@@ -37,7 +37,8 @@ impl RenderContext {
             .get_default_config(&adapter, size.width, size.height)
             .unwrap();
 
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        // Use Immediate for uncapped FPS (Mailbox not supported on this system)
+        config.present_mode = wgpu::PresentMode::Immediate;
 
         surface.configure(&device, &config);
 

@@ -142,4 +142,31 @@ impl CameraController {
         self.distance = self.distance.clamp(1.0, 1000.0);
         self.update_camera_pos();
     }
+
+    /// Adjust camera to fit the given positions, centering on their centroid
+    /// and setting distance so all points are visible.
+    pub fn fit_to_positions(&mut self, positions: &[Vec3]) {
+        if positions.is_empty() {
+            return;
+        }
+
+        // Calculate centroid
+        let centroid: Vec3 = positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
+
+        // Calculate bounding sphere radius from centroid
+        let radius = positions
+            .iter()
+            .map(|p| (*p - centroid).length())
+            .fold(0.0f32, f32::max);
+
+        self.focus_point = centroid;
+
+        // Set distance to fit the bounding sphere in view
+        // Using fovy and some padding factor
+        let fovy_rad = self.camera.fovy.to_radians();
+        let fit_distance = radius / (fovy_rad / 2.0).tan();
+        self.distance = fit_distance * 1.5; // 1.5x padding for comfortable view
+
+        self.update_camera_pos();
+    }
 }

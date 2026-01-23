@@ -1,4 +1,11 @@
 pub mod atom_renderer;
+pub mod backbone_renderer;
+pub mod bond_topology;
 pub mod camera;
+pub mod cylinder_renderer;
 pub mod engine;
+pub mod frame_timing;
+pub mod lighting;
+pub mod protein_data;
 pub mod render_context;
+pub mod text_renderer;

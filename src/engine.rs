@@ -1,35 +1,142 @@
 use crate::atom_renderer::AtomRenderer;
+use crate::backbone_renderer::BackboneRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
+use crate::cylinder_renderer::CylinderRenderer;
+use crate::frame_timing::FrameTiming;
+use crate::lighting::Lighting;
+use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
+use crate::text_renderer::TextRenderer;
 use glam::{Vec2, Vec3};
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
 
+/// Target FPS limit
+const TARGET_FPS: u32 = 300;
+
 pub struct ProteinRenderEngine {
     pub context: RenderContext,
     pub camera_controller: CameraController,
+    pub lighting: Lighting,
+    pub backbone_renderer: BackboneRenderer,
+    pub cylinder_renderer: CylinderRenderer,
     pub atom_renderer: AtomRenderer,
+    pub text_renderer: TextRenderer,
+    pub frame_timing: FrameTiming,
     pub input_handler: InputHandler,
+    pub depth_view: wgpu::TextureView,
 }
 
 impl ProteinRenderEngine {
     pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Self {
         let context = RenderContext::new(window).await;
-        let camera_controller = CameraController::new(&context);
-        let atom_renderer = AtomRenderer::new(&context, &camera_controller.layout).await;
+        let mut camera_controller = CameraController::new(&context);
+        let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
+
+        // Load protein data from mmCIF file
+        let cif_path = "assets/models/6ta1.cif";
+        let protein_data = ProteinData::from_mmcif(cif_path)
+            .expect("Failed to load protein data from CIF file");
+
+        // Create backbone renderer (B-spline tube through backbone atoms)
+        let backbone_renderer = BackboneRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &protein_data.backbone_chains,
+        );
+
+        // Get sidechain data
+        let sidechain_positions = protein_data.sidechain_positions();
+        let sidechain_hydrophobicity: Vec<bool> = protein_data
+            .sidechain_atoms
+            .iter()
+            .map(|a| a.is_hydrophobic)
+            .collect();
+
+        // Create cylinder renderer for sidechain bonds AND backbone-sidechain bonds
+        let cylinder_renderer = CylinderRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &sidechain_positions,
+            &protein_data.sidechain_bonds,
+            &protein_data.backbone_sidechain_bonds,
+            &sidechain_hydrophobicity,
+        );
+
+        // Create atom renderer for sidechain atoms with hydrophobicity coloring
+        let atom_renderer = AtomRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            sidechain_positions,
+            sidechain_hydrophobicity,
+        );
+
+        // Create shared depth view
+        let depth_view = Self::create_depth_view(&context);
+
+        // Create text renderer for FPS display
+        let text_renderer = TextRenderer::new(&context);
+
+        // Create frame timing with 300 FPS limit
+        let frame_timing = FrameTiming::new(TARGET_FPS);
+
+        // Fit camera to all atom positions
+        camera_controller.fit_to_positions(&protein_data.all_positions);
 
         Self {
             context,
             camera_controller,
+            lighting,
+            backbone_renderer,
+            cylinder_renderer,
             atom_renderer,
+            text_renderer,
+            frame_timing,
             input_handler,
+            depth_view,
         }
     }
 
+    fn create_depth_view(context: &RenderContext) -> wgpu::TextureView {
+        let size = wgpu::Extent3d {
+            width: context.config.width,
+            height: context.config.height,
+            depth_or_array_layers: 1,
+        };
+
+        let desc = wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        };
+
+        context
+            .device
+            .create_texture(&desc)
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        // Check if we should render based on FPS limit
+        if !self.frame_timing.should_render() {
+            return Ok(());
+        }
+
         self.camera_controller.update_gpu(&self.context.queue);
+
+        // Update FPS display
+        self.text_renderer.update_fps(self.frame_timing.fps());
+        self.text_renderer.prepare(&self.context);
 
         let frame = self.context.get_next_frame()?;
         let view = frame
@@ -39,7 +146,7 @@ impl ProteinRenderEngine {
 
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear pass"),
+                label: Some("main render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -55,7 +162,7 @@ impl ProteinRenderEngine {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.atom_renderer.depth_view,
+                    view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -65,12 +172,41 @@ impl ProteinRenderEngine {
                 ..Default::default()
             });
 
+            // Render order: backbone tubes -> cylinders -> spheres (all opaque)
+            self.backbone_renderer
+                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+            self.cylinder_renderer
+                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
             self.atom_renderer
-                .draw(&mut rp, &self.camera_controller.bind_group);
+                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+        }
+
+        // Text rendering pass (no depth testing needed)
+        {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text render pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Don't clear - render on top
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+
+            self.text_renderer.render(&mut rp);
         }
 
         self.context.submit(encoder);
         frame.present();
+
+        // Update frame timing
+        self.frame_timing.end_frame();
+
         Ok(())
     }
 
@@ -78,7 +214,8 @@ impl ProteinRenderEngine {
         if newsize.width > 0 && newsize.height > 0 {
             self.context.resize(newsize);
             self.camera_controller.resize(newsize.width, newsize.height);
-            self.atom_renderer.depth_view = AtomRenderer::create_depth_view(&self.context);
+            self.depth_view = Self::create_depth_view(&self.context);
+            self.text_renderer.resize(newsize.width, newsize.height);
         }
     }
 
@@ -130,7 +267,7 @@ impl ProteinRenderEngine {
         // Intersection test with spheres
         let mut selected_index = -1;
         let mut closest_t = f32::INFINITY;
-        let sphere_radius = 2.0;
+        let sphere_radius = 0.3;
 
         for (i, &pos) in self.atom_renderer.positions.iter().enumerate() {
             let oc = ray_origin - pos;

@@ -1,7 +1,14 @@
 pub mod atom_renderer;
+pub mod backbone_renderer;
+pub mod bond_topology;
 pub mod camera;
+pub mod cylinder_renderer;
 pub mod engine;
+pub mod frame_timing;
+pub mod lighting;
+pub mod protein_data;
 pub mod render_context;
+pub mod text_renderer;
 
 use engine::ProteinRenderEngine;
 use std::sync::Arc;
@@ -62,8 +69,10 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::RedrawRequested => {
-                if let (Some(_window), Some(engine)) = (&self.window, &mut self.engine) {
+                if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
                     let _ = engine.render();
+                    // Request continuous redraws for smooth FPS updates
+                    window.request_redraw();
                 }
             }
 
