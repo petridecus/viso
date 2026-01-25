@@ -23,29 +23,60 @@ struct LightingUniform {
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
+    // Instance model matrix (4 vec4 columns)
+    @location(2) model_0: vec4<f32>,
+    @location(3) model_1: vec4<f32>,
+    @location(4) model_2: vec4<f32>,
+    @location(5) model_3: vec4<f32>,
+    // Instance color (hydrophobic = blue, hydrophilic = orange)
+    @location(6) instance_color: vec3<f32>,
+    // Instance index for selection
+    @location(7) instance_index: f32,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
-    @location(2) depth: f32,
-    @location(3) vertex_color: vec3<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) depth: f32,
+    @location(4) instance_index: f32,
 };
+
+const HIGHLIGHT_MIX: f32 = 0.3;
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 @group(1) @binding(0) var<uniform> lighting: LightingUniform;
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
+    // Reconstruct model matrix from columns
+    let model = mat4x4<f32>(
+        in.model_0,
+        in.model_1,
+        in.model_2,
+        in.model_3,
+    );
+
+    // Transform position
+    let world_pos = model * vec4<f32>(in.position, 1.0);
+
+    // Transform normal (using upper 3x3 of model matrix)
+    // For uniform scaling this approximation works
+    let normal_matrix = mat3x3<f32>(
+        model[0].xyz,
+        model[1].xyz,
+        model[2].xyz,
+    );
+    let world_normal = normalize(normal_matrix * in.normal);
+
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(in.position, 1.0);
-    out.world_normal = in.normal;
-    out.world_position = in.position;
-    // Compute depth once in vertex shader (cheaper than per-fragment length())
-    out.depth = length(camera.position - in.position);
-    out.vertex_color = in.color;
+    out.clip_position = camera.view_proj * world_pos;
+    out.world_normal = world_normal;
+    out.world_position = world_pos.xyz;
+    out.color = in.instance_color;
+    out.depth = length(camera.position - world_pos.xyz);
+    out.instance_index = in.instance_index;
     return out;
 }
 
@@ -75,7 +106,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let key_diff = max(dot(normal, key_light), 0.0) * 0.8;
     let fill_diff = max(dot(normal, fill_light), 0.0) * 0.3;
 
-    // Specular (Blinn-Phong) - tight highlight for cylindrical shape
+    // Specular (Blinn-Phong) - tight highlight
     let half_vec = normalize(key_light + view_dir);
     let specular = pow(max(dot(normal, half_vec), 0.0), 64.0) * 0.5;
 
@@ -83,16 +114,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = 0.1;
     let total_light = ambient + key_diff + fill_diff;
 
-    // Use vertex color for secondary structure coloring
-    let base_color = in.vertex_color;
+    // Use instance color (hydrophobic blue or hydrophilic orange)
+    let base_color = in.color;
 
-    // Depth fog - fade to black with distance (depth computed in vertex shader)
+    // Depth fog - fade to black with distance
     let fog_start = 100.0;
     let fog_end = 500.0;
     let fog_factor = clamp((fog_end - in.depth) / (fog_end - fog_start), 0.0, 1.0);
 
     let lit_color = base_color * total_light + vec3<f32>(specular);
-    let final_color = lit_color * fog_factor;
+    let final_rgb_non_highlight = lit_color * fog_factor;
 
-    return vec4<f32>(final_color, 1.0);
+    // Selection highlighting
+    let is_selected = i32(in.instance_index) == camera.selected_atom_index;
+    let final_rgb = select(final_rgb_non_highlight, mix(final_rgb_non_highlight, vec3<f32>(1.0), HIGHLIGHT_MIX), is_selected);
+
+    return vec4<f32>(final_rgb, 1.0);
 }

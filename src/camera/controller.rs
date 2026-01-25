@@ -33,7 +33,7 @@ impl CameraController {
             up: Vec3::Y,
             aspect: context.config.width as f32 / context.config.height as f32,
             fovy: 45.0,
-            znear: 0.1,
+            znear: 5.0,
             zfar: 2000.0,
         };
 

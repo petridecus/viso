@@ -1,11 +1,19 @@
+//! Backbone tube renderer
+//!
+//! Renders protein backbone as smooth tubes using cubic Hermite splines
+//! with rotation-minimizing frames for consistent tube orientation.
+
+use crate::dynamic_buffer::DynamicBuffer;
 use crate::render_context::RenderContext;
+use crate::secondary_structure::{detect_secondary_structure, SSType};
 use glam::Vec3;
-use wgpu::util::DeviceExt;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Parameters for backbone tube rendering
 const TUBE_RADIUS: f32 = 0.3;
 const SEGMENTS_PER_SPAN: usize = 8;
-const RADIAL_SEGMENTS: usize = 8;
+const RADIAL_SEGMENTS: usize = 16;
 
 /// A point along the spline with position, tangent, and frame vectors
 #[derive(Clone, Copy)]
@@ -22,13 +30,16 @@ struct SplinePoint {
 struct TubeVertex {
     position: [f32; 3],
     normal: [f32; 3],
+    color: [f32; 3],
 }
 
 pub struct BackboneRenderer {
     pub pipeline: wgpu::RenderPipeline,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    vertex_buffer: DynamicBuffer,
+    index_buffer: DynamicBuffer,
     pub index_count: u32,
+    /// Hash of the last chain data for change detection
+    last_chain_hash: u64,
 }
 
 impl BackboneRenderer {
@@ -40,30 +51,137 @@ impl BackboneRenderer {
     ) -> Self {
         let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
 
-        let vertex_buffer = context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Backbone Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let vertex_buffer = if vertices.is_empty() {
+            DynamicBuffer::new(
+                &context.device,
+                "Backbone Vertex Buffer",
+                std::mem::size_of::<TubeVertex>() * 1000,
+                wgpu::BufferUsages::VERTEX,
+            )
+        } else {
+            DynamicBuffer::new_with_data(
+                &context.device,
+                "Backbone Vertex Buffer",
+                &vertices,
+                wgpu::BufferUsages::VERTEX,
+            )
+        };
 
-        let index_buffer = context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Backbone Index Buffer"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let index_buffer = if indices.is_empty() {
+            DynamicBuffer::new(
+                &context.device,
+                "Backbone Index Buffer",
+                std::mem::size_of::<u32>() * 3000,
+                wgpu::BufferUsages::INDEX,
+            )
+        } else {
+            DynamicBuffer::new_with_data(
+                &context.device,
+                "Backbone Index Buffer",
+                &indices,
+                wgpu::BufferUsages::INDEX,
+            )
+        };
 
         let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
+        let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
             pipeline,
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            last_chain_hash,
         }
+    }
+
+    /// Compute a hash of the chain data for change detection
+    fn compute_chain_hash(chains: &[Vec<Vec3>]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        chains.len().hash(&mut hasher);
+        for chain in chains {
+            chain.len().hash(&mut hasher);
+            // Hash first, middle, and last positions for good change detection
+            // without hashing every single point
+            if let Some(first) = chain.first() {
+                first.x.to_bits().hash(&mut hasher);
+                first.y.to_bits().hash(&mut hasher);
+                first.z.to_bits().hash(&mut hasher);
+            }
+            if chain.len() > 2 {
+                let mid = &chain[chain.len() / 2];
+                mid.x.to_bits().hash(&mut hasher);
+                mid.y.to_bits().hash(&mut hasher);
+                mid.z.to_bits().hash(&mut hasher);
+            }
+            if let Some(last) = chain.last() {
+                last.x.to_bits().hash(&mut hasher);
+                last.y.to_bits().hash(&mut hasher);
+                last.z.to_bits().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Update the backbone with new chains (regenerates the mesh if changed)
+    pub fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        backbone_chains: &[Vec<Vec3>],
+    ) {
+        // Quick hash check to see if chains actually changed
+        let new_hash = Self::compute_chain_hash(backbone_chains);
+        if new_hash == self.last_chain_hash {
+            return; // No change, skip expensive mesh regeneration
+        }
+        self.last_chain_hash = new_hash;
+
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
+
+        if vertices.is_empty() {
+            self.index_count = 0;
+            return;
+        }
+
+        self.vertex_buffer.write(device, queue, &vertices);
+        self.index_buffer.write(device, queue, &indices);
+        self.index_count = indices.len() as u32;
+    }
+
+    /// Legacy method for compatibility - calls update()
+    pub fn update_chains(&mut self, device: &wgpu::Device, backbone_chains: &[Vec<Vec3>]) {
+        // Create a temporary queue-less update by regenerating buffers
+        let new_hash = Self::compute_chain_hash(backbone_chains);
+        if new_hash == self.last_chain_hash {
+            return;
+        }
+        self.last_chain_hash = new_hash;
+
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
+
+        if vertices.is_empty() {
+            self.index_count = 0;
+            return;
+        }
+
+        // For legacy compatibility, recreate buffers directly
+        self.vertex_buffer = DynamicBuffer::new_with_data(
+            device,
+            "Backbone Vertex Buffer",
+            &vertices,
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        self.index_buffer = DynamicBuffer::new_with_data(
+            device,
+            "Backbone Index Buffer",
+            &indices,
+            wgpu::BufferUsages::INDEX,
+        );
+
+        self.index_count = indices.len() as u32;
     }
 
     fn create_pipeline(
@@ -91,12 +209,17 @@ impl BackboneRenderer {
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
                     offset: 0,
-                    shader_location: 0,
+                    shader_location: 0, // position
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
                     offset: 12,
-                    shader_location: 1,
+                    shader_location: 1, // normal
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 24,
+                    shader_location: 2, // color
                 },
             ],
         };
@@ -144,24 +267,68 @@ impl BackboneRenderer {
         let mut all_vertices: Vec<TubeVertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
 
-        for ca_positions in chains {
+        for backbone_atoms in chains {
+            // Backbone chains contain N, CA, C atoms per residue (3 atoms per residue)
+            // Extract just CA positions for spline and SS detection
+            // CA is at index 1, 4, 7, 10, ... (every 3rd starting at 1)
+            let ca_positions: Vec<Vec3> = backbone_atoms
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 3 == 1) // CA is the second atom in each N, CA, C triplet
+                .map(|(_, &pos)| pos)
+                .collect();
+
             // Need at least 4 CA atoms for a smooth spline
             if ca_positions.len() < 4 {
                 continue;
             }
 
-            // Generate spline points
-            let spline_points = Self::generate_spline_points(ca_positions);
+            // Detect secondary structure from CA positions
+            let ss_types = detect_secondary_structure(&ca_positions);
 
-            // Generate tube geometry
+            // Generate spline points with SS colors
+            let spline_points = Self::generate_spline_points(&ca_positions);
+            let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
+
+            // Generate tube geometry with colors
             let base_vertex = all_vertices.len() as u32;
-            let (vertices, indices) = Self::generate_tube_segment(&spline_points, base_vertex);
+            let (vertices, indices) =
+                Self::generate_tube_segment(&spline_points, &spline_colors, base_vertex);
 
             all_vertices.extend(vertices);
             all_indices.extend(indices);
         }
 
         (all_vertices, all_indices)
+    }
+
+    /// Interpolate SS colors to match spline point count
+    fn interpolate_ss_colors(ss_types: &[SSType], num_spline_points: usize) -> Vec<[f32; 3]> {
+        if ss_types.is_empty() {
+            return vec![[0.6, 0.85, 0.6]; num_spline_points];
+        }
+
+        let n_residues = ss_types.len();
+        let _points_per_residue = if n_residues > 1 {
+            (num_spline_points - 1) / (n_residues - 1)
+        } else {
+            num_spline_points
+        };
+
+        let mut colors = Vec::with_capacity(num_spline_points);
+
+        for i in 0..num_spline_points {
+            // Map spline point index to residue index
+            let residue_idx = if n_residues > 1 {
+                ((i as f32 / (num_spline_points - 1) as f32) * (n_residues - 1) as f32) as usize
+            } else {
+                0
+            };
+            let residue_idx = residue_idx.min(n_residues - 1);
+            colors.push(ss_types[residue_idx].color());
+        }
+
+        colors
     }
 
     fn generate_spline_points(ca_positions: &[Vec3]) -> Vec<SplinePoint> {
@@ -221,6 +388,7 @@ impl BackboneRenderer {
 
     fn generate_tube_segment(
         points: &[SplinePoint],
+        colors: &[[f32; 3]],
         base_vertex: u32,
     ) -> (Vec<TubeVertex>, Vec<u32>) {
         let num_rings = points.len();
@@ -228,7 +396,9 @@ impl BackboneRenderer {
         let mut indices = Vec::new();
 
         // Generate vertices for each ring
-        for point in points {
+        for (i, point) in points.iter().enumerate() {
+            let color = colors.get(i).copied().unwrap_or([0.6, 0.85, 0.6]);
+
             for k in 0..RADIAL_SEGMENTS {
                 let angle = (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;
                 let cos_a = angle.cos();
@@ -244,6 +414,7 @@ impl BackboneRenderer {
                 vertices.push(TubeVertex {
                     position: pos.into(),
                     normal: normal.into(),
+                    color,
                 });
             }
         }
@@ -283,8 +454,8 @@ impl BackboneRenderer {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, lighting_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
+        render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 }

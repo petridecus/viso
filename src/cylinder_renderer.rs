@@ -1,11 +1,17 @@
+//! Cylinder renderer for bonds between atoms
+//!
+//! Renders bonds as cylinders with hydrophobicity-based coloring.
+//! Uses instanced rendering with a dynamic instance buffer.
+
+use crate::dynamic_buffer::TypedBuffer;
 use crate::protein_data::BackboneSidechainBond;
 use crate::render_context::RenderContext;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 /// Cylinder rendering parameters
-const CYLINDER_RADIUS: f32 = 0.3;  // Match sphere radius
-const RADIAL_SEGMENTS: usize = 8;
+const CYLINDER_RADIUS: f32 = 0.3; // Match sphere radius
+const RADIAL_SEGMENTS: usize = 16;
 
 /// Vertex for the unit cylinder mesh
 #[repr(C)]
@@ -31,13 +37,13 @@ pub struct CylinderRenderer {
     pub pipeline: wgpu::RenderPipeline,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
-    pub instance_buffer: wgpu::Buffer,
+    instance_buffer: TypedBuffer<CylinderInstance>,
     pub index_count: u32,
     pub instance_count: u32,
 }
 
 // Color constants
-const HYDROPHOBIC_COLOR: [f32; 3] = [0.3, 0.5, 0.9];  // Blue
+const HYDROPHOBIC_COLOR: [f32; 3] = [0.3, 0.5, 0.9]; // Blue
 const HYDROPHILIC_COLOR: [f32; 3] = [0.95, 0.6, 0.2]; // Orange
 
 impl CylinderRenderer {
@@ -69,7 +75,63 @@ impl CylinderRenderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        // Generate instance data for sidechain bonds (use color from first atom of bond)
+        // Generate instance data
+        let instances = Self::generate_all_instances(
+            sidechain_positions,
+            sidechain_bonds,
+            backbone_sidechain_bonds,
+            hydrophobicity,
+        );
+
+        let instance_count = instances.len() as u32;
+
+        let instance_buffer = TypedBuffer::new_with_data(
+            &context.device,
+            "Cylinder Instance Buffer",
+            &instances,
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
+
+        Self {
+            pipeline,
+            vertex_buffer,
+            index_buffer,
+            instance_buffer,
+            index_count: indices.len() as u32,
+            instance_count,
+        }
+    }
+
+    /// Update bonds dynamically - can handle changing topology
+    pub fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sidechain_positions: &[Vec3],
+        sidechain_bonds: &[(u32, u32)],
+        backbone_sidechain_bonds: &[BackboneSidechainBond],
+        hydrophobicity: &[bool],
+    ) {
+        let instances = Self::generate_all_instances(
+            sidechain_positions,
+            sidechain_bonds,
+            backbone_sidechain_bonds,
+            hydrophobicity,
+        );
+
+        self.instance_buffer.write(device, queue, &instances);
+        self.instance_count = instances.len() as u32;
+    }
+
+    /// Generate all instances (sidechain bonds + backbone-sidechain bonds)
+    fn generate_all_instances(
+        sidechain_positions: &[Vec3],
+        sidechain_bonds: &[(u32, u32)],
+        backbone_sidechain_bonds: &[BackboneSidechainBond],
+        hydrophobicity: &[bool],
+    ) -> Vec<CylinderInstance> {
         let mut instances = Self::generate_instances_with_color(
             sidechain_positions,
             sidechain_bonds,
@@ -96,26 +158,7 @@ impl CylinderRenderer {
             }
         }
 
-        let instance_count = instances.len() as u32;
-
-        let instance_buffer = context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Cylinder Instance Buffer"),
-                contents: bytemuck::cast_slice(&instances),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
-
-        Self {
-            pipeline,
-            vertex_buffer,
-            index_buffer,
-            instance_buffer,
-            index_count: indices.len() as u32,
-            instance_count,
-        }
+        instances
     }
 
     fn create_pipeline(
@@ -257,9 +300,9 @@ impl CylinderRenderer {
         for i in 0..RADIAL_SEGMENTS {
             let i_next = (i + 1) % RADIAL_SEGMENTS;
 
-            let v0 = (i * 2) as u32;     // bottom current
+            let v0 = (i * 2) as u32; // bottom current
             let v1 = (i * 2 + 1) as u32; // top current
-            let v2 = (i_next * 2) as u32;     // bottom next
+            let v2 = (i_next * 2) as u32; // bottom next
             let v3 = (i_next * 2 + 1) as u32; // top next
 
             // Two triangles per quad
@@ -358,7 +401,7 @@ impl CylinderRenderer {
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, lighting_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.instance_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..self.instance_count);
     }

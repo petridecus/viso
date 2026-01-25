@@ -7,6 +7,7 @@ use crate::frame_timing::FrameTiming;
 use crate::lighting::Lighting;
 use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
+use crate::ssao::SsaoRenderer;
 use crate::text_renderer::TextRenderer;
 use glam::{Vec2, Vec3};
 use winit::event::MouseButton;
@@ -25,18 +26,25 @@ pub struct ProteinRenderEngine {
     pub text_renderer: TextRenderer,
     pub frame_timing: FrameTiming,
     pub input_handler: InputHandler,
+    pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
+    pub ssao_renderer: SsaoRenderer,
 }
 
 impl ProteinRenderEngine {
+    /// Create a new engine with a default molecule path
     pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Self {
+        Self::new_with_path(window, "assets/models/6ta1.cif").await
+    }
+
+    /// Create a new engine with a specified molecule path
+    pub async fn new_with_path(window: std::sync::Arc<winit::window::Window>, cif_path: &str) -> Self {
         let context = RenderContext::new(window).await;
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
 
         // Load protein data from mmCIF file
-        let cif_path = "assets/models/6ta1.cif";
         let protein_data = ProteinData::from_mmcif(cif_path)
             .expect("Failed to load protein data from CIF file");
 
@@ -76,8 +84,11 @@ impl ProteinRenderEngine {
             sidechain_hydrophobicity,
         );
 
-        // Create shared depth view
-        let depth_view = Self::create_depth_view(&context);
+        // Create shared depth texture (bindable for SSAO)
+        let (depth_texture, depth_view) = Self::create_depth_texture(&context);
+
+        // Create SSAO renderer
+        let ssao_renderer = SsaoRenderer::new(&context, &depth_view);
 
         // Create text renderer for FPS display
         let text_renderer = TextRenderer::new(&context);
@@ -98,32 +109,33 @@ impl ProteinRenderEngine {
             text_renderer,
             frame_timing,
             input_handler,
+            depth_texture,
             depth_view,
+            ssao_renderer,
         }
     }
 
-    fn create_depth_view(context: &RenderContext) -> wgpu::TextureView {
+    fn create_depth_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
             width: context.config.width,
             height: context.config.height,
             depth_or_array_layers: 1,
         };
 
-        let desc = wgpu::TextureDescriptor {
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // Add TEXTURE_BINDING so SSAO can sample from it
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
-        };
+        });
 
-        context
-            .device
-            .create_texture(&desc)
-            .create_view(&wgpu::TextureViewDescriptor::default())
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -181,6 +193,18 @@ impl ProteinRenderEngine {
                 .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
         }
 
+        // Update SSAO projection matrices
+        let proj = self.camera_controller.camera.build_projection();
+        self.ssao_renderer.update_projection(
+            &self.context.queue,
+            proj,
+            self.camera_controller.camera.znear,
+            self.camera_controller.camera.zfar,
+        );
+
+        // SSAO pass (compute ambient occlusion from depth buffer)
+        self.ssao_renderer.render_ssao(&mut encoder);
+
         // Text rendering pass (no depth testing needed)
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -214,7 +238,10 @@ impl ProteinRenderEngine {
         if newsize.width > 0 && newsize.height > 0 {
             self.context.resize(newsize);
             self.camera_controller.resize(newsize.width, newsize.height);
-            self.depth_view = Self::create_depth_view(&self.context);
+            let (depth_texture, depth_view) = Self::create_depth_texture(&self.context);
+            self.depth_texture = depth_texture;
+            self.depth_view = depth_view;
+            self.ssao_renderer.resize(&self.context, &self.depth_view);
             self.text_renderer.resize(newsize.width, newsize.height);
         }
     }
@@ -242,6 +269,85 @@ impl ProteinRenderEngine {
 
     pub fn update_modifiers(&mut self, modifiers: ModifiersState) {
         self.camera_controller.shift_pressed = modifiers.shift_key();
+    }
+
+    /// Update protein atom positions for animation
+    /// Handles dynamic buffer resizing if new positions exceed current capacity
+    pub fn update_positions(&mut self, positions: &[Vec3], hydrophobicity: &[bool]) {
+        self.atom_renderer.update_positions(
+            &self.context.device,
+            &self.context.queue,
+            positions,
+            hydrophobicity,
+        );
+    }
+
+    /// Update backbone with new chains (regenerates the tube mesh)
+    /// Use this for designed backbones from ML models like RFDiffusion3
+    pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
+        self.backbone_renderer
+            .update_chains(&self.context.device, backbone_chains);
+    }
+
+    /// Get the GPU queue for buffer updates
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.context.queue
+    }
+
+    /// Update all renderers from aggregated scene data
+    ///
+    /// This is the main integration point for the Scene-based rendering model.
+    /// Call this whenever structures are added, removed, or modified in the scene.
+    pub fn update_from_aggregated(
+        &mut self,
+        backbone_chains: &[Vec<Vec3>],
+        sidechain_positions: &[Vec3],
+        sidechain_hydrophobicity: &[bool],
+        sidechain_bonds: &[(u32, u32)],
+        backbone_sidechain_bonds: &[(Vec3, u32)], // (CA position, CB index)
+        all_positions: &[Vec3],
+        fit_camera: bool,
+    ) {
+        use crate::protein_data::BackboneSidechainBond;
+
+        // Update backbone tubes
+        self.backbone_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            backbone_chains,
+        );
+
+        // Update sidechain spheres
+        self.atom_renderer.update_positions(
+            &self.context.device,
+            &self.context.queue,
+            sidechain_positions,
+            sidechain_hydrophobicity,
+        );
+
+        // Convert backbone_sidechain_bonds to the format CylinderRenderer expects
+        let bs_bonds: Vec<BackboneSidechainBond> = backbone_sidechain_bonds
+            .iter()
+            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
+                ca_position: *ca_pos,
+                cb_index: *cb_idx,
+            })
+            .collect();
+
+        // Update bonds
+        self.cylinder_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            sidechain_positions,
+            sidechain_bonds,
+            &bs_bonds,
+            sidechain_hydrophobicity,
+        );
+
+        // Fit camera if requested and we have positions
+        if fit_camera && !all_positions.is_empty() {
+            self.camera_controller.fit_to_positions(all_positions);
+        }
     }
 
     pub fn handle_mouse_position(&mut self, position: (f32, f32)) {

@@ -1,17 +1,41 @@
+//! Atom renderer using ray-marched spheres
+//!
+//! Renders atoms as spheres with hydrophobicity-based coloring.
+//! Uses a storage buffer for positions that can grow dynamically.
+
+use crate::dynamic_buffer::TypedBuffer;
 use crate::render_context::RenderContext;
 use glam::Vec3;
 
 pub struct AtomRenderer {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group: wgpu::BindGroup,
-    pub positions_buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    positions_buffer: TypedBuffer<[f32; 4]>,
     pub positions: Vec<Vec3>,
     pub atom_count: u32,
 }
 
 impl AtomRenderer {
+    fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Atom Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        })
+    }
+
     fn create_render_pipeline(
         context: &RenderContext,
+        atom_bind_group_layout: &wgpu::BindGroupLayout,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
@@ -19,31 +43,12 @@ impl AtomRenderer {
             .device
             .create_shader_module(wgpu::include_wgsl!("../assets/shaders/camera_spheres.wgsl"));
 
-        let entries = vec![wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }];
-
-        let atom_bind_group_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Atom Layout"),
-                    entries: &entries,
-                });
-
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Atom Renderer Pipeline Layout"),
-                    bind_group_layouts: &[&atom_bind_group_layout, camera_layout, lighting_layout],
+                    bind_group_layouts: &[atom_bind_group_layout, camera_layout, lighting_layout],
                     immediate_size: 0,
                 });
 
@@ -115,8 +120,9 @@ impl AtomRenderer {
         positions: Vec<Vec3>,
         hydrophobicity: Vec<bool>,
     ) -> Self {
-        let pipeline = Self::create_render_pipeline(&context, camera_layout, lighting_layout);
-        let atom_count = positions.len() as u32;
+        let bind_group_layout = Self::create_bind_group_layout(&context.device);
+        let pipeline =
+            Self::create_render_pipeline(context, &bind_group_layout, camera_layout, lighting_layout);
 
         // Convert to GPU format [x, y, z, w] where w encodes hydrophobicity
         // w = 1.0 for hydrophobic, w = 0.0 for hydrophilic
@@ -126,30 +132,28 @@ impl AtomRenderer {
             .map(|(v, &hydro)| [v.x, v.y, v.z, if hydro { 1.0 } else { 0.0 }])
             .collect();
 
-        use wgpu::util::DeviceExt;
-        let positions_buffer =
-            context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Atom Positions Buffer"),
-                    contents: bytemuck::cast_slice(&positions_data),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+        let positions_buffer = TypedBuffer::new_with_data(
+            &context.device,
+            "Atom Positions Buffer",
+            &positions_data,
+            wgpu::BufferUsages::STORAGE,
+        );
 
-        let bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &pipeline.get_bind_group_layout(0),
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: positions_buffer.as_entire_binding(),
-                }],
-                label: Some("Atom XYZ Bind Group"),
-            });
+        let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: positions_buffer.buffer().as_entire_binding(),
+            }],
+            label: Some("Atom XYZ Bind Group"),
+        });
+
+        let atom_count = positions.len() as u32;
 
         Self {
             pipeline,
             bind_group,
+            bind_group_layout,
             positions_buffer,
             positions,
             atom_count,
@@ -162,10 +166,47 @@ impl AtomRenderer {
         camera_bind_group: &'a wgpu::BindGroup,
         lighting_bind_group: &'a wgpu::BindGroup,
     ) {
+        if self.atom_count == 0 {
+            return;
+        }
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.set_bind_group(1, camera_bind_group, &[]);
         render_pass.set_bind_group(2, lighting_bind_group, &[]);
         render_pass.draw(0..6, 0..self.atom_count);
+    }
+
+    /// Update atom positions dynamically (for animation)
+    /// If the new positions exceed buffer capacity, the buffer and bind group are recreated.
+    pub fn update_positions(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &[Vec3],
+        hydrophobicity: &[bool],
+    ) {
+        let positions_data: Vec<[f32; 4]> = positions
+            .iter()
+            .zip(hydrophobicity.iter())
+            .map(|(v, &hydro)| [v.x, v.y, v.z, if hydro { 1.0 } else { 0.0 }])
+            .collect();
+
+        // TypedBuffer handles resizing automatically
+        let reallocated = self.positions_buffer.write(device, queue, &positions_data);
+
+        if reallocated {
+            // Buffer was reallocated, recreate bind group
+            self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.positions_buffer.buffer().as_entire_binding(),
+                }],
+                label: Some("Atom XYZ Bind Group"),
+            });
+        }
+
+        self.positions = positions.to_vec();
+        self.atom_count = positions.len() as u32;
     }
 }

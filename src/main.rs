@@ -3,11 +3,15 @@ pub mod backbone_renderer;
 pub mod bond_topology;
 pub mod camera;
 pub mod cylinder_renderer;
+pub mod dynamic_buffer;
 pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
 pub mod protein_data;
 pub mod render_context;
+pub mod secondary_structure;
+pub mod sphere_renderer;
+pub mod ssao;
 pub mod text_renderer;
 
 use engine::ProteinRenderEngine;
