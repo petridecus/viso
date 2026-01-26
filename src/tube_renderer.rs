@@ -346,6 +346,7 @@ impl TubeRenderer {
     }
 
     /// Generate tube segments only for residues matching the SS filter
+    /// Extends segments by 1 residue at each boundary to overlap with ribbons
     fn generate_filtered_segments(
         spline_points: &[SplinePoint],
         ss_types: &[SSType],
@@ -376,21 +377,27 @@ impl TubeRenderer {
             }
             let end_residue = i;
 
+            // Extend segment by 1 residue on each end to overlap with ribbons
+            // This ensures tubes go "under" the ribbons at junctions
+            let extended_start = start_residue.saturating_sub(1);
+            let extended_end = (end_residue + 1).min(n_residues);
+
             // Need at least 2 residues for a tube segment
-            if end_residue - start_residue < 2 {
+            if extended_end - extended_start < 2 {
                 continue;
             }
 
             // Convert residue range to spline point range
-            let start_point = start_residue * points_per_residue;
-            let end_point = ((end_residue - 1) * points_per_residue + 1).min(spline_points.len());
+            let start_point = extended_start * points_per_residue;
+            let end_point = ((extended_end - 1) * points_per_residue + 1).min(spline_points.len());
 
             if start_point >= end_point || start_point >= spline_points.len() {
                 continue;
             }
 
             let segment_points = &spline_points[start_point..end_point];
-            let segment_ss = &ss_types[start_residue..end_residue];
+            // Use original (non-extended) SS types for coloring so colors match ribbons
+            let segment_ss = &ss_types[extended_start..extended_end];
             let segment_colors = Self::interpolate_ss_colors(segment_ss, segment_points.len());
 
             let base_vertex = all_vertices.len() as u32;
