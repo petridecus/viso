@@ -2,7 +2,7 @@ use crate::render_context::RenderContext;
 use wgpu::util::DeviceExt;
 
 /// Lighting configuration shared across all shaders
-/// NOTE: Must match WGSL struct layout exactly (80 bytes with vec3 alignment)
+/// NOTE: Must match WGSL struct layout exactly (64 bytes)
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightingUniform {
@@ -22,30 +22,36 @@ pub struct LightingUniform {
     pub specular_intensity: f32,
     /// Specular shininess exponent
     pub shininess: f32,
-    // Padding: shininess ends at offset 52, vec3 _pad3 needs 16-byte alignment (offset 64)
-    pub _pad_align: [f32; 3],
-    // vec3 in WGSL is 12 bytes but struct pads to 16-byte boundary -> 80 total
-    pub _pad3: [f32; 4],
+    /// Fresnel edge falloff power (higher = tighter edge glow)
+    pub fresnel_power: f32,
+    /// Fresnel edge brightness boost
+    pub fresnel_intensity: f32,
+    pub _pad3: f32,
 }
 
 impl Default for LightingUniform {
     fn default() -> Self {
         Self {
-            // Match Foldit's lighting setup for consistent appearance
-            // Light 0: (-100, 300, 0) - upper-left (16.7% ambient + 33.3% diffuse)
-            light1_dir: normalize([-100.0, 300.0, 0.0]),
+            // Primary light: upper-left for strong directional contrast
+            light1_dir: normalize([-0.3, 0.9, -0.3]),
             _pad1: 0.0,
-            // Light 1: (100, 300, 100) - upper-right-front (33.3% diffuse)
-            light2_dir: normalize([100.0, 300.0, 100.0]),
+            // Secondary light: upper-right-front for fill
+            light2_dir: normalize([0.3, 0.6, -0.4]),
             _pad2: 0.0,
-            light1_intensity: 0.333,
-            light2_intensity: 0.333,
-            ambient: 0.167,
-            // No specular for consistent matte appearance from all angles
-            specular_intensity: 0.0,
+            // Stronger primary light for better depth perception
+            light1_intensity: 0.7,
+            light2_intensity: 0.3,
+            // Slightly reduced ambient to allow darker shadows
+            ambient: 0.12,
+            // Increased specular for glossy/jewel-like look
+            specular_intensity: 0.5,
+            // Higher shininess for tight highlights
             shininess: 64.0,
-            _pad_align: [0.0; 3],
-            _pad3: [0.0; 4],
+            // Fresnel edge falloff
+            fresnel_power: 3.0,
+            // Subtle edge glow
+            fresnel_intensity: 0.25,
+            _pad3: 0.0,
         }
     }
 }
@@ -109,8 +115,36 @@ impl Lighting {
         }
     }
 
-    #[allow(dead_code)]
     pub fn update_gpu(&self, queue: &wgpu::Queue) {
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+    }
+
+    /// Update light directions to follow camera (headlamp mode)
+    /// Call this each frame after camera updates
+    pub fn update_headlamp(
+        &mut self,
+        camera_right: glam::Vec3,
+        camera_up: glam::Vec3,
+        camera_forward: glam::Vec3,
+    ) {
+        // Primary light: upper-left relative to camera view
+        // In camera space: (-0.3, 0.9, -0.3) = left, up, toward viewer
+        // Negative z ensures surfaces facing camera receive light
+        let light1_camera = glam::Vec3::new(-0.3, 0.9, -0.3).normalize();
+
+        // Transform from camera space to world space
+        let light1_world = camera_right * light1_camera.x
+            + camera_up * light1_camera.y
+            + camera_forward * light1_camera.z;
+
+        self.uniform.light1_dir = light1_world.normalize().to_array();
+
+        // Secondary fill light: upper-right relative to camera
+        let light2_camera = glam::Vec3::new(0.3, 0.6, -0.4).normalize();
+        let light2_world = camera_right * light2_camera.x
+            + camera_up * light2_camera.y
+            + camera_forward * light2_camera.z;
+
+        self.uniform.light2_dir = light2_world.normalize().to_array();
     }
 }

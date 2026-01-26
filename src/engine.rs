@@ -1,17 +1,31 @@
-use crate::atom_renderer::AtomRenderer;
-use crate::backbone_renderer::BackboneRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
-use crate::cylinder_renderer::CylinderRenderer;
+use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
+use crate::composite::CompositePass;
 use crate::frame_timing::FrameTiming;
 use crate::lighting::Lighting;
 use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
+use crate::ribbon_renderer::RibbonRenderer;
+use crate::secondary_structure::SSType;
 use crate::ssao::SsaoRenderer;
 use crate::text_renderer::TextRenderer;
+use crate::tube_renderer::TubeRenderer;
+
 use glam::{Vec2, Vec3};
+use std::collections::HashSet;
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
+
+/// View mode for backbone rendering
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    /// Uniform-radius tubes for all residues
+    #[default]
+    Tube,
+    /// Secondary structure ribbons for helices/sheets, tubes for coils
+    Ribbon,
+}
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -20,15 +34,17 @@ pub struct ProteinRenderEngine {
     pub context: RenderContext,
     pub camera_controller: CameraController,
     pub lighting: Lighting,
-    pub backbone_renderer: BackboneRenderer,
-    pub cylinder_renderer: CylinderRenderer,
-    pub atom_renderer: AtomRenderer,
+    pub sidechain_renderer: CapsuleSidechainRenderer,
+    pub tube_renderer: TubeRenderer,
+    pub ribbon_renderer: RibbonRenderer,
+    pub view_mode: ViewMode,
     pub text_renderer: TextRenderer,
     pub frame_timing: FrameTiming,
     pub input_handler: InputHandler,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
     pub ssao_renderer: SsaoRenderer,
+    pub composite_pass: CompositePass,
 }
 
 impl ProteinRenderEngine {
@@ -49,12 +65,31 @@ impl ProteinRenderEngine {
             .expect("Failed to load protein data from CIF file");
 
         // Create backbone renderer (B-spline tube through backbone atoms)
-        let backbone_renderer = BackboneRenderer::new(
+        let tube_renderer = TubeRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
             &protein_data.backbone_chains,
         );
+
+        // Create ribbon renderer for secondary structure visualization
+        // Use the new Foldit-style renderer if we have full backbone residue data (N, CA, C, O)
+        let ribbon_renderer = if !protein_data.backbone_residue_chains.is_empty() {
+            RibbonRenderer::new_from_residues(
+                &context,
+                &camera_controller.layout,
+                &lighting.layout,
+                &protein_data.backbone_residue_chains,
+            )
+        } else {
+            // Fallback to legacy renderer if only backbone_chains available
+            RibbonRenderer::new(
+                &context,
+                &camera_controller.layout,
+                &lighting.layout,
+                &protein_data.backbone_chains,
+            )
+        };
 
         // Get sidechain data
         let sidechain_positions = protein_data.sidechain_positions();
@@ -64,24 +99,14 @@ impl ProteinRenderEngine {
             .map(|a| a.is_hydrophobic)
             .collect();
 
-        // Create cylinder renderer for sidechain bonds AND backbone-sidechain bonds
-        let cylinder_renderer = CylinderRenderer::new(
+        let sidechain_renderer = CapsuleSidechainRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
             &sidechain_positions,
             &protein_data.sidechain_bonds,
             &protein_data.backbone_sidechain_bonds,
-            &sidechain_hydrophobicity,
-        );
-
-        // Create atom renderer for sidechain atoms with hydrophobicity coloring
-        let atom_renderer = AtomRenderer::new(
-            &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            sidechain_positions,
-            sidechain_hydrophobicity,
+            &sidechain_hydrophobicity
         );
 
         // Create shared depth texture (bindable for SSAO)
@@ -89,6 +114,9 @@ impl ProteinRenderEngine {
 
         // Create SSAO renderer
         let ssao_renderer = SsaoRenderer::new(&context, &depth_view);
+
+        // Create composite pass (applies SSAO and outlines to final image)
+        let composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view);
 
         // Create text renderer for FPS display
         let text_renderer = TextRenderer::new(&context);
@@ -103,15 +131,17 @@ impl ProteinRenderEngine {
             context,
             camera_controller,
             lighting,
-            backbone_renderer,
-            cylinder_renderer,
-            atom_renderer,
+            tube_renderer,
+            ribbon_renderer,
+            view_mode: ViewMode::default(),
+            sidechain_renderer,
             text_renderer,
             frame_timing,
             input_handler,
             depth_texture,
             depth_view,
             ssao_renderer,
+            composite_pass,
         }
     }
 
@@ -146,6 +176,14 @@ impl ProteinRenderEngine {
 
         self.camera_controller.update_gpu(&self.context.queue);
 
+        // Update lighting to follow camera (headlamp mode)
+        let camera = &self.camera_controller.camera;
+        let forward = (camera.target - camera.eye).normalize();
+        let right = forward.cross(Vec3::Y).normalize();
+        let up = right.cross(forward);
+        self.lighting.update_headlamp(right, up, forward);
+        self.lighting.update_gpu(&self.context.queue);
+
         // Update FPS display
         self.text_renderer.update_fps(self.frame_timing.fps());
         self.text_renderer.prepare(&self.context);
@@ -156,11 +194,12 @@ impl ProteinRenderEngine {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.context.create_encoder();
 
+        // Geometry pass - render to intermediate color texture (for SSAO compositing)
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.composite_pass.get_color_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -184,13 +223,27 @@ impl ProteinRenderEngine {
                 ..Default::default()
             });
 
-            // Render order: backbone tubes -> cylinders -> spheres (all opaque)
-            self.backbone_renderer
-                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
-            self.cylinder_renderer
-                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
-            self.atom_renderer
-                .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+            // Render order: backbone (tube or ribbon) -> cylinders -> spheres (all opaque)
+            match self.view_mode {
+                ViewMode::Tube => {
+                    // Tube mode: TubeRenderer renders all SS types as tubes
+                    self.tube_renderer
+                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+                }
+                ViewMode::Ribbon => {
+                    // Ribbon mode: TubeRenderer renders coils, RibbonRenderer renders helices/sheets
+                    self.tube_renderer
+                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+                    self.ribbon_renderer
+                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+                }
+            }
+
+            self.sidechain_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group
+            );
         }
 
         // Update SSAO projection matrices
@@ -205,7 +258,10 @@ impl ProteinRenderEngine {
         // SSAO pass (compute ambient occlusion from depth buffer)
         self.ssao_renderer.render_ssao(&mut encoder);
 
-        // Text rendering pass (no depth testing needed)
+        // Composite pass - apply SSAO to the geometry and output to swapchain
+        self.composite_pass.render(&mut encoder, &view);
+
+        // Text rendering pass (no depth testing needed, renders on top of composited image)
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text render pass"),
@@ -242,6 +298,7 @@ impl ProteinRenderEngine {
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
             self.ssao_renderer.resize(&self.context, &self.depth_view);
+            self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
             self.text_renderer.resize(newsize.width, newsize.height);
         }
     }
@@ -274,19 +331,53 @@ impl ProteinRenderEngine {
     /// Update protein atom positions for animation
     /// Handles dynamic buffer resizing if new positions exceed current capacity
     pub fn update_positions(&mut self, positions: &[Vec3], hydrophobicity: &[bool]) {
-        self.atom_renderer.update_positions(
-            &self.context.device,
-            &self.context.queue,
-            positions,
-            hydrophobicity,
-        );
+        todo!("need a new update_positions method for capsule sidechains");
     }
 
     /// Update backbone with new chains (regenerates the tube mesh)
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
-        self.backbone_renderer
+        self.tube_renderer
             .update_chains(&self.context.device, backbone_chains);
+        self.ribbon_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            backbone_chains,
+        );
+    }
+
+    /// Set the view mode for backbone rendering
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        if self.view_mode == mode {
+            return;
+        }
+        self.view_mode = mode;
+
+        // Update tube renderer filter based on mode
+        match mode {
+            ViewMode::Tube => {
+                // Tube mode: render all SS types as tubes
+                self.tube_renderer.set_ss_filter(None);
+            }
+            ViewMode::Ribbon => {
+                // Ribbon mode: tube renderer only renders coils
+                let mut coil_only = HashSet::new();
+                coil_only.insert(SSType::Coil);
+                self.tube_renderer.set_ss_filter(Some(coil_only));
+            }
+        }
+
+        // Regenerate mesh with new filter
+        self.tube_renderer.regenerate(&self.context.device, &self.context.queue);
+    }
+
+    /// Toggle between tube and ribbon view modes
+    pub fn toggle_view_mode(&mut self) {
+        let new_mode = match self.view_mode {
+            ViewMode::Tube => ViewMode::Ribbon,
+            ViewMode::Ribbon => ViewMode::Tube,
+        };
+        self.set_view_mode(new_mode);
     }
 
     /// Get the GPU queue for buffer updates
@@ -311,18 +402,17 @@ impl ProteinRenderEngine {
         use crate::protein_data::BackboneSidechainBond;
 
         // Update backbone tubes
-        self.backbone_renderer.update(
+        self.tube_renderer.update(
             &self.context.device,
             &self.context.queue,
             backbone_chains,
         );
 
-        // Update sidechain spheres
-        self.atom_renderer.update_positions(
+        // Update ribbon renderer
+        self.ribbon_renderer.update(
             &self.context.device,
             &self.context.queue,
-            sidechain_positions,
-            sidechain_hydrophobicity,
+            backbone_chains,
         );
 
         // Convert backbone_sidechain_bonds to the format CylinderRenderer expects
@@ -334,8 +424,7 @@ impl ProteinRenderEngine {
             })
             .collect();
 
-        // Update bonds
-        self.cylinder_renderer.update(
+        self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
             sidechain_positions,
@@ -350,6 +439,7 @@ impl ProteinRenderEngine {
         }
     }
 
+    /*
     pub fn handle_mouse_position(&mut self, position: (f32, f32)) {
         let (x, y) = position;
         let width = self.context.config.width as f32;
@@ -395,5 +485,5 @@ impl ProteinRenderEngine {
         if old_selected != selected_index {
             self.camera_controller.uniform.selected_atom_index = selected_index;
         }
-    }
+    }*/
 }

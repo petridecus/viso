@@ -7,6 +7,7 @@ pub struct CameraController {
     orientation: Quat,
     distance: f32,
     focus_point: Vec3,
+    bounding_radius: f32,  // Protein bounding sphere radius for fog computation
 
     pub camera: Camera,
     pub uniform: CameraUniform,
@@ -79,6 +80,7 @@ impl CameraController {
             orientation,
             distance,
             focus_point,
+            bounding_radius: 50.0, // Default, will be updated by fit_to_positions
             camera,
             uniform,
             buffer,
@@ -90,6 +92,21 @@ impl CameraController {
             pan_speed: 0.1,
             zoom_speed: 0.05,
         }
+    }
+
+    /// Update fog parameters based on current camera distance and protein bounding radius.
+    /// Called after any camera transform (zoom, pan, fit_to_positions).
+    fn update_fog_params(&mut self) {
+        // Fog starts at the back of the protein (center + some offset)
+        // This keeps the front crisp and only fades the back
+        let fog_start = self.distance + self.bounding_radius * 0.5;
+
+        // Density calibrated so fog reaches ~90% at 4x bounding radius
+        // Larger proteins get gentler fog falloff
+        let fog_density = 0.5 / self.bounding_radius.max(10.0);
+
+        self.uniform.fog_start = fog_start;
+        self.uniform.fog_density = fog_density;
     }
 
     fn update_camera_pos(&mut self) {
@@ -141,6 +158,7 @@ impl CameraController {
         self.distance *= 1.0 - delta * self.zoom_speed;
         self.distance = self.distance.clamp(1.0, 1000.0);
         self.update_camera_pos();
+        self.update_fog_params();
     }
 
     /// Adjust camera to fit the given positions, centering on their centroid
@@ -160,6 +178,7 @@ impl CameraController {
             .fold(0.0f32, f32::max);
 
         self.focus_point = centroid;
+        self.bounding_radius = radius;
 
         // Set distance to fit the bounding sphere in view
         // Using fovy and some padding factor
@@ -168,5 +187,6 @@ impl CameraController {
         self.distance = fit_distance * 1.5; // 1.5x padding for comfortable view
 
         self.update_camera_pos();
+        self.update_fog_params();
     }
 }

@@ -6,7 +6,7 @@
 use glam::Vec3;
 
 /// Secondary structure type for a residue
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SSType {
     Helix,
     Sheet,

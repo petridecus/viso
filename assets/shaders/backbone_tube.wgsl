@@ -5,6 +5,9 @@ struct CameraUniform {
     forward: vec3<f32>,
     fovy: f32,
     selected_atom_index: i32,
+    fog_start: f32,
+    fog_density: f32,
+    _pad: f32,
 };
 
 struct LightingUniform {
@@ -17,7 +20,9 @@ struct LightingUniform {
     ambient: f32,
     specular_intensity: f32,
     shininess: f32,
-    _pad3: vec3<f32>,
+    fresnel_power: f32,
+    fresnel_intensity: f32,
+    _pad3: f32,
 };
 
 struct VertexInput {
@@ -51,47 +56,37 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // World-space normal from mesh geometry (already in world space)
     let normal = normalize(in.world_normal);
     let view_dir = normalize(camera.position - in.world_position);
 
-    // Camera forward direction from uniform
-    let cam_forward = camera.forward;
+    // HEADLAMP LIGHTING:
+    // Light directions follow camera orientation (updated each frame on CPU).
+    // All shaders use consistent world-space normals for unified appearance.
+    let key_diff = max(dot(normal, lighting.light1_dir), 0.0) * lighting.light1_intensity;
+    let fill_diff = max(dot(normal, lighting.light2_dir), 0.0) * lighting.light2_intensity;
 
-    // Build camera coordinate frame
-    let world_up = vec3<f32>(0.0, 1.0, 0.0);
-    var cam_right = cross(cam_forward, world_up);
-    if (length(cam_right) < 0.001) {
-        cam_right = vec3<f32>(1.0, 0.0, 0.0);
-    } else {
-        cam_right = normalize(cam_right);
-    }
-    let cam_up = normalize(cross(cam_right, cam_forward));
+    // Specular (Blinn-Phong with tight highlight for jewel-like look)
+    let half_vec = normalize(lighting.light1_dir + view_dir);
+    let specular = pow(max(dot(normal, half_vec), 0.0), lighting.shininess) * lighting.specular_intensity;
 
-    // Strong key light (upper-right), weaker fill (upper-left)
-    let key_light = normalize(cam_forward + cam_right * 0.4 + cam_up * 0.6);
-    let fill_light = normalize(cam_forward - cam_right * 0.3 + cam_up * 0.4);
+    // Fresnel edge glow - edges facing away from viewer glow brighter
+    let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), lighting.fresnel_power);
+    let fresnel_boost = fresnel * lighting.fresnel_intensity;
 
-    // Diffuse - strong directional contrast
-    let key_diff = max(dot(normal, key_light), 0.0) * 0.8;
-    let fill_diff = max(dot(normal, fill_light), 0.0) * 0.3;
-
-    // Specular (Blinn-Phong) - tight highlight for cylindrical shape
-    let half_vec = normalize(key_light + view_dir);
-    let specular = pow(max(dot(normal, half_vec), 0.0), 64.0) * 0.5;
-
-    // Low ambient to allow dark sides
-    let ambient = 0.1;
-    let total_light = ambient + key_diff + fill_diff;
+    let total_light = lighting.ambient + key_diff + fill_diff + fresnel_boost;
 
     // Use vertex color for secondary structure coloring
     let base_color = in.vertex_color;
 
-    // Depth fog - fade to black with distance (depth computed in vertex shader)
-    let fog_start = 100.0;
-    let fog_end = 500.0;
-    let fog_factor = clamp((fog_end - in.depth) / (fog_end - fog_start), 0.0, 1.0);
+    // EXPONENTIAL FOG - keeps foreground crisp, gradual falloff
+    // Only applies fog beyond fog_start (front of protein is full color)
+    let fog_distance = max(in.depth - camera.fog_start, 0.0);
+    let fog_factor = exp(-fog_distance * camera.fog_density);
+    // fog_factor: 1.0 = no fog (close), 0.0 = full fog (far)
 
     let lit_color = base_color * total_light + vec3<f32>(specular);
+    // Blend toward background color (black) for silhouette effect
     let final_color = lit_color * fog_factor;
 
     return vec4<f32>(final_color, 1.0);

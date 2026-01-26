@@ -1,19 +1,23 @@
-//! Backbone tube renderer
+//! Tube renderer for protein backbone
 //!
 //! Renders protein backbone as smooth tubes using cubic Hermite splines
 //! with rotation-minimizing frames for consistent tube orientation.
+//!
+//! Can render all SS types or filter to specific ones (e.g., coils only
+//! when used alongside RibbonRenderer in ribbon view mode).
 
 use crate::dynamic_buffer::DynamicBuffer;
 use crate::render_context::RenderContext;
 use crate::secondary_structure::{detect_secondary_structure, SSType};
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 /// Parameters for backbone tube rendering
 const TUBE_RADIUS: f32 = 0.3;
-const SEGMENTS_PER_SPAN: usize = 8;
-const RADIAL_SEGMENTS: usize = 16;
+const SEGMENTS_PER_SPAN: usize = 16;
+const RADIAL_SEGMENTS: usize = 32;
 
 /// A point along the spline with position, tangent, and frame vectors
 #[derive(Clone, Copy)]
@@ -33,23 +37,28 @@ struct TubeVertex {
     color: [f32; 3],
 }
 
-pub struct BackboneRenderer {
+pub struct TubeRenderer {
     pub pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
     pub index_count: u32,
     /// Hash of the last chain data for change detection
     last_chain_hash: u64,
+    /// Which SS types to render (None = all types)
+    ss_filter: Option<HashSet<SSType>>,
+    /// Cached chain data for regeneration when filter changes
+    cached_chains: Vec<Vec<Vec3>>,
 }
 
-impl BackboneRenderer {
+impl TubeRenderer {
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
     ) -> Self {
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
+        let ss_filter = None; // Render all SS types by default
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &ss_filter);
 
         let vertex_buffer = if vertices.is_empty() {
             DynamicBuffer::new(
@@ -92,7 +101,25 @@ impl BackboneRenderer {
             index_buffer,
             index_count: indices.len() as u32,
             last_chain_hash,
+            ss_filter,
+            cached_chains: backbone_chains.to_vec(),
         }
+    }
+
+    /// Set which secondary structure types this renderer should render
+    /// Pass None to render all types, or Some(set) to filter
+    pub fn set_ss_filter(&mut self, filter: Option<HashSet<SSType>>) {
+        self.ss_filter = filter;
+    }
+
+    /// Regenerate mesh with current filter settings
+    pub fn regenerate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let (vertices, indices) = Self::generate_tube_mesh(&self.cached_chains, &self.ss_filter);
+        if !vertices.is_empty() {
+            self.vertex_buffer.write(device, queue, &vertices);
+            self.index_buffer.write(device, queue, &indices);
+        }
+        self.index_count = indices.len() as u32;
     }
 
     /// Compute a hash of the chain data for change detection
@@ -137,8 +164,9 @@ impl BackboneRenderer {
             return; // No change, skip expensive mesh regeneration
         }
         self.last_chain_hash = new_hash;
+        self.cached_chains = backbone_chains.to_vec();
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter);
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -158,8 +186,9 @@ impl BackboneRenderer {
             return;
         }
         self.last_chain_hash = new_hash;
+        self.cached_chains = backbone_chains.to_vec();
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains);
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter);
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -263,7 +292,10 @@ impl BackboneRenderer {
             })
     }
 
-    fn generate_tube_mesh(chains: &[Vec<Vec3>]) -> (Vec<TubeVertex>, Vec<u32>) {
+    fn generate_tube_mesh(
+        chains: &[Vec<Vec3>],
+        ss_filter: &Option<HashSet<SSType>>,
+    ) -> (Vec<TubeVertex>, Vec<u32>) {
         let mut all_vertices: Vec<TubeVertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
 
@@ -286,20 +318,88 @@ impl BackboneRenderer {
             // Detect secondary structure from CA positions
             let ss_types = detect_secondary_structure(&ca_positions);
 
-            // Generate spline points with SS colors
+            // Generate spline points from raw CA positions (no smoothing/idealization)
             let spline_points = Self::generate_spline_points(&ca_positions);
-            let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
 
-            // Generate tube geometry with colors
+            // If no filter, render all. Otherwise, render only matching SS segments.
+            if let Some(filter) = ss_filter {
+                // Render only segments matching the filter
+                Self::generate_filtered_segments(
+                    &spline_points,
+                    &ss_types,
+                    filter,
+                    &mut all_vertices,
+                    &mut all_indices,
+                );
+            } else {
+                // Render everything
+                let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
+                let base_vertex = all_vertices.len() as u32;
+                let (vertices, indices) =
+                    Self::generate_tube_segment(&spline_points, &spline_colors, base_vertex);
+                all_vertices.extend(vertices);
+                all_indices.extend(indices);
+            }
+        }
+
+        (all_vertices, all_indices)
+    }
+
+    /// Generate tube segments only for residues matching the SS filter
+    fn generate_filtered_segments(
+        spline_points: &[SplinePoint],
+        ss_types: &[SSType],
+        filter: &HashSet<SSType>,
+        all_vertices: &mut Vec<TubeVertex>,
+        all_indices: &mut Vec<u32>,
+    ) {
+        if spline_points.is_empty() || ss_types.is_empty() {
+            return;
+        }
+
+        let n_residues = ss_types.len();
+        let points_per_residue = SEGMENTS_PER_SPAN;
+
+        // Find contiguous runs of residues matching the filter
+        let mut i = 0;
+        while i < n_residues {
+            // Skip residues not in filter
+            if !filter.contains(&ss_types[i]) {
+                i += 1;
+                continue;
+            }
+
+            // Found start of a matching segment
+            let start_residue = i;
+            while i < n_residues && filter.contains(&ss_types[i]) {
+                i += 1;
+            }
+            let end_residue = i;
+
+            // Need at least 2 residues for a tube segment
+            if end_residue - start_residue < 2 {
+                continue;
+            }
+
+            // Convert residue range to spline point range
+            let start_point = start_residue * points_per_residue;
+            let end_point = ((end_residue - 1) * points_per_residue + 1).min(spline_points.len());
+
+            if start_point >= end_point || start_point >= spline_points.len() {
+                continue;
+            }
+
+            let segment_points = &spline_points[start_point..end_point];
+            let segment_ss = &ss_types[start_residue..end_residue];
+            let segment_colors = Self::interpolate_ss_colors(segment_ss, segment_points.len());
+
             let base_vertex = all_vertices.len() as u32;
             let (vertices, indices) =
-                Self::generate_tube_segment(&spline_points, &spline_colors, base_vertex);
+                Self::generate_tube_segment(segment_points, &segment_colors, base_vertex);
 
             all_vertices.extend(vertices);
             all_indices.extend(indices);
         }
-
-        (all_vertices, all_indices)
     }
 
     /// Interpolate SS colors to match spline point count

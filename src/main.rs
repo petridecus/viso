@@ -1,7 +1,8 @@
 pub mod atom_renderer;
-pub mod backbone_renderer;
+pub mod tube_renderer;
 pub mod bond_topology;
 pub mod camera;
+pub mod composite;
 pub mod cylinder_renderer;
 pub mod dynamic_buffer;
 pub mod engine;
@@ -9,8 +10,8 @@ pub mod frame_timing;
 pub mod lighting;
 pub mod protein_data;
 pub mod render_context;
+pub mod ribbon_renderer;
 pub mod secondary_structure;
-pub mod sphere_renderer;
 pub mod ssao;
 pub mod text_renderer;
 
@@ -92,7 +93,7 @@ impl ApplicationHandler for RenderApp {
 
                 if let Some(engine) = &mut self.engine {
                     engine.handle_mouse_move(delta_x, delta_y);
-                    engine.handle_mouse_position((position.x as f32, position.y as f32));
+                    // engine.handle_mouse_position((position.x as f32, position.y as f32));
                 }
 
                 self.last_mouse_pos = (position.x as f32, position.y as f32);

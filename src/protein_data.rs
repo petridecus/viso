@@ -5,6 +5,22 @@ use std::path::Path;
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
 
+/// Full backbone atom positions for a single residue
+/// These are the raw PDB coordinates used for ribbon geometry
+#[derive(Debug, Clone, Copy)]
+pub struct BackboneResidue {
+    pub n_pos: Vec3,
+    pub ca_pos: Vec3,
+    pub c_pos: Vec3,
+    pub o_pos: Vec3,
+}
+
+/// A chain of backbone residues (continuous, no breaks)
+#[derive(Debug, Clone)]
+pub struct BackboneChain {
+    pub residues: Vec<BackboneResidue>,
+}
+
 /// A sidechain atom with its position and residue context
 #[derive(Debug, Clone)]
 pub struct SidechainAtom {
@@ -29,7 +45,11 @@ const MAX_PEPTIDE_BOND_DISTANCE: f32 = 2.5;
 /// Extracted protein data for rendering
 pub struct ProteinData {
     /// Backbone segments (split at chain breaks). Each segment is a continuous run of N, CA, C atoms
+    /// Legacy format for compatibility - use backbone_residue_chains for new geometry
     pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Full backbone residue data with N, CA, C, O positions per residue
+    /// This is the primary data source for ribbon geometry (Foldit-style)
+    pub backbone_residue_chains: Vec<BackboneChain>,
     /// All sidechain atoms (non-backbone: not N, CA, C, O)
     pub sidechain_atoms: Vec<SidechainAtom>,
     /// Bond pairs as indices into sidechain_atoms (internal sidechain bonds)
@@ -56,6 +76,7 @@ impl ProteinData {
     /// Extract protein data from a parsed PDB structure
     fn from_pdb(pdb: &PDB) -> Result<Self, String> {
         let mut backbone_chains: Vec<Vec<Vec3>> = Vec::new();
+        let mut backbone_residue_chains: Vec<BackboneChain> = Vec::new();
         let mut sidechain_atoms: Vec<SidechainAtom> = Vec::new();
         let mut all_positions: Vec<Vec3> = Vec::new();
         let mut backbone_sidechain_bonds: Vec<BackboneSidechainBond> = Vec::new();
@@ -67,6 +88,7 @@ impl ProteinData {
         for chain in pdb.chains() {
             let chain_id = chain.id().to_string();
             let mut current_segment: Vec<Vec3> = Vec::new();
+            let mut current_residues: Vec<BackboneResidue> = Vec::new();
             let mut prev_c_pos: Option<Vec3> = None;
             let mut prev_res_serial: Option<isize> = None;
 
@@ -75,10 +97,11 @@ impl ProteinData {
                 let res_name = residue.name().unwrap_or("UNK");
                 let hydrophobic = is_hydrophobic(res_name);
 
-                // Collect backbone atoms in order: N, CA, C (skip O for spline smoothness)
+                // Collect all backbone atoms: N, CA, C, O
                 let mut n_pos: Option<Vec3> = None;
                 let mut ca_pos: Option<Vec3> = None;
                 let mut c_pos: Option<Vec3> = None;
+                let mut o_pos: Option<Vec3> = None;
                 let mut cb_idx: Option<usize> = None;
 
                 for atom in residue.atoms() {
@@ -91,7 +114,7 @@ impl ProteinData {
                         "N" => n_pos = Some(pos),
                         "CA" => ca_pos = Some(pos),
                         "C" => c_pos = Some(pos),
-                        "O" => {} // Skip O for spline (it's off the main chain)
+                        "O" => o_pos = Some(pos), // Now we capture O for peptide plane orientation
                         _ => {
                             // Sidechain atom
                             let sidechain_idx = sidechain_atoms.len();
@@ -134,9 +157,12 @@ impl ProteinData {
                 // If chain break detected, save current segment and start new one
                 if (is_chain_break || has_sequence_gap) && !current_segment.is_empty() {
                     backbone_chains.push(std::mem::take(&mut current_segment));
+                    backbone_residue_chains.push(BackboneChain {
+                        residues: std::mem::take(&mut current_residues),
+                    });
                 }
 
-                // Add backbone atoms in order for smooth spline
+                // Add backbone atoms in order for legacy spline format (N, CA, C)
                 if let Some(n) = n_pos {
                     current_segment.push(n);
                 }
@@ -158,12 +184,27 @@ impl ProteinData {
                     prev_c_pos = None; // No C atom means we can't check continuity
                 }
 
+                // Add full residue data if all backbone atoms present
+                if let (Some(n), Some(ca), Some(c), Some(o)) = (n_pos, ca_pos, c_pos, o_pos) {
+                    current_residues.push(BackboneResidue {
+                        n_pos: n,
+                        ca_pos: ca,
+                        c_pos: c,
+                        o_pos: o,
+                    });
+                }
+
                 prev_res_serial = Some(res_serial);
             }
 
             // Don't forget the last segment
             if !current_segment.is_empty() {
                 backbone_chains.push(current_segment);
+            }
+            if !current_residues.is_empty() {
+                backbone_residue_chains.push(BackboneChain {
+                    residues: current_residues,
+                });
             }
         }
 
@@ -172,6 +213,7 @@ impl ProteinData {
 
         Ok(Self {
             backbone_chains,
+            backbone_residue_chains,
             sidechain_atoms,
             sidechain_bonds,
             backbone_sidechain_bonds,
@@ -216,6 +258,13 @@ impl ProteinData {
     /// Get all sidechain positions as a flat Vec<Vec3>
     pub fn sidechain_positions(&self) -> Vec<Vec3> {
         self.sidechain_atoms.iter().map(|a| a.position).collect()
+    }
+}
+
+impl BackboneChain {
+    /// Get CA positions for secondary structure detection
+    pub fn ca_positions(&self) -> Vec<Vec3> {
+        self.residues.iter().map(|r| r.ca_pos).collect()
     }
 }
 
