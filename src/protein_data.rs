@@ -83,6 +83,7 @@ impl ProteinData {
 
         // Track atoms by (chain_id, residue_serial, atom_name) for bond lookup
         let mut atom_index_map: HashMap<(String, isize, String), usize> = HashMap::new();
+        let mut global_residue_idx: usize = 0;  // Track global residue index across all chains
 
         // Process each chain
         for chain in pdb.chains() {
@@ -129,7 +130,7 @@ impl ProteinData {
 
                             sidechain_atoms.push(SidechainAtom {
                                 position: pos,
-                                residue_idx: backbone_chains.len(), // Will be updated
+                                residue_idx: global_residue_idx,
                                 atom_name,
                                 chain_id: chain_id.clone(),
                                 is_hydrophobic: hydrophobic,
@@ -195,6 +196,7 @@ impl ProteinData {
                 }
 
                 prev_res_serial = Some(res_serial);
+                global_residue_idx += 1;  // Increment for next residue
             }
 
             // Don't forget the last segment

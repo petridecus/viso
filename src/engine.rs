@@ -4,6 +4,7 @@ use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
 use crate::composite::CompositePass;
 use crate::frame_timing::FrameTiming;
 use crate::lighting::Lighting;
+use crate::picking::{Picking, SelectionBuffer};
 use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
@@ -45,6 +46,8 @@ pub struct ProteinRenderEngine {
     pub depth_view: wgpu::TextureView,
     pub ssao_renderer: SsaoRenderer,
     pub composite_pass: CompositePass,
+    pub picking: Picking,
+    pub selection_buffer: SelectionBuffer,
 }
 
 impl ProteinRenderEngine {
@@ -64,11 +67,22 @@ impl ProteinRenderEngine {
         let protein_data = ProteinData::from_mmcif(cif_path)
             .expect("Failed to load protein data from CIF file");
 
+        // Count total residues for selection buffer sizing
+        let total_residues: usize = if !protein_data.backbone_residue_chains.is_empty() {
+            protein_data.backbone_residue_chains.iter().map(|c| c.residues.len()).sum()
+        } else {
+            protein_data.backbone_chains.iter().map(|c| c.len() / 3).sum()
+        };
+
+        // Create selection buffer (shared by all renderers)
+        let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
+
         // Create backbone renderer (B-spline tube through backbone atoms)
         let tube_renderer = TubeRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
+            &selection_buffer.layout,
             &protein_data.backbone_chains,
         );
 
@@ -79,6 +93,7 @@ impl ProteinRenderEngine {
                 &context,
                 &camera_controller.layout,
                 &lighting.layout,
+                &selection_buffer.layout,
                 &protein_data.backbone_residue_chains,
             )
         } else {
@@ -87,6 +102,7 @@ impl ProteinRenderEngine {
                 &context,
                 &camera_controller.layout,
                 &lighting.layout,
+                &selection_buffer.layout,
                 &protein_data.backbone_chains,
             )
         };
@@ -98,15 +114,22 @@ impl ProteinRenderEngine {
             .iter()
             .map(|a| a.is_hydrophobic)
             .collect();
+        let sidechain_residue_indices: Vec<u32> = protein_data
+            .sidechain_atoms
+            .iter()
+            .map(|a| a.residue_idx as u32)
+            .collect();
 
         let sidechain_renderer = CapsuleSidechainRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
+            &selection_buffer.layout,
             &sidechain_positions,
             &protein_data.sidechain_bonds,
             &protein_data.backbone_sidechain_bonds,
-            &sidechain_hydrophobicity
+            &sidechain_hydrophobicity,
+            &sidechain_residue_indices,
         );
 
         // Create shared depth texture (bindable for SSAO)
@@ -127,6 +150,14 @@ impl ProteinRenderEngine {
         // Fit camera to all atom positions
         camera_controller.fit_to_positions(&protein_data.all_positions);
 
+        // Initialize picking with CA positions
+        let mut picking = Picking::new();
+        if !protein_data.backbone_residue_chains.is_empty() {
+            picking.update_from_residue_chains(&protein_data.backbone_residue_chains);
+        } else {
+            picking.update_from_backbone_chains(&protein_data.backbone_chains);
+        }
+
         Self {
             context,
             camera_controller,
@@ -142,6 +173,8 @@ impl ProteinRenderEngine {
             depth_view,
             ssao_renderer,
             composite_pass,
+            picking,
+            selection_buffer,
         }
     }
 
@@ -174,7 +207,12 @@ impl ProteinRenderEngine {
             return Ok(());
         }
 
+        // Update hover state in camera uniform
+        self.camera_controller.uniform.hovered_residue = self.picking.hovered_residue;
         self.camera_controller.update_gpu(&self.context.queue);
+
+        // Update selection buffer
+        self.selection_buffer.update(&self.context.queue, &self.picking.selected_residues);
 
         // Update lighting to follow camera (headlamp mode)
         let camera = &self.camera_controller.camera;
@@ -223,26 +261,39 @@ impl ProteinRenderEngine {
                 ..Default::default()
             });
 
-            // Render order: backbone (tube or ribbon) -> cylinders -> spheres (all opaque)
+            // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
             match self.view_mode {
                 ViewMode::Tube => {
-                    // Tube mode: TubeRenderer renders all SS types as tubes
-                    self.tube_renderer
-                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+                    // Tube mode: render all SS types as tubes
+                    self.tube_renderer.draw(
+                        &mut rp,
+                        &self.camera_controller.bind_group,
+                        &self.lighting.bind_group,
+                        &self.selection_buffer.bind_group,
+                    );
                 }
                 ViewMode::Ribbon => {
-                    // Ribbon mode: TubeRenderer renders coils, RibbonRenderer renders helices/sheets
-                    self.tube_renderer
-                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
-                    self.ribbon_renderer
-                        .draw(&mut rp, &self.camera_controller.bind_group, &self.lighting.bind_group);
+                    // Ribbon mode: tubes for coils, ribbons for helices/sheets
+                    self.tube_renderer.draw(
+                        &mut rp,
+                        &self.camera_controller.bind_group,
+                        &self.lighting.bind_group,
+                        &self.selection_buffer.bind_group,
+                    );
+                    self.ribbon_renderer.draw(
+                        &mut rp,
+                        &self.camera_controller.bind_group,
+                        &self.lighting.bind_group,
+                        &self.selection_buffer.bind_group,
+                    );
                 }
             }
 
             self.sidechain_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
-                &self.lighting.bind_group
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
             );
         }
 
@@ -324,13 +375,43 @@ impl ProteinRenderEngine {
         }
     }
 
+    /// Handle mouse position update for hover detection
+    pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
+        let width = self.context.config.width as f32;
+        let height = self.context.config.height as f32;
+        let camera = &self.camera_controller.camera;
+
+        self.picking.update_hover_from_camera(x, y, width, height, camera);
+    }
+
+    /// Handle click for residue selection
+    /// Returns true if selection changed
+    pub fn handle_click(&mut self, x: f32, y: f32) -> bool {
+        let width = self.context.config.width as f32;
+        let height = self.context.config.height as f32;
+        let camera = &self.camera_controller.camera;
+        let shift_held = self.camera_controller.shift_pressed;
+
+        self.picking.handle_click_from_camera(x, y, width, height, camera, shift_held)
+    }
+
+    /// Get currently hovered residue index (-1 if none)
+    pub fn hovered_residue(&self) -> i32 {
+        self.picking.hovered_residue
+    }
+
+    /// Get currently selected residue indices
+    pub fn selected_residues(&self) -> &[i32] {
+        &self.picking.selected_residues
+    }
+
     pub fn update_modifiers(&mut self, modifiers: ModifiersState) {
         self.camera_controller.shift_pressed = modifiers.shift_key();
     }
 
     /// Update protein atom positions for animation
     /// Handles dynamic buffer resizing if new positions exceed current capacity
-    pub fn update_positions(&mut self, positions: &[Vec3], hydrophobicity: &[bool]) {
+    pub fn update_positions(&mut self, _positions: &[Vec3], _hydrophobicity: &[bool]) {
         todo!("need a new update_positions method for capsule sidechains");
     }
 
@@ -394,6 +475,7 @@ impl ProteinRenderEngine {
         backbone_chains: &[Vec<Vec3>],
         sidechain_positions: &[Vec3],
         sidechain_hydrophobicity: &[bool],
+        sidechain_residue_indices: &[u32],
         sidechain_bonds: &[(u32, u32)],
         backbone_sidechain_bonds: &[(Vec3, u32)], // (CA position, CB index)
         all_positions: &[Vec3],
@@ -431,6 +513,7 @@ impl ProteinRenderEngine {
             sidechain_bonds,
             &bs_bonds,
             sidechain_hydrophobicity,
+            sidechain_residue_indices,
         );
 
         // Fit camera if requested and we have positions
@@ -438,52 +521,4 @@ impl ProteinRenderEngine {
             self.camera_controller.fit_to_positions(all_positions);
         }
     }
-
-    /*
-    pub fn handle_mouse_position(&mut self, position: (f32, f32)) {
-        let (x, y) = position;
-        let width = self.context.config.width as f32;
-        let height = self.context.config.height as f32;
-
-        // Normalized device coordinates (-1 to 1), y flipped
-        let ndc_x = (x / width) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (y / height) * 2.0;
-
-        // Compute ray direction in world space
-        let view_proj = self.camera_controller.camera.build_matrix();
-        let inv_view_proj = view_proj.inverse();
-        // Use ndc z = 1 for near plane, 0 for far plane (correction matrix seems to invert)
-        let ndc_near = Vec3::new(ndc_x, ndc_y, 1.0);
-        let ndc_far = Vec3::new(ndc_x, ndc_y, 0.0);
-        let world_near = inv_view_proj.project_point3(ndc_near);
-        let world_far = inv_view_proj.project_point3(ndc_far);
-        let ray_dir = (world_far - world_near).normalize();
-        let ray_origin = world_near;
-
-        // Intersection test with spheres
-        let mut selected_index = -1;
-        let mut closest_t = f32::INFINITY;
-        let sphere_radius = 0.3;
-
-        for (i, &pos) in self.atom_renderer.positions.iter().enumerate() {
-            let oc = ray_origin - pos;
-            let a = ray_dir.dot(ray_dir);
-            let b = 2.0 * oc.dot(ray_dir);
-            let c = oc.dot(oc) - sphere_radius * sphere_radius;
-            let discriminant = b * b - 4.0 * a * c;
-            if discriminant >= 0.0 {
-                let t = (-b - discriminant.sqrt()) / (2.0 * a);
-                if t > 0.0 && t < closest_t {
-                    closest_t = t;
-                    selected_index = i as i32;
-                }
-            }
-        }
-
-        // Update selection if changed
-        let old_selected = self.camera_controller.uniform.selected_atom_index;
-        if old_selected != selected_index {
-            self.camera_controller.uniform.selected_atom_index = selected_index;
-        }
-    }*/
 }

@@ -42,6 +42,7 @@ struct RibbonVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
+    residue_idx: u32,
 }
 
 struct RibbonFrame {
@@ -50,6 +51,7 @@ struct RibbonFrame {
     normal: Vec3,    // Points "up" from ribbon surface
     binormal: Vec3,  // Points along ribbon width
     color: [f32; 3],
+    residue_idx: u32,
 }
 
 #[derive(Debug)]
@@ -73,6 +75,7 @@ impl RibbonRenderer {
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
+        selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
     ) -> Self {
         let params = RibbonParams::default();
@@ -81,7 +84,7 @@ impl RibbonRenderer {
         let vertex_buffer = DynamicBuffer::new_with_data(
             &context.device,
             "Ribbon Vertex Buffer",
-            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3] }] } else { &vertices },
+            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0 }] } else { &vertices },
             wgpu::BufferUsages::VERTEX,
         );
 
@@ -92,7 +95,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -109,6 +112,7 @@ impl RibbonRenderer {
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
+        selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[BackboneChain],
     ) -> Self {
         let params = RibbonParams::default();
@@ -117,7 +121,7 @@ impl RibbonRenderer {
         let vertex_buffer = DynamicBuffer::new_with_data(
             &context.device,
             "Ribbon Vertex Buffer",
-            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3] }] } else { &vertices },
+            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0 }] } else { &vertices },
             wgpu::BufferUsages::VERTEX,
         );
 
@@ -128,7 +132,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
         let last_chain_hash = Self::compute_residue_hash(backbone_chains);
 
         Self {
@@ -196,12 +200,13 @@ impl RibbonRenderer {
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
+        selection_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
         let shader = context.device.create_shader_module(wgpu::include_wgsl!("../assets/shaders/backbone_tube.wgsl"));
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ribbon Pipeline Layout"),
-            bind_group_layouts: &[camera_layout, lighting_layout],
+            bind_group_layouts: &[camera_layout, lighting_layout, selection_layout],
             immediate_size: 0,
         });
 
@@ -212,6 +217,7 @@ impl RibbonRenderer {
                 wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
                 wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
                 wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 24, shader_location: 2 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Uint32, offset: 36, shader_location: 3 },
             ],
         };
 
@@ -257,9 +263,13 @@ impl RibbonRenderer {
     fn generate_from_residues(chains: &[BackboneChain], params: &RibbonParams) -> (Vec<RibbonVertex>, Vec<u32>) {
         let mut all_verts = Vec::new();
         let mut all_inds = Vec::new();
+        let mut global_residue_idx: u32 = 0;
 
         for chain in chains {
-            if chain.residues.len() < 4 { continue; }
+            if chain.residues.len() < 4 { 
+                global_residue_idx += chain.residues.len() as u32;
+                continue; 
+            }
 
             let ca_positions = chain.ca_positions();
             let ss_types = detect_secondary_structure(&ca_positions);
@@ -275,16 +285,19 @@ impl RibbonRenderer {
                 let residues = &chain.residues[start..end];
                 let ss = &ss_types[start..end.min(ss_types.len())];
                 let base = all_verts.len() as u32;
+                let segment_residue_base = global_residue_idx + start as u32;
 
                 let (v, i) = match seg.ss_type {
-                    SSType::Helix => generate_helix(residues, ss, params, base),
-                    SSType::Sheet => generate_sheet(residues, ss, params, base),
+                    SSType::Helix => generate_helix(residues, ss, params, base, segment_residue_base),
+                    SSType::Sheet => generate_sheet(residues, ss, params, base, segment_residue_base),
                     SSType::Coil => continue,
                 };
 
                 all_verts.extend(v);
                 all_inds.extend(i);
             }
+            
+            global_residue_idx += chain.residues.len() as u32;
         }
 
         (all_verts, all_inds)
@@ -293,6 +306,7 @@ impl RibbonRenderer {
     fn generate_from_ca_only(chains: &[Vec<Vec3>], params: &RibbonParams) -> (Vec<RibbonVertex>, Vec<u32>) {
         let mut all_verts = Vec::new();
         let mut all_inds = Vec::new();
+        let mut global_residue_idx: u32 = 0;
 
         for chain in chains {
             // Extract CA positions (every 3rd starting at 1 for N-CA-C pattern)
@@ -301,7 +315,10 @@ impl RibbonRenderer {
                 .map(|(_, &p)| p)
                 .collect();
 
-            if ca_positions.len() < 4 { continue; }
+            if ca_positions.len() < 4 { 
+                global_residue_idx += ca_positions.len() as u32;
+                continue; 
+            }
 
             let ss_types = detect_secondary_structure(&ca_positions);
             let segments = segment_by_ss(&ss_types);
@@ -316,16 +333,19 @@ impl RibbonRenderer {
                 let positions = &ca_positions[start..end];
                 let ss = &ss_types[start..end.min(ss_types.len())];
                 let base = all_verts.len() as u32;
+                let segment_residue_base = global_residue_idx + start as u32;
 
                 let (v, i) = match seg.ss_type {
-                    SSType::Helix => generate_helix_from_ca(positions, ss, params, base),
-                    SSType::Sheet => generate_sheet_from_ca(positions, ss, params, base),
+                    SSType::Helix => generate_helix_from_ca(positions, ss, params, base, segment_residue_base),
+                    SSType::Sheet => generate_sheet_from_ca(positions, ss, params, base, segment_residue_base),
                     SSType::Coil => continue,
                 };
 
                 all_verts.extend(v);
                 all_inds.extend(i);
             }
+            
+            global_residue_idx += ca_positions.len() as u32;
         }
 
         (all_verts, all_inds)
@@ -336,12 +356,14 @@ impl RibbonRenderer {
         render_pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
         lighting_bind_group: &'a wgpu::BindGroup,
+        selection_bind_group: &'a wgpu::BindGroup,
     ) {
         if self.index_count == 0 { return; }
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, lighting_bind_group, &[]);
+        render_pass.set_bind_group(2, selection_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -351,12 +373,12 @@ impl RibbonRenderer {
 // ==================== HELIX GENERATION ====================
 // Key: Normal points RADIALLY OUTWARD from helix axis
 
-fn generate_helix(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_helix(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
-    generate_helix_from_ca(&ca_positions, ss_types, params, base)
+    generate_helix_from_ca(&ca_positions, ss_types, params, base, global_residue_base)
 }
 
-fn generate_helix_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &RibbonParams, base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_helix_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let n = ca_positions.len();
     if n < 2 { return (Vec::new(), Vec::new()); }
 
@@ -397,11 +419,12 @@ fn generate_helix_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &R
         
         let binormal = tangent.cross(normal).normalize();
         
-        // Color from SS type
-        let residue_idx = (i * (n - 1)) / spline_points.len().max(1);
-        let color = ss_types.get(residue_idx).map(|s| s.color()).unwrap_or(SSType::Helix.color());
+        // Color and residue index from SS type
+        let local_residue_idx = (i * (n - 1)) / spline_points.len().max(1);
+        let color = ss_types.get(local_residue_idx).map(|s| s.color()).unwrap_or(SSType::Helix.color());
+        let residue_idx = global_residue_base + local_residue_idx as u32;
         
-        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color });
+        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color, residue_idx });
     }
     
     build_ribbon_mesh(&frames, params.helix_width, params.helix_thickness, base)
@@ -431,12 +454,12 @@ fn compute_helix_axis_points(ca_positions: &[Vec3]) -> Vec<Vec3> {
 // ==================== SHEET GENERATION ====================
 // Key: Constant width, smooth RMF normals, no pleating
 
-fn generate_sheet(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_sheet(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
-    generate_sheet_from_ca(&ca_positions, ss_types, params, base)
+    generate_sheet_from_ca(&ca_positions, ss_types, params, base, global_residue_base)
 }
 
-fn generate_sheet_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &RibbonParams, base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_sheet_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let n = ca_positions.len();
     if n < 2 { return (Vec::new(), Vec::new()); }
 
@@ -465,10 +488,11 @@ fn generate_sheet_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &R
         let normal = normals[i];
         let binormal = tangent.cross(normal).normalize();
         
-        let residue_idx = (i * (n - 1)) / spline_points.len().max(1);
-        let color = ss_types.get(residue_idx).map(|s| s.color()).unwrap_or(SSType::Sheet.color());
+        let local_residue_idx = (i * (n - 1)) / spline_points.len().max(1);
+        let color = ss_types.get(local_residue_idx).map(|s| s.color()).unwrap_or(SSType::Sheet.color());
+        let residue_idx = global_residue_base + local_residue_idx as u32;
         
-        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color });
+        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color, residue_idx });
     }
     
     build_ribbon_mesh(&frames, params.sheet_width, params.sheet_thickness, base)
@@ -494,10 +518,10 @@ fn build_ribbon_mesh(frames: &[RibbonFrame], width: f32, thickness: f32, base: u
         let up: [f32; 3] = frame.normal.into();
         let down: [f32; 3] = (-frame.normal).into();
         
-        vertices.push(RibbonVertex { position: tl.into(), normal: up, color: frame.color });
-        vertices.push(RibbonVertex { position: tr.into(), normal: up, color: frame.color });
-        vertices.push(RibbonVertex { position: br.into(), normal: down, color: frame.color });
-        vertices.push(RibbonVertex { position: bl.into(), normal: down, color: frame.color });
+        vertices.push(RibbonVertex { position: tl.into(), normal: up, color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: tr.into(), normal: up, color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: br.into(), normal: down, color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: bl.into(), normal: down, color: frame.color, residue_idx: frame.residue_idx });
     }
     
     // Connect adjacent frames

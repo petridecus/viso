@@ -1,7 +1,5 @@
-// Ray-marched capsule impostors for backbone tube rendering
+// Ray-marched capsule impostors for sidechain rendering
 // Capsules = cylinders with hemispherical caps
-// Provides per-pixel normals matching sphere quality
-// Capsules naturally blend at joints for smooth tube appearance
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -9,7 +7,7 @@ struct CameraUniform {
     aspect: f32,
     forward: vec3<f32>,
     fovy: f32,
-    selected_atom_index: i32,
+    hovered_residue: i32,
     fog_start: f32,
     fog_density: f32,
     _pad: f32,
@@ -32,7 +30,7 @@ struct LightingUniform {
 
 // Per-instance data for capsule
 // endpoint_a: xyz = position, w = radius
-// endpoint_b: xyz = position, w = unused
+// endpoint_b: xyz = position, w = residue_idx (packed as float)
 // color_a: xyz = RGB at endpoint A, w = unused
 // color_b: xyz = RGB at endpoint B, w = unused
 struct CapsuleInstance {
@@ -50,6 +48,7 @@ struct VertexOutput {
     @location(3) radius: f32,
     @location(4) color_a: vec3<f32>,
     @location(5) color_b: vec3<f32>,
+    @location(6) @interpolate(flat) residue_idx: u32,
 };
 
 struct FragOut {
@@ -62,22 +61,30 @@ const TUBE_RADIUS: f32 = 0.3;
 @group(0) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
 @group(1) @binding(0) var<uniform> camera: CameraUniform;
 @group(2) @binding(0) var<uniform> lighting: LightingUniform;
+@group(3) @binding(0) var<storage, read> selection: array<u32>;
 
-// Ray-capsule intersection using SDF approach
-// A capsule is the set of all points within 'radius' of the line segment AB
-// Returns (t, axis_param) where axis_param is 0 at A, 1 at B, <0 or >1 for caps
+// Check if a residue is selected (bit array lookup)
+fn is_selected(residue_idx: u32) -> bool {
+    let word_idx = residue_idx / 32u;
+    let bit_idx = residue_idx % 32u;
+    if (word_idx >= arrayLength(&selection)) {
+        return false;
+    }
+    return (selection[word_idx] & (1u << bit_idx)) != 0u;
+}
+
+// Ray-capsule intersection
 fn intersect_capsule(
     ray_origin: vec3<f32>,
     ray_dir: vec3<f32>,
     cap_a: vec3<f32>,
     cap_b: vec3<f32>,
     radius: f32
-) -> vec3<f32> {  // Returns (t, axis_param, hit_type) where hit_type: 0=miss, 1=cylinder, 2=cap_a, 3=cap_b
+) -> vec3<f32> {
     let ba = cap_b - cap_a;
     let ba_len = length(ba);
     
     if (ba_len < 0.0001) {
-        // Degenerate capsule = sphere
         let oc = ray_origin - cap_a;
         let a = dot(ray_dir, ray_dir);
         let b = 2.0 * dot(oc, ray_dir);
@@ -92,13 +99,11 @@ fn intersect_capsule(
     let ba_dir = ba / ba_len;
     let oa = ray_origin - cap_a;
     
-    // Decompose ray direction and offset into components parallel and perpendicular to axis
     let ray_par = dot(ray_dir, ba_dir);
     let ray_perp = ray_dir - ba_dir * ray_par;
     let oa_par = dot(oa, ba_dir);
     let oa_perp = oa - ba_dir * oa_par;
     
-    // Solve quadratic for infinite cylinder
     let a = dot(ray_perp, ray_perp);
     let b = 2.0 * dot(oa_perp, ray_perp);
     let c = dot(oa_perp, oa_perp) - radius * radius;
@@ -107,7 +112,6 @@ fn intersect_capsule(
     var best_axis: f32 = 0.0;
     var best_type: f32 = 0.0;
     
-    // Check cylinder body intersection
     let disc_cyl = b * b - 4.0 * a * c;
     if (disc_cyl >= 0.0 && a > 0.0001) {
         let sqrt_disc = sqrt(disc_cyl);
@@ -127,7 +131,7 @@ fn intersect_capsule(
         }
     }
     
-    // Check cap A (sphere at cap_a)
+    // Check cap A
     {
         let oc = ray_origin - cap_a;
         let a_sph = dot(ray_dir, ray_dir);
@@ -137,7 +141,6 @@ fn intersect_capsule(
         if (disc >= 0.0) {
             let t = (-b_sph - sqrt(disc)) / (2.0 * a_sph);
             if (t > 0.001 && t < best_t) {
-                // Check that hit is on the cap side (axis_param <= 0)
                 let hit = ray_origin + ray_dir * t;
                 let axis_pos = dot(hit - cap_a, ba_dir);
                 if (axis_pos <= 0.0) {
@@ -149,7 +152,7 @@ fn intersect_capsule(
         }
     }
     
-    // Check cap B (sphere at cap_b)
+    // Check cap B
     {
         let oc = ray_origin - cap_b;
         let a_sph = dot(ray_dir, ray_dir);
@@ -159,7 +162,6 @@ fn intersect_capsule(
         if (disc >= 0.0) {
             let t = (-b_sph - sqrt(disc)) / (2.0 * a_sph);
             if (t > 0.001 && t < best_t) {
-                // Check that hit is on the cap side (axis_param >= 1)
                 let hit = ray_origin + ray_dir * t;
                 let axis_pos = dot(hit - cap_a, ba_dir);
                 if (axis_pos >= ba_len) {
@@ -178,7 +180,6 @@ fn intersect_capsule(
     return vec3<f32>(best_t, best_axis, best_type);
 }
 
-// Compute capsule normal at a point
 fn capsule_normal(
     point: vec3<f32>,
     cap_a: vec3<f32>,
@@ -186,13 +187,10 @@ fn capsule_normal(
     hit_type: f32
 ) -> vec3<f32> {
     if (hit_type == 2.0) {
-        // Cap A: sphere normal
         return normalize(point - cap_a);
     } else if (hit_type == 3.0) {
-        // Cap B: sphere normal
         return normalize(point - cap_b);
     } else {
-        // Cylinder body: radial normal
         let axis = normalize(cap_b - cap_a);
         let to_point = point - cap_a;
         let proj = axis * dot(to_point, axis);
@@ -205,7 +203,6 @@ fn vs_main(
     @builtin(vertex_index) vidx: u32,
     @builtin(instance_index) iidx: u32
 ) -> VertexOutput {
-    // Quad vertices
     let quad = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
         vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0)
@@ -214,17 +211,22 @@ fn vs_main(
     let cap = capsules[iidx];
     let endpoint_a = cap.endpoint_a.xyz;
     let endpoint_b = cap.endpoint_b.xyz;
-    let radius = TUBE_RADIUS;
     let color_a = cap.color_a.xyz;
     let color_b = cap.color_b.xyz;
+    // Residue index packed in endpoint_b.w
+    let residue_idx = u32(cap.endpoint_b.w);
+
+    // Make selected residues 1.2x larger
+    var radius = TUBE_RADIUS;
+    if (is_selected(residue_idx)) {
+        radius = TUBE_RADIUS * 1.2;
+    }
     
-    // Capsule center and axis
     let center = (endpoint_a + endpoint_b) * 0.5;
     let axis = endpoint_b - endpoint_a;
     let seg_length = length(axis);
     let axis_dir = select(vec3<f32>(0.0, 1.0, 0.0), axis / seg_length, seg_length > 0.0001);
     
-    // Build oriented billboard
     let to_camera = normalize(camera.position - center);
     
     var right = cross(axis_dir, to_camera);
@@ -239,7 +241,6 @@ fn vs_main(
     
     let up = axis_dir;
     
-    // Quad size: encompasses capsule + margin for perspective
     let half_width = radius * 1.6;
     let half_height = seg_length * 0.5 + radius * 1.6;
     
@@ -255,17 +256,16 @@ fn vs_main(
     out.radius = radius;
     out.color_a = color_a;
     out.color_b = color_b;
+    out.residue_idx = residue_idx;
     
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragOut {
-    // Ray from camera through this fragment
     let ray_origin = camera.position;
     let ray_dir = normalize(in.world_pos - camera.position);
     
-    // Intersect ray with capsule
     let hit = intersect_capsule(ray_origin, ray_dir, in.endpoint_a, in.endpoint_b, in.radius);
     
     if (hit.x < 0.0) {
@@ -273,27 +273,36 @@ fn fs_main(in: VertexOutput) -> FragOut {
     }
     
     let t = hit.x;
-    let axis_param = hit.y;  // 0 at A, 1 at B
+    let axis_param = hit.y;
     let hit_type = hit.z;
     
     let world_hit = ray_origin + ray_dir * t;
     
-    // Compute normal
     let normal = capsule_normal(world_hit, in.endpoint_a, in.endpoint_b, hit_type);
     let view_dir = normalize(camera.position - world_hit);
     
-    // Interpolate color along capsule axis
-    let base_color = mix(in.color_a, in.color_b, axis_param);
+    // Interpolate base color along capsule axis
+    var base_color = mix(in.color_a, in.color_b, axis_param);
     
-    // === LIGHTING (matches sphere shader exactly) ===
+    // Hover highlight: make brighter with additive white
+    if (camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx) {
+        base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);
+    }
+    
+    // Selection highlight: blue color
+    var outline_factor = 0.0;
+    if (is_selected(in.residue_idx)) {
+        base_color = vec3<f32>(0.3, 0.5, 1.0);  // Blue color for selected
+        outline_factor = 1.0;
+    }
+    
+    // Lighting
     let key_diff = max(dot(normal, lighting.light1_dir), 0.0) * lighting.light1_intensity;
     let fill_diff = max(dot(normal, lighting.light2_dir), 0.0) * lighting.light2_intensity;
     
-    // Specular (Blinn-Phong)
     let half_vec = normalize(lighting.light1_dir + view_dir);
     let specular = pow(max(dot(normal, half_vec), 0.0), lighting.shininess) * lighting.specular_intensity;
     
-    // Fresnel edge glow
     let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), lighting.fresnel_power);
     let fresnel_boost = fresnel * lighting.fresnel_intensity;
     
@@ -305,9 +314,16 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let fog_factor = exp(-fog_distance * camera.fog_density);
     
     let lit_color = base_color * total_light + vec3<f32>(specular);
-    let final_color = lit_color * fog_factor;
     
-    // Compute proper depth
+    // Edge darkening for selected
+    var final_color = lit_color;
+    if (outline_factor > 0.0) {
+        let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
+        final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
+    }
+    
+    final_color = final_color * fog_factor;
+    
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
     let ndc_depth = clip_pos.z / clip_pos.w;
     

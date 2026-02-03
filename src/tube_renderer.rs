@@ -35,6 +35,7 @@ struct TubeVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
+    residue_idx: u32,
 }
 
 pub struct TubeRenderer {
@@ -55,6 +56,7 @@ impl TubeRenderer {
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
+        selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
     ) -> Self {
         let ss_filter = None; // Render all SS types by default
@@ -92,7 +94,7 @@ impl TubeRenderer {
             )
         };
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -217,6 +219,7 @@ impl TubeRenderer {
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
+        selection_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
         let shader = context
             .device
@@ -227,7 +230,7 @@ impl TubeRenderer {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Backbone Pipeline Layout"),
-                    bind_group_layouts: &[camera_layout, lighting_layout],
+                    bind_group_layouts: &[camera_layout, lighting_layout, selection_layout],
                     immediate_size: 0,
                 });
 
@@ -249,6 +252,11 @@ impl TubeRenderer {
                     format: wgpu::VertexFormat::Float32x3,
                     offset: 24,
                     shader_location: 2, // color
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 36,
+                    shader_location: 3, // residue_idx
                 },
             ],
         };
@@ -298,6 +306,7 @@ impl TubeRenderer {
     ) -> (Vec<TubeVertex>, Vec<u32>) {
         let mut all_vertices: Vec<TubeVertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
+        let mut global_residue_idx: u32 = 0;
 
         for backbone_atoms in chains {
             // Backbone chains contain N, CA, C atoms per residue (3 atoms per residue)
@@ -312,6 +321,7 @@ impl TubeRenderer {
 
             // Need at least 4 CA atoms for a smooth spline
             if ca_positions.len() < 4 {
+                global_residue_idx += ca_positions.len() as u32;
                 continue;
             }
 
@@ -328,18 +338,22 @@ impl TubeRenderer {
                     &spline_points,
                     &ss_types,
                     filter,
+                    global_residue_idx,
                     &mut all_vertices,
                     &mut all_indices,
                 );
             } else {
                 // Render everything
                 let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
+                let residue_indices = Self::interpolate_residue_indices(ca_positions.len(), spline_points.len(), global_residue_idx);
                 let base_vertex = all_vertices.len() as u32;
                 let (vertices, indices) =
-                    Self::generate_tube_segment(&spline_points, &spline_colors, base_vertex);
+                    Self::generate_tube_segment(&spline_points, &spline_colors, &residue_indices, base_vertex);
                 all_vertices.extend(vertices);
                 all_indices.extend(indices);
             }
+            
+            global_residue_idx += ca_positions.len() as u32;
         }
 
         (all_vertices, all_indices)
@@ -351,6 +365,7 @@ impl TubeRenderer {
         spline_points: &[SplinePoint],
         ss_types: &[SSType],
         filter: &HashSet<SSType>,
+        base_residue_idx: u32,
         all_vertices: &mut Vec<TubeVertex>,
         all_indices: &mut Vec<u32>,
     ) {
@@ -399,10 +414,15 @@ impl TubeRenderer {
             // Use original (non-extended) SS types for coloring so colors match ribbons
             let segment_ss = &ss_types[extended_start..extended_end];
             let segment_colors = Self::interpolate_ss_colors(segment_ss, segment_points.len());
+            let segment_residue_indices = Self::interpolate_residue_indices(
+                extended_end - extended_start,
+                segment_points.len(),
+                base_residue_idx + extended_start as u32,
+            );
 
             let base_vertex = all_vertices.len() as u32;
             let (vertices, indices) =
-                Self::generate_tube_segment(segment_points, &segment_colors, base_vertex);
+                Self::generate_tube_segment(segment_points, &segment_colors, &segment_residue_indices, base_vertex);
 
             all_vertices.extend(vertices);
             all_indices.extend(indices);
@@ -436,6 +456,28 @@ impl TubeRenderer {
         }
 
         colors
+    }
+
+    /// Interpolate residue indices to match spline point count
+    fn interpolate_residue_indices(n_residues: usize, num_spline_points: usize, base_residue: u32) -> Vec<u32> {
+        if n_residues == 0 {
+            return vec![base_residue; num_spline_points];
+        }
+
+        let mut indices = Vec::with_capacity(num_spline_points);
+
+        for i in 0..num_spline_points {
+            // Map spline point index to residue index
+            let residue_idx = if n_residues > 1 {
+                ((i as f32 / (num_spline_points - 1) as f32) * (n_residues - 1) as f32) as usize
+            } else {
+                0
+            };
+            let residue_idx = residue_idx.min(n_residues - 1);
+            indices.push(base_residue + residue_idx as u32);
+        }
+
+        indices
     }
 
     fn generate_spline_points(ca_positions: &[Vec3]) -> Vec<SplinePoint> {
@@ -496,6 +538,7 @@ impl TubeRenderer {
     fn generate_tube_segment(
         points: &[SplinePoint],
         colors: &[[f32; 3]],
+        residue_indices: &[u32],
         base_vertex: u32,
     ) -> (Vec<TubeVertex>, Vec<u32>) {
         let num_rings = points.len();
@@ -505,6 +548,7 @@ impl TubeRenderer {
         // Generate vertices for each ring
         for (i, point) in points.iter().enumerate() {
             let color = colors.get(i).copied().unwrap_or([0.6, 0.85, 0.6]);
+            let residue_idx = residue_indices.get(i).copied().unwrap_or(0);
 
             for k in 0..RADIAL_SEGMENTS {
                 let angle = (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;
@@ -522,6 +566,7 @@ impl TubeRenderer {
                     position: pos.into(),
                     normal: normal.into(),
                     color,
+                    residue_idx,
                 });
             }
         }
@@ -553,6 +598,7 @@ impl TubeRenderer {
         render_pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
         lighting_bind_group: &'a wgpu::BindGroup,
+        selection_bind_group: &'a wgpu::BindGroup,
     ) {
         if self.index_count == 0 {
             return;
@@ -561,6 +607,7 @@ impl TubeRenderer {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, lighting_bind_group, &[]);
+        render_pass.set_bind_group(2, selection_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);

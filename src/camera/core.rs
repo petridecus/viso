@@ -18,7 +18,7 @@ pub struct CameraUniform {
     pub aspect: f32,
     pub forward: [f32; 3],  // Camera forward direction for lighting
     pub fovy: f32,
-    pub selected_atom_index: i32,
+    pub hovered_residue: i32,  // Currently hovered residue (-1 if none)
     pub fog_start: f32,     // Distance where fog begins (protein-adaptive)
     pub fog_density: f32,   // Exponential falloff rate
     pub _pad: f32,
@@ -30,7 +30,7 @@ impl Camera {
 
         let proj = Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
 
-        // wgpu correction matrix (maps z differently from the default, opengl)
+        // wgpu correction matrix (maps z from OpenGL's [-1,1] to wgpu's [0,1])
         let correction: Mat4 = Mat4::from_cols_array(&[
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
         ]);
@@ -42,7 +42,7 @@ impl Camera {
     pub fn build_projection(&self) -> Mat4 {
         let proj = Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
 
-        // wgpu correction matrix
+        // wgpu correction matrix (maps z from OpenGL's [-1,1] to wgpu's [0,1])
         let correction: Mat4 = Mat4::from_cols_array(&[
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
         ]);
@@ -59,7 +59,7 @@ impl CameraUniform {
             aspect: 1.6,
             forward: [0.0, 0.0, -1.0],
             fovy: 45.0,
-            selected_atom_index: -1,
+            hovered_residue: -1,
             fog_start: 100.0,   // Default, will be updated by fit_to_positions
             fog_density: 0.005, // Default exponential decay rate
             _pad: 0.0,

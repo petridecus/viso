@@ -1,19 +1,19 @@
-pub mod atom_renderer;
-pub mod tube_renderer;
 pub mod bond_topology;
 pub mod camera;
+pub mod capsule_sidechain_renderer;
 pub mod composite;
-pub mod cylinder_renderer;
 pub mod dynamic_buffer;
 pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
+pub mod picking;
 pub mod protein_data;
 pub mod render_context;
 pub mod ribbon_renderer;
 pub mod secondary_structure;
 pub mod ssao;
 pub mod text_renderer;
+pub mod tube_renderer;
 
 use engine::ProteinRenderEngine;
 use std::sync::Arc;
@@ -22,10 +22,14 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+/// Distance threshold for distinguishing click from drag (pixels)
+const CLICK_THRESHOLD: f32 = 5.0;
+
 struct RenderApp {
     window: Option<Arc<Window>>,
     engine: Option<ProteinRenderEngine>,
     last_mouse_pos: (f32, f32),
+    mouse_down_pos: Option<(f32, f32)>,  // Position where mouse was pressed
 }
 
 impl RenderApp {
@@ -34,6 +38,7 @@ impl RenderApp {
             window: None,
             engine: None,
             last_mouse_pos: (0.0, 0.0),
+            mouse_down_pos: None,
         }
     }
 }
@@ -83,7 +88,29 @@ impl ApplicationHandler for RenderApp {
 
             WindowEvent::MouseInput { button, state, .. } => {
                 if let Some(engine) = &mut self.engine {
-                    engine.handle_mouse_button(button, state == ElementState::Pressed);
+                    let pressed = state == ElementState::Pressed;
+                    
+                    if button == winit::event::MouseButton::Left {
+                        if pressed {
+                            // Remember where mouse was pressed
+                            self.mouse_down_pos = Some(self.last_mouse_pos);
+                        } else {
+                            // Mouse released - check if it was a click (not a drag)
+                            if let Some(down_pos) = self.mouse_down_pos {
+                                let dx = self.last_mouse_pos.0 - down_pos.0;
+                                let dy = self.last_mouse_pos.1 - down_pos.1;
+                                let distance = (dx * dx + dy * dy).sqrt();
+                                
+                                if distance < CLICK_THRESHOLD {
+                                    // This was a click, not a drag - do selection
+                                    engine.handle_click(self.last_mouse_pos.0, self.last_mouse_pos.1);
+                                }
+                            }
+                            self.mouse_down_pos = None;
+                        }
+                    }
+                    
+                    engine.handle_mouse_button(button, pressed);
                 }
             }
 
@@ -92,13 +119,16 @@ impl ApplicationHandler for RenderApp {
                 let delta_y = position.y as f32 - self.last_mouse_pos.1;
 
                 if let Some(engine) = &mut self.engine {
+                    // Update camera (drag)
                     engine.handle_mouse_move(delta_x, delta_y);
-                    // engine.handle_mouse_position((position.x as f32, position.y as f32));
+                    
+                    // Update hover (always, for picking)
+                    engine.handle_mouse_position(position.x as f32, position.y as f32);
                 }
 
                 self.last_mouse_pos = (position.x as f32, position.y as f32);
 
-                // Request redraw on camera movement
+                // Request redraw on mouse movement
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -122,6 +152,25 @@ impl ApplicationHandler for RenderApp {
             WindowEvent::ModifiersChanged(modifiers) => {
                 if let Some(engine) = &mut self.engine {
                     engine.update_modifiers(modifiers.state());
+                }
+            }
+
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    if let Some(engine) = &mut self.engine {
+                        use winit::keyboard::{Key, NamedKey};
+                        match &event.logical_key {
+                            // V toggles view mode (Tube <-> Ribbon)
+                            Key::Character(c) if c.as_str() == "v" || c.as_str() == "V" => {
+                                engine.toggle_view_mode();
+                            }
+                            // Escape clears selection
+                            Key::Named(NamedKey::Escape) => {
+                                engine.picking.clear_selection();
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
 

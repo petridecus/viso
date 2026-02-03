@@ -6,6 +6,7 @@ pub mod dynamic_buffer;
 pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
+pub mod picking;
 pub mod protein_data;
 pub mod render_context;
 pub mod ribbon_renderer;
