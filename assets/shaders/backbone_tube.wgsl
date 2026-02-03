@@ -59,10 +59,10 @@ fn is_selected(residue_idx: u32) -> bool {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    // Expand selected residues outward along normal for 1.2x radius
+    // Expand selected residues outward along normal for 1.4x radius (matches Foldit)
     var position = in.position;
     if (is_selected(in.residue_idx)) {
-        position = position + in.normal * 0.12;  // ~1.2x expansion (tube radius ~0.6)
+        position = position + in.normal * 0.24;  // ~1.4x expansion (tube radius ~0.6)
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
@@ -98,10 +98,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);  // Add brightness
     }
 
-    // Selection highlight: blue tint
+    // Selection highlight: blend original color with blue (matches Foldit)
+    // Foldit uses: color * 0.5 + SELECT_COLOR * 1.0 where SELECT_COLOR = (0,0,1)
     var outline_factor = 0.0;
     if (is_selected(in.residue_idx)) {
-        base_color = vec3<f32>(0.3, 0.5, 1.0);  // Blue color for selected
+        base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
         outline_factor = 1.0;
     }
 

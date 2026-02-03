@@ -368,6 +368,16 @@ impl RibbonRenderer {
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
+
+    /// Get the vertex buffer for picking
+    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+        self.vertex_buffer.buffer()
+    }
+
+    /// Get the index buffer for picking
+    pub fn index_buffer(&self) -> &wgpu::Buffer {
+        self.index_buffer.buffer()
+    }
 }
 
 // ==================== HELIX GENERATION ====================

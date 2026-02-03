@@ -4,8 +4,9 @@ use crate::camera::input::InputHandler;
 use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
 use crate::composite::CompositePass;
 use crate::frame_timing::FrameTiming;
-use crate::lighting::Lighting;
 use crate::picking::{Picking, SelectionBuffer};
+use crate::lighting::Lighting;
+
 use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
@@ -50,6 +51,20 @@ pub struct ProteinRenderEngine {
     pub composite_pass: CompositePass,
     pub picking: Picking,
     pub selection_buffer: SelectionBuffer,
+    /// Bind group for capsule picking (needs to be recreated when capsule buffer changes)
+    capsule_picking_bind_group: Option<wgpu::BindGroup>,
+    /// Current mouse position for picking
+    mouse_pos: (f32, f32),
+    /// Residue that was under cursor at mouse down (-1 = background, used for drag vs click logic)
+    mouse_down_residue: i32,
+    /// Whether we're in a drag operation (mouse moved significantly after mouse down)
+    is_dragging: bool,
+    /// Last click time for double-click detection
+    last_click_time: Instant,
+    /// Last clicked residue for double-click detection
+    last_click_residue: i32,
+    /// Cached secondary structure types per residue (for double-click segment selection)
+    cached_ss_types: Vec<SSType>,
     /// Structure animator for smooth transitions
     pub animator: StructureAnimator,
     /// Start sidechain positions (for animation interpolation)
@@ -69,7 +84,7 @@ pub struct ProteinRenderEngine {
 impl ProteinRenderEngine {
     /// Create a new engine with a default molecule path
     pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Self {
-        Self::new_with_path(window, "assets/models/6ta1.cif").await
+        Self::new_with_path(window, "assets/models/4pnk.cif").await
     }
 
     /// Create a new engine with a specified molecule path
@@ -164,10 +179,14 @@ impl ProteinRenderEngine {
         // Fit camera to all atom positions
         camera_controller.fit_to_positions(&protein_data.all_positions);
 
-        // Initialize picking with CA positions from backbone_chains
-        // (must match what tube_renderer uses for consistent residue indexing)
-        let mut picking = Picking::new();
-        picking.update_from_backbone_chains(&protein_data.backbone_chains);
+        // Create GPU-based picking
+        let picking = Picking::new(&context, &camera_controller.layout);
+
+        // Create initial capsule picking bind group
+        let capsule_picking_bind_group = Some(picking.create_capsule_bind_group(
+            &context.device,
+            sidechain_renderer.capsule_buffer(),
+        ));
 
         // Create structure animator
         let animator = StructureAnimator::new();
@@ -189,6 +208,13 @@ impl ProteinRenderEngine {
             composite_pass,
             picking,
             selection_buffer,
+            capsule_picking_bind_group,
+            mouse_pos: (0.0, 0.0),
+            mouse_down_residue: -1,
+            is_dragging: false,
+            last_click_time: Instant::now(),
+            last_click_residue: -1,
+            cached_ss_types: Vec::new(),
             animator,
             start_sidechain_positions: Vec::new(),
             target_sidechain_positions: Vec::new(),
@@ -242,18 +268,19 @@ impl ProteinRenderEngine {
             self.update_sidechains_interpolated(t);
         }
 
-        // Update hover state in camera uniform
+        // Update hover state in camera uniform (from GPU picking)
         self.camera_controller.uniform.hovered_residue = self.picking.hovered_residue;
         self.camera_controller.update_gpu(&self.context.queue);
 
-        // Update selection buffer
+        // Update selection buffer (from GPU picking)
         self.selection_buffer.update(&self.context.queue, &self.picking.selected_residues);
 
         // Update lighting to follow camera (headlamp mode)
+        // Use camera.up (set by quaternion) for consistent basis vectors
         let camera = &self.camera_controller.camera;
         let forward = (camera.target - camera.eye).normalize();
-        let right = forward.cross(Vec3::Y).normalize();
-        let up = right.cross(forward);
+        let right = camera.up.cross(forward).normalize();  // right = up × forward
+        let up = forward.cross(right);  // recalculate up to ensure orthonormal
         self.lighting.update_headlamp(right, up, forward);
         self.lighting.update_gpu(&self.context.queue);
 
@@ -347,6 +374,32 @@ impl ProteinRenderEngine {
         // Composite pass - apply SSAO to the geometry and output to swapchain
         self.composite_pass.render(&mut encoder, &view);
 
+        // GPU Picking pass - render residue IDs to picking buffer
+        // In Ribbon mode, also render ribbons for picking (helices/sheets)
+        let (ribbon_vb, ribbon_ib, ribbon_count) = match self.view_mode {
+            ViewMode::Ribbon => (
+                Some(self.ribbon_renderer.vertex_buffer()),
+                Some(self.ribbon_renderer.index_buffer()),
+                self.ribbon_renderer.index_count,
+            ),
+            ViewMode::Tube => (None, None, 0),
+        };
+
+        self.picking.render(
+            &mut encoder,
+            &self.camera_controller.bind_group,
+            self.tube_renderer.vertex_buffer(),
+            self.tube_renderer.index_buffer(),
+            self.tube_renderer.index_count,
+            ribbon_vb,
+            ribbon_ib,
+            ribbon_count,
+            self.capsule_picking_bind_group.as_ref(),
+            self.sidechain_renderer.instance_count,
+            self.mouse_pos.0 as u32,
+            self.mouse_pos.1 as u32,
+        );
+
         // Text rendering pass (no depth testing needed, renders on top of composited image)
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -368,6 +421,10 @@ impl ProteinRenderEngine {
         }
 
         self.context.submit(encoder);
+
+        // Complete GPU picking readback (after submit)
+        self.picking.complete_readback(&self.context.device);
+
         frame.present();
 
         // Update frame timing
@@ -386,12 +443,18 @@ impl ProteinRenderEngine {
             self.ssao_renderer.resize(&self.context, &self.depth_view);
             self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
             self.text_renderer.resize(newsize.width, newsize.height);
+            self.picking.resize(&self.context.device, newsize.width, newsize.height);
         }
     }
 
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
-        if self.camera_controller.mouse_pressed {
+        // Only allow rotation/pan if mouse down was on background (not on a residue)
+        if self.camera_controller.mouse_pressed && self.mouse_down_residue < 0 {
             let delta = Vec2::new(delta_x, delta_y);
+            // Mark that we're dragging (moved after mouse down)
+            if delta.length_squared() > 1.0 {
+                self.is_dragging = true;
+            }
             if self.camera_controller.shift_pressed {
                 self.camera_controller.pan(delta);
             } else {
@@ -404,43 +467,132 @@ impl ProteinRenderEngine {
         self.camera_controller.zoom(delta_y);
     }
 
+    /// Handle mouse button press/release
+    /// On press: record what residue (if any) is under cursor
+    /// On release: handled by handle_mouse_up
     pub fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
         if button == MouseButton::Left {
+            if pressed {
+                // Mouse down - record what's under cursor
+                self.mouse_down_residue = self.picking.hovered_residue;
+                self.is_dragging = false;
+            }
             self.camera_controller.mouse_pressed = pressed;
         }
     }
 
-    /// Handle mouse position update for hover detection
-    pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
-        // Both cursor position (from winit PhysicalPosition) and context.config dimensions
-        // (from inner_size()) are in physical pixels - use them directly
-        let width = self.context.config.width as f32;
-        let height = self.context.config.height as f32;
-        let camera = &self.camera_controller.camera;
+    /// Handle mouse button release for selection
+    /// Returns true if selection changed
+    pub fn handle_mouse_up(&mut self) -> bool {
+        use std::time::Duration;
 
-        // Diagnostic logging (once) to verify coordinate spaces match
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            eprintln!("=== PICKING COORDINATE DIAGNOSTICS ===");
-            eprintln!("  cursor: ({:.0}, {:.0})", x, y);
-            eprintln!("  screen: ({:.0}, {:.0})", width, height);
-            eprintln!("  ratio cursor/screen: ({:.3}, {:.3})", x / width, y / height);
-            // At center of screen, ratio should be ~0.5
-        });
+        const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
-        self.picking.update_hover_from_camera(x, y, width, height, camera);
+        let mouse_up_residue = self.picking.hovered_residue;
+        let mouse_down_residue = self.mouse_down_residue;
+        let now = Instant::now();
+
+        // Reset state
+        self.mouse_down_residue = -1;
+        let was_dragging = self.is_dragging;
+        self.is_dragging = false;
+
+        // If we were dragging (mouse moved significantly), don't do selection
+        if was_dragging {
+            self.last_click_time = now;
+            self.last_click_residue = -1;
+            return false;
+        }
+
+        // Selection only happens when:
+        // 1. Mouse down was on a residue AND mouse up is on the SAME residue
+        // 2. Mouse down AND up are both on background (clear selection)
+        if mouse_down_residue >= 0 && mouse_down_residue == mouse_up_residue {
+            // Check for double-click on the same residue
+            let is_double_click = now.duration_since(self.last_click_time) < DOUBLE_CLICK_THRESHOLD
+                && self.last_click_residue == mouse_up_residue;
+
+            // Update click tracking
+            self.last_click_time = now;
+            self.last_click_residue = mouse_up_residue;
+
+            let shift_held = self.camera_controller.shift_pressed;
+
+            if is_double_click {
+                // Double-click: select entire secondary structure segment
+                // With shift: add to existing selection
+                self.select_ss_segment(mouse_up_residue, shift_held)
+            } else {
+                // Single click: select just this residue
+                self.picking.handle_click(shift_held)
+            }
+        } else if mouse_down_residue < 0 && mouse_up_residue < 0 {
+            // Clicked on background - clear selection (only if not dragging)
+            self.last_click_time = now;
+            self.last_click_residue = -1;
+            if !self.picking.selected_residues.is_empty() {
+                self.picking.selected_residues.clear();
+                true
+            } else {
+                false
+            }
+        } else {
+            // Mouse down and up on different things - no action
+            self.last_click_time = now;
+            self.last_click_residue = -1;
+            false
+        }
     }
 
-    /// Handle click for residue selection
-    /// Returns true if selection changed
-    pub fn handle_click(&mut self, x: f32, y: f32) -> bool {
-        // Both cursor position and context.config dimensions are in physical pixels
-        let width = self.context.config.width as f32;
-        let height = self.context.config.height as f32;
-        let camera = &self.camera_controller.camera;
-        let shift_held = self.camera_controller.shift_pressed;
+    /// Select all residues in the same secondary structure segment as the given residue
+    /// If shift_held is true, adds to existing selection; otherwise replaces selection
+    fn select_ss_segment(&mut self, residue_idx: i32, shift_held: bool) -> bool {
+        if residue_idx < 0 || (residue_idx as usize) >= self.cached_ss_types.len() {
+            return false;
+        }
 
-        self.picking.handle_click_from_camera(x, y, width, height, camera, shift_held)
+        let idx = residue_idx as usize;
+        let target_ss = self.cached_ss_types[idx];
+
+        // Find the start of this SS segment (walk backwards)
+        let mut start = idx;
+        while start > 0 && self.cached_ss_types[start - 1] == target_ss {
+            start -= 1;
+        }
+
+        // Find the end of this SS segment (walk forwards)
+        let mut end = idx;
+        while end + 1 < self.cached_ss_types.len() && self.cached_ss_types[end + 1] == target_ss {
+            end += 1;
+        }
+
+        // If shift is NOT held, clear existing selection first
+        if !shift_held {
+            self.picking.selected_residues.clear();
+        }
+
+        // Add all residues in this segment to selection (avoid duplicates)
+        for i in start..=end {
+            let residue = i as i32;
+            if !self.picking.selected_residues.contains(&residue) {
+                self.picking.selected_residues.push(residue);
+            }
+        }
+
+        true
+    }
+
+    /// Handle mouse position update for hover detection
+    /// GPU picking uses this position in the next render pass
+    pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
+        self.mouse_pos = (x, y);
+    }
+
+    /// Handle click for residue selection (deprecated - use handle_mouse_up instead)
+    /// Returns true if selection changed
+    pub fn handle_click(&mut self, _x: f32, _y: f32) -> bool {
+        // This is now handled by handle_mouse_up
+        false
     }
 
     /// Get currently hovered residue index (-1 if none)
@@ -606,10 +758,41 @@ impl ProteinRenderEngine {
             sidechain_residue_indices,
         );
 
+        // Update capsule picking bind group (buffer may have been reallocated)
+        self.capsule_picking_bind_group = Some(self.picking.create_capsule_bind_group(
+            &self.context.device,
+            self.sidechain_renderer.capsule_buffer(),
+        ));
+
+        // Cache secondary structure types for double-click segment selection
+        self.cached_ss_types = self.compute_ss_types(backbone_chains);
+
         // Fit camera if requested and we have positions
         if fit_camera && !all_positions.is_empty() {
             self.camera_controller.fit_to_positions(all_positions);
         }
+    }
+
+    /// Compute secondary structure types for all residues across all chains
+    fn compute_ss_types(&self, backbone_chains: &[Vec<Vec3>]) -> Vec<SSType> {
+        use crate::secondary_structure::detect_secondary_structure;
+
+        let mut all_ss_types = Vec::new();
+
+        for chain in backbone_chains {
+            // Extract CA positions (every 3rd atom starting at index 1: N, CA, C pattern)
+            let ca_positions: Vec<Vec3> = chain
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 3 == 1)
+                .map(|(_, &pos)| pos)
+                .collect();
+
+            let ss_types = detect_secondary_structure(&ca_positions);
+            all_ss_types.extend(ss_types);
+        }
+
+        all_ss_types
     }
 
     // =========================================================================

@@ -38,6 +38,36 @@ struct TubeVertex {
     residue_idx: u32,
 }
 
+/// Get the vertex buffer layout for TubeVertex (for use with picking pipeline)
+pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<TubeVertex>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0, // position
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1, // normal
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 24,
+                shader_location: 2, // color
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 36,
+                shader_location: 3, // residue_idx
+            },
+        ],
+    }
+}
+
 pub struct TubeRenderer {
     pub pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
@@ -629,6 +659,16 @@ impl TubeRenderer {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+    }
+
+    /// Get the vertex buffer for picking
+    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+        self.vertex_buffer.buffer()
+    }
+
+    /// Get the index buffer for picking
+    pub fn index_buffer(&self) -> &wgpu::Buffer {
+        self.index_buffer.buffer()
     }
 }
 

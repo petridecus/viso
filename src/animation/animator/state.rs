@@ -16,6 +16,8 @@ pub struct StructureState {
     current: Vec<ResidueVisualState>,
     /// Target state per residue (animation end state).
     target: Vec<ResidueVisualState>,
+    /// Number of residues per chain (for preserving chain boundaries).
+    chain_lengths: Vec<usize>,
 }
 
 impl StructureState {
@@ -24,6 +26,7 @@ impl StructureState {
         Self {
             current: Vec::new(),
             target: Vec::new(),
+            chain_lengths: Vec::new(),
         }
     }
 
@@ -33,9 +36,15 @@ impl StructureState {
     /// `[N, CA, C, N, CA, C, ...]` (3 atoms per residue).
     pub fn from_backbone(backbone_chains: &[Vec<Vec3>]) -> Self {
         let states = Self::backbone_to_states(backbone_chains);
+        // Track how many residues in each chain
+        let chain_lengths: Vec<usize> = backbone_chains
+            .iter()
+            .map(|chain| chain.len() / 3)
+            .collect();
         Self {
             current: states.clone(),
             target: states,
+            chain_lengths,
         }
     }
 
@@ -77,6 +86,7 @@ impl StructureState {
     /// Set new target state.
     pub fn set_target(&mut self, new_target: StructureState) {
         self.target = new_target.target;
+        self.chain_lengths = new_target.chain_lengths;
     }
 
     /// Set current state to match target (snap to end).
@@ -132,15 +142,34 @@ impl StructureState {
             return Vec::new();
         }
 
-        // For now, return as single chain
-        // TODO: Track chain boundaries for multi-chain support
-        let positions: Vec<Vec3> = self
-            .current
-            .iter()
-            .flat_map(|s| s.backbone.iter().copied())
-            .collect();
+        // Use chain_lengths to preserve chain boundaries
+        let mut chains = Vec::new();
+        let mut residue_idx = 0;
 
-        vec![positions]
+        for &chain_len in &self.chain_lengths {
+            let mut chain_positions = Vec::with_capacity(chain_len * 3);
+            for _ in 0..chain_len {
+                if let Some(state) = self.current.get(residue_idx) {
+                    chain_positions.extend(state.backbone.iter().copied());
+                }
+                residue_idx += 1;
+            }
+            if !chain_positions.is_empty() {
+                chains.push(chain_positions);
+            }
+        }
+
+        // Fallback: if chain_lengths is empty but we have residues, return as single chain
+        if chains.is_empty() && !self.current.is_empty() {
+            let positions: Vec<Vec3> = self
+                .current
+                .iter()
+                .flat_map(|s| s.backbone.iter().copied())
+                .collect();
+            chains.push(positions);
+        }
+
+        chains
     }
 
     /// Check if two states differ significantly.

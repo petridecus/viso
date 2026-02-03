@@ -289,4 +289,9 @@ impl CapsuleSidechainRenderer {
         // 6 vertices per quad, one quad per capsule
         render_pass.draw(0..6, 0..self.instance_count);
     }
+
+    /// Get the capsule instance buffer for picking
+    pub fn capsule_buffer(&self) -> &wgpu::Buffer {
+        self.instance_buffer.buffer()
+    }
 }

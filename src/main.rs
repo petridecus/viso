@@ -24,14 +24,10 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-/// Distance threshold for distinguishing click from drag (pixels)
-const CLICK_THRESHOLD: f32 = 5.0;
-
 struct RenderApp {
     window: Option<Arc<Window>>,
     engine: Option<ProteinRenderEngine>,
     last_mouse_pos: (f32, f32),
-    mouse_down_pos: Option<(f32, f32)>,  // Position where mouse was pressed
 }
 
 impl RenderApp {
@@ -40,7 +36,6 @@ impl RenderApp {
             window: None,
             engine: None,
             last_mouse_pos: (0.0, 0.0),
-            mouse_down_pos: None,
         }
     }
 }
@@ -91,28 +86,14 @@ impl ApplicationHandler for RenderApp {
             WindowEvent::MouseInput { button, state, .. } => {
                 if let Some(engine) = &mut self.engine {
                     let pressed = state == ElementState::Pressed;
-                    
-                    if button == winit::event::MouseButton::Left {
-                        if pressed {
-                            // Remember where mouse was pressed
-                            self.mouse_down_pos = Some(self.last_mouse_pos);
-                        } else {
-                            // Mouse released - check if it was a click (not a drag)
-                            if let Some(down_pos) = self.mouse_down_pos {
-                                let dx = self.last_mouse_pos.0 - down_pos.0;
-                                let dy = self.last_mouse_pos.1 - down_pos.1;
-                                let distance = (dx * dx + dy * dy).sqrt();
-                                
-                                if distance < CLICK_THRESHOLD {
-                                    // This was a click, not a drag - do selection
-                                    engine.handle_click(self.last_mouse_pos.0, self.last_mouse_pos.1);
-                                }
-                            }
-                            self.mouse_down_pos = None;
-                        }
-                    }
-                    
+
+                    // Handle mouse button state change (tracks mouse_down_residue internally)
                     engine.handle_mouse_button(button, pressed);
+
+                    // On mouse up, handle selection logic
+                    if button == winit::event::MouseButton::Left && !pressed {
+                        engine.handle_mouse_up();
+                    }
                 }
             }
 

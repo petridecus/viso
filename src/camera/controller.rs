@@ -109,6 +109,24 @@ impl CameraController {
         self.uniform.fog_density = fog_density;
     }
 
+    /// Get the camera's right vector from the orientation quaternion.
+    #[inline]
+    pub fn right(&self) -> Vec3 {
+        self.orientation * Vec3::X
+    }
+
+    /// Get the camera's up vector from the orientation quaternion.
+    #[inline]
+    pub fn up(&self) -> Vec3 {
+        self.orientation * Vec3::Y
+    }
+
+    /// Get the camera's forward vector from the orientation quaternion.
+    #[inline]
+    pub fn forward(&self) -> Vec3 {
+        -(self.orientation * Vec3::Z)
+    }
+
     fn update_camera_pos(&mut self) {
         // Renormalize quaternion to prevent accumulated floating-point drift
         // after many rotation operations

@@ -6,79 +6,9 @@
 
 use crate::render_context::RenderContext;
 use crate::tube_renderer::tube_vertex_buffer_layout;
-use wgpu::util::DeviceExt;
-
-/// Selection buffer for GPU - stores selection state as a bit array
-pub struct SelectionBuffer {
-    buffer: wgpu::Buffer,
-    pub layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
-    /// Number of residues (for sizing)
-    capacity: usize,
-}
-
-impl SelectionBuffer {
-    pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
-        // Round up to multiple of 32 bits
-        let num_words = (max_residues + 31) / 32;
-        let data = vec![0u32; num_words.max(1)];
-
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Selection Buffer"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Selection Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Selection Bind Group"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-        });
-
-        Self {
-            buffer,
-            layout,
-            bind_group,
-            capacity: max_residues,
-        }
-    }
-
-    /// Update selection state from a list of selected residue indices
-    pub fn update(&self, queue: &wgpu::Queue, selected_residues: &[i32]) {
-        let num_words = (self.capacity + 31) / 32;
-        let mut data = vec![0u32; num_words.max(1)];
-
-        for &idx in selected_residues {
-            if idx >= 0 && (idx as usize) < self.capacity {
-                let word_idx = idx as usize / 32;
-                let bit_idx = idx as usize % 32;
-                data[word_idx] |= 1u32 << bit_idx;
-            }
-        }
-
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&data));
-    }
-}
 
 /// GPU picking buffer that stores residue indices
-pub struct Picking {
+pub struct GpuPicking {
     /// Picking texture (R32Uint format for residue indices)
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
@@ -104,7 +34,7 @@ pub struct Picking {
     pending_mouse_pos: Option<(u32, u32)>,
 }
 
-impl Picking {
+impl GpuPicking {
     pub fn new(
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
@@ -341,9 +271,6 @@ impl Picking {
     }
 
     /// Render the picking pass and request readback at mouse position
-    ///
-    /// In Ribbon mode, pass ribbon buffers to render helices/sheets for picking.
-    /// Tubes are still rendered (for coils in ribbon mode, or everything in tube mode).
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -351,9 +278,6 @@ impl Picking {
         tube_vertex_buffer: &wgpu::Buffer,
         tube_index_buffer: &wgpu::Buffer,
         tube_index_count: u32,
-        ribbon_vertex_buffer: Option<&wgpu::Buffer>,
-        ribbon_index_buffer: Option<&wgpu::Buffer>,
-        ribbon_index_count: u32,
         capsule_bind_group: Option<&wgpu::BindGroup>,
         capsule_count: u32,
         mouse_x: u32,
@@ -388,7 +312,7 @@ impl Picking {
                 ..Default::default()
             });
 
-            // Draw tubes (coils in ribbon mode, everything in tube mode)
+            // Draw tubes
             if tube_index_count > 0 {
                 render_pass.set_pipeline(&self.tube_pipeline);
                 render_pass.set_bind_group(0, camera_bind_group, &[]);
@@ -397,19 +321,7 @@ impl Picking {
                 render_pass.draw_indexed(0..tube_index_count, 0, 0..1);
             }
 
-            // Draw ribbons (helices/sheets in ribbon mode)
-            // Uses the same pipeline as tubes - same vertex layout and picking shader
-            if let (Some(ribbon_vb), Some(ribbon_ib)) = (ribbon_vertex_buffer, ribbon_index_buffer) {
-                if ribbon_index_count > 0 {
-                    render_pass.set_pipeline(&self.tube_pipeline);
-                    render_pass.set_bind_group(0, camera_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, ribbon_vb.slice(..));
-                    render_pass.set_index_buffer(ribbon_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..ribbon_index_count, 0, 0..1);
-                }
-            }
-
-            // Draw capsules (sidechains)
+            // Draw capsules
             if let Some(capsule_bg) = capsule_bind_group {
                 if capsule_count > 0 {
                     render_pass.set_pipeline(&self.capsule_pipeline);
