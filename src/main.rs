@@ -1,8 +1,10 @@
+pub mod animation;
 pub mod bond_topology;
 pub mod camera;
 pub mod capsule_sidechain_renderer;
 pub mod composite;
 pub mod dynamic_buffer;
+pub mod easing;
 pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
