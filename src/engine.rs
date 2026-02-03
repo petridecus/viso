@@ -1,4 +1,4 @@
-use crate::animation::{AnimationConfig, AnimationTimeline, InterpolatedResidue};
+use crate::animation::{AnimationAction, StructureAnimator};
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
 use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
@@ -16,7 +16,7 @@ use crate::tube_renderer::TubeRenderer;
 
 use glam::{Vec2, Vec3};
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
 
@@ -50,16 +50,20 @@ pub struct ProteinRenderEngine {
     pub composite_pass: CompositePass,
     pub picking: Picking,
     pub selection_buffer: SelectionBuffer,
-    /// Animation timeline for smooth transitions
-    pub animation_timeline: Option<AnimationTimeline>,
-    /// Current backbone state: Vec[chain][residue] = [N, CA, C]
-    current_backbone_state: Vec<Vec<[Vec3; 3]>>,
-    /// Current sidechain chi angles: Vec[residue] = chis
-    current_sidechain_state: Vec<Vec<f32>>,
-    /// Animation configuration
-    pub animation_config: AnimationConfig,
-    /// Map from global residue index to chain index
-    residue_to_chain: Vec<usize>,
+    /// Structure animator for smooth transitions
+    pub animator: StructureAnimator,
+    /// Start sidechain positions (for animation interpolation)
+    start_sidechain_positions: Vec<Vec3>,
+    /// Target sidechain positions (animation end state)
+    target_sidechain_positions: Vec<Vec3>,
+    /// Start backbone-sidechain CA positions (for animation interpolation)
+    start_backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// Target backbone-sidechain bonds (animation end state)
+    target_backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// Sidechain bond topology (doesn't change during animation)
+    cached_sidechain_bonds: Vec<(u32, u32)>,
+    cached_sidechain_hydrophobicity: Vec<bool>,
+    cached_sidechain_residue_indices: Vec<u32>,
 }
 
 impl ProteinRenderEngine {
@@ -165,23 +169,8 @@ impl ProteinRenderEngine {
         let mut picking = Picking::new();
         picking.update_from_backbone_chains(&protein_data.backbone_chains);
 
-        // Build animation state
-        // Create animation timeline with capacity for total residues
-        let animation_timeline = Some(AnimationTimeline::new(total_residues));
-        let animation_config = AnimationConfig::default();
-
-        // Build residue_to_chain mapping
-        let mut residue_to_chain = Vec::with_capacity(total_residues);
-        for (chain_idx, chain) in protein_data.backbone_chains.iter().enumerate() {
-            let residues_in_chain = chain.len() / 3; // Each residue has N, CA, C
-            for _ in 0..residues_in_chain {
-                residue_to_chain.push(chain_idx);
-            }
-        }
-
-        // Initialize backbone and sidechain state as empty (populated on first animate call)
-        let current_backbone_state = Vec::new();
-        let current_sidechain_state = Vec::new();
+        // Create structure animator
+        let animator = StructureAnimator::new();
 
         Self {
             context,
@@ -200,11 +189,14 @@ impl ProteinRenderEngine {
             composite_pass,
             picking,
             selection_buffer,
-            animation_timeline,
-            current_backbone_state,
-            current_sidechain_state,
-            animation_config,
-            residue_to_chain,
+            animator,
+            start_sidechain_positions: Vec::new(),
+            target_sidechain_positions: Vec::new(),
+            start_backbone_sidechain_bonds: Vec::new(),
+            target_backbone_sidechain_bonds: Vec::new(),
+            cached_sidechain_bonds: Vec::new(),
+            cached_sidechain_hydrophobicity: Vec::new(),
+            cached_sidechain_residue_indices: Vec::new(),
         }
     }
 
@@ -238,7 +230,17 @@ impl ProteinRenderEngine {
         }
 
         // Update animations for this frame
-        self.update_animations();
+        let animating = self.animator.update(Instant::now());
+
+        // If animation is active, update renderers with interpolated positions
+        if animating {
+            let visual_backbone = self.animator.get_backbone();
+            self.update_backbone(&visual_backbone);
+
+            // Interpolate sidechain positions
+            let t = self.animator.progress();
+            self.update_sidechains_interpolated(t);
+        }
 
         // Update hover state in camera uniform
         self.camera_controller.uniform.hovered_residue = self.picking.hovered_residue;
@@ -473,6 +475,48 @@ impl ProteinRenderEngine {
         );
     }
 
+    /// Update sidechains with interpolated positions.
+    fn update_sidechains_interpolated(&mut self, t: f32) {
+        // Interpolate sidechain atom positions
+        let interpolated_positions: Vec<Vec3> = self
+            .start_sidechain_positions
+            .iter()
+            .zip(self.target_sidechain_positions.iter())
+            .map(|(start, target)| *start + (*target - *start) * t)
+            .collect();
+
+        // Interpolate backbone-sidechain CA positions
+        let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
+            .start_backbone_sidechain_bonds
+            .iter()
+            .zip(self.target_backbone_sidechain_bonds.iter())
+            .map(|((start_pos, idx), (target_pos, _))| {
+                let pos = *start_pos + (*target_pos - *start_pos) * t;
+                (pos, *idx)
+            })
+            .collect();
+
+        // Update sidechain renderer
+        use crate::protein_data::BackboneSidechainBond;
+        let bs_bonds: Vec<BackboneSidechainBond> = interpolated_bs_bonds
+            .iter()
+            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
+                ca_position: *ca_pos,
+                cb_index: *cb_idx,
+            })
+            .collect();
+
+        self.sidechain_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            &interpolated_positions,
+            &self.cached_sidechain_bonds,
+            &bs_bonds,
+            &self.cached_sidechain_hydrophobicity,
+            &self.cached_sidechain_residue_indices,
+        );
+    }
+
     /// Set the view mode for backbone rendering
     pub fn set_view_mode(&mut self, mode: ViewMode) {
         if self.view_mode == mode {
@@ -568,304 +612,120 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Capture current backbone state from protein data.
-    ///
-    /// Converts Vec<Vec3> (N, CA, C flat) to Vec<Vec<[Vec3; 3]>> (per residue).
-    fn capture_backbone_state(&mut self, backbone_chains: &[Vec<Vec3>]) {
-        self.current_backbone_state.clear();
-        self.current_backbone_state.reserve(backbone_chains.len());
-
-        for chain in backbone_chains {
-            let num_residues = chain.len() / 3;
-            let mut residue_states = Vec::with_capacity(num_residues);
-
-            for i in 0..num_residues {
-                let base = i * 3;
-                if base + 2 < chain.len() {
-                    residue_states.push([chain[base], chain[base + 1], chain[base + 2]]);
-                }
-            }
-
-            self.current_backbone_state.push(residue_states);
-        }
-    }
-
-    /// Get chain index for a residue.
-    #[inline]
-    fn chain_for_residue(&self, residue_idx: usize) -> usize {
-        self.residue_to_chain.get(residue_idx).copied().unwrap_or(0)
-    }
-
     // =========================================================================
-    // Animation Trigger Methods
+    // Animation Methods (delegate to StructureAnimator)
     // =========================================================================
 
-    /// Animate from current state to new pose.
-    ///
-    /// Creates animations for all residues that differ between the current
-    /// backbone state and the new backbone positions.
-    ///
-    /// If an animation is already in progress, the new animation starts from
-    /// the current interpolated (visual) position, ensuring smooth continuity.
-    ///
-    /// # Arguments
-    /// * `new_backbone` - New backbone positions: Vec[chain][residue * 3 + atom] where atom is N=0, CA=1, C=2
-    pub fn animate_to_pose(&mut self, new_backbone: &[Vec<Vec3>]) {
-        use crate::animation::state::ResidueAnimationState;
+    /// Animate backbone to new pose with specified action.
+    pub fn animate_to_pose(&mut self, new_backbone: &[Vec<Vec3>], action: AnimationAction) {
+        self.animator.set_target(new_backbone, action);
 
-        // 1. Capture current state if empty
-        if self.current_backbone_state.is_empty() {
-            // First call - just set state, no animation
-            self.capture_backbone_state(new_backbone);
-            return;
+        // If animator has visual state, update renderers
+        if self.animator.residue_count() > 0 {
+            let visual_backbone = self.animator.get_backbone();
+            self.update_backbone(&visual_backbone);
         }
-
-        // Check if animation is enabled
-        if !self.animation_config.enabled {
-            // Animation disabled - just update state directly
-            self.capture_backbone_state(new_backbone);
-            return;
-        }
-
-        // 2. If animation is in progress, sync current_backbone_state with visual position
-        // This ensures the new animation starts from where we visually are, not the previous target
-        if self.is_animating() {
-            self.sync_current_state_with_interpolated();
-        }
-
-        const EPSILON: f32 = 0.0001;
-
-        // 2. Compare and create ResidueAnimationState for differing residues
-        let mut animation_states = Vec::new();
-        let mut global_residue_idx = 0usize;
-
-        for (chain_idx, chain_positions) in new_backbone.iter().enumerate() {
-            let num_residues = chain_positions.len() / 3;
-
-            // Get current chain state (if it exists)
-            let current_chain = self.current_backbone_state.get(chain_idx);
-
-            for residue_in_chain in 0..num_residues {
-                let base_idx = residue_in_chain * 3;
-
-                // Extract new backbone positions for this residue
-                let new_n = chain_positions.get(base_idx).copied().unwrap_or(Vec3::ZERO);
-                let new_ca = chain_positions.get(base_idx + 1).copied().unwrap_or(Vec3::ZERO);
-                let new_c = chain_positions.get(base_idx + 2).copied().unwrap_or(Vec3::ZERO);
-                let end_backbone = [new_n, new_ca, new_c];
-
-                // Get current backbone positions for this residue
-                let start_backbone = current_chain
-                    .and_then(|c| c.get(residue_in_chain))
-                    .copied()
-                    .unwrap_or(end_backbone); // Default to end if no current state
-
-                // Check if any position differs by more than epsilon
-                let needs_animation = (0..3).any(|i| {
-                    (end_backbone[i] - start_backbone[i]).length() > EPSILON
-                });
-
-                if needs_animation {
-                    // Create animation state for this residue
-                    let mut state = ResidueAnimationState::new(
-                        global_residue_idx,
-                        start_backbone,
-                        end_backbone,
-                        &[], // Empty chi angles for now (backbone only)
-                        &[], // Empty chi angles for now (backbone only)
-                    );
-                    state.needs_animation = true;
-                    animation_states.push(state);
-                }
-
-                global_residue_idx += 1;
-            }
-        }
-
-        // 3. Add animations to timeline
-        if !animation_states.is_empty() {
-            if let Some(timeline) = &mut self.animation_timeline {
-                timeline.add(animation_states, Some(self.animation_config.duration), None);
-            }
-        }
-
-        // 4. Update current_backbone_state to new state
-        self.capture_backbone_state(new_backbone);
     }
 
-    /// Skip all animations to final state immediately.
+    /// Animate to new pose with sidechain data.
+    ///
+    /// Uses AnimationAction::Wiggle by default for backwards compatibility.
+    pub fn animate_to_full_pose(
+        &mut self,
+        new_backbone: &[Vec<Vec3>],
+        sidechain_positions: &[Vec3],
+        sidechain_bonds: &[(u32, u32)],
+        sidechain_hydrophobicity: &[bool],
+        sidechain_residue_indices: &[u32],
+        backbone_sidechain_bonds: &[(Vec3, u32)],
+    ) {
+        self.animate_to_full_pose_with_action(
+            new_backbone,
+            sidechain_positions,
+            sidechain_bonds,
+            sidechain_hydrophobicity,
+            sidechain_residue_indices,
+            backbone_sidechain_bonds,
+            AnimationAction::Wiggle,
+        );
+    }
+
+    /// Animate to new pose with sidechain data and explicit action.
+    pub fn animate_to_full_pose_with_action(
+        &mut self,
+        new_backbone: &[Vec<Vec3>],
+        sidechain_positions: &[Vec3],
+        sidechain_bonds: &[(u32, u32)],
+        sidechain_hydrophobicity: &[bool],
+        sidechain_residue_indices: &[u32],
+        backbone_sidechain_bonds: &[(Vec3, u32)],
+        action: AnimationAction,
+    ) {
+        // Capture current positions as start (for interpolation)
+        // If sizes match, use current target; otherwise use new positions (snap)
+        if self.target_sidechain_positions.len() == sidechain_positions.len() {
+            self.start_sidechain_positions = self.target_sidechain_positions.clone();
+            self.start_backbone_sidechain_bonds = self.target_backbone_sidechain_bonds.clone();
+        } else {
+            self.start_sidechain_positions = sidechain_positions.to_vec();
+            self.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+        }
+
+        // Set new targets
+        self.target_sidechain_positions = sidechain_positions.to_vec();
+        self.target_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+        self.cached_sidechain_bonds = sidechain_bonds.to_vec();
+        self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
+        self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
+
+        // Set backbone target (this starts the animation)
+        self.animator.set_target(new_backbone, action);
+
+        // Update renderers with START visual state (animation will interpolate from here)
+        if self.animator.residue_count() > 0 {
+            let visual_backbone = self.animator.get_backbone();
+            self.update_backbone(&visual_backbone);
+        }
+
+        // Update sidechain renderer with start positions
+        use crate::protein_data::BackboneSidechainBond;
+        let bs_bonds: Vec<BackboneSidechainBond> = self.start_backbone_sidechain_bonds
+            .iter()
+            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
+                ca_position: *ca_pos,
+                cb_index: *cb_idx,
+            })
+            .collect();
+
+        self.sidechain_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            &self.start_sidechain_positions,
+            sidechain_bonds,
+            &bs_bonds,
+            sidechain_hydrophobicity,
+            sidechain_residue_indices,
+        );
+    }
+
+    /// Skip all animations to final state.
     pub fn skip_animations(&mut self) {
-        if let Some(timeline) = &mut self.animation_timeline {
-            timeline.skip();
-        }
+        self.animator.skip();
     }
 
-    /// Cancel all animations (stay at current interpolated state).
+    /// Cancel all animations.
     pub fn cancel_animations(&mut self) {
-        if let Some(timeline) = &mut self.animation_timeline {
-            timeline.cancel();
-        }
+        self.animator.cancel();
     }
 
-    /// Check if any animations are active.
+    /// Check if animations are active.
     #[inline]
     pub fn is_animating(&self) -> bool {
-        self.animation_timeline
-            .as_ref()
-            .map(|t| t.is_animating())
-            .unwrap_or(false)
+        self.animator.is_animating()
     }
 
     /// Set animation enabled/disabled.
     pub fn set_animation_enabled(&mut self, enabled: bool) {
-        self.animation_config.enabled = enabled;
-    }
-
-    /// Set animation duration.
-    pub fn set_animation_duration(&mut self, duration: Duration) {
-        self.animation_config.duration = duration;
-    }
-
-    // =========================================================================
-    // Animation Update Methods
-    // =========================================================================
-
-    /// Update animations for current frame.
-    ///
-    /// Returns true if render is needed (animations active).
-    /// Call this at the start of each render frame.
-    pub fn update_animations(&mut self) -> bool {
-        // Check if we have a timeline and it's animating
-        let has_updates = {
-            let Some(timeline) = &mut self.animation_timeline else {
-                return false;
-            };
-
-            let now = Instant::now();
-            timeline.update(now)
-        };
-
-        if !has_updates {
-            return false;
-        }
-
-        // Copy interpolated state to avoid borrow conflicts
-        let interpolated: Vec<InterpolatedResidue> = {
-            let Some(timeline) = &self.animation_timeline else {
-                return false;
-            };
-            timeline.get_interpolated().to_vec()
-        };
-
-        if interpolated.is_empty() {
-            return false;
-        }
-
-        // Convert interpolated residues back to backbone_chains format
-        // and update the renderers
-        self.apply_interpolated_state(&interpolated);
-
-        true
-    }
-
-    /// Apply interpolated state to renderers.
-    ///
-    /// Groups interpolated residues by chain using residue_to_chain mapping,
-    /// builds new backbone_chains Vec<Vec<Vec3>> by flattening [N, CA, C] arrays,
-    /// and calls update_backbone() to update tube and ribbon renderers.
-    fn apply_interpolated_state(&mut self, interpolated: &[InterpolatedResidue]) {
-        // 1. Determine the number of chains and residues per chain
-        // We need to build the full backbone structure, updating only the animated residues
-
-        // First, figure out how many chains we have
-        let num_chains = self.residue_to_chain.iter().max().map(|&m| m + 1).unwrap_or(0);
-        if num_chains == 0 {
-            return;
-        }
-
-        // Count residues per chain
-        let mut residues_per_chain = vec![0usize; num_chains];
-        for &chain_idx in &self.residue_to_chain {
-            residues_per_chain[chain_idx] += 1;
-        }
-
-        // 2. Build new backbone_chains from current_backbone_state, updating with interpolated values
-        // First, create a map of residue_idx -> interpolated backbone
-        let mut interpolated_map: std::collections::HashMap<usize, [Vec3; 3]> =
-            std::collections::HashMap::with_capacity(interpolated.len());
-        for interp in interpolated {
-            interpolated_map.insert(interp.residue_idx, interp.backbone);
-        }
-
-        // 3. Build the new backbone chains
-        let mut new_backbone_chains: Vec<Vec<Vec3>> = Vec::with_capacity(num_chains);
-        let mut global_residue_idx = 0usize;
-
-        for (chain_idx, &num_residues) in residues_per_chain.iter().enumerate() {
-            // Pre-allocate for N, CA, C per residue
-            let mut chain_positions: Vec<Vec3> = Vec::with_capacity(num_residues * 3);
-
-            for residue_in_chain in 0..num_residues {
-                // Check if this residue has interpolated data
-                let backbone = if let Some(&interp_backbone) = interpolated_map.get(&global_residue_idx) {
-                    // Use interpolated backbone
-                    interp_backbone
-                } else if let Some(chain_state) = self.current_backbone_state.get(chain_idx) {
-                    // Use current backbone state
-                    chain_state.get(residue_in_chain).copied().unwrap_or([Vec3::ZERO; 3])
-                } else {
-                    // Fallback to zeros (shouldn't happen in practice)
-                    [Vec3::ZERO; 3]
-                };
-
-                // Flatten [N, CA, C] into the chain positions
-                chain_positions.push(backbone[0]); // N
-                chain_positions.push(backbone[1]); // CA
-                chain_positions.push(backbone[2]); // C
-
-                global_residue_idx += 1;
-            }
-
-            new_backbone_chains.push(chain_positions);
-        }
-
-        // 4. Update the backbone renderers
-        self.update_backbone(&new_backbone_chains);
-
-        // Note: For now, sidechains are not animated.
-        // They would need similar treatment when implemented.
-    }
-
-    /// Sync current_backbone_state with the current interpolated (visual) positions.
-    ///
-    /// Called before starting a new animation when one is already in progress.
-    /// This ensures the new animation starts from where we visually are,
-    /// not from the previous animation's target, avoiding visual jumps.
-    fn sync_current_state_with_interpolated(&mut self) {
-        let Some(timeline) = &self.animation_timeline else {
-            return;
-        };
-
-        let interpolated = timeline.get_interpolated();
-        if interpolated.is_empty() {
-            return;
-        }
-
-        // Build a map of residue_idx -> interpolated backbone
-        let interpolated_map: std::collections::HashMap<usize, [Vec3; 3]> = interpolated
-            .iter()
-            .map(|i| (i.residue_idx, i.backbone))
-            .collect();
-
-        // Update current_backbone_state with interpolated positions
-        let mut global_residue_idx = 0usize;
-        for chain in &mut self.current_backbone_state {
-            for residue_backbone in chain.iter_mut() {
-                if let Some(&interp_backbone) = interpolated_map.get(&global_residue_idx) {
-                    *residue_backbone = interp_backbone;
-                }
-                global_residue_idx += 1;
-            }
-        }
+        self.animator.set_enabled(enabled);
     }
 }
