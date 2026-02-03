@@ -27,27 +27,15 @@ pub struct CameraUniform {
 impl Camera {
     pub fn build_matrix(&self) -> Mat4 {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
-
+        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan convention)
         let proj = Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
-
-        // wgpu correction matrix (maps z from OpenGL's [-1,1] to wgpu's [0,1])
-        let correction: Mat4 = Mat4::from_cols_array(&[
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
-        ]);
-
-        correction * proj * view
+        proj * view
     }
 
-    /// Get just the projection matrix (with wgpu correction) for SSAO
+    /// Get just the projection matrix for SSAO
     pub fn build_projection(&self) -> Mat4 {
-        let proj = Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
-
-        // wgpu correction matrix (maps z from OpenGL's [-1,1] to wgpu's [0,1])
-        let correction: Mat4 = Mat4::from_cols_array(&[
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
-        ]);
-
-        correction * proj
+        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan convention)
+        Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar)
     }
 }
 

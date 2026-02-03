@@ -346,13 +346,20 @@ impl TubeRenderer {
                 // Render everything
                 let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
                 let residue_indices = Self::interpolate_residue_indices(ca_positions.len(), spline_points.len(), global_residue_idx);
+
+                // Debug: log residue index range for this chain
+                if let (Some(&first), Some(&last)) = (residue_indices.first(), residue_indices.last()) {
+                    eprintln!("TubeRenderer: chain with {} CAs, residue indices {} to {}",
+                        ca_positions.len(), first, last);
+                }
+
                 let base_vertex = all_vertices.len() as u32;
                 let (vertices, indices) =
                     Self::generate_tube_segment(&spline_points, &spline_colors, &residue_indices, base_vertex);
                 all_vertices.extend(vertices);
                 all_indices.extend(indices);
             }
-            
+
             global_residue_idx += ca_positions.len() as u32;
         }
 
@@ -545,10 +552,21 @@ impl TubeRenderer {
         let mut vertices = Vec::with_capacity(num_rings * RADIAL_SEGMENTS);
         let mut indices = Vec::new();
 
+        // Debug: verify residue_indices length matches points
+        if residue_indices.len() != points.len() {
+            eprintln!("WARNING: residue_indices.len()={} != points.len()={}",
+                residue_indices.len(), points.len());
+        }
+
         // Generate vertices for each ring
         for (i, point) in points.iter().enumerate() {
             let color = colors.get(i).copied().unwrap_or([0.6, 0.85, 0.6]);
             let residue_idx = residue_indices.get(i).copied().unwrap_or(0);
+
+            // Debug: sample some vertices
+            if i == 0 || i == points.len() / 2 || i == points.len() - 1 {
+                eprintln!("  vertex ring {}: residue_idx={}", i, residue_idx);
+            }
 
             for k in 0..RADIAL_SEGMENTS {
                 let angle = (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;

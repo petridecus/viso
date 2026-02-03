@@ -103,7 +103,11 @@ impl ProteinData {
                 let mut ca_pos: Option<Vec3> = None;
                 let mut c_pos: Option<Vec3> = None;
                 let mut o_pos: Option<Vec3> = None;
-                let mut cb_idx: Option<usize> = None;
+
+                // Temporarily collect sidechain atoms for this residue
+                // (we'll only add them if the residue has backbone)
+                let mut temp_sidechains: Vec<(Vec3, String)> = Vec::new();
+                let mut cb_atom_name: Option<String> = None;
 
                 for atom in residue.atoms() {
                     let atom_name = atom.name().trim().to_string();
@@ -115,26 +119,13 @@ impl ProteinData {
                         "N" => n_pos = Some(pos),
                         "CA" => ca_pos = Some(pos),
                         "C" => c_pos = Some(pos),
-                        "O" => o_pos = Some(pos), // Now we capture O for peptide plane orientation
+                        "O" => o_pos = Some(pos),
                         _ => {
-                            // Sidechain atom
-                            let sidechain_idx = sidechain_atoms.len();
-                            atom_index_map.insert(
-                                (chain_id.clone(), res_serial, atom_name.clone()),
-                                sidechain_idx,
-                            );
-
+                            // Collect sidechain atom temporarily
                             if atom_name == "CB" {
-                                cb_idx = Some(sidechain_idx);
+                                cb_atom_name = Some(atom_name.clone());
                             }
-
-                            sidechain_atoms.push(SidechainAtom {
-                                position: pos,
-                                residue_idx: global_residue_idx,
-                                atom_name,
-                                chain_id: chain_id.clone(),
-                                is_hydrophobic: hydrophobic,
-                            });
+                            temp_sidechains.push((pos, atom_name));
                         }
                     }
                 }
@@ -149,7 +140,6 @@ impl ProteinData {
 
                 // Also check for sequence gap (missing residues)
                 let has_sequence_gap = if let Some(prev_serial) = prev_res_serial {
-                    // Allow for insertion codes by checking if gap is > 1
                     (res_serial - prev_serial).abs() > 1
                 } else {
                     false
@@ -163,40 +153,64 @@ impl ProteinData {
                     });
                 }
 
-                // Add backbone atoms in order for legacy spline format (N, CA, C)
-                if let Some(n) = n_pos {
-                    current_segment.push(n);
-                }
-                if let Some(ca) = ca_pos {
-                    current_segment.push(ca);
+                // Only process residues that have backbone atoms (N, CA, C)
+                // This ensures residue indices match tube_renderer and picking
+                let has_backbone = n_pos.is_some() && ca_pos.is_some() && c_pos.is_some();
+
+                if has_backbone {
+                    // Add backbone atoms in order (N, CA, C)
+                    current_segment.push(n_pos.unwrap());
+                    current_segment.push(ca_pos.unwrap());
+                    current_segment.push(c_pos.unwrap());
+                    prev_c_pos = c_pos;
+
+                    // Now add sidechain atoms with the correct residue index
+                    let mut cb_idx: Option<usize> = None;
+                    for (pos, atom_name) in temp_sidechains {
+                        let sidechain_idx = sidechain_atoms.len();
+                        atom_index_map.insert(
+                            (chain_id.clone(), res_serial, atom_name.clone()),
+                            sidechain_idx,
+                        );
+
+                        if cb_atom_name.as_ref() == Some(&atom_name) {
+                            cb_idx = Some(sidechain_idx);
+                        }
+
+                        sidechain_atoms.push(SidechainAtom {
+                            position: pos,
+                            residue_idx: global_residue_idx,
+                            atom_name,
+                            chain_id: chain_id.clone(),
+                            is_hydrophobic: hydrophobic,
+                        });
+                    }
 
                     // Add CA-CB bond if CB exists
                     if let Some(cb_i) = cb_idx {
                         backbone_sidechain_bonds.push(BackboneSidechainBond {
-                            ca_position: ca,
+                            ca_position: ca_pos.unwrap(),
                             cb_index: cb_i as u32,
                         });
                     }
-                }
-                if let Some(c) = c_pos {
-                    current_segment.push(c);
-                    prev_c_pos = Some(c);
-                } else {
-                    prev_c_pos = None; // No C atom means we can't check continuity
-                }
 
-                // Add full residue data if all backbone atoms present
-                if let (Some(n), Some(ca), Some(c), Some(o)) = (n_pos, ca_pos, c_pos, o_pos) {
-                    current_residues.push(BackboneResidue {
-                        n_pos: n,
-                        ca_pos: ca,
-                        c_pos: c,
-                        o_pos: o,
-                    });
+                    // Add full residue data if O is also present
+                    if let Some(o) = o_pos {
+                        current_residues.push(BackboneResidue {
+                            n_pos: n_pos.unwrap(),
+                            ca_pos: ca_pos.unwrap(),
+                            c_pos: c_pos.unwrap(),
+                            o_pos: o,
+                        });
+                    }
+
+                    global_residue_idx += 1;
+                } else {
+                    // No backbone - don't add sidechains either (would have mismatched indices)
+                    prev_c_pos = None;
                 }
 
                 prev_res_serial = Some(res_serial);
-                global_residue_idx += 1;  // Increment for next residue
             }
 
             // Don't forget the last segment
@@ -212,6 +226,16 @@ impl ProteinData {
 
         // Generate sidechain bonds from topology tables
         let sidechain_bonds = Self::generate_sidechain_bonds(pdb, &atom_index_map);
+
+        // Debug: log what was loaded
+        let total_backbone_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
+        eprintln!("ProteinData: {} backbone chains, {} total backbone residues",
+            backbone_chains.len(), total_backbone_residues);
+        eprintln!("ProteinData: {} sidechain atoms", sidechain_atoms.len());
+        if let (Some(first), Some(last)) = (sidechain_atoms.first(), sidechain_atoms.last()) {
+            eprintln!("ProteinData: sidechain residue_idx range: {} to {}",
+                first.residue_idx, last.residue_idx);
+        }
 
         Ok(Self {
             backbone_chains,

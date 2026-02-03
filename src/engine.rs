@@ -68,11 +68,9 @@ impl ProteinRenderEngine {
             .expect("Failed to load protein data from CIF file");
 
         // Count total residues for selection buffer sizing
-        let total_residues: usize = if !protein_data.backbone_residue_chains.is_empty() {
-            protein_data.backbone_residue_chains.iter().map(|c| c.residues.len()).sum()
-        } else {
-            protein_data.backbone_chains.iter().map(|c| c.len() / 3).sum()
-        };
+        // Must use backbone_chains (not backbone_residue_chains) for consistent indexing
+        // with tube_renderer and picking
+        let total_residues: usize = protein_data.backbone_chains.iter().map(|c| c.len() / 3).sum();
 
         // Create selection buffer (shared by all renderers)
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
@@ -150,13 +148,10 @@ impl ProteinRenderEngine {
         // Fit camera to all atom positions
         camera_controller.fit_to_positions(&protein_data.all_positions);
 
-        // Initialize picking with CA positions
+        // Initialize picking with CA positions from backbone_chains
+        // (must match what tube_renderer uses for consistent residue indexing)
         let mut picking = Picking::new();
-        if !protein_data.backbone_residue_chains.is_empty() {
-            picking.update_from_residue_chains(&protein_data.backbone_residue_chains);
-        } else {
-            picking.update_from_backbone_chains(&protein_data.backbone_chains);
-        }
+        picking.update_from_backbone_chains(&protein_data.backbone_chains);
 
         Self {
             context,
@@ -377,9 +372,21 @@ impl ProteinRenderEngine {
 
     /// Handle mouse position update for hover detection
     pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
+        // Both cursor position (from winit PhysicalPosition) and context.config dimensions
+        // (from inner_size()) are in physical pixels - use them directly
         let width = self.context.config.width as f32;
         let height = self.context.config.height as f32;
         let camera = &self.camera_controller.camera;
+
+        // Diagnostic logging (once) to verify coordinate spaces match
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            eprintln!("=== PICKING COORDINATE DIAGNOSTICS ===");
+            eprintln!("  cursor: ({:.0}, {:.0})", x, y);
+            eprintln!("  screen: ({:.0}, {:.0})", width, height);
+            eprintln!("  ratio cursor/screen: ({:.3}, {:.3})", x / width, y / height);
+            // At center of screen, ratio should be ~0.5
+        });
 
         self.picking.update_hover_from_camera(x, y, width, height, camera);
     }
@@ -387,6 +394,7 @@ impl ProteinRenderEngine {
     /// Handle click for residue selection
     /// Returns true if selection changed
     pub fn handle_click(&mut self, x: f32, y: f32) -> bool {
+        // Both cursor position and context.config dimensions are in physical pixels
         let width = self.context.config.width as f32;
         let height = self.context.config.height as f32;
         let camera = &self.camera_controller.camera;

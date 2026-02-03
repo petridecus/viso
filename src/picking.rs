@@ -8,7 +8,9 @@ use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 /// Picking radius for CA spheres (Angstroms)
-const PICK_RADIUS: f32 = 2.5;
+/// Tube visual radius is 0.3Å, CA-CA distance is ~3.8Å
+/// Use 1.5Å for better usability without overlap (half the CA-CA distance)
+const PICK_RADIUS: f32 = 1.5;
 
 /// Selection buffer for GPU - stores selection state as a bit array
 pub struct SelectionBuffer {
@@ -118,15 +120,21 @@ impl Picking {
     /// Update picking data from legacy backbone chains (N, CA, C format)
     pub fn update_from_backbone_chains(&mut self, chains: &[Vec<Vec3>]) {
         self.ca_positions.clear();
-        for chain in chains {
+        let mut chain_start = 0usize;
+        for (chain_idx, chain) in chains.iter().enumerate() {
+            let chain_cas: usize = chain.len() / 3;
             // CA positions are every 3rd atom starting at index 1 (N=0, CA=1, C=2)
             for (i, &pos) in chain.iter().enumerate() {
                 if i % 3 == 1 {
                     self.ca_positions.push(pos);
                 }
             }
+            eprintln!("Picking: chain {} has {} CAs, residue indices {} to {}",
+                chain_idx, chain_cas, chain_start, chain_start + chain_cas - 1);
+            chain_start += chain_cas;
         }
-        eprintln!("Picking: loaded {} CA positions from {} backbone chains", self.ca_positions.len(), chains.len());
+        eprintln!("Picking: loaded {} total CA positions from {} backbone chains",
+            self.ca_positions.len(), chains.len());
     }
     
     /// Cast a ray from screen coordinates and return the hit residue index (or -1)
@@ -407,31 +415,39 @@ impl Picking {
     }
 }
 
-/// Ray-sphere intersection test
+/// Ray-sphere intersection test (numerically stable formulation)
 /// Returns the distance along the ray to the first intersection, or None if no hit
+///
+/// Uses the "half-b" formulation which is more numerically stable than the
+/// naive quadratic formula, especially for rays originating near the sphere.
 fn ray_sphere_intersect(ray_origin: Vec3, ray_dir: Vec3, center: Vec3, radius: f32) -> Option<f32> {
     let oc = ray_origin - center;
-    let a = ray_dir.dot(ray_dir);
-    let b = 2.0 * oc.dot(ray_dir);
-    let c = oc.dot(oc) - radius * radius;
-    let discriminant = b * b - 4.0 * a * c;
-    
-    if discriminant < 0.0 {
+
+    // Using half-b formulation: t = -half_b ± sqrt(half_b² - c)
+    // where half_b = oc·ray_dir (assumes ray_dir is normalized, so a=1)
+    let half_b = oc.dot(ray_dir);
+    let c = oc.length_squared() - radius * radius;
+    let quarter_discriminant = half_b * half_b - c;
+
+    if quarter_discriminant < 0.0 {
         return None;
     }
-    
-    let t = (-b - discriminant.sqrt()) / (2.0 * a);
-    if t > 0.0 {
-        Some(t)
-    } else {
-        // Try the far intersection (we're inside the sphere)
-        let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
-        if t2 > 0.0 {
-            Some(t2)
-        } else {
-            None
-        }
+
+    let sqrt_d = quarter_discriminant.sqrt();
+
+    // Try near intersection first
+    let t1 = -half_b - sqrt_d;
+    if t1 > 1e-6 {
+        return Some(t1);
     }
+
+    // Try far intersection (we're inside the sphere or near intersection is behind us)
+    let t2 = -half_b + sqrt_d;
+    if t2 > 1e-6 {
+        return Some(t2);
+    }
+
+    None
 }
 
 impl Default for Picking {

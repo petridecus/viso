@@ -110,6 +110,10 @@ impl CameraController {
     }
 
     fn update_camera_pos(&mut self) {
+        // Renormalize quaternion to prevent accumulated floating-point drift
+        // after many rotation operations
+        self.orientation = self.orientation.normalize();
+
         let dir = self.orientation * Vec3::Z;
 
         self.camera.eye = self.focus_point + (dir * self.distance);
