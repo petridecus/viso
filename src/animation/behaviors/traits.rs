@@ -53,6 +53,23 @@ pub enum PreemptionStrategy {
 /// }
 /// ```
 pub trait AnimationBehavior: Send + Sync {
+    /// Interpolate a position, optionally collapsing toward a point.
+    ///
+    /// Used for sidechain animation where atoms should collapse toward
+    /// the backbone (CA) during mutations.
+    ///
+    /// Default implementation: linear interpolation (ignores collapse_point).
+    /// CollapseExpand overrides to do two-phase collapse/expand.
+    fn interpolate_position(
+        &self,
+        t: f32,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        _collapse_point: glam::Vec3,
+    ) -> glam::Vec3 {
+        // Default: linear interpolation, ignore collapse_point
+        start + (end - start) * t
+    }
     /// Compute the visual state at time t (0.0 to 1.0).
     ///
     /// This is the core method that defines the animation curve.

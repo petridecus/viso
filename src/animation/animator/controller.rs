@@ -64,6 +64,9 @@ impl AnimationController {
     /// - Ignore the new target (if current animation has Ignore preemption)
     /// - Preempt current animation (syncing visual state first)
     ///
+    /// The `force` parameter allows forcing animation creation even when backbone
+    /// hasn't changed (e.g., for sidechain-only animations like Shake or MPNN).
+    ///
     /// Returns `Some(AnimationRunner)` if a new animation should start,
     /// `None` if the new target should be ignored or no animation needed.
     pub fn handle_new_target(
@@ -72,6 +75,7 @@ impl AnimationController {
         new_target: &StructureState,
         current_runner: Option<&AnimationRunner>,
         action: AnimationAction,
+        force: bool,
     ) -> Option<AnimationRunner> {
         // Disabled means no animation
         if !self.enabled {
@@ -110,18 +114,25 @@ impl AnimationController {
             }
         }
 
-        // Check if target actually changed (compare against previous target)
-        if !current_state.target_differs(new_target) {
+        // Check if backbone target actually changed (compare against previous target)
+        let backbone_changed = current_state.target_differs(new_target);
+
+        // If neither backbone nor sidechains changed (and not forced), skip animation
+        if !backbone_changed && !force {
             return None;
         }
 
-        // Find residues that need animation
+        // Find residues that need animation (backbone differences)
         let differing = current_state.differing_residues(new_target);
-        if differing.is_empty() {
+
+        // If backbone changed, we need residue data for the animation
+        // If only sidechains changed (force=true, backbone_changed=false),
+        // create a minimal runner that will drive sidechain interpolation
+        if differing.is_empty() && !force {
             return None;
         }
 
-        // Build residue animation data
+        // Build residue animation data from differing backbone residues
         let residue_data: Vec<ResidueAnimationData> = differing
             .into_iter()
             .filter_map(|idx| {
@@ -135,10 +146,15 @@ impl AnimationController {
             })
             .collect();
 
-        if residue_data.is_empty() {
+        // If we have backbone residue data, create animation from it
+        // If forcing (sidechain-only), create a minimal animation runner
+        if residue_data.is_empty() && !force {
             return None;
         }
 
+        // For sidechain-only animations (force=true, no backbone changes),
+        // create a runner with empty residue data - it will still provide
+        // timing/progress for sidechain interpolation
         Some(AnimationRunner::new(behavior, residue_data))
     }
 }
@@ -189,6 +205,7 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Wiggle,
+            false,
         );
 
         assert!(runner.is_none());
@@ -206,6 +223,7 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Wiggle,
+            false,
         );
 
         assert!(runner.is_some());
@@ -225,6 +243,7 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Wiggle,
+            false,
         );
 
         assert!(runner.is_none());
@@ -246,6 +265,7 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Load,
+            false,
         );
 
         // Snap behavior has zero duration, so it completes instantly
@@ -264,6 +284,7 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Wiggle,
+            false,
         );
 
         assert!(runner.is_none());
@@ -281,8 +302,27 @@ mod tests {
             &new_target,
             None,
             AnimationAction::Wiggle,
+            false,
         );
 
         assert!(runner.is_none());
+    }
+
+    #[test]
+    fn test_controller_force_creates_animation_with_same_backbone() {
+        let controller = AnimationController::new();
+        let mut state = StructureState::from_backbone(&make_backbone(5.0, 2));
+        let new_target = StructureState::from_backbone(&make_backbone(5.0, 2)); // Same backbone
+
+        // With force=true, should create animation even with same backbone
+        let runner = controller.handle_new_target(
+            &mut state,
+            &new_target,
+            None,
+            AnimationAction::Shake,
+            true, // force animation for sidechain-only change
+        );
+
+        assert!(runner.is_some());
     }
 }

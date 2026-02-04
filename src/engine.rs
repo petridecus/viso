@@ -25,9 +25,9 @@ use winit::keyboard::ModifiersState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewMode {
     /// Uniform-radius tubes for all residues
-    #[default]
     Tube,
     /// Secondary structure ribbons for helices/sheets, tubes for coils
+    #[default]
     Ribbon,
 }
 
@@ -107,7 +107,7 @@ impl ProteinRenderEngine {
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
 
         // Create backbone renderer (B-spline tube through backbone atoms)
-        let tube_renderer = TubeRenderer::new(
+        let mut tube_renderer = TubeRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
@@ -191,13 +191,23 @@ impl ProteinRenderEngine {
         // Create structure animator
         let animator = StructureAnimator::new();
 
+        // Set up tube renderer filter based on default view mode
+        let view_mode = ViewMode::default();
+        if view_mode == ViewMode::Ribbon {
+            // Ribbon mode: tube renderer only renders coils
+            let mut coil_only = HashSet::new();
+            coil_only.insert(SSType::Coil);
+            tube_renderer.set_ss_filter(Some(coil_only));
+            tube_renderer.regenerate(&context.device, &context.queue);
+        }
+
         Self {
             context,
             camera_controller,
             lighting,
             tube_renderer,
             ribbon_renderer,
-            view_mode: ViewMode::default(),
+            view_mode,
             sidechain_renderer,
             text_renderer,
             frame_timing,
@@ -263,9 +273,12 @@ impl ProteinRenderEngine {
             let visual_backbone = self.animator.get_backbone();
             self.update_backbone(&visual_backbone);
 
-            // Interpolate sidechain positions
-            let t = self.animator.progress();
-            self.update_sidechains_interpolated(t);
+            // Get interpolated sidechain positions from animator
+            // (uses behavior's interpolate_position for proper collapse/expand)
+            if self.animator.has_sidechain_data() {
+                let interpolated_positions = self.animator.get_sidechain_positions();
+                self.update_sidechains_with_positions(&interpolated_positions);
+            }
         }
 
         // Update hover state in camera uniform (from GPU picking)
@@ -627,17 +640,12 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Update sidechains with interpolated positions.
-    fn update_sidechains_interpolated(&mut self, t: f32) {
-        // Interpolate sidechain atom positions
-        let interpolated_positions: Vec<Vec3> = self
-            .start_sidechain_positions
-            .iter()
-            .zip(self.target_sidechain_positions.iter())
-            .map(|(start, target)| *start + (*target - *start) * t)
-            .collect();
+    /// Update sidechains with pre-interpolated positions from the animator.
+    fn update_sidechains_with_positions(&mut self, sidechain_positions: &[Vec3]) {
+        use crate::protein_data::BackboneSidechainBond;
 
-        // Interpolate backbone-sidechain CA positions
+        // Interpolate backbone-sidechain CA positions (linear)
+        let t = self.animator.progress();
         let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
             .start_backbone_sidechain_bonds
             .iter()
@@ -648,8 +656,6 @@ impl ProteinRenderEngine {
             })
             .collect();
 
-        // Update sidechain renderer
-        use crate::protein_data::BackboneSidechainBond;
         let bs_bonds: Vec<BackboneSidechainBond> = interpolated_bs_bonds
             .iter()
             .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
@@ -661,7 +667,7 @@ impl ProteinRenderEngine {
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            &interpolated_positions,
+            sidechain_positions,
             &self.cached_sidechain_bonds,
             &bs_bonds,
             &self.cached_sidechain_hydrophobicity,
@@ -703,6 +709,26 @@ impl ProteinRenderEngine {
         self.set_view_mode(new_mode);
     }
 
+    /// Fit the camera to show all provided positions (instant)
+    pub fn fit_camera_to_positions(&mut self, positions: &[Vec3]) {
+        if !positions.is_empty() {
+            self.camera_controller.fit_to_positions(positions);
+        }
+    }
+
+    /// Fit the camera to show all provided positions (animated)
+    pub fn fit_camera_to_positions_animated(&mut self, positions: &[Vec3]) {
+        if !positions.is_empty() {
+            self.camera_controller.fit_to_positions_animated(positions);
+        }
+    }
+
+    /// Update camera animation. Call this every frame.
+    /// Returns true if animation is still in progress.
+    pub fn update_camera_animation(&mut self, dt: f32) -> bool {
+        self.camera_controller.update_animation(dt)
+    }
+
     /// Get the GPU queue for buffer updates
     pub fn queue(&self) -> &wgpu::Queue {
         &self.context.queue
@@ -724,6 +750,12 @@ impl ProteinRenderEngine {
         fit_camera: bool,
     ) {
         use crate::protein_data::BackboneSidechainBond;
+
+        // Calculate total residues from backbone chains (3 atoms per residue: N, CA, C)
+        let total_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
+
+        // Ensure selection buffer has capacity for all residues (including new structures)
+        self.selection_buffer.ensure_capacity(&self.context.device, total_residues);
 
         // Update backbone tubes
         self.tube_renderer.update(
@@ -861,7 +893,24 @@ impl ProteinRenderEngine {
         self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
         self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
 
-        // Set backbone target (this starts the animation)
+        // Extract CA positions from backbone for sidechain collapse animation
+        // CA is the second atom (index 1) in each group of 3 (N, CA, C) per residue
+        let ca_positions: Vec<Vec3> = new_backbone
+            .iter()
+            .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+            .collect();
+
+        // Pass sidechain data to animator FIRST (before set_target)
+        // This allows set_target to detect sidechain changes and force animation
+        // even when backbone is unchanged (for Shake/MPNN animations)
+        self.animator.set_sidechain_target_with_action(
+            sidechain_positions,
+            sidechain_residue_indices,
+            &ca_positions,
+            Some(action),
+        );
+
+        // Set backbone target (this starts the animation, checking sidechain changes)
         self.animator.set_target(new_backbone, action);
 
         // Update renderers with START visual state (animation will interpolate from here)

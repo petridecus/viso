@@ -75,6 +75,36 @@ impl SelectionBuffer {
 
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&data));
     }
+
+    /// Ensure the buffer has capacity for at least `required` residues.
+    /// Recreates the buffer and bind_group if current capacity is insufficient.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: usize) {
+        if required <= self.capacity {
+            return;
+        }
+
+        // Need to grow - recreate buffer with new capacity
+        let new_capacity = required;
+        let num_words = (new_capacity + 31) / 32;
+        let data = vec![0u32; num_words.max(1)];
+
+        self.buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Selection Buffer"),
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Selection Bind Group"),
+            layout: &self.layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.buffer.as_entire_binding(),
+            }],
+        });
+
+        self.capacity = new_capacity;
+    }
 }
 
 /// GPU picking buffer that stores residue indices

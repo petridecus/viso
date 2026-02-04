@@ -144,6 +144,36 @@ impl AnimationBehavior for CollapseExpand {
     fn name(&self) -> &'static str {
         "collapse-expand"
     }
+
+    fn interpolate_position(
+        &self,
+        t: f32,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        collapse_point: glam::Vec3,
+    ) -> glam::Vec3 {
+        let collapse_frac = self.collapse_fraction();
+
+        if t < collapse_frac {
+            // Phase 1: Collapse from start toward collapse_point (backbone CA)
+            let phase_t = if collapse_frac > 0.0 {
+                t / collapse_frac
+            } else {
+                1.0
+            };
+            let eased_t = self.collapse_easing.evaluate(phase_t);
+            start + (collapse_point - start) * eased_t
+        } else {
+            // Phase 2: Expand from collapse_point toward end
+            let phase_t = if collapse_frac < 1.0 {
+                (t - collapse_frac) / (1.0 - collapse_frac)
+            } else {
+                1.0
+            };
+            let eased_t = self.expand_easing.evaluate(phase_t);
+            collapse_point + (end - collapse_point) * eased_t
+        }
+    }
 }
 
 #[cfg(test)]

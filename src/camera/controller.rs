@@ -3,11 +3,19 @@ use crate::render_context::RenderContext;
 use glam::{Quat, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
+/// Speed of camera animation (higher = faster, 1.0 = instant)
+const CAMERA_ANIMATION_SPEED: f32 = 3.0;
+
 pub struct CameraController {
     orientation: Quat,
     distance: f32,
     focus_point: Vec3,
     bounding_radius: f32,  // Protein bounding sphere radius for fog computation
+
+    // Animation targets (None = no animation in progress)
+    target_focus_point: Option<Vec3>,
+    target_distance: Option<f32>,
+    target_bounding_radius: Option<f32>,
 
     pub camera: Camera,
     pub uniform: CameraUniform,
@@ -81,6 +89,9 @@ impl CameraController {
             distance,
             focus_point,
             bounding_radius: 50.0, // Default, will be updated by fit_to_positions
+            target_focus_point: None,
+            target_distance: None,
+            target_bounding_radius: None,
             camera,
             uniform,
             buffer,
@@ -92,6 +103,63 @@ impl CameraController {
             pan_speed: 0.1,
             zoom_speed: 0.05,
         }
+    }
+
+    /// Update camera animation. Call this every frame.
+    /// Returns true if animation is still in progress.
+    pub fn update_animation(&mut self, dt: f32) -> bool {
+        let mut animating = false;
+        let t = (CAMERA_ANIMATION_SPEED * dt).min(1.0);
+
+        // Animate focus point
+        if let Some(target) = self.target_focus_point {
+            let diff = target - self.focus_point;
+            if diff.length() < 0.01 {
+                self.focus_point = target;
+                self.target_focus_point = None;
+            } else {
+                self.focus_point = self.focus_point.lerp(target, t);
+                animating = true;
+            }
+        }
+
+        // Animate distance
+        if let Some(target) = self.target_distance {
+            let diff = (target - self.distance).abs();
+            if diff < 0.01 {
+                self.distance = target;
+                self.target_distance = None;
+            } else {
+                self.distance = self.distance + (target - self.distance) * t;
+                animating = true;
+            }
+        }
+
+        // Animate bounding radius (for fog)
+        if let Some(target) = self.target_bounding_radius {
+            let diff = (target - self.bounding_radius).abs();
+            if diff < 0.01 {
+                self.bounding_radius = target;
+                self.target_bounding_radius = None;
+            } else {
+                self.bounding_radius = self.bounding_radius + (target - self.bounding_radius) * t;
+                animating = true;
+            }
+        }
+
+        if animating {
+            self.update_camera_pos();
+            self.update_fog_params();
+        }
+
+        animating
+    }
+
+    /// Check if camera is currently animating
+    pub fn is_animating(&self) -> bool {
+        self.target_focus_point.is_some()
+            || self.target_distance.is_some()
+            || self.target_bounding_radius.is_some()
     }
 
     /// Update fog parameters based on current camera distance and protein bounding radius.
@@ -183,11 +251,11 @@ impl CameraController {
         self.update_fog_params();
     }
 
-    /// Adjust camera to fit the given positions, centering on their centroid
-    /// and setting distance so all points are visible.
-    pub fn fit_to_positions(&mut self, positions: &[Vec3]) {
+    /// Calculate fit parameters for the given positions.
+    /// Returns (centroid, radius, fit_distance).
+    fn calculate_fit_params(&self, positions: &[Vec3]) -> Option<(Vec3, f32, f32)> {
         if positions.is_empty() {
-            return;
+            return None;
         }
 
         // Calculate centroid
@@ -199,16 +267,47 @@ impl CameraController {
             .map(|p| (*p - centroid).length())
             .fold(0.0f32, f32::max);
 
-        self.focus_point = centroid;
-        self.bounding_radius = radius;
-
         // Set distance to fit the bounding sphere in view
-        // Using fovy and some padding factor
+        // Account for both vertical and horizontal FOV to fill viewport maximally
         let fovy_rad = self.camera.fovy.to_radians();
-        let fit_distance = radius / (fovy_rad / 2.0).tan();
-        self.distance = fit_distance * 1.5; // 1.5x padding for comfortable view
+        let fovx_rad = fovy_rad * self.camera.aspect;
 
-        self.update_camera_pos();
-        self.update_fog_params();
+        // Calculate required distance for each axis
+        let fit_distance_y = radius / (fovy_rad / 2.0).tan();
+        let fit_distance_x = radius / (fovx_rad / 2.0).tan();
+
+        // Use the larger distance (tighter constraint) to ensure fit on both axes
+        let fit_distance = fit_distance_y.max(fit_distance_x);
+
+        // Minimal padding (1.05x) to fill viewport without clipping
+        Some((centroid, radius, fit_distance * 1.05))
+    }
+
+    /// Adjust camera to fit the given positions instantly (no animation).
+    /// Used for initial load.
+    pub fn fit_to_positions(&mut self, positions: &[Vec3]) {
+        if let Some((centroid, radius, fit_distance)) = self.calculate_fit_params(positions) {
+            self.focus_point = centroid;
+            self.bounding_radius = radius;
+            self.distance = fit_distance;
+
+            // Clear any pending animation
+            self.target_focus_point = None;
+            self.target_distance = None;
+            self.target_bounding_radius = None;
+
+            self.update_camera_pos();
+            self.update_fog_params();
+        }
+    }
+
+    /// Adjust camera to fit the given positions with smooth animation.
+    /// Used when new designs are added to the scene.
+    pub fn fit_to_positions_animated(&mut self, positions: &[Vec3]) {
+        if let Some((centroid, radius, fit_distance)) = self.calculate_fit_params(positions) {
+            self.target_focus_point = Some(centroid);
+            self.target_bounding_radius = Some(radius);
+            self.target_distance = Some(fit_distance);
+        }
     }
 }

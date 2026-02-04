@@ -593,11 +593,6 @@ impl TubeRenderer {
             let color = colors.get(i).copied().unwrap_or([0.6, 0.85, 0.6]);
             let residue_idx = residue_indices.get(i).copied().unwrap_or(0);
 
-            // Debug: sample some vertices
-            if i == 0 || i == points.len() / 2 || i == points.len() - 1 {
-                eprintln!("  vertex ring {}: residue_idx={}", i, residue_idx);
-            }
-
             for k in 0..RADIAL_SEGMENTS {
                 let angle = (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;
                 let cos_a = angle.cos();
