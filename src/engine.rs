@@ -7,6 +7,7 @@ use crate::composite::CompositePass;
 use crate::frame_timing::FrameTiming;
 use crate::picking::{Picking, SelectionBuffer};
 use crate::lighting::Lighting;
+use crate::pull_renderer::{PullRenderer, PullRenderInfo};
 
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
@@ -42,6 +43,7 @@ pub struct ProteinRenderEngine {
     pub lighting: Lighting,
     pub sidechain_renderer: CapsuleSidechainRenderer,
     pub band_renderer: BandRenderer,
+    pub pull_renderer: PullRenderer,
     pub tube_renderer: TubeRenderer,
     pub ribbon_renderer: RibbonRenderer,
     pub view_mode: ViewMode,
@@ -84,6 +86,8 @@ pub struct ProteinRenderEngine {
     cached_sidechain_residue_indices: Vec<u32>,
     /// Sidechain atom names (for looking up atoms by name during animation)
     cached_sidechain_atom_names: Vec<String>,
+    /// Last camera eye position for frustum culling change detection
+    last_cull_camera_eye: Vec3,
 }
 
 impl ProteinRenderEngine {
@@ -114,7 +118,6 @@ impl ProteinRenderEngine {
         // Create selection buffer (shared by all renderers)
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
 
-        // Create backbone renderer (B-spline tube through backbone atoms)
         let mut tube_renderer = TubeRenderer::new(
             &context,
             &camera_controller.layout,
@@ -163,6 +166,14 @@ impl ProteinRenderEngine {
 
         // Create band renderer (starts empty)
         let band_renderer = BandRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &selection_buffer.layout,
+        );
+
+        // Create pull renderer (starts empty, only one pull at a time)
+        let pull_renderer = PullRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
@@ -218,6 +229,7 @@ impl ProteinRenderEngine {
             view_mode,
             sidechain_renderer,
             band_renderer,
+            pull_renderer,
             text_renderer,
             frame_timing,
             input_handler,
@@ -243,6 +255,7 @@ impl ProteinRenderEngine {
             cached_sidechain_hydrophobicity: Vec::new(),
             cached_sidechain_residue_indices: Vec::new(),
             cached_sidechain_atom_names: Vec::new(),
+            last_cull_camera_eye: Vec3::ZERO,
         }
     }
 
@@ -310,6 +323,9 @@ impl ProteinRenderEngine {
         // Update FPS display
         self.text_renderer.update_fps(self.frame_timing.fps());
         self.text_renderer.prepare(&self.context);
+
+        // Frustum culling for sidechains - update when camera moves significantly
+        self.update_frustum_culling();
 
         let frame = self.context.get_next_frame()?;
         let view = frame
@@ -388,6 +404,14 @@ impl ProteinRenderEngine {
                 &self.lighting.bind_group,
                 &self.selection_buffer.bind_group,
             );
+
+            // Render pull (temporary drag constraint - only one at a time)
+            self.pull_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
+            );
         }
 
         // Update SSAO projection matrices
@@ -453,7 +477,10 @@ impl ProteinRenderEngine {
 
         self.context.submit(encoder);
 
-        // Complete GPU picking readback (after submit)
+        // Start async GPU picking readback (non-blocking)
+        self.picking.start_readback();
+
+        // Try to complete any pending readback from previous frame (non-blocking poll)
         self.picking.complete_readback(&self.context.device);
 
         frame.present();
@@ -660,15 +687,24 @@ impl ProteinRenderEngine {
 
     /// Update sidechains with pre-interpolated positions from the animator.
     fn update_sidechains_with_positions(&mut self, sidechain_positions: &[Vec3]) {
-        // Interpolate backbone-sidechain CA positions (linear)
-        let t = self.animator.progress();
+        // Get CA positions from animator's backbone state (not separate interpolation)
+        // This ensures CA-CB bonds match the actual rendered backbone position
         let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
-            .start_backbone_sidechain_bonds
+            .target_backbone_sidechain_bonds
             .iter()
-            .zip(self.target_backbone_sidechain_bonds.iter())
-            .map(|((start_pos, idx), (target_pos, _))| {
-                let pos = *start_pos + (*target_pos - *start_pos) * t;
-                (pos, *idx)
+            .map(|(target_ca_pos, cb_idx)| {
+                // Get residue index for this CB atom
+                let res_idx = self
+                    .cached_sidechain_residue_indices
+                    .get(*cb_idx as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                // Get CA position from animator (matches rendered backbone)
+                let ca_pos = self
+                    .animator
+                    .get_ca_position(res_idx)
+                    .unwrap_or(*target_ca_pos); // Fallback to target if not available
+                (ca_pos, *cb_idx)
             })
             .collect();
 
@@ -681,6 +717,77 @@ impl ProteinRenderEngine {
             &self.cached_sidechain_hydrophobicity,
             &self.cached_sidechain_residue_indices,
         );
+    }
+
+    /// Update sidechain instances with frustum culling when camera moves significantly.
+    /// This filters out sidechains behind the camera to reduce draw calls.
+    fn update_frustum_culling(&mut self) {
+        // Skip if no sidechain data
+        if self.target_sidechain_positions.is_empty() {
+            return;
+        }
+
+        let camera_eye = self.camera_controller.camera.eye;
+        let camera_delta = (camera_eye - self.last_cull_camera_eye).length();
+
+        // Only update culling when camera moves more than 5 units
+        // This prevents expensive updates on minor camera movements
+        const CULL_UPDATE_THRESHOLD: f32 = 5.0;
+        if camera_delta < CULL_UPDATE_THRESHOLD {
+            return;
+        }
+
+        self.last_cull_camera_eye = camera_eye;
+
+        // Get current frustum
+        let frustum = self.camera_controller.frustum();
+
+        // Get current sidechain positions (may be interpolated during animation)
+        let positions = if self.animator.is_animating() && self.animator.has_sidechain_data() {
+            self.animator.get_sidechain_positions()
+        } else {
+            self.target_sidechain_positions.clone()
+        };
+
+        // Get current backbone-sidechain bonds (may be interpolated)
+        let bs_bonds = if self.animator.is_animating() {
+            // Interpolate CA positions
+            self.target_backbone_sidechain_bonds
+                .iter()
+                .map(|(target_ca, cb_idx)| {
+                    let res_idx = self
+                        .cached_sidechain_residue_indices
+                        .get(*cb_idx as usize)
+                        .copied()
+                        .unwrap_or(0) as usize;
+                    let ca_pos = self
+                        .animator
+                        .get_ca_position(res_idx)
+                        .unwrap_or(*target_ca);
+                    (ca_pos, *cb_idx)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            self.target_backbone_sidechain_bonds.clone()
+        };
+
+        // Update sidechains with frustum culling
+        self.sidechain_renderer.update_with_frustum(
+            &self.context.device,
+            &self.context.queue,
+            &positions,
+            &self.cached_sidechain_bonds,
+            &bs_bonds,
+            &self.cached_sidechain_hydrophobicity,
+            &self.cached_sidechain_residue_indices,
+            Some(&frustum),
+        );
+
+        // Recreate picking bind group since buffer may have changed
+        self.capsule_picking_bind_group = Some(self.picking.create_capsule_bind_group(
+            &self.context.device,
+            self.sidechain_renderer.capsule_buffer(),
+        ));
     }
 
     /// Set the view mode for backbone rendering
@@ -853,6 +960,7 @@ impl ProteinRenderEngine {
         sidechain_bonds: &[(u32, u32)],
         sidechain_hydrophobicity: &[bool],
         sidechain_residue_indices: &[u32],
+        sidechain_atom_names: &[String],
         backbone_sidechain_bonds: &[(Vec3, u32)],
     ) {
         self.animate_to_full_pose_with_action(
@@ -861,6 +969,7 @@ impl ProteinRenderEngine {
             sidechain_bonds,
             sidechain_hydrophobicity,
             sidechain_residue_indices,
+            sidechain_atom_names,
             backbone_sidechain_bonds,
             AnimationAction::Wiggle,
         );
@@ -874,26 +983,45 @@ impl ProteinRenderEngine {
         sidechain_bonds: &[(u32, u32)],
         sidechain_hydrophobicity: &[bool],
         sidechain_residue_indices: &[u32],
+        sidechain_atom_names: &[String],
         backbone_sidechain_bonds: &[(Vec3, u32)],
         action: AnimationAction,
     ) {
-        // Capture current positions as start (for interpolation)
-        // If sizes match, use current target; otherwise use new positions (snap)
+        // Capture current VISUAL positions as start (for smooth preemption)
+        // If animation is in progress, use interpolated positions, not old targets
         if self.target_sidechain_positions.len() == sidechain_positions.len() {
-            self.start_sidechain_positions = self.target_sidechain_positions.clone();
-            self.start_backbone_sidechain_bonds = self.target_backbone_sidechain_bonds.clone();
+            if self.animator.is_animating() && self.animator.has_sidechain_data() {
+                // Animation in progress - sync to current visual state (like backbone does)
+                self.start_sidechain_positions = self.animator.get_sidechain_positions();
+                // Also interpolate backbone-sidechain bonds
+                let ctx = self.animator.interpolation_context();
+                self.start_backbone_sidechain_bonds = self
+                    .start_backbone_sidechain_bonds
+                    .iter()
+                    .zip(self.target_backbone_sidechain_bonds.iter())
+                    .map(|((start_pos, idx), (target_pos, _))| {
+                        let pos = *start_pos + (*target_pos - *start_pos) * ctx.eased_t;
+                        (pos, *idx)
+                    })
+                    .collect();
+            } else {
+                // No animation - use previous target as new start
+                self.start_sidechain_positions = self.target_sidechain_positions.clone();
+                self.start_backbone_sidechain_bonds = self.target_backbone_sidechain_bonds.clone();
+            }
         } else {
+            // Size changed - snap to new positions
             self.start_sidechain_positions = sidechain_positions.to_vec();
             self.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
         }
 
-        // Set new targets
+        // Set new targets and cached data
         self.target_sidechain_positions = sidechain_positions.to_vec();
         self.target_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
         self.cached_sidechain_bonds = sidechain_bonds.to_vec();
         self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
         self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
-        // Note: atom names are set by update_from_aggregated, not here
+        self.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
         // CA is the second atom (index 1) in each group of 3 (N, CA, C) per residue
@@ -974,7 +1102,26 @@ impl ProteinRenderEngine {
     }
 
     // =========================================================================
-    // Pull Action Methods
+    // Pull Renderer Methods
+    // =========================================================================
+
+    /// Update the pull visualization (only one pull at a time).
+    /// Pass None to clear the pull visualization.
+    pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
+        self.pull_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            pull,
+        );
+    }
+
+    /// Clear the pull visualization.
+    pub fn clear_pull(&mut self) {
+        self.pull_renderer.clear();
+    }
+
+    // =========================================================================
+    // Pull Action Methods (camera/position helpers)
     // =========================================================================
 
     /// Get the CA position of a residue by index.

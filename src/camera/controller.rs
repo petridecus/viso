@@ -1,4 +1,5 @@
 use crate::camera::core::{Camera, CameraUniform};
+use crate::camera::frustum::Frustum;
 use crate::render_context::RenderContext;
 use glam::{Quat, Vec2, Vec3};
 use wgpu::util::DeviceExt;
@@ -359,5 +360,10 @@ impl CameraController {
 
         let center = self.camera.eye + forward * depth;
         center + right * (ndc_x * half_width) + up * (ndc_y * half_height)
+    }
+
+    /// Get the current view frustum for culling
+    pub fn frustum(&self) -> Frustum {
+        Frustum::from_view_projection(self.camera.build_matrix())
     }
 }

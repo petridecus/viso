@@ -6,6 +6,8 @@
 
 use crate::render_context::RenderContext;
 use crate::tube_renderer::tube_vertex_buffer_layout;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// Selection buffer for GPU - stores selection state as a bit array
@@ -130,8 +132,10 @@ pub struct Picking {
     pub hovered_residue: i32,
     /// Currently selected residue indices
     pub selected_residues: Vec<i32>,
-    /// Pending mouse position for async readback
-    pending_mouse_pos: Option<(u32, u32)>,
+    /// Whether a readback is in flight (buffer mapping requested)
+    readback_in_flight: bool,
+    /// Flag set by callback when buffer mapping is complete
+    map_complete: Arc<AtomicBool>,
 }
 
 impl Picking {
@@ -290,7 +294,8 @@ impl Picking {
             height,
             hovered_residue: -1,
             selected_residues: Vec::new(),
-            pending_mouse_pos: None,
+            readback_in_flight: false,
+            map_complete: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -450,8 +455,8 @@ impl Picking {
             }
         }
 
-        // Copy pixel at mouse position to staging buffer
-        if mouse_x < self.width && mouse_y < self.height {
+        // Copy pixel at mouse position to staging buffer (only if not already in flight)
+        if mouse_x < self.width && mouse_y < self.height && !self.readback_in_flight {
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -477,42 +482,58 @@ impl Picking {
                     depth_or_array_layers: 1,
                 },
             );
-            self.pending_mouse_pos = Some((mouse_x, mouse_y));
         }
     }
 
-    /// Complete the readback (call after queue.submit)
-    pub fn complete_readback(&mut self, device: &wgpu::Device) {
-        if self.pending_mouse_pos.is_none() {
+    /// Start async readback (call after queue.submit)
+    /// This initiates the buffer mapping without blocking
+    pub fn start_readback(&mut self) {
+        if self.readback_in_flight {
             return;
         }
-
+        self.readback_in_flight = true;
+        self.map_complete.store(false, Ordering::SeqCst);
+        let map_complete = self.map_complete.clone();
         let buffer_slice = self.staging_buffer.slice(..4);
-        let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
+            if result.is_ok() {
+                map_complete.store(true, Ordering::SeqCst);
+            }
         });
+    }
 
-        let _ = device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
-
-        if let Ok(Ok(())) = receiver.recv() {
-            let data = buffer_slice.get_mapped_range();
-            let residue_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            drop(data);
-            self.staging_buffer.unmap();
-
-            // residue_id is residue_idx + 1, so 0 means no hit
-            self.hovered_residue = if residue_id == 0 {
-                -1
-            } else {
-                (residue_id - 1) as i32
-            };
+    /// Try to complete the readback without blocking.
+    /// Returns true if new data was read, false if still pending.
+    /// Uses previous frame's hover result until new data is ready.
+    pub fn complete_readback(&mut self, device: &wgpu::Device) -> bool {
+        if !self.readback_in_flight {
+            return false;
         }
 
-        self.pending_mouse_pos = None;
+        // Poll without waiting - process callbacks
+        let _ = device.poll(wgpu::PollType::Poll);
+
+        // Check if the callback has signaled completion
+        if !self.map_complete.load(Ordering::SeqCst) {
+            // Not ready yet - keep using cached hovered_residue
+            return false;
+        }
+
+        // Buffer is mapped - read the data
+        let buffer_slice = self.staging_buffer.slice(..4);
+        let data = buffer_slice.get_mapped_range();
+        let residue_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        drop(data);
+        self.staging_buffer.unmap();
+        self.readback_in_flight = false;
+
+        // residue_id is residue_idx + 1, so 0 means no hit
+        self.hovered_residue = if residue_id == 0 {
+            -1
+        } else {
+            (residue_id - 1) as i32
+        };
+        true
     }
 
     /// Handle click for selection

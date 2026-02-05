@@ -10,6 +10,7 @@ pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
 pub mod picking;
+pub mod pull_renderer;
 pub mod render_context;
 pub mod ribbon_renderer;
 pub mod secondary_structure;

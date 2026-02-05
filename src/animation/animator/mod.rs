@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use glam::Vec3;
 
+use super::interpolation::InterpolationContext;
 use super::preferences::AnimationAction;
 
 /// Structure animator manages animation state and applies behaviors.
@@ -55,6 +56,9 @@ pub struct StructureAnimator {
     sidechains_changed: bool,
     /// Pending action for sidechain-only animation
     pending_sidechain_action: Option<AnimationAction>,
+    /// Current frame's animation progress (0.0 to 1.0) - single source of truth
+    /// Set by update(), used by all getters in the same frame
+    current_frame_progress: f32,
 }
 
 impl StructureAnimator {
@@ -71,6 +75,7 @@ impl StructureAnimator {
             target_ca_positions: Vec::new(),
             sidechains_changed: false,
             pending_sidechain_action: None,
+            current_frame_progress: 1.0,
         }
     }
 
@@ -87,6 +92,7 @@ impl StructureAnimator {
             target_ca_positions: Vec::new(),
             sidechains_changed: false,
             pending_sidechain_action: None,
+            current_frame_progress: 1.0,
         }
     }
 
@@ -119,12 +125,10 @@ impl StructureAnimator {
     }
 
     /// Get the current animation progress (0.0 to 1.0).
-    /// Returns 1.0 if no animation is active.
+    /// Returns the progress computed in the last update() call.
+    /// This is the single source of truth for animation timing within a frame.
     pub fn progress(&self) -> f32 {
-        self.runner
-            .as_ref()
-            .map(|r| r.progress(Instant::now()))
-            .unwrap_or(1.0)
+        self.current_frame_progress
     }
 
     /// Set a new target state, potentially triggering an animation.
@@ -164,14 +168,19 @@ impl StructureAnimator {
     /// Returns `true` if animations are still active.
     pub fn update(&mut self, now: Instant) -> bool {
         let Some(ref runner) = self.runner else {
+            self.current_frame_progress = 1.0;
             return false;
         };
 
-        // Apply interpolated states
-        runner.apply_to_state(&mut self.state, now);
+        // Compute and store progress once - this is the single source of truth for this frame
+        self.current_frame_progress = runner.progress(now);
+
+        // Apply interpolated states using the same progress value
+        runner.apply_to_state(&mut self.state, self.current_frame_progress);
 
         // Check if complete
-        if runner.is_complete(now) {
+        if self.current_frame_progress >= 1.0 {
+            self.current_frame_progress = 1.0;
             self.state.snap_to_target();
             self.runner = None;
             return false;
@@ -182,6 +191,7 @@ impl StructureAnimator {
 
     /// Skip current animation to end state.
     pub fn skip(&mut self) {
+        self.current_frame_progress = 1.0;
         self.state.snap_to_target();
         self.runner = None;
     }
@@ -204,6 +214,24 @@ impl StructureAnimator {
     /// Get the underlying state (for advanced usage).
     pub fn state(&self) -> &StructureState {
         &self.state
+    }
+
+    /// Get the current animation runner (if any).
+    pub fn runner(&self) -> Option<&AnimationRunner> {
+        self.runner.as_ref()
+    }
+
+    /// Get the current interpolation context.
+    ///
+    /// Returns the unified context that should be used for all interpolation
+    /// in the current frame. This ensures backbone, sidechains, and bonds
+    /// all use the same eased progress values.
+    pub fn interpolation_context(&self) -> InterpolationContext {
+        let raw_t = self.progress();
+        match self.runner.as_ref() {
+            Some(runner) if raw_t < 1.0 => runner.behavior().compute_context(raw_t),
+            _ => InterpolationContext::identity(),
+        }
     }
 
     /// Set sidechain target positions for animation.
@@ -234,10 +262,25 @@ impl StructureAnimator {
         // Check if sidechains actually changed
         let sidechains_changed = self.sidechains_differ(positions);
 
-        // If sizes match, capture current target as new start
+        // If sizes match, capture current VISUAL state as new start (for smooth preemption)
         if self.target_sidechain_positions.len() == positions.len() {
-            self.start_sidechain_positions = self.target_sidechain_positions.clone();
-            self.start_ca_positions = self.target_ca_positions.clone();
+            if self.is_animating() && !self.target_sidechain_positions.is_empty() {
+                // Animation in progress - sync to current interpolated positions
+                // This prevents sidechains from jumping during rapid updates (like pulls)
+                self.start_sidechain_positions = self.get_sidechain_positions();
+                // Also sync CA positions using same progress
+                let ctx = self.interpolation_context();
+                self.start_ca_positions = self
+                    .start_ca_positions
+                    .iter()
+                    .zip(self.target_ca_positions.iter())
+                    .map(|(start, target)| *start + (*target - *start) * ctx.eased_t)
+                    .collect();
+            } else {
+                // No animation - use previous target as new start
+                self.start_sidechain_positions = self.target_sidechain_positions.clone();
+                self.start_ca_positions = self.target_ca_positions.clone();
+            }
         } else {
             // Size changed - snap to new positions
             self.start_sidechain_positions = positions.to_vec();
@@ -281,15 +324,18 @@ impl StructureAnimator {
     /// This applies the same interpolation logic as backbone animation,
     /// including collapse/expand for mutations.
     pub fn get_sidechain_positions(&self) -> Vec<Vec3> {
-        let t = self.progress();
+        let raw_t = self.progress();
 
         // If no runner or animation complete, return target positions
-        if self.runner.is_none() || t >= 1.0 {
+        if self.runner.is_none() || raw_t >= 1.0 {
             return self.target_sidechain_positions.clone();
         }
 
         let runner = self.runner.as_ref().unwrap();
         let behavior = runner.behavior();
+
+        // Get unified interpolation context - single source of truth for progress
+        let ctx = behavior.compute_context(raw_t);
 
         self.start_sidechain_positions
             .iter()
@@ -300,10 +346,12 @@ impl StructureAnimator {
                 let res_idx = self.sidechain_residue_indices.get(i).copied().unwrap_or(0) as usize;
                 let start_ca = self.start_ca_positions.get(res_idx).copied().unwrap_or(*start);
                 let end_ca = self.target_ca_positions.get(res_idx).copied().unwrap_or(*end);
-                // Interpolate CA position for collapse point
-                let collapse_point = start_ca + (end_ca - start_ca) * t;
 
-                behavior.interpolate_position(t, *start, *end, collapse_point)
+                // CRITICAL: Use eased_t for collapse point (same as backbone)
+                // This ensures sidechain collapse point matches backbone CA position
+                let collapse_point = start_ca + (end_ca - start_ca) * ctx.eased_t;
+
+                behavior.interpolate_position(raw_t, *start, *end, collapse_point)
             })
             .collect()
     }
@@ -319,14 +367,18 @@ impl StructureAnimator {
         let target = self.target_ca_positions.get(residue_idx)?;
 
         // If not animating, return target position
-        if self.runner.is_none() || self.progress() >= 1.0 {
+        let Some(runner) = self.runner.as_ref() else {
+            return Some(*target);
+        };
+        let raw_t = self.progress();
+        if raw_t >= 1.0 {
             return Some(*target);
         }
 
-        // Interpolate between start and target
+        // Use unified context for consistent interpolation with backbone/sidechains
         let start = self.start_ca_positions.get(residue_idx).unwrap_or(target);
-        let t = self.progress();
-        Some(*start + (*target - *start) * t)
+        let ctx = runner.behavior().compute_context(raw_t);
+        Some(*start + (*target - *start) * ctx.eased_t)
     }
 }
 

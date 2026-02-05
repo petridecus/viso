@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::easing::EasingFunction;
 
+use super::super::interpolation::InterpolationContext;
 use super::state::ResidueVisualState;
 use super::traits::{AnimationBehavior, PreemptionStrategy};
 
@@ -79,49 +80,73 @@ impl Default for CollapseExpand {
 }
 
 impl AnimationBehavior for CollapseExpand {
+    fn compute_context(&self, raw_t: f32) -> InterpolationContext {
+        let collapse_frac = self.collapse_fraction();
+
+        if raw_t < collapse_frac {
+            // Collapse phase
+            let phase_t = if collapse_frac > 0.0 {
+                raw_t / collapse_frac
+            } else {
+                1.0
+            };
+            let phase_eased = self.collapse_easing.evaluate(phase_t);
+
+            // Global eased progress: during collapse, we go from 0 to collapse_frac
+            // using the collapse easing curve
+            let eased_t = phase_eased * collapse_frac;
+
+            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+        } else {
+            // Expand phase
+            let phase_t = if collapse_frac < 1.0 {
+                (raw_t - collapse_frac) / (1.0 - collapse_frac)
+            } else {
+                1.0
+            };
+            let phase_eased = self.expand_easing.evaluate(phase_t);
+
+            // Global eased progress: during expand, we go from collapse_frac to 1.0
+            // using the expand easing curve
+            let eased_t = collapse_frac + phase_eased * (1.0 - collapse_frac);
+
+            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+        }
+    }
+
     fn compute_state(
         &self,
         t: f32,
         start: &ResidueVisualState,
         end: &ResidueVisualState,
     ) -> ResidueVisualState {
+        let ctx = self.compute_context(t);
         let collapse_frac = self.collapse_fraction();
 
-        // Backbone interpolates linearly throughout the entire animation
+        // CRITICAL FIX: Backbone now uses eased_t (same as sidechains)
+        // This ensures backbone and sidechains move at the same pace
+        let backbone_t = ctx.eased_t;
         let backbone = [
-            start.backbone[0] + (end.backbone[0] - start.backbone[0]) * t,
-            start.backbone[1] + (end.backbone[1] - start.backbone[1]) * t,
-            start.backbone[2] + (end.backbone[2] - start.backbone[2]) * t,
+            start.backbone[0] + (end.backbone[0] - start.backbone[0]) * backbone_t,
+            start.backbone[1] + (end.backbone[1] - start.backbone[1]) * backbone_t,
+            start.backbone[2] + (end.backbone[2] - start.backbone[2]) * backbone_t,
         ];
+
+        // Get phase-eased progress for chi interpolation
+        let phase_eased = ctx.phase_eased_t.unwrap_or(1.0);
 
         let chis = if t < collapse_frac {
             // Phase 1: Collapse old sidechain toward backbone (chi -> 0)
-            let phase_t = if collapse_frac > 0.0 {
-                t / collapse_frac
-            } else {
-                1.0
-            };
-            let eased_t = self.collapse_easing.evaluate(phase_t);
-
-            // Interpolate from start chis toward 0
             let mut chis = [0.0f32; 4];
             for i in 0..start.num_chis {
-                chis[i] = start.chis[i] * (1.0 - eased_t);
+                chis[i] = start.chis[i] * (1.0 - phase_eased);
             }
             chis
         } else {
             // Phase 2: Expand new sidechain from backbone (0 -> chi)
-            let phase_t = if collapse_frac < 1.0 {
-                (t - collapse_frac) / (1.0 - collapse_frac)
-            } else {
-                1.0
-            };
-            let eased_t = self.expand_easing.evaluate(phase_t);
-
-            // Interpolate from 0 toward end chis
             let mut chis = [0.0f32; 4];
             for i in 0..end.num_chis {
-                chis[i] = end.chis[i] * eased_t;
+                chis[i] = end.chis[i] * phase_eased;
             }
             chis
         };

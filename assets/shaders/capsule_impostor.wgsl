@@ -216,10 +216,15 @@ fn vs_main(
     // Residue index packed in endpoint_b.w
     let residue_idx = u32(cap.endpoint_b.w);
 
+    // Use radius from instance data (packed in endpoint_a.w)
+    // Fall back to TUBE_RADIUS if instance radius is 0 (legacy compatibility)
+    var radius = cap.endpoint_a.w;
+    if (radius < 0.001) {
+        radius = TUBE_RADIUS;
+    }
     // Make selected residues 1.4x larger (matches Foldit SEL_THICKNESS_MULTIPLIER)
-    var radius = TUBE_RADIUS;
     if (is_selected(residue_idx)) {
-        radius = TUBE_RADIUS * 1.4;
+        radius = radius * 1.4;
     }
     
     let center = (endpoint_a + endpoint_b) * 0.5;

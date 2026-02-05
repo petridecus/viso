@@ -16,8 +16,12 @@ use std::hash::{Hash, Hasher};
 
 /// Parameters for backbone tube rendering
 const TUBE_RADIUS: f32 = 0.3;
-const SEGMENTS_PER_SPAN: usize = 16;
-const RADIAL_SEGMENTS: usize = 32;
+
+/// Radial segments around the tube circumference
+const RADIAL_SEGMENTS: usize = 8;
+
+/// Axial segments along the tube between CA atoms
+const SEGMENTS_PER_SPAN: usize = 4;
 
 /// A point along the spline with position, tangent, and frame vectors
 #[derive(Clone, Copy)]
@@ -90,6 +94,7 @@ impl TubeRenderer {
         backbone_chains: &[Vec<Vec3>],
     ) -> Self {
         let ss_filter = None; // Render all SS types by default
+
         let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &ss_filter);
 
         let vertex_buffer = if vertices.is_empty() {
@@ -330,6 +335,7 @@ impl TubeRenderer {
             })
     }
 
+    /// Generate tube mesh for all chains
     fn generate_tube_mesh(
         chains: &[Vec<Vec3>],
         ss_filter: &Option<HashSet<SSType>>,
@@ -358,7 +364,7 @@ impl TubeRenderer {
             // Detect secondary structure from CA positions
             let ss_types = detect_secondary_structure(&ca_positions);
 
-            // Generate spline points from raw CA positions (no smoothing/idealization)
+            // Generate spline points from raw CA positions
             let spline_points = Self::generate_spline_points(&ca_positions);
 
             // If no filter, render all. Otherwise, render only matching SS segments.
@@ -375,17 +381,19 @@ impl TubeRenderer {
             } else {
                 // Render everything
                 let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
-                let residue_indices = Self::interpolate_residue_indices(ca_positions.len(), spline_points.len(), global_residue_idx);
-
-                // Debug: log residue index range for this chain
-                if let (Some(&first), Some(&last)) = (residue_indices.first(), residue_indices.last()) {
-                    eprintln!("TubeRenderer: chain with {} CAs, residue indices {} to {}",
-                        ca_positions.len(), first, last);
-                }
+                let residue_indices = Self::interpolate_residue_indices(
+                    ca_positions.len(),
+                    spline_points.len(),
+                    global_residue_idx,
+                );
 
                 let base_vertex = all_vertices.len() as u32;
-                let (vertices, indices) =
-                    Self::generate_tube_segment(&spline_points, &spline_colors, &residue_indices, base_vertex);
+                let (vertices, indices) = Self::generate_tube_segment(
+                    &spline_points,
+                    &spline_colors,
+                    &residue_indices,
+                    base_vertex,
+                );
                 all_vertices.extend(vertices);
                 all_indices.extend(indices);
             }
@@ -458,8 +466,12 @@ impl TubeRenderer {
             );
 
             let base_vertex = all_vertices.len() as u32;
-            let (vertices, indices) =
-                Self::generate_tube_segment(segment_points, &segment_colors, &segment_residue_indices, base_vertex);
+            let (vertices, indices) = Self::generate_tube_segment(
+                segment_points,
+                &segment_colors,
+                &segment_residue_indices,
+                base_vertex,
+            );
 
             all_vertices.extend(vertices);
             all_indices.extend(indices);
@@ -473,12 +485,6 @@ impl TubeRenderer {
         }
 
         let n_residues = ss_types.len();
-        let _points_per_residue = if n_residues > 1 {
-            (num_spline_points - 1) / (n_residues - 1)
-        } else {
-            num_spline_points
-        };
-
         let mut colors = Vec::with_capacity(num_spline_points);
 
         for i in 0..num_spline_points {
@@ -517,8 +523,13 @@ impl TubeRenderer {
         indices
     }
 
+    /// Generate spline points from CA positions
     fn generate_spline_points(ca_positions: &[Vec3]) -> Vec<SplinePoint> {
         let n = ca_positions.len();
+        if n < 2 {
+            return Vec::new();
+        }
+
         let total_segments = (n - 1) * SEGMENTS_PER_SPAN;
         let mut points = Vec::with_capacity(total_segments + 1);
 
@@ -572,21 +583,21 @@ impl TubeRenderer {
         points
     }
 
+    /// Generate tube segment geometry
     fn generate_tube_segment(
         points: &[SplinePoint],
         colors: &[[f32; 3]],
         residue_indices: &[u32],
         base_vertex: u32,
     ) -> (Vec<TubeVertex>, Vec<u32>) {
-        let num_rings = points.len();
-        let mut vertices = Vec::with_capacity(num_rings * RADIAL_SEGMENTS);
-        let mut indices = Vec::new();
-
-        // Debug: verify residue_indices length matches points
-        if residue_indices.len() != points.len() {
-            eprintln!("WARNING: residue_indices.len()={} != points.len()={}",
-                residue_indices.len(), points.len());
+        if points.is_empty() {
+            return (Vec::new(), Vec::new());
         }
+
+        let num_rings = points.len();
+        let total_vertices = num_rings * RADIAL_SEGMENTS;
+        let mut vertices = Vec::with_capacity(total_vertices);
+        let mut indices = Vec::new();
 
         // Generate vertices for each ring
         for (i, point) in points.iter().enumerate() {
@@ -616,16 +627,16 @@ impl TubeRenderer {
 
         // Generate indices for triangles connecting adjacent rings
         for i in 0..num_rings - 1 {
-            let ring_start = i * RADIAL_SEGMENTS;
-            let next_ring_start = (i + 1) * RADIAL_SEGMENTS;
+            let ring_offset = i * RADIAL_SEGMENTS;
+            let next_ring_offset = (i + 1) * RADIAL_SEGMENTS;
 
             for k in 0..RADIAL_SEGMENTS {
                 let k_next = (k + 1) % RADIAL_SEGMENTS;
 
-                let v0 = base_vertex + (ring_start + k) as u32;
-                let v1 = base_vertex + (ring_start + k_next) as u32;
-                let v2 = base_vertex + (next_ring_start + k) as u32;
-                let v3 = base_vertex + (next_ring_start + k_next) as u32;
+                let v0 = base_vertex + (ring_offset + k) as u32;
+                let v1 = base_vertex + (ring_offset + k_next) as u32;
+                let v2 = base_vertex + (next_ring_offset + k) as u32;
+                let v3 = base_vertex + (next_ring_offset + k_next) as u32;
 
                 // Two triangles per quad
                 indices.extend_from_slice(&[v0, v2, v1]);

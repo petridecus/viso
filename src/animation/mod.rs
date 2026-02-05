@@ -25,6 +25,7 @@
 
 pub mod animator;
 pub mod behaviors;
+pub mod interpolation;
 pub mod preferences;
 
 // Re-export commonly used types
@@ -33,4 +34,5 @@ pub use behaviors::{
     AnimationBehavior, Cascade, CollapseExpand, PreemptionStrategy, ResidueVisualState,
     SharedBehavior, SmoothInterpolation, Snap, shared,
 };
+pub use interpolation::{InterpolationContext, lerp_position, lerp_f32};
 pub use preferences::{AnimationAction, AnimationPreferences};

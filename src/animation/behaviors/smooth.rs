@@ -70,13 +70,17 @@ impl Default for SmoothInterpolation {
 }
 
 impl AnimationBehavior for SmoothInterpolation {
+    fn eased_t(&self, t: f32) -> f32 {
+        self.easing.evaluate(t)
+    }
+
     fn compute_state(
         &self,
         t: f32,
         start: &ResidueVisualState,
         end: &ResidueVisualState,
     ) -> ResidueVisualState {
-        let eased_t = self.easing.evaluate(t);
+        let eased_t = self.eased_t(t);
         start.lerp(end, eased_t)
     }
 

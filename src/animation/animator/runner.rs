@@ -85,16 +85,15 @@ impl AnimationRunner {
         self.progress(now) >= 1.0
     }
 
-    /// Compute visual state for a specific residue at current time.
-    pub fn compute_residue_state(&self, data: &ResidueAnimationData, now: Instant) -> ResidueVisualState {
-        let t = self.progress(now);
+    /// Compute visual state for a specific residue at given progress.
+    pub fn compute_residue_state(&self, data: &ResidueAnimationData, t: f32) -> ResidueVisualState {
         self.behavior.compute_state(t, &data.start, &data.target)
     }
 
-    /// Apply interpolated states to a StructureState.
-    pub fn apply_to_state(&self, state: &mut StructureState, now: Instant) {
+    /// Apply interpolated states to a StructureState using pre-computed progress.
+    pub fn apply_to_state(&self, state: &mut StructureState, t: f32) {
         for data in &self.residues {
-            let visual = self.compute_residue_state(data, now);
+            let visual = self.compute_residue_state(data, t);
             state.set_current(data.residue_idx, visual);
         }
     }
@@ -172,8 +171,8 @@ mod tests {
         let start = Instant::now();
         let runner = AnimationRunner::with_start_time(start, behavior, residues);
 
-        let mid = start + Duration::from_millis(50);
-        let state = runner.compute_residue_state(&runner.residues[0], mid);
+        // At t=0.5 (50ms of 100ms total), should be at midpoint
+        let state = runner.compute_residue_state(&runner.residues[0], 0.5);
 
         // Should be at midpoint (y=5)
         assert!((state.backbone[0].y - 5.0).abs() < 0.1);

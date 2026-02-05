@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::super::interpolation::InterpolationContext;
 use super::state::ResidueVisualState;
 
 /// How to handle a new target arriving while an animation is in progress.
@@ -53,12 +54,22 @@ pub enum PreemptionStrategy {
 /// }
 /// ```
 pub trait AnimationBehavior: Send + Sync {
+    /// Get the eased time value for a given raw progress t (0.0 to 1.0).
+    ///
+    /// This is the single source of truth for easing. Override this to apply
+    /// custom easing curves. Used by both backbone and sidechain interpolation.
+    ///
+    /// Default implementation: linear (no easing).
+    fn eased_t(&self, t: f32) -> f32 {
+        t
+    }
+
     /// Interpolate a position, optionally collapsing toward a point.
     ///
     /// Used for sidechain animation where atoms should collapse toward
     /// the backbone (CA) during mutations.
     ///
-    /// Default implementation: linear interpolation (ignores collapse_point).
+    /// Default implementation: lerp using eased_t (ignores collapse_point).
     /// CollapseExpand overrides to do two-phase collapse/expand.
     fn interpolate_position(
         &self,
@@ -67,8 +78,9 @@ pub trait AnimationBehavior: Send + Sync {
         end: glam::Vec3,
         _collapse_point: glam::Vec3,
     ) -> glam::Vec3 {
-        // Default: linear interpolation, ignore collapse_point
-        start + (end - start) * t
+        // Use eased_t for consistent easing with backbone
+        let eased = self.eased_t(t);
+        start + (end - start) * eased
     }
     /// Compute the visual state at time t (0.0 to 1.0).
     ///
@@ -93,6 +105,18 @@ pub trait AnimationBehavior: Send + Sync {
     /// Optional name for debugging/logging.
     fn name(&self) -> &'static str {
         "unnamed"
+    }
+
+    /// Compute the interpolation context for this behavior at raw progress t.
+    ///
+    /// This provides a single source of truth for all progress values in a frame.
+    /// Both backbone and sidechain interpolation should use the same context
+    /// to ensure they move in sync.
+    ///
+    /// Default implementation: applies eased_t for simple behaviors.
+    /// Complex behaviors (CollapseExpand) should override with phase-aware logic.
+    fn compute_context(&self, raw_t: f32) -> InterpolationContext {
+        InterpolationContext::simple(raw_t, self.eased_t(raw_t))
     }
 }
 

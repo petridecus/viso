@@ -108,8 +108,8 @@ impl AnimationController {
                 }
                 PreemptionStrategy::Restart | PreemptionStrategy::Blend => {
                     // Sync current state to visual position before starting new animation
-                    let now = Instant::now();
-                    runner.apply_to_state(current_state, now);
+                    let t = runner.progress(Instant::now());
+                    runner.apply_to_state(current_state, t);
                 }
             }
         }

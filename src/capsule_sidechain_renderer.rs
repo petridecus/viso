@@ -8,9 +8,13 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the tube renderer.
 
+use crate::camera::frustum::Frustum;
 use crate::dynamic_buffer::TypedBuffer;
 use crate::render_context::RenderContext;
 use glam::Vec3;
+
+/// Radius used for frustum culling (capsule bounding sphere)
+const CULL_RADIUS: f32 = 5.0;
 
 /// Per-instance data for capsule impostor
 /// Must match the WGSL CapsuleInstance struct layout exactly
@@ -54,12 +58,14 @@ impl CapsuleSidechainRenderer {
         hydrophobicity: &[bool],
         residue_indices: &[u32],
     ) -> Self {
+        // No frustum culling on initial creation
         let instances = Self::generate_instances(
             sidechain_positions,
             sidechain_bonds,
             backbone_sidechain_bonds,
             hydrophobicity,
             residue_indices,
+            None,
         );
 
         let instance_count = instances.len() as u32;
@@ -173,12 +179,14 @@ impl CapsuleSidechainRenderer {
 
     /// Generate capsule instances from sidechain data.
     /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+    /// - `frustum`: Optional frustum for culling (None = no culling)
     fn generate_instances(
         sidechain_positions: &[Vec3],
         sidechain_bonds: &[(u32, u32)],
         backbone_sidechain_bonds: &[(Vec3, u32)],
         hydrophobicity: &[bool],
         residue_indices: &[u32],
+        frustum: Option<&Frustum>,
     ) -> Vec<CapsuleInstance> {
         let mut instances = Vec::with_capacity(sidechain_bonds.len() + backbone_sidechain_bonds.len());
 
@@ -196,6 +204,18 @@ impl CapsuleSidechainRenderer {
             residue_indices.get(idx).copied().unwrap_or(0) as f32
         };
 
+        // Helper to check if a capsule is visible (either endpoint in frustum)
+        let is_visible = |pos_a: Vec3, pos_b: Vec3| -> bool {
+            match frustum {
+                Some(f) => {
+                    let center = (pos_a + pos_b) * 0.5;
+                    let half_len = (pos_a - pos_b).length() * 0.5;
+                    f.intersects_sphere(center, half_len + CULL_RADIUS)
+                }
+                None => true,
+            }
+        };
+
         // Sidechain-sidechain bonds
         for &(a, b) in sidechain_bonds {
             let a_idx = a as usize;
@@ -206,6 +226,12 @@ impl CapsuleSidechainRenderer {
 
             let pos_a = sidechain_positions[a_idx];
             let pos_b = sidechain_positions[b_idx];
+
+            // Frustum cull
+            if !is_visible(pos_a, pos_b) {
+                continue;
+            }
+
             let color_a = get_color(a_idx);
             let color_b = get_color(b_idx);
             // Use residue index from first atom (both should be same residue for internal bonds)
@@ -227,6 +253,12 @@ impl CapsuleSidechainRenderer {
             }
 
             let cb_pos = sidechain_positions[cb_idx];
+
+            // Frustum cull
+            if !is_visible(ca_pos, cb_pos) {
+                continue;
+            }
+
             let cb_color = get_color(cb_idx);
             let res_idx = get_residue_idx(cb_idx);
 
@@ -242,7 +274,7 @@ impl CapsuleSidechainRenderer {
         instances
     }
 
-    /// Update sidechain geometry.
+    /// Update sidechain geometry (no frustum culling).
     /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
     pub fn update(
         &mut self,
@@ -254,12 +286,39 @@ impl CapsuleSidechainRenderer {
         hydrophobicity: &[bool],
         residue_indices: &[u32],
     ) {
+        self.update_with_frustum(
+            device,
+            queue,
+            sidechain_positions,
+            sidechain_bonds,
+            backbone_sidechain_bonds,
+            hydrophobicity,
+            residue_indices,
+            None,
+        );
+    }
+
+    /// Update sidechain geometry with frustum culling.
+    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+    /// - `frustum`: Optional frustum for culling invisible sidechains
+    pub fn update_with_frustum(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sidechain_positions: &[Vec3],
+        sidechain_bonds: &[(u32, u32)],
+        backbone_sidechain_bonds: &[(Vec3, u32)],
+        hydrophobicity: &[bool],
+        residue_indices: &[u32],
+        frustum: Option<&Frustum>,
+    ) {
         let instances = Self::generate_instances(
             sidechain_positions,
             sidechain_bonds,
             backbone_sidechain_bonds,
             hydrophobicity,
             residue_indices,
+            frustum,
         );
 
         let reallocated = self.instance_buffer.write(device, queue, &instances);

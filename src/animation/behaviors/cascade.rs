@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::easing::EasingFunction;
 
+use super::super::interpolation::InterpolationContext;
 use super::state::ResidueVisualState;
 use super::traits::{AnimationBehavior, PreemptionStrategy};
 
@@ -107,6 +108,14 @@ impl Default for Cascade {
 }
 
 impl AnimationBehavior for Cascade {
+    fn eased_t(&self, t: f32) -> f32 {
+        self.easing.evaluate(t)
+    }
+
+    fn compute_context(&self, raw_t: f32) -> InterpolationContext {
+        InterpolationContext::simple(raw_t, self.easing.evaluate(raw_t))
+    }
+
     fn compute_state(
         &self,
         t: f32,
@@ -116,7 +125,7 @@ impl AnimationBehavior for Cascade {
         // Note: Cascade is special - it needs residue index context for proper behavior.
         // When used through the animator, residue_t() should be called first to get
         // the per-residue progress. This basic implementation applies easing to global t.
-        let eased_t = self.easing.evaluate(t);
+        let eased_t = self.eased_t(t);
         start.lerp(end, eased_t)
     }
 
