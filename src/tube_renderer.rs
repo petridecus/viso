@@ -665,6 +665,11 @@ impl TubeRenderer {
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
     }
+
+    /// Get a reference to the cached backbone chains.
+    pub fn cached_chains(&self) -> &[Vec<Vec3>] {
+        &self.cached_chains
+    }
 }
 
 /// Cubic Hermite interpolation for position

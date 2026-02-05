@@ -1,12 +1,14 @@
-//! Capsule sidechain renderer
+//! Band renderer
 //!
-//! Renders sidechains as capsule chains (cylinders with hemispherical caps).
-//! This replaces both AtomRenderer and CylinderImpostorRenderer:
-//! - Bonds are rendered as capsules
-//! - "Atoms" are simply the hemispherical caps at capsule endpoints
-//! - No separate sphere pass needed, no junction artifacts
+//! Renders constraint bands between atoms as capsules (cylinders with hemispherical caps).
+//! Bands are used to pull atoms toward each other during minimization.
 //!
-//! Uses the same capsule_impostor.wgsl shader as the tube renderer.
+//! Color coding:
+//! - Green: Pull mode (attract atoms)
+//! - Red: Push mode (repel atoms)
+//! - Gray: Disabled
+//!
+//! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
 use crate::dynamic_buffer::TypedBuffer;
 use crate::render_context::RenderContext;
@@ -27,47 +29,52 @@ struct CapsuleInstance {
     color_b: [f32; 4],
 }
 
-// Color constants
-const HYDROPHOBIC_COLOR: [f32; 3] = [0.3, 0.5, 0.9]; // Blue
-const HYDROPHILIC_COLOR: [f32; 3] = [0.95, 0.6, 0.2]; // Orange
-const CAPSULE_RADIUS: f32 = 0.3;
+// Color constants for bands
+const PULL_COLOR: [f32; 3] = [0.2, 0.8, 0.3]; // Green for pull mode
+const PUSH_COLOR: [f32; 3] = [0.9, 0.2, 0.2]; // Red for push mode
+const DISABLED_COLOR: [f32; 3] = [0.5, 0.5, 0.5]; // Gray for disabled
+const NEUTRAL_COLOR: [f32; 3] = [0.3, 0.6, 0.9]; // Blue for neutral (neither push nor pull)
+const BAND_RADIUS: f32 = 0.15; // Thinner than sidechains for visual distinction
 
-pub struct CapsuleSidechainRenderer {
+/// Information about a band to be rendered
+#[derive(Debug, Clone)]
+pub struct BandRenderInfo {
+    /// World-space position of first endpoint
+    pub endpoint_a: Vec3,
+    /// World-space position of second endpoint
+    pub endpoint_b: Vec3,
+    /// Whether the band is in pull mode
+    pub is_pull: bool,
+    /// Whether the band is in push mode
+    pub is_push: bool,
+    /// Whether the band is disabled
+    pub is_disabled: bool,
+    /// Residue index for picking (typically the first residue)
+    pub residue_idx: u32,
+}
+
+pub struct BandRenderer {
     pipeline: wgpu::RenderPipeline,
     instance_buffer: TypedBuffer<CapsuleInstance>,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
-    pub instance_count: u32,
+    instance_count: u32,
 }
 
-impl CapsuleSidechainRenderer {
-    /// Create a new capsule sidechain renderer.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+impl BandRenderer {
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
     ) -> Self {
-        let instances = Self::generate_instances(
-            sidechain_positions,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            hydrophobicity,
-            residue_indices,
-        );
+        // Start with empty buffer
+        let instances: Vec<CapsuleInstance> = Vec::new();
 
-        let instance_count = instances.len() as u32;
-
-        let instance_buffer = TypedBuffer::new_with_data(
+        let instance_buffer = TypedBuffer::with_capacity(
             &context.device,
-            "Capsule Sidechain Instance Buffer",
-            &instances,
+            "Band Instance Buffer",
+            64, // Initial capacity for ~64 bands
             wgpu::BufferUsages::STORAGE,
         );
 
@@ -80,13 +87,13 @@ impl CapsuleSidechainRenderer {
             instance_buffer,
             bind_group_layout,
             bind_group,
-            instance_count,
+            instance_count: instances.len() as u32,
         }
     }
 
     fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Capsule Sidechain Layout"),
+            label: Some("Band Renderer Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -111,7 +118,7 @@ impl CapsuleSidechainRenderer {
                 binding: 0,
                 resource: instance_buffer.buffer().as_entire_binding(),
             }],
-            label: Some("Capsule Sidechain Bind Group"),
+            label: Some("Band Renderer Bind Group"),
         })
     }
 
@@ -131,7 +138,7 @@ impl CapsuleSidechainRenderer {
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Capsule Sidechain Pipeline Layout"),
+                    label: Some("Band Renderer Pipeline Layout"),
                     bind_group_layouts: &[bind_group_layout, camera_layout, lighting_layout, selection_layout],
                     immediate_size: 0,
                 });
@@ -139,7 +146,7 @@ impl CapsuleSidechainRenderer {
         context
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Capsule Sidechain Pipeline"),
+                label: Some("Band Renderer Pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -171,96 +178,39 @@ impl CapsuleSidechainRenderer {
             })
     }
 
-    /// Generate capsule instances from sidechain data.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
-    fn generate_instances(
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
-    ) -> Vec<CapsuleInstance> {
-        let mut instances = Vec::with_capacity(sidechain_bonds.len() + backbone_sidechain_bonds.len());
+    /// Generate capsule instances from band data
+    fn generate_instances(bands: &[BandRenderInfo]) -> Vec<CapsuleInstance> {
+        bands
+            .iter()
+            .map(|band| {
+                let color = if band.is_disabled {
+                    DISABLED_COLOR
+                } else if band.is_push {
+                    PUSH_COLOR
+                } else if band.is_pull {
+                    PULL_COLOR
+                } else {
+                    NEUTRAL_COLOR
+                };
 
-        // Helper to get color for an atom index
-        let get_color = |idx: usize| -> [f32; 3] {
-            if hydrophobicity.get(idx).copied().unwrap_or(false) {
-                HYDROPHOBIC_COLOR
-            } else {
-                HYDROPHILIC_COLOR
-            }
-        };
-
-        // Helper to get residue index for an atom
-        let get_residue_idx = |idx: usize| -> f32 {
-            residue_indices.get(idx).copied().unwrap_or(0) as f32
-        };
-
-        // Sidechain-sidechain bonds
-        for &(a, b) in sidechain_bonds {
-            let a_idx = a as usize;
-            let b_idx = b as usize;
-            if a_idx >= sidechain_positions.len() || b_idx >= sidechain_positions.len() {
-                continue;
-            }
-
-            let pos_a = sidechain_positions[a_idx];
-            let pos_b = sidechain_positions[b_idx];
-            let color_a = get_color(a_idx);
-            let color_b = get_color(b_idx);
-            // Use residue index from first atom (both should be same residue for internal bonds)
-            let res_idx = get_residue_idx(a_idx);
-
-            instances.push(CapsuleInstance {
-                endpoint_a: [pos_a.x, pos_a.y, pos_a.z, CAPSULE_RADIUS],
-                endpoint_b: [pos_b.x, pos_b.y, pos_b.z, res_idx],
-                color_a: [color_a[0], color_a[1], color_a[2], 0.0],
-                color_b: [color_b[0], color_b[1], color_b[2], 0.0],
-            });
-        }
-
-        // Backbone-sidechain bonds (CA to CB)
-        for &(ca_pos, cb_idx) in backbone_sidechain_bonds {
-            let cb_idx = cb_idx as usize;
-            if cb_idx >= sidechain_positions.len() {
-                continue;
-            }
-
-            let cb_pos = sidechain_positions[cb_idx];
-            let cb_color = get_color(cb_idx);
-            let res_idx = get_residue_idx(cb_idx);
-
-            // CA end uses same color as CB for visual continuity
-            instances.push(CapsuleInstance {
-                endpoint_a: [ca_pos.x, ca_pos.y, ca_pos.z, CAPSULE_RADIUS],
-                endpoint_b: [cb_pos.x, cb_pos.y, cb_pos.z, res_idx],
-                color_a: [cb_color[0], cb_color[1], cb_color[2], 0.0],
-                color_b: [cb_color[0], cb_color[1], cb_color[2], 0.0],
-            });
-        }
-
-        instances
+                CapsuleInstance {
+                    endpoint_a: [band.endpoint_a.x, band.endpoint_a.y, band.endpoint_a.z, BAND_RADIUS],
+                    endpoint_b: [band.endpoint_b.x, band.endpoint_b.y, band.endpoint_b.z, band.residue_idx as f32],
+                    color_a: [color[0], color[1], color[2], 0.0],
+                    color_b: [color[0], color[1], color[2], 0.0],
+                }
+            })
+            .collect()
     }
 
-    /// Update sidechain geometry.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+    /// Update band geometry
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
+        bands: &[BandRenderInfo],
     ) {
-        let instances = Self::generate_instances(
-            sidechain_positions,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            hydrophobicity,
-            residue_indices,
-        );
+        let instances = Self::generate_instances(bands);
 
         let reallocated = self.instance_buffer.write(device, queue, &instances);
 
@@ -269,6 +219,11 @@ impl CapsuleSidechainRenderer {
         }
 
         self.instance_count = instances.len() as u32;
+    }
+
+    /// Clear all bands
+    pub fn clear(&mut self) {
+        self.instance_count = 0;
     }
 
     pub fn draw<'a>(
@@ -292,8 +247,8 @@ impl CapsuleSidechainRenderer {
         render_pass.draw(0..6, 0..self.instance_count);
     }
 
-    /// Get the capsule instance buffer for picking
-    pub fn capsule_buffer(&self) -> &wgpu::Buffer {
-        self.instance_buffer.buffer()
+    /// Get band count for debugging
+    pub fn band_count(&self) -> u32 {
+        self.instance_count
     }
 }

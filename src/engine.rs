@@ -1,4 +1,5 @@
 use crate::animation::{AnimationAction, StructureAnimator};
+use crate::band_renderer::{BandRenderer, BandRenderInfo};
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
 use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
@@ -7,7 +8,6 @@ use crate::frame_timing::FrameTiming;
 use crate::picking::{Picking, SelectionBuffer};
 use crate::lighting::Lighting;
 
-use crate::protein_data::ProteinData;
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
 use crate::secondary_structure::SSType;
@@ -15,6 +15,8 @@ use crate::ssao::SsaoRenderer;
 use crate::text_renderer::TextRenderer;
 use crate::tube_renderer::TubeRenderer;
 
+use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
+use foldit_conv::coords::{get_ca_position_from_chains, mmcif_file_to_coords, RenderCoords};
 use glam::{Vec2, Vec3};
 use std::collections::HashSet;
 use std::time::Instant;
@@ -39,6 +41,7 @@ pub struct ProteinRenderEngine {
     pub camera_controller: CameraController,
     pub lighting: Lighting,
     pub sidechain_renderer: CapsuleSidechainRenderer,
+    pub band_renderer: BandRenderer,
     pub tube_renderer: TubeRenderer,
     pub ribbon_renderer: RibbonRenderer,
     pub view_mode: ViewMode,
@@ -79,6 +82,8 @@ pub struct ProteinRenderEngine {
     cached_sidechain_bonds: Vec<(u32, u32)>,
     cached_sidechain_hydrophobicity: Vec<bool>,
     cached_sidechain_residue_indices: Vec<u32>,
+    /// Sidechain atom names (for looking up atoms by name during animation)
+    cached_sidechain_atom_names: Vec<String>,
 }
 
 impl ProteinRenderEngine {
@@ -94,14 +99,17 @@ impl ProteinRenderEngine {
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
 
-        // Load protein data from mmCIF file
-        let protein_data = ProteinData::from_mmcif(cif_path)
-            .expect("Failed to load protein data from CIF file");
+        // Load coords from mmCIF file and convert to render format
+        let coords = mmcif_file_to_coords(std::path::Path::new(cif_path))
+            .expect("Failed to load coords from CIF file");
+        let render_coords = RenderCoords::from_coords_with_topology(
+            &coords,
+            is_hydrophobic,
+            |name| get_residue_bonds(name).map(|b| b.to_vec()),
+        );
 
         // Count total residues for selection buffer sizing
-        // Must use backbone_chains (not backbone_residue_chains) for consistent indexing
-        // with tube_renderer and picking
-        let total_residues: usize = protein_data.backbone_chains.iter().map(|c| c.len() / 3).sum();
+        let total_residues = render_coords.residue_count();
 
         // Create selection buffer (shared by all renderers)
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
@@ -112,18 +120,18 @@ impl ProteinRenderEngine {
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
-            &protein_data.backbone_chains,
+            &render_coords.backbone_chains,
         );
 
         // Create ribbon renderer for secondary structure visualization
-        // Use the new Foldit-style renderer if we have full backbone residue data (N, CA, C, O)
-        let ribbon_renderer = if !protein_data.backbone_residue_chains.is_empty() {
+        // Use the Foldit-style renderer if we have full backbone residue data (N, CA, C, O)
+        let ribbon_renderer = if !render_coords.backbone_residue_chains.is_empty() {
             RibbonRenderer::new_from_residues(
                 &context,
                 &camera_controller.layout,
                 &lighting.layout,
                 &selection_buffer.layout,
-                &protein_data.backbone_residue_chains,
+                &render_coords.backbone_residue_chains,
             )
         } else {
             // Fallback to legacy renderer if only backbone_chains available
@@ -132,22 +140,14 @@ impl ProteinRenderEngine {
                 &camera_controller.layout,
                 &lighting.layout,
                 &selection_buffer.layout,
-                &protein_data.backbone_chains,
+                &render_coords.backbone_chains,
             )
         };
 
-        // Get sidechain data
-        let sidechain_positions = protein_data.sidechain_positions();
-        let sidechain_hydrophobicity: Vec<bool> = protein_data
-            .sidechain_atoms
-            .iter()
-            .map(|a| a.is_hydrophobic)
-            .collect();
-        let sidechain_residue_indices: Vec<u32> = protein_data
-            .sidechain_atoms
-            .iter()
-            .map(|a| a.residue_idx as u32)
-            .collect();
+        // Get sidechain data from RenderCoords
+        let sidechain_positions = render_coords.sidechain_positions();
+        let sidechain_hydrophobicity = render_coords.sidechain_hydrophobicity();
+        let sidechain_residue_indices = render_coords.sidechain_residue_indices();
 
         let sidechain_renderer = CapsuleSidechainRenderer::new(
             &context,
@@ -155,10 +155,18 @@ impl ProteinRenderEngine {
             &lighting.layout,
             &selection_buffer.layout,
             &sidechain_positions,
-            &protein_data.sidechain_bonds,
-            &protein_data.backbone_sidechain_bonds,
+            &render_coords.sidechain_bonds,
+            &render_coords.backbone_sidechain_bonds,
             &sidechain_hydrophobicity,
             &sidechain_residue_indices,
+        );
+
+        // Create band renderer (starts empty)
+        let band_renderer = BandRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &selection_buffer.layout,
         );
 
         // Create shared depth texture (bindable for SSAO)
@@ -177,7 +185,7 @@ impl ProteinRenderEngine {
         let frame_timing = FrameTiming::new(TARGET_FPS);
 
         // Fit camera to all atom positions
-        camera_controller.fit_to_positions(&protein_data.all_positions);
+        camera_controller.fit_to_positions(&render_coords.all_positions);
 
         // Create GPU-based picking
         let picking = Picking::new(&context, &camera_controller.layout);
@@ -209,6 +217,7 @@ impl ProteinRenderEngine {
             ribbon_renderer,
             view_mode,
             sidechain_renderer,
+            band_renderer,
             text_renderer,
             frame_timing,
             input_handler,
@@ -233,6 +242,7 @@ impl ProteinRenderEngine {
             cached_sidechain_bonds: Vec::new(),
             cached_sidechain_hydrophobicity: Vec::new(),
             cached_sidechain_residue_indices: Vec::new(),
+            cached_sidechain_atom_names: Vec::new(),
         }
     }
 
@@ -365,6 +375,14 @@ impl ProteinRenderEngine {
             }
 
             self.sidechain_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
+            );
+
+            // Render bands (constraint visualizations)
+            self.band_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
                 &self.lighting.bind_group,
@@ -642,8 +660,6 @@ impl ProteinRenderEngine {
 
     /// Update sidechains with pre-interpolated positions from the animator.
     fn update_sidechains_with_positions(&mut self, sidechain_positions: &[Vec3]) {
-        use crate::protein_data::BackboneSidechainBond;
-
         // Interpolate backbone-sidechain CA positions (linear)
         let t = self.animator.progress();
         let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
@@ -656,20 +672,12 @@ impl ProteinRenderEngine {
             })
             .collect();
 
-        let bs_bonds: Vec<BackboneSidechainBond> = interpolated_bs_bonds
-            .iter()
-            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
-                ca_position: *ca_pos,
-                cb_index: *cb_idx,
-            })
-            .collect();
-
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
             sidechain_positions,
             &self.cached_sidechain_bonds,
-            &bs_bonds,
+            &interpolated_bs_bonds,
             &self.cached_sidechain_hydrophobicity,
             &self.cached_sidechain_residue_indices,
         );
@@ -744,13 +752,12 @@ impl ProteinRenderEngine {
         sidechain_positions: &[Vec3],
         sidechain_hydrophobicity: &[bool],
         sidechain_residue_indices: &[u32],
+        sidechain_atom_names: &[String],
         sidechain_bonds: &[(u32, u32)],
         backbone_sidechain_bonds: &[(Vec3, u32)], // (CA position, CB index)
         all_positions: &[Vec3],
         fit_camera: bool,
     ) {
-        use crate::protein_data::BackboneSidechainBond;
-
         // Calculate total residues from backbone chains (3 atoms per residue: N, CA, C)
         let total_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
 
@@ -771,21 +778,12 @@ impl ProteinRenderEngine {
             backbone_chains,
         );
 
-        // Convert backbone_sidechain_bonds to the format CylinderRenderer expects
-        let bs_bonds: Vec<BackboneSidechainBond> = backbone_sidechain_bonds
-            .iter()
-            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
-                ca_position: *ca_pos,
-                cb_index: *cb_idx,
-            })
-            .collect();
-
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
             sidechain_positions,
             sidechain_bonds,
-            &bs_bonds,
+            backbone_sidechain_bonds,
             sidechain_hydrophobicity,
             sidechain_residue_indices,
         );
@@ -798,6 +796,9 @@ impl ProteinRenderEngine {
 
         // Cache secondary structure types for double-click segment selection
         self.cached_ss_types = self.compute_ss_types(backbone_chains);
+
+        // Cache atom names for lookup by name (used for band tracking during animation)
+        self.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Fit camera if requested and we have positions
         if fit_camera && !all_positions.is_empty() {
@@ -892,6 +893,7 @@ impl ProteinRenderEngine {
         self.cached_sidechain_bonds = sidechain_bonds.to_vec();
         self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
         self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
+        // Note: atom names are set by update_from_aggregated, not here
 
         // Extract CA positions from backbone for sidechain collapse animation
         // CA is the second atom (index 1) in each group of 3 (N, CA, C) per residue
@@ -920,21 +922,12 @@ impl ProteinRenderEngine {
         }
 
         // Update sidechain renderer with start positions
-        use crate::protein_data::BackboneSidechainBond;
-        let bs_bonds: Vec<BackboneSidechainBond> = self.start_backbone_sidechain_bonds
-            .iter()
-            .map(|(ca_pos, cb_idx)| BackboneSidechainBond {
-                ca_position: *ca_pos,
-                cb_index: *cb_idx,
-            })
-            .collect();
-
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
             &self.start_sidechain_positions,
             sidechain_bonds,
-            &bs_bonds,
+            &self.start_backbone_sidechain_bonds,
             sidechain_hydrophobicity,
             sidechain_residue_indices,
         );
@@ -959,5 +952,192 @@ impl ProteinRenderEngine {
     /// Set animation enabled/disabled.
     pub fn set_animation_enabled(&mut self, enabled: bool) {
         self.animator.set_enabled(enabled);
+    }
+
+    // =========================================================================
+    // Band Methods
+    // =========================================================================
+
+    /// Update the band visualization.
+    /// Call this when bands are added, removed, or modified.
+    pub fn update_bands(&mut self, bands: &[BandRenderInfo]) {
+        self.band_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            bands,
+        );
+    }
+
+    /// Clear all band visualizations.
+    pub fn clear_bands(&mut self) {
+        self.band_renderer.clear();
+    }
+
+    // =========================================================================
+    // Pull Action Methods
+    // =========================================================================
+
+    /// Get the CA position of a residue by index.
+    /// Returns None if the residue index is out of bounds.
+    pub fn get_residue_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
+        // First try animator (has interpolated positions during animation)
+        if let Some(pos) = self.animator.get_ca_position(residue_idx) {
+            return Some(pos);
+        }
+
+        // Fall back to tube_renderer's cached backbone chains
+        // Uses foldit-conv's get_ca_position_from_chains which extracts CA (index 1 in N, CA, C triplet)
+        get_ca_position_from_chains(self.tube_renderer.cached_chains(), residue_idx)
+    }
+
+    /// Convert screen delta (pixels) to world-space offset.
+    /// Useful for drag operations like pulling.
+    pub fn screen_delta_to_world(&self, delta_x: f32, delta_y: f32) -> Vec3 {
+        self.camera_controller.screen_delta_to_world(delta_x, delta_y)
+    }
+
+    /// Unproject screen coordinates to a world-space point at the depth of a reference point.
+    /// Useful for pull operations where the target should be on a plane at the residue's depth.
+    pub fn screen_to_world_at_depth(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        world_point: Vec3,
+    ) -> Vec3 {
+        self.camera_controller.screen_to_world_at_depth(
+            screen_x,
+            screen_y,
+            self.context.config.width,
+            self.context.config.height,
+            world_point,
+        )
+    }
+
+    /// Get current screen dimensions.
+    pub fn screen_size(&self) -> (u32, u32) {
+        (self.context.config.width, self.context.config.height)
+    }
+
+    // =========================================================================
+    // Interpolated Position Methods (for bands/constraints during animation)
+    // =========================================================================
+
+    /// Get the current visual backbone chains (interpolated during animation).
+    /// Use this for constraint visualizations that need to follow the animated backbone.
+    pub fn get_current_backbone_chains(&self) -> Vec<Vec<Vec3>> {
+        if self.animator.is_animating() {
+            self.animator.get_backbone()
+        } else {
+            // Return cached chains from tube renderer when not animating
+            self.tube_renderer.cached_chains().to_vec()
+        }
+    }
+
+    /// Get the current visual sidechain positions (interpolated during animation).
+    /// Use this for constraint visualizations that need to follow the animated sidechains.
+    pub fn get_current_sidechain_positions(&self) -> Vec<Vec3> {
+        if self.animator.is_animating() && self.animator.has_sidechain_data() {
+            self.animator.get_sidechain_positions()
+        } else {
+            self.target_sidechain_positions.clone()
+        }
+    }
+
+    /// Get the current visual CA positions for all residues (interpolated during animation).
+    /// This is useful for band endpoints that need to track residue positions.
+    pub fn get_current_ca_positions(&self) -> Vec<Vec3> {
+        let chains = self.get_current_backbone_chains();
+        foldit_conv::coords::extract_ca_from_chains(&chains)
+    }
+
+    /// Get a single interpolated CA position by residue index.
+    /// Returns None if out of bounds.
+    pub fn get_current_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
+        // Animator already handles interpolation in get_ca_position
+        if let Some(pos) = self.animator.get_ca_position(residue_idx) {
+            return Some(pos);
+        }
+
+        // Fall back to tube_renderer's cached chains
+        get_ca_position_from_chains(self.tube_renderer.cached_chains(), residue_idx)
+    }
+
+    /// Check if structure animation is currently in progress.
+    /// Useful for determining if band positions should be updated.
+    #[inline]
+    pub fn needs_band_update(&self) -> bool {
+        self.animator.is_animating()
+    }
+
+    /// Get the current animation progress (0.0 to 1.0).
+    /// Returns 1.0 if no animation is active.
+    pub fn animation_progress(&self) -> f32 {
+        self.animator.progress()
+    }
+
+    /// Get the interpolated position of the closest atom to a reference point for a given residue.
+    /// This is useful for bands that need to track a specific atom (not just CA) during animation.
+    /// The reference_point is typically the original atom position when the band was created.
+    pub fn get_closest_atom_for_residue(
+        &self,
+        residue_idx: usize,
+        reference_point: Vec3,
+    ) -> Option<Vec3> {
+        let backbone_chains = self.get_current_backbone_chains();
+        let sidechain_positions = self.get_current_sidechain_positions();
+
+        foldit_conv::coords::get_closest_atom_for_residue(
+            &backbone_chains,
+            &sidechain_positions,
+            &self.cached_sidechain_residue_indices,
+            residue_idx,
+            reference_point,
+        )
+    }
+
+    /// Get the interpolated position of a specific atom by residue index and atom name.
+    /// This is the preferred method for band endpoint tracking as it reliably identifies
+    /// the same atom across animation frames.
+    pub fn get_atom_position_by_name(
+        &self,
+        residue_idx: usize,
+        atom_name: &str,
+    ) -> Option<Vec3> {
+        // Check backbone atoms first (N, CA, C)
+        if atom_name == "N" || atom_name == "CA" || atom_name == "C" {
+            let backbone_chains = self.get_current_backbone_chains();
+            let offset = match atom_name {
+                "N" => 0,
+                "CA" => 1,
+                "C" => 2,
+                _ => return None,
+            };
+
+            let mut current_idx = 0;
+            for chain in &backbone_chains {
+                let residues_in_chain = chain.len() / 3;
+                if residue_idx < current_idx + residues_in_chain {
+                    let local_idx = residue_idx - current_idx;
+                    let atom_idx = local_idx * 3 + offset;
+                    return chain.get(atom_idx).copied();
+                }
+                current_idx += residues_in_chain;
+            }
+            return None;
+        }
+
+        // Check sidechain atoms
+        let sidechain_positions = self.get_current_sidechain_positions();
+        for (i, (res_idx, name)) in self.cached_sidechain_residue_indices
+            .iter()
+            .zip(self.cached_sidechain_atom_names.iter())
+            .enumerate()
+        {
+            if *res_idx as usize == residue_idx && name == atom_name {
+                return sidechain_positions.get(i).copied();
+            }
+        }
+
+        None
     }
 }

@@ -312,6 +312,22 @@ impl StructureAnimator {
     pub fn has_sidechain_data(&self) -> bool {
         !self.target_sidechain_positions.is_empty()
     }
+
+    /// Get the CA position of a residue by index.
+    /// Returns the interpolated position during animation.
+    pub fn get_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
+        let target = self.target_ca_positions.get(residue_idx)?;
+
+        // If not animating, return target position
+        if self.runner.is_none() || self.progress() >= 1.0 {
+            return Some(*target);
+        }
+
+        // Interpolate between start and target
+        let start = self.start_ca_positions.get(residue_idx).unwrap_or(target);
+        let t = self.progress();
+        Some(*start + (*target - *start) * t)
+    }
 }
 
 impl Default for StructureAnimator {

@@ -310,4 +310,54 @@ impl CameraController {
             self.target_distance = Some(fit_distance);
         }
     }
+
+    /// Convert screen delta (pixels) to world-space offset.
+    /// Uses camera orientation to map 2D mouse movement to 3D space.
+    pub fn screen_delta_to_world(&self, delta_x: f32, delta_y: f32) -> Vec3 {
+        // Scale factor based on distance (further = larger movements)
+        let scale = self.distance * 0.002;
+
+        // Use camera right/up vectors to convert 2D delta to 3D offset
+        let right = self.right();
+        let up = self.up();
+
+        right * (delta_x * scale) + up * (-delta_y * scale)
+    }
+
+    /// Unproject screen coordinates to a world-space point on a plane at the given depth.
+    ///
+    /// # Arguments
+    /// * `screen_x`, `screen_y` - Screen coordinates in pixels (origin top-left)
+    /// * `screen_width`, `screen_height` - Screen dimensions
+    /// * `world_point` - A point in world space; the result will be on a plane
+    ///                   parallel to the camera at this point's depth
+    pub fn screen_to_world_at_depth(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        screen_width: u32,
+        screen_height: u32,
+        world_point: Vec3,
+    ) -> Vec3 {
+        // Convert screen coords to NDC [-1, 1]
+        let ndc_x = (2.0 * screen_x / screen_width as f32) - 1.0;
+        let ndc_y = 1.0 - (2.0 * screen_y / screen_height as f32); // flip Y
+
+        // Calculate the depth of the world_point from camera
+        let to_point = world_point - self.camera.eye;
+        let depth = to_point.dot(self.forward());
+
+        // Use FOV to calculate the half-extents of the view plane at that depth
+        let fovy_rad = self.camera.fovy.to_radians();
+        let half_height = depth * (fovy_rad / 2.0).tan();
+        let half_width = half_height * self.camera.aspect;
+
+        // Calculate world position on the plane at that depth
+        let right = self.right();
+        let up = self.up();
+        let forward = self.forward();
+
+        let center = self.camera.eye + forward * depth;
+        center + right * (ndc_x * half_width) + up * (ndc_y * half_height)
+    }
 }

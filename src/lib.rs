@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod band_renderer;
 pub mod bond_topology;
 pub mod camera;
 pub mod easing;
@@ -9,7 +10,6 @@ pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
 pub mod picking;
-pub mod protein_data;
 pub mod render_context;
 pub mod ribbon_renderer;
 pub mod secondary_structure;

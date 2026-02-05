@@ -7,7 +7,7 @@
 //! - B-spline interpolation for C2 continuity
 
 use crate::dynamic_buffer::DynamicBuffer;
-use crate::protein_data::{BackboneChain, BackboneResidue};
+use foldit_conv::coords::RenderBackboneResidue;
 use crate::render_context::RenderContext;
 use crate::secondary_structure::{detect_secondary_structure, SSType};
 use glam::Vec3;
@@ -113,7 +113,7 @@ impl RibbonRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
-        backbone_chains: &[BackboneChain],
+        backbone_chains: &[Vec<RenderBackboneResidue>],
     ) -> Self {
         let params = RibbonParams::default();
         let (vertices, indices) = Self::generate_from_residues(backbone_chains, &params);
@@ -155,12 +155,12 @@ impl RibbonRenderer {
         hasher.finish()
     }
 
-    fn compute_residue_hash(chains: &[BackboneChain]) -> u64 {
+    fn compute_residue_hash(chains: &[Vec<RenderBackboneResidue>]) -> u64 {
         let mut hasher = DefaultHasher::new();
         chains.len().hash(&mut hasher);
         for chain in chains {
-            chain.residues.len().hash(&mut hasher);
-            if let Some(f) = chain.residues.first() { f.ca_pos.x.to_bits().hash(&mut hasher); }
+            chain.len().hash(&mut hasher);
+            if let Some(f) = chain.first() { f.ca_pos.x.to_bits().hash(&mut hasher); }
         }
         hasher.finish()
     }
@@ -178,7 +178,7 @@ impl RibbonRenderer {
         self.index_count = indices.len() as u32;
     }
 
-    pub fn update_from_residues(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, chains: &[BackboneChain]) {
+    pub fn update_from_residues(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, chains: &[Vec<RenderBackboneResidue>]) {
         let new_hash = Self::compute_residue_hash(chains);
         if new_hash == self.last_chain_hash { return; }
         self.last_chain_hash = new_hash;
@@ -260,29 +260,29 @@ impl RibbonRenderer {
 
     // ==================== MAIN GENERATION ====================
 
-    fn generate_from_residues(chains: &[BackboneChain], params: &RibbonParams) -> (Vec<RibbonVertex>, Vec<u32>) {
+    fn generate_from_residues(chains: &[Vec<RenderBackboneResidue>], params: &RibbonParams) -> (Vec<RibbonVertex>, Vec<u32>) {
         let mut all_verts = Vec::new();
         let mut all_inds = Vec::new();
         let mut global_residue_idx: u32 = 0;
 
         for chain in chains {
-            if chain.residues.len() < 4 { 
-                global_residue_idx += chain.residues.len() as u32;
-                continue; 
+            if chain.len() < 4 {
+                global_residue_idx += chain.len() as u32;
+                continue;
             }
 
-            let ca_positions = chain.ca_positions();
+            let ca_positions: Vec<Vec3> = chain.iter().map(|r| r.ca_pos).collect();
             let ss_types = detect_secondary_structure(&ca_positions);
             let segments = segment_by_ss(&ss_types);
 
             for seg in &segments {
                 if seg.ss_type == SSType::Coil { continue; }
-                
+
                 let start = seg.start_residue;
-                let end = seg.end_residue.min(chain.residues.len());
+                let end = seg.end_residue.min(chain.len());
                 if end <= start + 1 { continue; }
 
-                let residues = &chain.residues[start..end];
+                let residues = &chain[start..end];
                 let ss = &ss_types[start..end.min(ss_types.len())];
                 let base = all_verts.len() as u32;
                 let segment_residue_base = global_residue_idx + start as u32;
@@ -296,8 +296,8 @@ impl RibbonRenderer {
                 all_verts.extend(v);
                 all_inds.extend(i);
             }
-            
-            global_residue_idx += chain.residues.len() as u32;
+
+            global_residue_idx += chain.len() as u32;
         }
 
         (all_verts, all_inds)
@@ -383,7 +383,7 @@ impl RibbonRenderer {
 // ==================== HELIX GENERATION ====================
 // Key: Normal points RADIALLY OUTWARD from helix axis
 
-fn generate_helix(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_helix(residues: &[RenderBackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
     generate_helix_from_ca(&ca_positions, ss_types, params, base, global_residue_base)
 }
@@ -464,7 +464,7 @@ fn compute_helix_axis_points(ca_positions: &[Vec3]) -> Vec<Vec3> {
 // ==================== SHEET GENERATION ====================
 // Key: Constant width, smooth RMF normals, no pleating
 
-fn generate_sheet(residues: &[BackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn generate_sheet(residues: &[RenderBackboneResidue], ss_types: &[SSType], params: &RibbonParams, base: u32, global_residue_base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
     let ca_positions: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
     generate_sheet_from_ca(&ca_positions, ss_types, params, base, global_residue_base)
 }
