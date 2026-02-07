@@ -92,13 +92,20 @@ pub struct ProteinRenderEngine {
 
 impl ProteinRenderEngine {
     /// Create a new engine with a default molecule path
-    pub async fn new(window: std::sync::Arc<winit::window::Window>) -> Self {
-        Self::new_with_path(window, "assets/models/4pnk.cif").await
+    pub async fn new(
+        window: impl Into<wgpu::SurfaceTarget<'static>>,
+        size: (u32, u32),
+    ) -> Self {
+        Self::new_with_path(window, size, "assets/models/4pnk.cif").await
     }
 
     /// Create a new engine with a specified molecule path
-    pub async fn new_with_path(window: std::sync::Arc<winit::window::Window>, cif_path: &str) -> Self {
-        let context = RenderContext::new(window).await;
+    pub async fn new_with_path(
+        window: impl Into<wgpu::SurfaceTarget<'static>>,
+        size: (u32, u32),
+        cif_path: &str,
+    ) -> Self {
+        let context = RenderContext::new(window, size).await;
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
@@ -491,17 +498,17 @@ impl ProteinRenderEngine {
         Ok(())
     }
 
-    pub fn resize(&mut self, newsize: winit::dpi::PhysicalSize<u32>) {
-        if newsize.width > 0 && newsize.height > 0 {
-            self.context.resize(newsize);
-            self.camera_controller.resize(newsize.width, newsize.height);
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.context.resize(width, height);
+            self.camera_controller.resize(width, height);
             let (depth_texture, depth_view) = Self::create_depth_texture(&self.context);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
             self.ssao_renderer.resize(&self.context, &self.depth_view);
             self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
-            self.text_renderer.resize(newsize.width, newsize.height);
-            self.picking.resize(&self.context.device, newsize.width, newsize.height);
+            self.text_renderer.resize(width, height);
+            self.picking.resize(&self.context.device, width, height);
         }
     }
 

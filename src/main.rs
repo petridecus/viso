@@ -49,7 +49,8 @@ impl ApplicationHandler for RenderApp {
                     .create_window(Window::default_attributes())
                     .unwrap(),
             );
-            let engine = pollster::block_on(ProteinRenderEngine::new(window.clone()));
+            let size = window.inner_size();
+            let engine = pollster::block_on(ProteinRenderEngine::new(window.clone(), (size.width, size.height)));
 
             window.request_redraw();
             self.window = Some(window);
@@ -65,14 +66,14 @@ impl ApplicationHandler for RenderApp {
 
             WindowEvent::Resized(newsize) => {
                 if let Some(engine) = &mut self.engine {
-                    engine.resize(newsize);
+                    engine.resize(newsize.width, newsize.height);
                 }
             }
 
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
                     let newsize = window.inner_size();
-                    engine.resize(newsize); // Full resize including camera aspect ratio
+                    engine.resize(newsize.width, newsize.height);
                 }
             }
 
