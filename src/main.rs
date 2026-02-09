@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod ball_and_stick_renderer;
 pub mod band_renderer;
 pub mod bond_topology;
 pub mod camera;
@@ -15,6 +16,7 @@ pub mod render_context;
 pub mod ribbon_renderer;
 pub mod ssao;
 pub mod text_renderer;
+pub mod scene;
 pub mod tube_renderer;
 
 use engine::ProteinRenderEngine;
@@ -147,6 +149,10 @@ impl ApplicationHandler for RenderApp {
                             // V toggles view mode (Tube <-> Ribbon)
                             Key::Character(c) if c.as_str() == "v" || c.as_str() == "V" => {
                                 engine.toggle_view_mode();
+                            }
+                            // W toggles water visibility
+                            Key::Character(c) if c.as_str() == "w" || c.as_str() == "W" => {
+                                engine.toggle_waters();
                             }
                             // Escape clears selection
                             Key::Named(NamedKey::Escape) => {

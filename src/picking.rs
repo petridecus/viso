@@ -391,6 +391,8 @@ impl Picking {
         ribbon_index_count: u32,
         capsule_bind_group: Option<&wgpu::BindGroup>,
         capsule_count: u32,
+        bns_capsule_bind_group: Option<&wgpu::BindGroup>,
+        bns_capsule_count: u32,
         mouse_x: u32,
         mouse_y: u32,
     ) {
@@ -451,6 +453,16 @@ impl Picking {
                     render_pass.set_bind_group(0, capsule_bg, &[]);
                     render_pass.set_bind_group(1, camera_bind_group, &[]);
                     render_pass.draw(0..6, 0..capsule_count);
+                }
+            }
+
+            // Draw ball-and-stick picking (degenerate capsules for spheres + bonds)
+            if let Some(bns_bg) = bns_capsule_bind_group {
+                if bns_capsule_count > 0 {
+                    render_pass.set_pipeline(&self.capsule_pipeline);
+                    render_pass.set_bind_group(0, bns_bg, &[]);
+                    render_pass.set_bind_group(1, camera_bind_group, &[]);
+                    render_pass.draw(0..6, 0..bns_capsule_count);
                 }
             }
         }
