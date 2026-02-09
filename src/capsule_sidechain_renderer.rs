@@ -8,6 +8,7 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the tube renderer.
 
+use bytemuck::Zeroable;
 use crate::camera::frustum::Frustum;
 use crate::dynamic_buffer::TypedBuffer;
 use crate::render_context::RenderContext;
@@ -70,12 +71,22 @@ impl CapsuleSidechainRenderer {
 
         let instance_count = instances.len() as u32;
 
-        let instance_buffer = TypedBuffer::new_with_data(
-            &context.device,
-            "Capsule Sidechain Instance Buffer",
-            &instances,
-            wgpu::BufferUsages::STORAGE,
-        );
+        // wgpu requires non-zero buffer for bind group; use a dummy element if empty
+        let instance_buffer = if instances.is_empty() {
+            TypedBuffer::new_with_data(
+                &context.device,
+                "Capsule Sidechain Instance Buffer",
+                &[CapsuleInstance::zeroed()],
+                wgpu::BufferUsages::STORAGE,
+            )
+        } else {
+            TypedBuffer::new_with_data(
+                &context.device,
+                "Capsule Sidechain Instance Buffer",
+                &instances,
+                wgpu::BufferUsages::STORAGE,
+            )
+        };
 
         let bind_group_layout = Self::create_bind_group_layout(&context.device);
         let bind_group = Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);

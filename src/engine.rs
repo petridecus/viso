@@ -11,7 +11,7 @@ use crate::pull_renderer::{PullRenderer, PullRenderInfo};
 
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
-use crate::secondary_structure::SSType;
+use foldit_conv::secondary_structure::SSType;
 use crate::ssao::SsaoRenderer;
 use crate::text_renderer::TextRenderer;
 use crate::tube_renderer::TubeRenderer;
@@ -19,7 +19,7 @@ use crate::tube_renderer::TubeRenderer;
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
 use foldit_conv::coords::{get_ca_position_from_chains, mmcif_file_to_coords, RenderCoords};
 use glam::{Vec2, Vec3};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
@@ -499,6 +499,8 @@ impl ProteinRenderEngine {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        log::info!("engine.resize: {}x{} (current config: {}x{})",
+            width, height, self.context.config.width, self.context.config.height);
         if width > 0 && height > 0 {
             self.context.resize(width, height);
             self.camera_controller.resize(width, height);
@@ -674,6 +676,11 @@ impl ProteinRenderEngine {
         self.camera_controller.shift_pressed = modifiers.shift_key();
     }
 
+    /// Set shift state directly (from frontend IPC, no winit dependency needed).
+    pub fn set_shift_pressed(&mut self, shift: bool) {
+        self.camera_controller.shift_pressed = shift;
+    }
+
     /// Update protein atom positions for animation
     /// Handles dynamic buffer resizing if new positions exceed current capacity
     pub fn update_positions(&mut self, _positions: &[Vec3], _hydrophobicity: &[bool]) {
@@ -689,6 +696,7 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.context.queue,
             backbone_chains,
+            None, // use cached ss_override
         );
     }
 
@@ -700,27 +708,35 @@ impl ProteinRenderEngine {
             .target_backbone_sidechain_bonds
             .iter()
             .map(|(target_ca_pos, cb_idx)| {
-                // Get residue index for this CB atom
                 let res_idx = self
                     .cached_sidechain_residue_indices
                     .get(*cb_idx as usize)
                     .copied()
                     .unwrap_or(0) as usize;
-                // Get CA position from animator (matches rendered backbone)
                 let ca_pos = self
                     .animator
                     .get_ca_position(res_idx)
-                    .unwrap_or(*target_ca_pos); // Fallback to target if not available
+                    .unwrap_or(*target_ca_pos);
                 (ca_pos, *cb_idx)
             })
             .collect();
 
+        // Translate entire sidechains onto sheet surface
+        let offset_map = self.sheet_offset_map();
+        let res_indices = self.cached_sidechain_residue_indices.clone();
+        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+            sidechain_positions, &res_indices, &offset_map,
+        );
+        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+            &interpolated_bs_bonds, &res_indices, &offset_map,
+        );
+
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            sidechain_positions,
+            &adjusted_positions,
             &self.cached_sidechain_bonds,
-            &interpolated_bs_bonds,
+            &adjusted_bonds,
             &self.cached_sidechain_hydrophobicity,
             &self.cached_sidechain_residue_indices,
         );
@@ -778,13 +794,23 @@ impl ProteinRenderEngine {
             self.target_backbone_sidechain_bonds.clone()
         };
 
+        // Translate entire sidechains onto sheet surface
+        let offset_map = self.sheet_offset_map();
+        let res_indices = self.cached_sidechain_residue_indices.clone();
+        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+            &positions, &res_indices, &offset_map,
+        );
+        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+            &bs_bonds, &res_indices, &offset_map,
+        );
+
         // Update sidechains with frustum culling
         self.sidechain_renderer.update_with_frustum(
             &self.context.device,
             &self.context.queue,
-            &positions,
+            &adjusted_positions,
             &self.cached_sidechain_bonds,
-            &bs_bonds,
+            &adjusted_bonds,
             &self.cached_sidechain_hydrophobicity,
             &self.cached_sidechain_residue_indices,
             Some(&frustum),
@@ -871,6 +897,7 @@ impl ProteinRenderEngine {
         backbone_sidechain_bonds: &[(Vec3, u32)], // (CA position, CB index)
         all_positions: &[Vec3],
         fit_camera: bool,
+        ss_types: Option<&[SSType]>,
     ) {
         // Calculate total residues from backbone chains (3 atoms per residue: N, CA, C)
         let total_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
@@ -883,6 +910,7 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.context.queue,
             backbone_chains,
+            ss_types,
         );
 
         // Update ribbon renderer
@@ -890,14 +918,24 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.context.queue,
             backbone_chains,
+            ss_types,
+        );
+
+        // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
+        let offset_map = self.sheet_offset_map();
+        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+            sidechain_positions, sidechain_residue_indices, &offset_map,
+        );
+        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+            backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
         );
 
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            sidechain_positions,
+            &adjusted_positions,
             sidechain_bonds,
-            backbone_sidechain_bonds,
+            &adjusted_bonds,
             sidechain_hydrophobicity,
             sidechain_residue_indices,
         );
@@ -909,7 +947,11 @@ impl ProteinRenderEngine {
         ));
 
         // Cache secondary structure types for double-click segment selection
-        self.cached_ss_types = self.compute_ss_types(backbone_chains);
+        self.cached_ss_types = if let Some(ss) = ss_types {
+            ss.to_vec()
+        } else {
+            self.compute_ss_types(backbone_chains)
+        };
 
         // Cache atom names for lookup by name (used for band tracking during animation)
         self.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
@@ -920,9 +962,19 @@ impl ProteinRenderEngine {
         }
     }
 
+    /// Set SS override (from puzzle.toml annotation). Updates cached types
+    /// and forces tube/ribbon renderer regeneration.
+    pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
+        self.cached_ss_types = ss_types.to_vec();
+        self.tube_renderer.set_ss_override(Some(ss_types.to_vec()));
+        self.tube_renderer.regenerate(&self.context.device, &self.context.queue);
+        self.ribbon_renderer.set_ss_override(Some(ss_types.to_vec()));
+        self.ribbon_renderer.regenerate(&self.context.device, &self.context.queue);
+    }
+
     /// Compute secondary structure types for all residues across all chains
     fn compute_ss_types(&self, backbone_chains: &[Vec<Vec3>]) -> Vec<SSType> {
-        use crate::secondary_structure::detect_secondary_structure;
+        use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 
         let mut all_ss_types = Vec::new();
 
@@ -940,6 +992,56 @@ impl ProteinRenderEngine {
         }
 
         all_ss_types
+    }
+
+    /// Build a map of sheet residue offsets (residue_idx -> offset vector).
+    /// Returns empty map when not in Ribbon mode.
+    fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
+        if self.view_mode != ViewMode::Ribbon {
+            return HashMap::new();
+        }
+        self.ribbon_renderer.sheet_offsets().iter().copied().collect()
+    }
+
+    /// Adjust backbone-sidechain bond CA positions by sheet flattening offsets.
+    fn adjust_bonds_for_sheet(
+        bonds: &[(Vec3, u32)],
+        sidechain_residue_indices: &[u32],
+        offset_map: &HashMap<u32, Vec3>,
+    ) -> Vec<(Vec3, u32)> {
+        if offset_map.is_empty() { return bonds.to_vec(); }
+        bonds.iter().map(|(ca_pos, cb_idx)| {
+            let res_idx = sidechain_residue_indices
+                .get(*cb_idx as usize)
+                .copied()
+                .unwrap_or(u32::MAX);
+            if let Some(&offset) = offset_map.get(&res_idx) {
+                (*ca_pos + offset, *cb_idx)
+            } else {
+                (*ca_pos, *cb_idx)
+            }
+        }).collect()
+    }
+
+    /// Translate all sidechain atom positions by sheet flattening offsets.
+    /// Moves entire sidechains onto the sheet surface, not just the CA-CB bond.
+    fn adjust_sidechains_for_sheet(
+        positions: &[Vec3],
+        sidechain_residue_indices: &[u32],
+        offset_map: &HashMap<u32, Vec3>,
+    ) -> Vec<Vec3> {
+        if offset_map.is_empty() { return positions.to_vec(); }
+        positions.iter().enumerate().map(|(i, &pos)| {
+            let res_idx = sidechain_residue_indices
+                .get(i)
+                .copied()
+                .unwrap_or(u32::MAX);
+            if let Some(&offset) = offset_map.get(&res_idx) {
+                pos + offset
+            } else {
+                pos
+            }
+        }).collect()
     }
 
     // =========================================================================
@@ -1056,13 +1158,20 @@ impl ProteinRenderEngine {
             self.update_backbone(&visual_backbone);
         }
 
-        // Update sidechain renderer with start positions
+        // Update sidechain renderer with start positions (adjusted for sheet surface)
+        let offset_map = self.sheet_offset_map();
+        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+            &self.start_sidechain_positions, sidechain_residue_indices, &offset_map,
+        );
+        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+            &self.start_backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
+        );
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            &self.start_sidechain_positions,
+            &adjusted_positions,
             sidechain_bonds,
-            &self.start_backbone_sidechain_bonds,
+            &adjusted_bonds,
             sidechain_hydrophobicity,
             sidechain_residue_indices,
         );

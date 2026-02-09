@@ -54,6 +54,35 @@ impl RenderContext {
         }
     }
 
+    /// Set the surface layer's scale factor for correct HiDPI compositing.
+    ///
+    /// On macOS the CAMetalLayer's `contentsScale` defaults to 1.0 — without
+    /// updating it the compositor downsamples the full-res drawable, producing
+    /// blurry output on Retina displays. On Vulkan/DX12 the surface dimensions
+    /// from `window.inner_size()` are sufficient; this is a no-op there for now.
+    pub fn set_surface_scale(&self, scale_factor: f64) {
+        log::info!(
+            "set_surface_scale called: scale_factor={}, surface config={}x{}",
+            scale_factor, self.config.width, self.config.height,
+        );
+        #[cfg(target_os = "macos")]
+        unsafe {
+            if let Some(hal_surface) = self.surface.as_hal::<wgpu::hal::api::Metal>() {
+                let layer = hal_surface.render_layer().lock();
+                let old_scale = layer.contents_scale();
+                layer.set_contents_scale(scale_factor);
+                log::info!(
+                    "Metal layer contentsScale: {} -> {}",
+                    old_scale, scale_factor,
+                );
+            } else {
+                log::warn!("as_hal::<Metal>() returned None — surface scale NOT set");
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = scale_factor;
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;

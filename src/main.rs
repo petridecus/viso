@@ -13,7 +13,6 @@ pub mod picking;
 pub mod pull_renderer;
 pub mod render_context;
 pub mod ribbon_renderer;
-pub mod secondary_structure;
 pub mod ssao;
 pub mod text_renderer;
 pub mod tube_renderer;
