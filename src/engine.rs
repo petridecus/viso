@@ -1,4 +1,5 @@
 use crate::animation::{AnimationAction, StructureAnimator};
+use crate::ball_and_stick_renderer::BallAndStickRenderer;
 use crate::band_renderer::{BandRenderer, BandRenderInfo};
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
@@ -17,7 +18,13 @@ use crate::text_renderer::TextRenderer;
 use crate::tube_renderer::TubeRenderer;
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::{get_ca_position_from_chains, mmcif_file_to_coords, RenderCoords};
+use crate::scene::{
+    CombinedCoordsResult, EntityGroup, Focus, GroupId, Scene,
+};
+use foldit_conv::coords::{
+    get_ca_position_from_chains, mmcif_file_to_coords, split_into_entities,
+    MoleculeEntity, MoleculeType, RenderCoords,
+};
 use glam::{Mat4, Vec2, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -90,6 +97,14 @@ pub struct ProteinRenderEngine {
     cached_sidechain_atom_names: Vec<String>,
     /// Last camera eye position for frustum culling change detection
     last_cull_camera_eye: Vec3,
+    /// Authoritative scene (all entity groups).
+    pub scene: Scene,
+    /// Ball-and-stick renderer for ligands, ions, and waters
+    pub ball_and_stick_renderer: BallAndStickRenderer,
+    /// Whether water entities are visible
+    pub show_waters: bool,
+    /// Bind group for ball-and-stick picking (degenerate capsules)
+    bns_picking_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl ProteinRenderEngine {
@@ -112,11 +127,32 @@ impl ProteinRenderEngine {
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
 
-        // Load coords from mmCIF file and convert to render format
+        // Load coords from mmCIF file, split into entities
         let coords = mmcif_file_to_coords(std::path::Path::new(cif_path))
             .expect("Failed to load coords from CIF file");
+
+        let entities = split_into_entities(&coords);
+
+        // Log entity breakdown
+        for e in &entities {
+            eprintln!("  entity {} — {:?}: {} atoms", e.entity_id, e.molecule_type, e.coords.num_atoms);
+        }
+
+        let group_name = std::path::Path::new(cif_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(cif_path);
+        let mut scene = Scene::new();
+        let group_id = scene.add_group(entities, group_name);
+
+        // Extract protein coords for rendering
+        let protein_coords = scene.group(group_id)
+            .and_then(|g| g.protein_coords())
+            .expect("No protein entities found in CIF file");
+        let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
+
         let render_coords = RenderCoords::from_coords_with_topology(
-            &coords,
+            &protein_coords,
             is_hydrophobic,
             |name| get_residue_bonds(name).map(|b| b.to_vec()),
         );
@@ -207,9 +243,6 @@ impl ProteinRenderEngine {
         // Create frame timing with 300 FPS limit
         let frame_timing = FrameTiming::new(TARGET_FPS);
 
-        // Fit camera to all atom positions
-        camera_controller.fit_to_positions(&render_coords.all_positions);
-
         // Create GPU-based picking
         let picking = Picking::new(&context, &camera_controller.layout);
 
@@ -218,6 +251,46 @@ impl ProteinRenderEngine {
             &context.device,
             sidechain_renderer.capsule_buffer(),
         ));
+
+        // Create ball-and-stick renderer for non-protein entities
+        let mut ball_and_stick_renderer = BallAndStickRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &selection_buffer.layout,
+        );
+        let show_waters = true;
+        // Collect non-protein entities from the group for ball-and-stick
+        let non_protein_entities: Vec<&MoleculeEntity> = scene.group(group_id)
+            .map(|g| g.entities().iter()
+                .filter(|e| e.molecule_type != MoleculeType::Protein)
+                .collect())
+            .unwrap_or_default();
+        let non_protein_refs: Vec<MoleculeEntity> = non_protein_entities.into_iter().cloned().collect();
+        ball_and_stick_renderer.update_from_entities(
+            &context.device,
+            &context.queue,
+            &non_protein_refs,
+            show_waters,
+        );
+
+        // Create picking bind group for ball-and-stick (degenerate capsules)
+        let bns_picking_bind_group = if ball_and_stick_renderer.picking_count() > 0 {
+            Some(picking.create_capsule_bind_group(
+                &context.device,
+                ball_and_stick_renderer.picking_buffer(),
+            ))
+        } else {
+            None
+        };
+
+        // Fit camera to all atom positions (protein + non-protein)
+        let mut all_fit_positions = render_coords.all_positions.clone();
+        all_fit_positions.extend(BallAndStickRenderer::collect_positions(&non_protein_refs, show_waters));
+        camera_controller.fit_to_positions(&all_fit_positions);
+
+        // Mark scene as rendered (initial state is synced)
+        scene.mark_rendered();
 
         // Create structure animator
         let animator = StructureAnimator::new();
@@ -270,6 +343,10 @@ impl ProteinRenderEngine {
             cached_sidechain_residue_indices: Vec::new(),
             cached_sidechain_atom_names: Vec::new(),
             last_cull_camera_eye: Vec3::ZERO,
+            scene,
+            ball_and_stick_renderer,
+            show_waters,
+            bns_picking_bind_group,
         }
     }
 
@@ -458,6 +535,14 @@ impl ProteinRenderEngine {
                 &self.selection_buffer.bind_group,
             );
 
+            // Render ball-and-stick (ligands, ions, waters)
+            self.ball_and_stick_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
+            );
+
             // Render bands (constraint visualizations)
             self.band_renderer.draw(
                 &mut rp,
@@ -518,6 +603,8 @@ impl ProteinRenderEngine {
             ribbon_count,
             self.capsule_picking_bind_group.as_ref(),
             self.sidechain_renderer.instance_count,
+            self.bns_picking_bind_group.as_ref(),
+            self.ball_and_stick_renderer.picking_count(),
             self.mouse_pos.0 as u32,
             self.mouse_pos.1 as u32,
         );
@@ -918,6 +1005,33 @@ impl ProteinRenderEngine {
             ViewMode::Ribbon => ViewMode::Tube,
         };
         self.set_view_mode(new_mode);
+    }
+
+    /// Toggle water visibility
+    pub fn toggle_waters(&mut self) {
+        self.show_waters = !self.show_waters;
+        // Collect all non-protein entities from all visible groups
+        let non_protein: Vec<MoleculeEntity> = self.scene.iter()
+            .filter(|g| g.visible)
+            .flat_map(|g| g.entities().iter())
+            .filter(|e| e.molecule_type != MoleculeType::Protein)
+            .cloned()
+            .collect();
+        self.ball_and_stick_renderer.update_from_entities(
+            &self.context.device,
+            &self.context.queue,
+            &non_protein,
+            self.show_waters,
+        );
+        // Recreate picking bind group
+        self.bns_picking_bind_group = if self.ball_and_stick_renderer.picking_count() > 0 {
+            Some(self.picking.create_capsule_bind_group(
+                &self.context.device,
+                self.ball_and_stick_renderer.picking_buffer(),
+            ))
+        } else {
+            None
+        };
     }
 
     /// Fit the camera to show all provided positions (instant)
@@ -1465,5 +1579,206 @@ impl ProteinRenderEngine {
         }
 
         None
+    }
+
+    // =========================================================================
+    // Scene API — Group Management (delegates to self.scene)
+    // =========================================================================
+
+    /// Load entities into a new group. Optionally fits camera.
+    pub fn load_entities(
+        &mut self,
+        entities: Vec<MoleculeEntity>,
+        name: &str,
+        fit_camera: bool,
+    ) -> GroupId {
+        let id = self.scene.add_group(entities, name);
+        if fit_camera {
+            // Sync immediately so aggregated data is available for camera fit
+            self.sync_scene_to_renderers(Some(AnimationAction::Load));
+            let agg = self.scene.aggregated();
+            if !agg.all_positions.is_empty() {
+                self.camera_controller.fit_to_positions(&agg.all_positions);
+            }
+        }
+        id
+    }
+
+    /// Remove a group by ID.
+    pub fn remove_group(&mut self, id: GroupId) -> Option<EntityGroup> {
+        self.scene.remove_group(id)
+    }
+
+    /// Set group visibility.
+    pub fn set_group_visible(&mut self, id: GroupId, visible: bool) {
+        self.scene.set_visible(id, visible);
+    }
+
+    /// Clear all groups.
+    pub fn clear_scene(&mut self) {
+        self.scene.clear();
+    }
+
+    /// Read access to a group.
+    pub fn group(&self, id: GroupId) -> Option<&EntityGroup> {
+        self.scene.group(id)
+    }
+
+    /// Write access to a group (invalidates scene cache).
+    pub fn group_mut(&mut self, id: GroupId) -> Option<&mut EntityGroup> {
+        self.scene.group_mut(id)
+    }
+
+    /// Ordered group IDs.
+    pub fn group_ids(&self) -> Vec<GroupId> {
+        self.scene.group_ids()
+    }
+
+    /// Number of groups.
+    pub fn group_count(&self) -> usize {
+        self.scene.group_count()
+    }
+
+    // ── Focus / tab cycling ──
+
+    /// Cycle focus: Session → Group1 → ... → GroupN → focusable entities → Session.
+    pub fn cycle_focus(&mut self) -> Focus {
+        self.scene.cycle_focus()
+    }
+
+    /// Current focus.
+    pub fn focus(&self) -> &Focus {
+        self.scene.focus()
+    }
+
+    /// Fit camera to the currently focused element.
+    pub fn fit_camera_to_focus(&mut self) {
+        match *self.scene.focus() {
+            Focus::Session => {
+                let agg = self.scene.aggregated();
+                if !agg.all_positions.is_empty() {
+                    self.camera_controller.fit_to_positions_animated(&agg.all_positions);
+                }
+            }
+            Focus::Group(id) => {
+                if let Some(group) = self.scene.group(id) {
+                    let positions: Vec<Vec3> = group.entities().iter()
+                        .flat_map(|e: &MoleculeEntity| e.positions())
+                        .collect();
+                    if !positions.is_empty() {
+                        self.camera_controller.fit_to_positions_animated(&positions);
+                    }
+                }
+            }
+            Focus::Entity(eid) => {
+                for g in self.scene.iter() {
+                    for e in g.entities() {
+                        if e.entity_id == eid {
+                            let positions = e.positions();
+                            if !positions.is_empty() {
+                                self.camera_controller.fit_to_positions_animated(&positions);
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Backend support ──
+
+    /// Combined coords for Rosetta.
+    pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
+        self.scene.combined_coords_for_backend()
+    }
+
+    /// Visible group IDs and their residue counts (for Rosetta topology check).
+    pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
+        self.scene.visible_residue_counts()
+    }
+
+    // ── Updates from backends (with animation) ──
+
+    /// Sync scene to renderers with the given animation action.
+    /// Called when scene data has changed (e.g. after loading, Rosetta update, etc.).
+    pub fn sync_scene_to_renderers(&mut self, action: Option<AnimationAction>) {
+        if !self.scene.is_dirty() && action.is_none() {
+            return;
+        }
+
+        let agg = self.scene.aggregated().clone();
+
+        if let Some(action) = action {
+            self.animate_to_full_pose_with_action(
+                &agg.backbone_chains,
+                &agg.sidechain_positions,
+                &agg.sidechain_bonds,
+                &agg.sidechain_hydrophobicity,
+                &agg.sidechain_residue_indices,
+                &agg.sidechain_atom_names,
+                &agg.backbone_sidechain_bonds,
+                action,
+            );
+
+            if let Some(ref ss) = agg.ss_types {
+                self.set_ss_override(ss);
+            }
+        } else {
+            // No animation: snap update
+            self.update_from_aggregated(
+                &agg.backbone_chains,
+                &agg.sidechain_positions,
+                &agg.sidechain_hydrophobicity,
+                &agg.sidechain_residue_indices,
+                &agg.sidechain_atom_names,
+                &agg.sidechain_bonds,
+                &agg.backbone_sidechain_bonds,
+                &agg.all_positions,
+                false,
+                agg.ss_types.as_deref(),
+            );
+        }
+
+        // Update ball-and-stick with non-protein entities
+        self.ball_and_stick_renderer.update_from_entities(
+            &self.context.device,
+            &self.context.queue,
+            &agg.non_protein_entities,
+            self.show_waters,
+        );
+        self.bns_picking_bind_group = if self.ball_and_stick_renderer.picking_count() > 0 {
+            Some(self.picking.create_capsule_bind_group(
+                &self.context.device,
+                self.ball_and_stick_renderer.picking_buffer(),
+            ))
+        } else {
+            None
+        };
+
+        self.scene.mark_rendered();
+    }
+
+    /// Apply combined Rosetta update to all groups.
+    pub fn apply_combined_update(
+        &mut self,
+        bytes: &[u8],
+        chain_ids: &[(GroupId, Vec<u8>)],
+        action: AnimationAction,
+    ) -> Result<(), String> {
+        self.scene.apply_combined_update(bytes, chain_ids)?;
+        self.sync_scene_to_renderers(Some(action));
+        Ok(())
+    }
+
+    /// Update protein coords for a specific group.
+    pub fn update_group_coords(
+        &mut self,
+        id: GroupId,
+        coords: foldit_conv::coords::Coords,
+        action: AnimationAction,
+    ) {
+        self.scene.update_group_protein_coords(id, coords);
+        self.sync_scene_to_renderers(Some(action));
     }
 }

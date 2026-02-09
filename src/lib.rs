@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod ball_and_stick_renderer;
 pub mod band_renderer;
 pub mod bond_topology;
 pub mod camera;
@@ -15,4 +16,5 @@ pub mod render_context;
 pub mod ribbon_renderer;
 pub mod ssao;
 pub mod text_renderer;
+pub mod scene;
 pub mod tube_renderer;
