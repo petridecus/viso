@@ -18,7 +18,7 @@ use crate::tube_renderer::TubeRenderer;
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
 use foldit_conv::coords::{get_ca_position_from_chains, mmcif_file_to_coords, RenderCoords};
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use winit::event::MouseButton;
@@ -52,6 +52,8 @@ pub struct ProteinRenderEngine {
     pub input_handler: InputHandler,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
+    pub normal_texture: wgpu::Texture,
+    pub normal_view: wgpu::TextureView,
     pub ssao_renderer: SsaoRenderer,
     pub composite_pass: CompositePass,
     pub picking: Picking,
@@ -190,8 +192,11 @@ impl ProteinRenderEngine {
         // Create shared depth texture (bindable for SSAO)
         let (depth_texture, depth_view) = Self::create_depth_texture(&context);
 
+        // Create normal G-buffer (world-space normals for SSAO)
+        let (normal_texture, normal_view) = Self::create_normal_texture(&context);
+
         // Create SSAO renderer
-        let ssao_renderer = SsaoRenderer::new(&context, &depth_view);
+        let ssao_renderer = SsaoRenderer::new(&context, &depth_view, &normal_view);
 
         // Create composite pass (applies SSAO and outlines to final image)
         let composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view);
@@ -242,6 +247,8 @@ impl ProteinRenderEngine {
             input_handler,
             depth_texture,
             depth_view,
+            normal_texture,
+            normal_view,
             ssao_renderer,
             composite_pass,
             picking,
@@ -289,6 +296,28 @@ impl ProteinRenderEngine {
         (texture, view)
     }
 
+    fn create_normal_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
+        let size = wgpu::Extent3d {
+            width: context.config.width,
+            height: context.config.height,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Normal G-Buffer"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         // Check if we should render based on FPS limit
         if !self.frame_timing.should_render() {
@@ -315,6 +344,15 @@ impl ProteinRenderEngine {
         self.camera_controller.uniform.hovered_residue = self.picking.hovered_residue;
         self.camera_controller.update_gpu(&self.context.queue);
 
+        // Compute fog params from camera state each frame (depth-buffer fog, always in sync)
+        // fog_start = focus point distance → front half stays crisp
+        // fog_density scaled so back of protein reaches ~87% fog (exp(-2) ≈ 0.13)
+        let distance = self.camera_controller.distance();
+        let bounding_radius = self.camera_controller.bounding_radius();
+        let fog_start = distance;
+        let fog_density = 2.0 / bounding_radius.max(10.0);
+        self.composite_pass.update_fog(&self.context.queue, fog_start, fog_density);
+
         // Update selection buffer (from GPU picking)
         self.selection_buffer.update(&self.context.queue, &self.picking.selected_residues);
 
@@ -340,24 +378,40 @@ impl ProteinRenderEngine {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.context.create_encoder();
 
-        // Geometry pass - render to intermediate color texture (for SSAO compositing)
+        // Geometry pass - render to intermediate color texture + normal G-buffer
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.composite_pass.get_color_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: self.composite_pass.get_color_view(),
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &self.normal_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    }),
+                ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -421,11 +475,17 @@ impl ProteinRenderEngine {
             );
         }
 
-        // Update SSAO projection matrices
+        // Update SSAO projection and view matrices
         let proj = self.camera_controller.camera.build_projection();
-        self.ssao_renderer.update_projection(
+        let view_matrix = Mat4::look_at_rh(
+            self.camera_controller.camera.eye,
+            self.camera_controller.camera.target,
+            self.camera_controller.camera.up,
+        );
+        self.ssao_renderer.update_matrices(
             &self.context.queue,
             proj,
+            view_matrix,
             self.camera_controller.camera.znear,
             self.camera_controller.camera.zfar,
         );
@@ -507,7 +567,10 @@ impl ProteinRenderEngine {
             let (depth_texture, depth_view) = Self::create_depth_texture(&self.context);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
-            self.ssao_renderer.resize(&self.context, &self.depth_view);
+            let (normal_texture, normal_view) = Self::create_normal_texture(&self.context);
+            self.normal_texture = normal_texture;
+            self.normal_view = normal_view;
+            self.ssao_renderer.resize(&self.context, &self.depth_view, &self.normal_view);
             self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
             self.text_renderer.resize(width, height);
             self.picking.resize(&self.context.device, width, height);

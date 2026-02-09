@@ -5,9 +5,6 @@ struct CameraUniform {
     forward: vec3<f32>,
     fovy: f32,
     hovered_residue: i32,
-    fog_start: f32,
-    fog_density: f32,
-    _pad: f32,
 };
 
 struct LightingUniform {
@@ -36,9 +33,8 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
-    @location(2) depth: f32,
-    @location(3) vertex_color: vec3<f32>,
-    @location(4) @interpolate(flat) residue_idx: u32,
+    @location(2) vertex_color: vec3<f32>,
+    @location(3) @interpolate(flat) residue_idx: u32,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
@@ -68,14 +64,18 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
     out.world_normal = in.normal;
     out.world_position = position;
-    out.depth = length(camera.position - position);
     out.vertex_color = in.color;
     out.residue_idx = in.residue_idx;
     return out;
 }
 
+struct FragOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+};
+
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragOutput {
     let normal = normalize(in.world_normal);
     let view_dir = normalize(camera.position - in.world_position);
 
@@ -106,9 +106,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         outline_factor = 1.0;
     }
 
-    let fog_distance = max(in.depth - camera.fog_start, 0.0);
-    let fog_factor = exp(-fog_distance * camera.fog_density);
-
     let lit_color = base_color * total_light + vec3<f32>(specular);
 
     // For selected residues, add dark edge effect
@@ -118,7 +115,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
     }
 
-    final_color = final_color * fog_factor;
-
-    return vec4<f32>(final_color, 1.0);
+    var out: FragOutput;
+    out.color = vec4<f32>(final_color, 1.0);
+    out.normal = vec4<f32>(normal, 0.0);
+    return out;
 }

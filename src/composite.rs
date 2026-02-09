@@ -17,6 +17,8 @@ pub struct CompositeParams {
     pub ao_strength: f32,
     pub near: f32,
     pub far: f32,
+    pub fog_start: f32,
+    pub fog_density: f32,
     pub _pad: f32,
 }
 
@@ -26,9 +28,11 @@ impl Default for CompositeParams {
             screen_size: [1920.0, 1080.0],
             outline_thickness: 1.0,
             outline_strength: 0.7,
-            ao_strength: 0.6,
+            ao_strength: 0.85,
             near: 5.0,
             far: 2000.0,
+            fog_start: 100.0,
+            fog_density: 0.005,
             _pad: 0.0,
         }
     }
@@ -320,6 +324,13 @@ impl CompositePass {
     /// Get the color view for geometry rendering
     pub fn get_color_view(&self) -> &wgpu::TextureView {
         &self.color_view
+    }
+
+    /// Update fog parameters (called each frame from engine)
+    pub fn update_fog(&mut self, queue: &wgpu::Queue, fog_start: f32, fog_density: f32) {
+        self.params.fog_start = fog_start;
+        self.params.fog_density = fog_density;
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[self.params]));
     }
 
     /// Resize textures and recreate bind groups

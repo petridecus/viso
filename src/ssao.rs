@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 pub struct SsaoParams {
     pub inv_proj: [[f32; 4]; 4],
     pub proj: [[f32; 4]; 4],
+    pub view: [[f32; 4]; 4],
     pub screen_size: [f32; 2],
     pub near: f32,
     pub far: f32,
@@ -48,7 +49,7 @@ const KERNEL_SIZE: usize = 32;
 const NOISE_SIZE: u32 = 4;
 
 impl SsaoRenderer {
-    pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView) -> Self {
+    pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) -> Self {
         let width = context.config.width;
         let height = context.config.height;
 
@@ -70,6 +71,7 @@ impl SsaoRenderer {
         let params = SsaoParams {
             inv_proj: Mat4::IDENTITY.to_cols_array_2d(),
             proj: Mat4::IDENTITY.to_cols_array_2d(),
+            view: Mat4::IDENTITY.to_cols_array_2d(),
             screen_size: [width as f32, height as f32],
             near: 0.1,
             far: 1000.0,
@@ -164,6 +166,17 @@ impl SsaoRenderer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
                                 min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // binding 6: normal G-buffer texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 6,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
                             count: None,
                         },
@@ -293,6 +306,7 @@ impl SsaoRenderer {
             &noise_sampler,
             &kernel_buffer,
             &params_buffer,
+            normal_view,
         );
 
         let blur_bind_group = Self::create_blur_bind_group(
@@ -439,6 +453,7 @@ impl SsaoRenderer {
         noise_sampler: &wgpu::Sampler,
         kernel_buffer: &wgpu::Buffer,
         params_buffer: &wgpu::Buffer,
+        normal_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SSAO Bind Group"),
@@ -468,6 +483,10 @@ impl SsaoRenderer {
                     binding: 5,
                     resource: params_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
             ],
         })
     }
@@ -494,12 +513,13 @@ impl SsaoRenderer {
         })
     }
 
-    /// Update projection matrices (call before render_ssao)
-    pub fn update_projection(&self, queue: &wgpu::Queue, proj: Mat4, near: f32, far: f32) {
+    /// Update projection and view matrices (call before render_ssao)
+    pub fn update_matrices(&self, queue: &wgpu::Queue, proj: Mat4, view: Mat4, near: f32, far: f32) {
         let inv_proj = proj.inverse();
         let params = SsaoParams {
             inv_proj: inv_proj.to_cols_array_2d(),
             proj: proj.to_cols_array_2d(),
+            view: view.to_cols_array_2d(),
             screen_size: [self.width as f32, self.height as f32],
             near,
             far,
@@ -507,7 +527,7 @@ impl SsaoRenderer {
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
     }
 
-    pub fn resize(&mut self, context: &RenderContext, depth_view: &wgpu::TextureView) {
+    pub fn resize(&mut self, context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) {
         if context.config.width == self.width && context.config.height == self.height {
             return;
         }
@@ -529,6 +549,7 @@ impl SsaoRenderer {
             &self.noise_sampler,
             &self.kernel_buffer,
             &self.params_buffer,
+            normal_view,
         );
 
         self.blur_bind_group = Self::create_blur_bind_group(

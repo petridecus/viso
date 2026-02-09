@@ -15,6 +15,8 @@ struct SsaoParams {
     inv_proj: mat4x4<f32>,
     // Projection matrix for projecting samples back to screen
     proj: mat4x4<f32>,
+    // View matrix for transforming world-space normals to view-space
+    view: mat4x4<f32>,
     // Screen dimensions
     screen_size: vec2<f32>,
     // Near/far planes
@@ -28,6 +30,7 @@ struct SsaoParams {
 @group(0) @binding(3) var noise_sampler: sampler;
 @group(0) @binding(4) var<uniform> kernel: Kernel;
 @group(0) @binding(5) var<uniform> params: SsaoParams;
+@group(0) @binding(6) var normal_texture: texture_2d<f32>;
 
 const RADIUS: f32 = 2.0;
 const BIAS: f32 = 0.05;
@@ -58,22 +61,11 @@ fn get_view_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return view_pos.xyz;
 }
 
-// Reconstruct view-space normal from depth derivatives
+// Read world-space normal from G-buffer and transform to view-space
 fn get_view_normal(uv: vec2<f32>, texel_size: vec2<f32>) -> vec3<f32> {
-    let d = textureSample(depth_texture, tex_sampler, uv);
-    let d_right = textureSample(depth_texture, tex_sampler, uv + vec2<f32>(texel_size.x, 0.0));
-    let d_down = textureSample(depth_texture, tex_sampler, uv + vec2<f32>(0.0, texel_size.y));
-
-    let p = get_view_pos(uv, d);
-    let p_right = get_view_pos(uv + vec2<f32>(texel_size.x, 0.0), d_right);
-    let p_down = get_view_pos(uv + vec2<f32>(0.0, texel_size.y), d_down);
-
-    // Cross product gives view-space normal
-    let tangent = p_right - p;
-    let bitangent = p_down - p;
-
-    // Note: cross order matters for correct facing direction in view space
-    return normalize(cross(bitangent, tangent));
+    let world_normal = textureSample(normal_texture, tex_sampler, uv).xyz;
+    // Transform world-space normal to view-space (w=0 for direction vector)
+    return normalize((params.view * vec4<f32>(world_normal, 0.0)).xyz);
 }
 
 // Project view-space position to screen UV
