@@ -20,8 +20,12 @@ struct LightingUniform {
     ambient: f32,
     specular_intensity: f32,
     shininess: f32,
-    fresnel_power: f32,
-    fresnel_intensity: f32,
+    rim_power: f32,
+    rim_intensity: f32,
+    rim_directionality: f32,
+    rim_color: vec3<f32>,
+    ibl_strength: f32,
+    rim_dir: vec3<f32>,
     _pad3: f32,
 };
 
@@ -59,6 +63,8 @@ const TUBE_RADIUS: f32 = 0.3;
 @group(0) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
 @group(1) @binding(0) var<uniform> camera: CameraUniform;
 @group(2) @binding(0) var<uniform> lighting: LightingUniform;
+@group(2) @binding(1) var irradiance_map: texture_cube<f32>;
+@group(2) @binding(2) var env_sampler: sampler;
 @group(3) @binding(0) var<storage, read> selection: array<u32>;
 
 // Check if a residue is selected (bit array lookup)
@@ -71,6 +77,17 @@ fn is_selected(residue_idx: u32) -> bool {
     return (selection[word_idx] & (1u << bit_idx)) != 0u;
 }
 
+// Compute rim lighting: view-dependent + optional directional back-light
+fn compute_rim(normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    let NdotV = max(dot(normal, view_dir), 0.0);
+    let rim = pow(1.0 - NdotV, lighting.rim_power);
+
+    let back_factor = max(dot(normal, -lighting.rim_dir), 0.0);
+    let directional_rim = rim * mix(1.0, back_factor, lighting.rim_directionality);
+
+    return directional_rim * lighting.rim_intensity * lighting.rim_color;
+}
+
 // Ray-capsule intersection
 fn intersect_capsule(
     ray_origin: vec3<f32>,
@@ -81,7 +98,7 @@ fn intersect_capsule(
 ) -> vec3<f32> {
     let ba = cap_b - cap_a;
     let ba_len = length(ba);
-    
+
     if (ba_len < 0.0001) {
         let oc = ray_origin - cap_a;
         let a = dot(ray_dir, ray_dir);
@@ -93,29 +110,29 @@ fn intersect_capsule(
         if (t > 0.001) { return vec3<f32>(t, 0.5, 2.0); }
         return vec3<f32>(-1.0, 0.0, 0.0);
     }
-    
+
     let ba_dir = ba / ba_len;
     let oa = ray_origin - cap_a;
-    
+
     let ray_par = dot(ray_dir, ba_dir);
     let ray_perp = ray_dir - ba_dir * ray_par;
     let oa_par = dot(oa, ba_dir);
     let oa_perp = oa - ba_dir * oa_par;
-    
+
     let a = dot(ray_perp, ray_perp);
     let b = 2.0 * dot(oa_perp, ray_perp);
     let c = dot(oa_perp, oa_perp) - radius * radius;
-    
+
     var best_t: f32 = 1e20;
     var best_axis: f32 = 0.0;
     var best_type: f32 = 0.0;
-    
+
     let disc_cyl = b * b - 4.0 * a * c;
     if (disc_cyl >= 0.0 && a > 0.0001) {
         let sqrt_disc = sqrt(disc_cyl);
         let t1 = (-b - sqrt_disc) / (2.0 * a);
         let t2 = (-b + sqrt_disc) / (2.0 * a);
-        
+
         for (var i = 0; i < 2; i++) {
             let t = select(t2, t1, i == 0);
             if (t > 0.001 && t < best_t) {
@@ -128,7 +145,7 @@ fn intersect_capsule(
             }
         }
     }
-    
+
     // Check cap A
     {
         let oc = ray_origin - cap_a;
@@ -149,7 +166,7 @@ fn intersect_capsule(
             }
         }
     }
-    
+
     // Check cap B
     {
         let oc = ray_origin - cap_b;
@@ -170,11 +187,11 @@ fn intersect_capsule(
             }
         }
     }
-    
+
     if (best_type == 0.0) {
         return vec3<f32>(-1.0, 0.0, 0.0);
     }
-    
+
     return vec3<f32>(best_t, best_axis, best_type);
 }
 
@@ -205,7 +222,7 @@ fn vs_main(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
         vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0)
     );
-    
+
     let cap = capsules[iidx];
     let endpoint_a = cap.endpoint_a.xyz;
     let endpoint_b = cap.endpoint_b.xyz;
@@ -224,14 +241,14 @@ fn vs_main(
     if (is_selected(residue_idx)) {
         radius = radius * 1.4;
     }
-    
+
     let center = (endpoint_a + endpoint_b) * 0.5;
     let axis = endpoint_b - endpoint_a;
     let seg_length = length(axis);
     let axis_dir = select(vec3<f32>(0.0, 1.0, 0.0), axis / seg_length, seg_length > 0.0001);
-    
+
     let to_camera = normalize(camera.position - center);
-    
+
     var right = cross(axis_dir, to_camera);
     let right_len = length(right);
     if (right_len < 0.001) {
@@ -241,16 +258,16 @@ fn vs_main(
         }
     }
     right = normalize(right);
-    
+
     let up = axis_dir;
-    
+
     let half_width = radius * 1.6;
     let half_height = seg_length * 0.5 + radius * 1.6;
-    
+
     let local_uv = quad[vidx];
     let world_offset = right * local_uv.x * half_width + up * local_uv.y * half_height;
     let world_pos = center + world_offset;
-    
+
     var out: VertexOutput;
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
@@ -260,7 +277,7 @@ fn vs_main(
     out.color_a = color_a;
     out.color_b = color_b;
     out.residue_idx = residue_idx;
-    
+
     return out;
 }
 
@@ -268,30 +285,30 @@ fn vs_main(
 fn fs_main(in: VertexOutput) -> FragOut {
     let ray_origin = camera.position;
     let ray_dir = normalize(in.world_pos - camera.position);
-    
+
     let hit = intersect_capsule(ray_origin, ray_dir, in.endpoint_a, in.endpoint_b, in.radius);
-    
+
     if (hit.x < 0.0) {
         discard;
     }
-    
+
     let t = hit.x;
     let axis_param = hit.y;
     let hit_type = hit.z;
-    
+
     let world_hit = ray_origin + ray_dir * t;
-    
+
     let normal = capsule_normal(world_hit, in.endpoint_a, in.endpoint_b, hit_type);
     let view_dir = normalize(camera.position - world_hit);
-    
+
     // Interpolate base color along capsule axis
     var base_color = mix(in.color_a, in.color_b, axis_param);
-    
+
     // Hover highlight: make brighter with additive white
     if (camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx) {
         base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);
     }
-    
+
     // Selection highlight: blend original color with blue (matches Foldit)
     // Foldit uses: color * 0.5 + SELECT_COLOR * 1.0 where SELECT_COLOR = (0,0,1)
     var outline_factor = 0.0;
@@ -299,20 +316,26 @@ fn fs_main(in: VertexOutput) -> FragOut {
         base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
         outline_factor = 1.0;
     }
-    
+
     // Lighting
     let key_diff = max(dot(normal, lighting.light1_dir), 0.0) * lighting.light1_intensity;
     let fill_diff = max(dot(normal, lighting.light2_dir), 0.0) * lighting.light2_intensity;
-    
+
     let half_vec = normalize(lighting.light1_dir + view_dir);
     let specular = pow(max(dot(normal, half_vec), 0.0), lighting.shininess) * lighting.specular_intensity;
-    
-    let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), lighting.fresnel_power);
-    let fresnel_boost = fresnel * lighting.fresnel_intensity;
-    
-    let total_light = lighting.ambient + key_diff + fill_diff + fresnel_boost;
-    
-    let lit_color = base_color * total_light + vec3<f32>(specular);
+
+    // IBL diffuse: sample irradiance cubemap with surface normal
+    let irradiance = textureSample(irradiance_map, env_sampler, normal).rgb;
+    let ibl_diffuse = irradiance * lighting.ibl_strength;
+    let ambient_light = mix(vec3(lighting.ambient), ibl_diffuse, lighting.ibl_strength);
+
+    // Rim lighting (replaces old Fresnel)
+    let rim = compute_rim(normal, view_dir);
+
+    let total_light = ambient_light + key_diff + fill_diff;
+
+    // Rim is additive (light from behind, not modulated by surface color)
+    let lit_color = base_color * total_light + vec3<f32>(specular) + rim;
 
     // Edge darkening for selected
     var final_color = lit_color;
@@ -320,10 +343,10 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
         final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
     }
-    
+
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
     let ndc_depth = clip_pos.z / clip_pos.w;
-    
+
     var out: FragOut;
     out.depth = ndc_depth;
     out.color = vec4<f32>(final_color, 1.0);
