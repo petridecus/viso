@@ -555,7 +555,7 @@ fn generate_helix_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &R
     }
     
     let widths = compute_taper_widths(frames.len(), params.helix_width, params.segments_per_residue, taper_start, taper_end);
-    let (v, i) = build_ribbon_mesh(&frames, &widths, params.helix_thickness, base);
+    let (v, i) = build_ribbon_mesh(&frames, &widths, params.helix_thickness, base, true);
     (v, i, Vec::new())
 }
 
@@ -677,7 +677,7 @@ fn sheet_from_normals(
     }
 
     let widths = compute_taper_widths(frames.len(), params.sheet_width, params.segments_per_residue, taper_start, taper_end);
-    build_ribbon_mesh(&frames, &widths, params.sheet_thickness, base)
+    build_ribbon_mesh(&frames, &widths, params.sheet_thickness, base, false)
 }
 
 /// Iterative flattening of sheet positions and normals (PyMOL-style).
@@ -771,7 +771,7 @@ fn compute_taper_widths(
     }).collect()
 }
 
-fn build_ribbon_mesh(frames: &[RibbonFrame], widths: &[f32], thickness: f32, base: u32) -> (Vec<RibbonVertex>, Vec<u32>) {
+fn build_ribbon_mesh(frames: &[RibbonFrame], widths: &[f32], thickness: f32, base: u32, smooth_normals: bool) -> (Vec<RibbonVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity(frames.len() * 4);
     let mut indices = Vec::new();
 
@@ -784,15 +784,34 @@ fn build_ribbon_mesh(frames: &[RibbonFrame], widths: &[f32], thickness: f32, bas
         let tr = frame.position + frame.normal * ht + frame.binormal * hw;
         let br = frame.position - frame.normal * ht + frame.binormal * hw;
         let bl = frame.position - frame.normal * ht - frame.binormal * hw;
-        
-        // Top face normal
-        let up: [f32; 3] = frame.normal.into();
-        let down: [f32; 3] = (-frame.normal).into();
-        
-        vertices.push(RibbonVertex { position: tl.into(), normal: up, color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: tr.into(), normal: up, color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: br.into(), normal: down, color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: bl.into(), normal: down, color: frame.color, residue_idx: frame.residue_idx });
+
+        let (n_tl, n_tr, n_br, n_bl) = if smooth_normals {
+            // Smooth normals: treat cross-section as an ellipse with semi-axes (hw, ht).
+            // The outward normal at offset (b, n) is proportional to (b/hw², n/ht²).
+            // This gives top vertices normals mostly pointing up with subtle side tilt,
+            // creating gradual specular falloff across the surface.
+            let inv_hw2 = 1.0 / (hw * hw).max(1e-6);
+            let inv_ht2 = 1.0 / (ht * ht).max(1e-6);
+            // TL: binormal_offset = -hw, normal_offset = +ht
+            let n_tl = (frame.binormal * (-hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
+            // TR: binormal_offset = +hw, normal_offset = +ht
+            let n_tr = (frame.binormal * (hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
+            // BR: binormal_offset = +hw, normal_offset = -ht
+            let n_br = (frame.binormal * (hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
+            // BL: binormal_offset = -hw, normal_offset = -ht
+            let n_bl = (frame.binormal * (-hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
+            (n_tl, n_tr, n_br, n_bl)
+        } else {
+            // Flat normals: top face up, bottom face down (for sheets)
+            let up = frame.normal;
+            let down = -frame.normal;
+            (up, up, down, down)
+        };
+
+        vertices.push(RibbonVertex { position: tl.into(), normal: n_tl.into(), color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: tr.into(), normal: n_tr.into(), color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: br.into(), normal: n_br.into(), color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: bl.into(), normal: n_bl.into(), color: frame.color, residue_idx: frame.residue_idx });
     }
     
     // Connect adjacent frames

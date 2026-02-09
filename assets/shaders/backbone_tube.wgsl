@@ -17,8 +17,12 @@ struct LightingUniform {
     ambient: f32,
     specular_intensity: f32,
     shininess: f32,
-    fresnel_power: f32,
-    fresnel_intensity: f32,
+    rim_power: f32,
+    rim_intensity: f32,
+    rim_directionality: f32,
+    rim_color: vec3<f32>,
+    ibl_strength: f32,
+    rim_dir: vec3<f32>,
     _pad3: f32,
 };
 
@@ -39,6 +43,8 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 @group(1) @binding(0) var<uniform> lighting: LightingUniform;
+@group(1) @binding(1) var irradiance_map: texture_cube<f32>;
+@group(1) @binding(2) var env_sampler: sampler;
 @group(2) @binding(0) var<storage, read> selection: array<u32>;
 
 // Check if a residue is selected (bit array lookup)
@@ -49,6 +55,18 @@ fn is_selected(residue_idx: u32) -> bool {
         return false;
     }
     return (selection[word_idx] & (1u << bit_idx)) != 0u;
+}
+
+// Compute rim lighting: view-dependent + optional directional back-light
+fn compute_rim(normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    let NdotV = max(dot(normal, view_dir), 0.0);
+    let rim = pow(1.0 - NdotV, lighting.rim_power);
+
+    // Directional modulation: surfaces facing away from rim light get brighter rims
+    let back_factor = max(dot(normal, -lighting.rim_dir), 0.0);
+    let directional_rim = rim * mix(1.0, back_factor, lighting.rim_directionality);
+
+    return directional_rim * lighting.rim_intensity * lighting.rim_color;
 }
 
 @vertex
@@ -85,10 +103,16 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let half_vec = normalize(lighting.light1_dir + view_dir);
     let specular = pow(max(dot(normal, half_vec), 0.0), lighting.shininess) * lighting.specular_intensity;
 
-    let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), lighting.fresnel_power);
-    let fresnel_boost = fresnel * lighting.fresnel_intensity;
+    // IBL diffuse: sample irradiance cubemap with surface normal
+    let irradiance = textureSample(irradiance_map, env_sampler, normal).rgb;
+    let ibl_diffuse = irradiance * lighting.ibl_strength;
+    // Blend between flat ambient and IBL based on ibl_strength
+    let ambient_light = mix(vec3(lighting.ambient), ibl_diffuse, lighting.ibl_strength);
 
-    let total_light = lighting.ambient + key_diff + fill_diff + fresnel_boost;
+    // Rim lighting (replaces old Fresnel)
+    let rim = compute_rim(normal, view_dir);
+
+    let total_light = ambient_light + key_diff + fill_diff;
 
     // Start with vertex color
     var base_color = in.vertex_color;
@@ -106,7 +130,8 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         outline_factor = 1.0;
     }
 
-    let lit_color = base_color * total_light + vec3<f32>(specular);
+    // Rim is additive (light from behind, not modulated by surface color)
+    let lit_color = base_color * total_light + vec3<f32>(specular) + rim;
 
     // For selected residues, add dark edge effect
     var final_color = lit_color;
