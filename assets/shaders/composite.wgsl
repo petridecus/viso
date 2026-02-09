@@ -7,7 +7,8 @@ struct CompositeParams {
     ao_strength: f32,
     near: f32,
     far: f32,
-    _pad: f32,
+    fog_start: f32,
+    fog_density: f32,
 };
 
 struct VertexOutput {
@@ -90,20 +91,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let adjusted_ao = mix(1.0, ao, params.ao_strength);
     var final_color = color.rgb * adjusted_ao;
 
-    // === STEP 2: Fog is applied in geometry shaders ===
-    // (Exponential fog already baked into color_texture)
+    // === STEP 2: Exponential fog from linearized depth ===
+    let linear_depth = linearize_depth(depth, params.near, params.far);
+    let fog_distance = max(linear_depth - params.fog_start, 0.0);
+    let fog_factor = exp(-fog_distance * params.fog_density);
+    final_color = final_color * fog_factor;
 
     // === STEP 3: Apply outline LAST (on top of fogged geometry) ===
     let texel_size = 1.0 / params.screen_size;
     let edge = detect_edges(in.uv, texel_size, params.outline_thickness);
 
-    // Linearize center depth for attenuation calculation
-    let l_c = linearize_depth(depth, params.near, params.far);
-
     // Outline strength attenuates with depth to prevent
     // pitch-black outlines on fogged distant geometry
     // Use a gentler falloff than the fog itself
-    let depth_attenuation = 1.0 / (1.0 + l_c * 0.002);
+    let depth_attenuation = 1.0 / (1.0 + linear_depth * 0.002);
     let attenuated_edge = edge * params.outline_strength * depth_attenuation;
 
     // Darken toward black for outline effect

@@ -19,9 +19,7 @@ pub struct CameraUniform {
     pub forward: [f32; 3],  // Camera forward direction for lighting
     pub fovy: f32,
     pub hovered_residue: i32,  // Currently hovered residue (-1 if none)
-    pub fog_start: f32,     // Distance where fog begins (protein-adaptive)
-    pub fog_density: f32,   // Exponential falloff rate
-    pub _pad: f32,
+    pub _pad: [f32; 3],
 }
 
 impl Camera {
@@ -48,9 +46,7 @@ impl CameraUniform {
             forward: [0.0, 0.0, -1.0],
             fovy: 45.0,
             hovered_residue: -1,
-            fog_start: 100.0,   // Default, will be updated by fit_to_positions
-            fog_density: 0.005, // Default exponential decay rate
-            _pad: 0.0,
+            _pad: [0.0; 3],
         }
     }
 

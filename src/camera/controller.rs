@@ -150,7 +150,6 @@ impl CameraController {
 
         if animating {
             self.update_camera_pos();
-            self.update_fog_params();
         }
 
         animating
@@ -163,19 +162,16 @@ impl CameraController {
             || self.target_bounding_radius.is_some()
     }
 
-    /// Update fog parameters based on current camera distance and protein bounding radius.
-    /// Called after any camera transform (zoom, pan, fit_to_positions).
-    fn update_fog_params(&mut self) {
-        // Fog starts at the back of the protein (center + some offset)
-        // This keeps the front crisp and only fades the back
-        let fog_start = self.distance + self.bounding_radius * 0.5;
+    /// Get the orbital distance from focus point.
+    #[inline]
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
 
-        // Density calibrated so fog reaches ~90% at 4x bounding radius
-        // Larger proteins get gentler fog falloff
-        let fog_density = 0.5 / self.bounding_radius.max(10.0);
-
-        self.uniform.fog_start = fog_start;
-        self.uniform.fog_density = fog_density;
+    /// Get the bounding radius of the current protein.
+    #[inline]
+    pub fn bounding_radius(&self) -> f32 {
+        self.bounding_radius
     }
 
     /// Get the camera's right vector from the orientation quaternion.
@@ -249,7 +245,6 @@ impl CameraController {
         self.distance *= 1.0 - delta * self.zoom_speed;
         self.distance = self.distance.clamp(1.0, 1000.0);
         self.update_camera_pos();
-        self.update_fog_params();
     }
 
     /// Calculate fit parameters for the given positions.
@@ -298,7 +293,6 @@ impl CameraController {
             self.target_bounding_radius = None;
 
             self.update_camera_pos();
-            self.update_fog_params();
         }
     }
 

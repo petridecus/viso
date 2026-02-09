@@ -7,8 +7,6 @@ struct CameraUniform {
     forward: vec3<f32>,
     fovy: f32,
     hovered_residue: i32,
-    fog_start: f32,
-    fog_density: f32,
 };
 
 struct CapsuleInstance {
