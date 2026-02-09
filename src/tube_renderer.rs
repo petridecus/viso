@@ -8,7 +8,8 @@
 
 use crate::dynamic_buffer::DynamicBuffer;
 use crate::render_context::RenderContext;
-use crate::secondary_structure::{detect_secondary_structure, SSType};
+use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
+use foldit_conv::secondary_structure::{SSType, merge_short_segments};
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
@@ -83,6 +84,8 @@ pub struct TubeRenderer {
     ss_filter: Option<HashSet<SSType>>,
     /// Cached chain data for regeneration when filter changes
     cached_chains: Vec<Vec<Vec3>>,
+    /// Pre-computed SS types override (from puzzle.toml annotation)
+    ss_override: Option<Vec<SSType>>,
 }
 
 impl TubeRenderer {
@@ -95,7 +98,7 @@ impl TubeRenderer {
     ) -> Self {
         let ss_filter = None; // Render all SS types by default
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &ss_filter);
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &ss_filter, None);
 
         let vertex_buffer = if vertices.is_empty() {
             DynamicBuffer::new(
@@ -140,6 +143,7 @@ impl TubeRenderer {
             last_chain_hash,
             ss_filter,
             cached_chains: backbone_chains.to_vec(),
+            ss_override: None,
         }
     }
 
@@ -149,9 +153,15 @@ impl TubeRenderer {
         self.ss_filter = filter;
     }
 
+    /// Set pre-computed SS types (from puzzle.toml annotation or DSSP).
+    /// When set, these are used instead of auto-detection.
+    pub fn set_ss_override(&mut self, ss_types: Option<Vec<SSType>>) {
+        self.ss_override = ss_types;
+    }
+
     /// Regenerate mesh with current filter settings
     pub fn regenerate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let (vertices, indices) = Self::generate_tube_mesh(&self.cached_chains, &self.ss_filter);
+        let (vertices, indices) = Self::generate_tube_mesh(&self.cached_chains, &self.ss_filter, self.ss_override.as_deref());
         if !vertices.is_empty() {
             self.vertex_buffer.write(device, queue, &vertices);
             self.index_buffer.write(device, queue, &indices);
@@ -194,16 +204,20 @@ impl TubeRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         backbone_chains: &[Vec<Vec3>],
+        ss_types: Option<&[SSType]>,
     ) {
         // Quick hash check to see if chains actually changed
         let new_hash = Self::compute_chain_hash(backbone_chains);
-        if new_hash == self.last_chain_hash {
+        if new_hash == self.last_chain_hash && ss_types.is_none() {
             return; // No change, skip expensive mesh regeneration
         }
         self.last_chain_hash = new_hash;
         self.cached_chains = backbone_chains.to_vec();
+        if let Some(ss) = ss_types {
+            self.ss_override = Some(ss.to_vec());
+        }
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter);
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter, self.ss_override.as_deref());
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -225,7 +239,7 @@ impl TubeRenderer {
         self.last_chain_hash = new_hash;
         self.cached_chains = backbone_chains.to_vec();
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter);
+        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter, self.ss_override.as_deref());
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -339,6 +353,7 @@ impl TubeRenderer {
     fn generate_tube_mesh(
         chains: &[Vec<Vec3>],
         ss_filter: &Option<HashSet<SSType>>,
+        ss_override: Option<&[SSType]>,
     ) -> (Vec<TubeVertex>, Vec<u32>) {
         let mut all_vertices: Vec<TubeVertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
@@ -355,14 +370,26 @@ impl TubeRenderer {
                 .map(|(_, &pos)| pos)
                 .collect();
 
-            // Need at least 4 CA atoms for a smooth spline
-            if ca_positions.len() < 4 {
+            // Need at least 2 CA atoms for a spline segment
+            if ca_positions.len() < 2 {
                 global_residue_idx += ca_positions.len() as u32;
                 continue;
             }
 
-            // Detect secondary structure from CA positions
-            let ss_types = detect_secondary_structure(&ca_positions);
+            // Use SS override if available, otherwise auto-detect
+            let n_residues = ca_positions.len();
+            let ss_types = if let Some(overrides) = ss_override {
+                let start = global_residue_idx as usize;
+                let end = (start + n_residues).min(overrides.len());
+                if start < overrides.len() {
+                    overrides[start..end].to_vec()
+                } else {
+                    detect_secondary_structure(&ca_positions)
+                }
+            } else {
+                detect_secondary_structure(&ca_positions)
+            };
+            let ss_types = merge_short_segments(&ss_types);
 
             // Generate spline points from raw CA positions
             let spline_points = Self::generate_spline_points(&ca_positions);
@@ -405,7 +432,8 @@ impl TubeRenderer {
     }
 
     /// Generate tube segments only for residues matching the SS filter
-    /// Extends segments by 1 residue at each boundary to overlap with ribbons
+    /// Generate tube segments only for residues matching the SS filter.
+    /// Ribbon handles the taper into coil regions, so tubes render only their exact range.
     fn generate_filtered_segments(
         spline_points: &[SplinePoint],
         ss_types: &[SSType],
@@ -437,32 +465,26 @@ impl TubeRenderer {
             }
             let end_residue = i;
 
-            // Extend segment by 1 residue on each end to overlap with ribbons
-            // This ensures tubes go "under" the ribbons at junctions
-            let extended_start = start_residue.saturating_sub(1);
-            let extended_end = (end_residue + 1).min(n_residues);
-
             // Need at least 2 residues for a tube segment
-            if extended_end - extended_start < 2 {
+            if end_residue - start_residue < 2 {
                 continue;
             }
 
             // Convert residue range to spline point range
-            let start_point = extended_start * points_per_residue;
-            let end_point = ((extended_end - 1) * points_per_residue + 1).min(spline_points.len());
+            let start_point = start_residue * points_per_residue;
+            let end_point = ((end_residue - 1) * points_per_residue + 1).min(spline_points.len());
 
             if start_point >= end_point || start_point >= spline_points.len() {
                 continue;
             }
 
             let segment_points = &spline_points[start_point..end_point];
-            // Use original (non-extended) SS types for coloring so colors match ribbons
-            let segment_ss = &ss_types[extended_start..extended_end];
+            let segment_ss = &ss_types[start_residue..end_residue];
             let segment_colors = Self::interpolate_ss_colors(segment_ss, segment_points.len());
             let segment_residue_indices = Self::interpolate_residue_indices(
-                extended_end - extended_start,
+                end_residue - start_residue,
                 segment_points.len(),
-                base_residue_idx + extended_start as u32,
+                base_residue_idx + start_residue as u32,
             );
 
             let base_vertex = all_vertices.len() as u32;

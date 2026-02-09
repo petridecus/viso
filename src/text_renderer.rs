@@ -70,6 +70,10 @@ impl TextRenderer {
     }
 
     pub fn prepare(&mut self, context: &RenderContext) {
+        log::debug!(
+            "text_renderer.prepare: viewport={}x{}",
+            context.config.width, context.config.height,
+        );
         self.viewport.update(
             &context.queue,
             Resolution {

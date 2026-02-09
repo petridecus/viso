@@ -20,6 +20,9 @@ pdbtbx = "0.12"
 # Text rendering for UI
 glyphon = "0.10"
 
+# Logging
+log = "0.4"
+
 # Time utilities
 instant = "0.1"
 
