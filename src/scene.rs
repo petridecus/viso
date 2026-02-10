@@ -9,7 +9,7 @@ use foldit_conv::coords::render::extract_sequences;
 use foldit_conv::coords::types::Coords;
 use foldit_conv::coords::{protein_only, RenderCoords};
 use foldit_conv::secondary_structure::SSType;
-use foldit_conv::types::assembly::{Assembly, prepare_combined_session, split_combined_result};
+use foldit_conv::types::assembly::{Assembly, prepare_combined_assembly, split_combined_result};
 use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -550,8 +550,9 @@ impl Scene {
 
     // ── Backend support (combined coords for Rosetta) ──
 
-    /// Get combined COORDS bytes from all visible groups for Rosetta operations.
-    /// Uses Assembly-based prepare_combined_session for correct atom ordering.
+    /// Get combined ASSEM01 bytes from all visible groups for Rosetta operations.
+    /// Uses prepare_combined_assembly to include all entity types (protein, ligand, etc.)
+    /// so the Rosetta backend can handle ligands and ions.
     pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
         let visible_groups: Vec<&EntityGroup> = self.groups.iter()
             .filter(|g| g.visible && g.assembly.residue_count() > 0)
@@ -568,21 +569,20 @@ impl Scene {
             .map(|g| g.id)
             .collect();
 
-        let session = prepare_combined_session(&assemblies)?;
+        let combined = prepare_combined_assembly(&assemblies)?;
 
-        // Convert CombinedSession to CombinedCoordsResult (with GroupId mapping)
         let chain_ids_per_group: Vec<(GroupId, Vec<u8>)> = group_ids.iter()
-            .zip(session.chain_ids.iter())
+            .zip(combined.chain_ids.iter())
             .map(|(&gid, chains)| (gid, chains.clone()))
             .collect();
 
         let residue_ranges: HashMap<GroupId, (usize, usize)> = group_ids.iter()
-            .zip(session.residue_ranges.iter())
+            .zip(combined.residue_ranges.iter())
             .map(|(&gid, &range)| (gid, range))
             .collect();
 
         Some(CombinedCoordsResult {
-            bytes: session.bytes,
+            bytes: combined.bytes,
             chain_ids_per_group,
             residue_ranges,
         })
@@ -590,6 +590,8 @@ impl Scene {
 
     /// Apply combined Rosetta update to all groups in the session.
     /// Uses split_combined_result for correct per-assembly splitting.
+    /// Uses update_from_backend to replace entity types Rosetta exported while
+    /// preserving entity types Rosetta skipped (water, unknown ligands).
     pub fn apply_combined_update(
         &mut self,
         coords_bytes: &[u8],
@@ -609,9 +611,9 @@ impl Scene {
             }
 
             if let Some(group) = self.groups.iter_mut().find(|g| g.id == *group_id) {
-                group.assembly.update_protein_coords(structure_coords.clone());
+                group.assembly.update_from_backend(structure_coords.clone());
                 group.invalidate_render_cache();
-                log::info!("Updated group {:?} from combined session ({} atoms)",
+                log::info!("Updated group {:?} from backend ({} atoms)",
                     group_id, structure_coords.num_atoms);
             }
         }

@@ -263,14 +263,17 @@ impl CameraController {
             .map(|p| (*p - centroid).length())
             .fold(0.0f32, f32::max);
 
+        // Minimum effective radius so small molecules (ions, ligands) don't zoom in too close
+        let effective_radius = radius.max(5.0);
+
         // Set distance to fit the bounding sphere in view
         // Account for both vertical and horizontal FOV to fill viewport maximally
         let fovy_rad = self.camera.fovy.to_radians();
         let fovx_rad = fovy_rad * self.camera.aspect;
 
         // Calculate required distance for each axis
-        let fit_distance_y = radius / (fovy_rad / 2.0).tan();
-        let fit_distance_x = radius / (fovx_rad / 2.0).tan();
+        let fit_distance_y = effective_radius / (fovy_rad / 2.0).tan();
+        let fit_distance_x = effective_radius / (fovx_rad / 2.0).tan();
 
         // Use the larger distance (tighter constraint) to ensure fit on both axes
         let fit_distance = fit_distance_y.max(fit_distance_x);
