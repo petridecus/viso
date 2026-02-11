@@ -4,13 +4,14 @@
 //! Uses distance-based bond inference from `foldit_conv::coords::bond_inference`.
 
 use bytemuck::Zeroable;
-use foldit_conv::coords::{
-    infer_bonds, BondOrder, MoleculeEntity, MoleculeType, DEFAULT_TOLERANCE,
-};
 use foldit_conv::coords::types::Element;
+use foldit_conv::coords::{
+    infer_bonds, BondOrder, InferredBond, MoleculeEntity, MoleculeType, DEFAULT_TOLERANCE,
+};
 use glam::Vec3;
 
 use crate::dynamic_buffer::TypedBuffer;
+use crate::options::{ColorOptions, DisplayOptions};
 use crate::render_context::RenderContext;
 
 /// Radius for bond capsules (thinner than protein sidechains)
@@ -28,30 +29,52 @@ const WATER_RADIUS: f32 = 0.3;
 /// Perpendicular offset for double bond parallel capsules
 const DOUBLE_BOND_OFFSET: f32 = 0.2;
 
+/// Warm beige/tan carbon tint for lipid molecules.
+const LIPID_CARBON_TINT: [f32; 3] = [0.76, 0.70, 0.50];
+
+/// Return atom color: if a carbon tint is provided, carbon atoms use it;
+/// all other elements (N, O, S, P, etc.) keep standard CPK coloring.
+fn atom_color(elem: Element, carbon_tint: Option<[f32; 3]>) -> [f32; 3] {
+    match (elem, carbon_tint) {
+        (Element::C, Some(tint)) => tint,
+        _ => elem.cpk_color(),
+    }
+}
+
+/// Display mode for lipid entities
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LipidDisplayMode {
+    /// Coarse-grained: P spheres, head-group O/N, thin tail bonds, skip H
+    #[default]
+    CoarseGrained,
+    /// Full ball-and-stick (same as ligands)
+    BallAndStick,
+}
+
 /// Per-instance data for sphere impostor.
 /// Must match the WGSL SphereInstance struct layout.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SphereInstance {
+pub(crate) struct SphereInstance {
     /// xyz = position, w = radius
-    center: [f32; 4],
+    pub(crate) center: [f32; 4],
     /// xyz = RGB color, w = entity_id (packed as float)
-    color: [f32; 4],
+    pub(crate) color: [f32; 4],
 }
 
 /// Per-instance data for capsule impostor (bonds).
 /// Must match the WGSL CapsuleInstance struct layout.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CapsuleInstance {
+pub(crate) struct CapsuleInstance {
     /// Endpoint A position (xyz), radius (w)
-    endpoint_a: [f32; 4],
+    pub(crate) endpoint_a: [f32; 4],
     /// Endpoint B position (xyz), residue_idx (w) - packed as float
-    endpoint_b: [f32; 4],
+    pub(crate) endpoint_b: [f32; 4],
     /// Color at endpoint A (RGB), w unused
-    color_a: [f32; 4],
+    pub(crate) color_a: [f32; 4],
     /// Color at endpoint B (RGB), w unused
-    color_b: [f32; 4],
+    pub(crate) color_b: [f32; 4],
 }
 
 pub struct BallAndStickRenderer {
@@ -203,9 +226,9 @@ impl BallAndStickRenderer {
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/sphere_impostor.wgsl"));
+        let shader = context.device.create_shader_module(wgpu::include_wgsl!(
+            "../assets/shaders/sphere_impostor.wgsl"
+        ));
 
         let pipeline_layout =
             context
@@ -271,9 +294,9 @@ impl BallAndStickRenderer {
         selection_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::RenderPipeline {
         // Reuse capsule_impostor.wgsl for bonds
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/capsule_impostor.wgsl"));
+        let shader = context.device.create_shader_module(wgpu::include_wgsl!(
+            "../assets/shaders/capsule_impostor.wgsl"
+        ));
 
         let pipeline_layout =
             context
@@ -331,14 +354,14 @@ impl BallAndStickRenderer {
             })
     }
 
-    /// Regenerate all instances from entity data.
-    pub fn update_from_entities(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+    /// Generate all instances from entity data (pure CPU, no GPU access needed).
+    ///
+    /// Returns (sphere_instances, bond_instances, picking_instances).
+    pub(crate) fn generate_all_instances(
         entities: &[MoleculeEntity],
-        show_waters: bool,
-    ) {
+        display: &DisplayOptions,
+        colors: Option<&ColorOptions>,
+    ) -> (Vec<SphereInstance>, Vec<CapsuleInstance>, Vec<CapsuleInstance>) {
         let mut sphere_instances = Vec::new();
         let mut bond_instances = Vec::new();
         let mut picking_instances = Vec::new();
@@ -346,7 +369,66 @@ impl BallAndStickRenderer {
         for entity in entities {
             match entity.molecule_type {
                 MoleculeType::Ligand => {
-                    self.generate_ligand_instances(
+                    Self::generate_ligand_instances(
+                        &entity.coords,
+                        entity.entity_id,
+                        None,
+                        &mut sphere_instances,
+                        &mut bond_instances,
+                        &mut picking_instances,
+                    );
+                }
+                MoleculeType::Cofactor => {
+                    let tint = entity.coords.res_names.first()
+                        .map(|rn| {
+                            if let Some(c) = colors {
+                                c.cofactor_tint(std::str::from_utf8(rn).unwrap_or("").trim())
+                            } else {
+                                Self::cofactor_carbon_tint(rn)
+                            }
+                        })
+                        .unwrap_or([0.5, 0.5, 0.5]);
+                    Self::generate_ligand_instances(
+                        &entity.coords,
+                        entity.entity_id,
+                        Some(tint),
+                        &mut sphere_instances,
+                        &mut bond_instances,
+                        &mut picking_instances,
+                    );
+                }
+                MoleculeType::Lipid => {
+                    let lipid_tint = colors.map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
+                    if display.lipid_ball_and_stick() {
+                        Self::generate_ligand_instances(
+                            &entity.coords,
+                            entity.entity_id,
+                            Some(lipid_tint),
+                            &mut sphere_instances,
+                            &mut bond_instances,
+                            &mut picking_instances,
+                        );
+                    } else {
+                        Self::generate_coarse_lipid_instances(
+                            &entity.coords,
+                            entity.entity_id,
+                            lipid_tint,
+                            &mut sphere_instances,
+                            &mut bond_instances,
+                            &mut picking_instances,
+                        );
+                    }
+                },
+                MoleculeType::Ion if display.show_ions => {
+                    Self::generate_ion_instances(
+                        &entity.coords,
+                        entity.entity_id,
+                        &mut sphere_instances,
+                        &mut picking_instances,
+                    );
+                }
+                MoleculeType::Water if display.show_waters => {
+                    Self::generate_water_instances(
                         &entity.coords,
                         entity.entity_id,
                         &mut sphere_instances,
@@ -354,34 +436,52 @@ impl BallAndStickRenderer {
                         &mut picking_instances,
                     );
                 }
-                MoleculeType::Ion => {
-                    self.generate_ion_instances(
+                MoleculeType::Solvent if display.show_solvent => {
+                    let sc = colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
+                    Self::generate_solvent_instances(
                         &entity.coords,
                         entity.entity_id,
+                        sc,
                         &mut sphere_instances,
                         &mut picking_instances,
                     );
                 }
-                MoleculeType::Water if show_waters => {
-                    self.generate_water_instances(
-                        &entity.coords,
-                        entity.entity_id,
-                        &mut sphere_instances,
-                        &mut bond_instances,
-                        &mut picking_instances,
-                    );
-                }
-                // Skip Protein, DNA, RNA (handled by other renderers), and Water if hidden
                 _ => {}
             }
         }
 
+        (sphere_instances, bond_instances, picking_instances)
+    }
+
+    /// Regenerate all instances from entity data.
+    pub fn update_from_entities(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        entities: &[MoleculeEntity],
+        display: &DisplayOptions,
+        colors: Option<&ColorOptions>,
+    ) {
+        let (sphere_instances, bond_instances, picking_instances) =
+            Self::generate_all_instances(entities, display, colors);
+        self.apply_instances(device, queue, &sphere_instances, &bond_instances, &picking_instances);
+    }
+
+    /// Upload pre-computed instances to GPU buffers, recreating bind groups if reallocated.
+    fn apply_instances(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sphere_instances: &[SphereInstance],
+        bond_instances: &[CapsuleInstance],
+        picking_instances: &[CapsuleInstance],
+    ) {
         // Update sphere buffer
         let sphere_reallocated = if sphere_instances.is_empty() {
             self.sphere_buffer
                 .write(device, queue, &[SphereInstance::zeroed()])
         } else {
-            self.sphere_buffer.write(device, queue, &sphere_instances)
+            self.sphere_buffer.write(device, queue, sphere_instances)
         };
         if sphere_reallocated {
             self.sphere_bind_group = Self::create_storage_bind_group(
@@ -398,7 +498,7 @@ impl BallAndStickRenderer {
             self.bond_buffer
                 .write(device, queue, &[CapsuleInstance::zeroed()])
         } else {
-            self.bond_buffer.write(device, queue, &bond_instances)
+            self.bond_buffer.write(device, queue, bond_instances)
         };
         if bond_reallocated {
             self.bond_bind_group = Self::create_storage_bind_group(
@@ -415,8 +515,7 @@ impl BallAndStickRenderer {
             self.picking_buffer
                 .write(device, queue, &[CapsuleInstance::zeroed()])
         } else {
-            self.picking_buffer
-                .write(device, queue, &picking_instances)
+            self.picking_buffer.write(device, queue, picking_instances)
         };
         if picking_reallocated {
             self.picking_bind_group = Self::create_storage_bind_group(
@@ -429,10 +528,15 @@ impl BallAndStickRenderer {
         self.picking_count = picking_instances.len() as u32;
     }
 
+    /// Generate ball-and-stick instances for a small molecule entity.
+    ///
+    /// When `carbon_tint` is `Some(color)`, carbon atoms and their bond endpoints
+    /// use the tint color instead of CPK gray; heteroatoms (N, O, S, P, …) keep
+    /// standard CPK coloring. Pass `None` for plain ligand rendering.
     fn generate_ligand_instances(
-        &self,
         coords: &foldit_conv::coords::Coords,
         _entity_id: u32,
+        carbon_tint: Option<[f32; 3]>,
         spheres: &mut Vec<SphereInstance>,
         bonds: &mut Vec<CapsuleInstance>,
         picking: &mut Vec<CapsuleInstance>,
@@ -445,12 +549,8 @@ impl BallAndStickRenderer {
 
         // Generate atom spheres
         for (i, pos) in positions.iter().enumerate() {
-            let elem = coords
-                .elements
-                .get(i)
-                .copied()
-                .unwrap_or(Element::Unknown);
-            let color = elem.cpk_color();
+            let elem = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+            let color = atom_color(elem, carbon_tint);
             let radius = elem.vdw_radius() * BALL_RADIUS_SCALE;
             // Use a large residue_idx offset so picking doesn't conflict with protein
             let pick_id = 100000 + i as u32;
@@ -469,8 +569,8 @@ impl BallAndStickRenderer {
             });
         }
 
-        // Infer and generate bonds
-        let inferred_bonds = infer_bonds(coords, DEFAULT_TOLERANCE);
+        // Infer bonds per-residue (avoids O(n²) on large multi-molecule entities)
+        let inferred_bonds = Self::infer_bonds_per_residue(coords);
         for bond in &inferred_bonds {
             let pos_a = positions[bond.atom_a];
             let pos_b = positions[bond.atom_b];
@@ -484,8 +584,8 @@ impl BallAndStickRenderer {
                 .get(bond.atom_b)
                 .copied()
                 .unwrap_or(Element::Unknown);
-            let color_a = elem_a.cpk_color();
-            let color_b = elem_b.cpk_color();
+            let color_a = atom_color(elem_a, carbon_tint);
+            let color_b = atom_color(elem_b, carbon_tint);
             // Use pick_id from atom_a for the bond
             let pick_id = 100000 + bond.atom_a as u32;
 
@@ -548,19 +648,118 @@ impl BallAndStickRenderer {
         }
     }
 
+    fn generate_coarse_lipid_instances(
+        coords: &foldit_conv::coords::Coords,
+        _entity_id: u32,
+        lipid_carbon_tint: [f32; 3],
+        spheres: &mut Vec<SphereInstance>,
+        bonds: &mut Vec<CapsuleInstance>,
+        picking: &mut Vec<CapsuleInstance>,
+    ) {
+        let positions: Vec<Vec3> = coords
+            .atoms
+            .iter()
+            .map(|a| Vec3::new(a.x, a.y, a.z))
+            .collect();
+
+        // Generate atom spheres (skip H entirely, CG radii for others)
+        for (i, pos) in positions.iter().enumerate() {
+            let elem = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+            let pick_id = 100000 + i as u32;
+
+            match elem {
+                Element::H => continue, // skip hydrogen entirely
+                Element::P => {
+                    // Phosphorus: medium sphere, CPK orange
+                    let color = elem.cpk_color();
+                    spheres.push(SphereInstance {
+                        center: [pos.x, pos.y, pos.z, 1.0],
+                        color: [color[0], color[1], color[2], pick_id as f32],
+                    });
+                    // Degenerate capsule for picking (P atoms only)
+                    picking.push(CapsuleInstance {
+                        endpoint_a: [pos.x, pos.y, pos.z, 1.0],
+                        endpoint_b: [pos.x, pos.y, pos.z, pick_id as f32],
+                        color_a: [0.0; 4],
+                        color_b: [0.0; 4],
+                    });
+                }
+                Element::O | Element::N => {
+                    // Head-group: small spheres, element-colored
+                    let color = elem.cpk_color();
+                    spheres.push(SphereInstance {
+                        center: [pos.x, pos.y, pos.z, 0.35],
+                        color: [color[0], color[1], color[2], pick_id as f32],
+                    });
+                }
+                // C and everything else: no sphere in CG mode
+                _ => {}
+            }
+        }
+
+        // Infer bonds PER RESIDUE to avoid O(n²) on the entire lipid entity
+        // (all lipids are grouped into one entity — distance checks across
+        // ~95K atoms would take minutes; per-residue is ~130 atoms each).
+        let lipid_tint = Some(lipid_carbon_tint);
+
+        // Group atom indices by residue number
+        let mut residue_atoms: std::collections::BTreeMap<i32, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for i in 0..coords.num_atoms {
+            residue_atoms.entry(coords.res_nums[i]).or_default().push(i);
+        }
+
+        for atom_indices in residue_atoms.values() {
+            // Pairwise bond inference within this residue only
+            for (ai, &i) in atom_indices.iter().enumerate() {
+                let elem_i = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+                if elem_i == Element::H {
+                    continue;
+                }
+                let cov_i = elem_i.covalent_radius();
+
+                for &j in &atom_indices[ai + 1..] {
+                    let elem_j = coords.elements.get(j).copied().unwrap_or(Element::Unknown);
+                    if elem_j == Element::H {
+                        continue;
+                    }
+                    let cov_j = elem_j.covalent_radius();
+
+                    let dist = positions[i].distance(positions[j]);
+                    let threshold = cov_i + cov_j + DEFAULT_TOLERANCE;
+
+                    if dist <= threshold && dist > 0.4 {
+                        let pos_a = positions[i];
+                        let pos_b = positions[j];
+                        let pick_id = 100000 + i as u32;
+
+                        // C-C tail bonds thin, head-group bonds thicker
+                        let both_carbon = elem_i == Element::C && elem_j == Element::C;
+                        let radius = if both_carbon { 0.06 } else { 0.10 };
+                        // Carbon gets lipid tint, heteroatoms keep CPK
+                        let color_a = atom_color(elem_i, lipid_tint);
+                        let color_b = atom_color(elem_j, lipid_tint);
+
+                        bonds.push(CapsuleInstance {
+                            endpoint_a: [pos_a.x, pos_a.y, pos_a.z, radius],
+                            endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
+                            color_a: [color_a[0], color_a[1], color_a[2], 0.0],
+                            color_b: [color_b[0], color_b[1], color_b[2], 0.0],
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn generate_ion_instances(
-        &self,
         coords: &foldit_conv::coords::Coords,
         _entity_id: u32,
         spheres: &mut Vec<SphereInstance>,
         picking: &mut Vec<CapsuleInstance>,
     ) {
         for (i, atom) in coords.atoms.iter().enumerate() {
-            let elem = coords
-                .elements
-                .get(i)
-                .copied()
-                .unwrap_or(Element::Unknown);
+            let elem = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
             let color = elem.cpk_color();
             let radius = elem.vdw_radius() * ION_RADIUS_SCALE;
             let pick_id = 100000 + i as u32;
@@ -581,7 +780,6 @@ impl BallAndStickRenderer {
     }
 
     fn generate_water_instances(
-        &self,
         coords: &foldit_conv::coords::Coords,
         _entity_id: u32,
         spheres: &mut Vec<SphereInstance>,
@@ -598,11 +796,7 @@ impl BallAndStickRenderer {
         let water_color: [f32; 3] = [0.5, 0.7, 1.0];
 
         for (i, pos) in positions.iter().enumerate() {
-            let elem = coords
-                .elements
-                .get(i)
-                .copied()
-                .unwrap_or(Element::Unknown);
+            let elem = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
 
             // Only render oxygens as visible spheres, skip hydrogens in water
             if elem == Element::O || elem == Element::Unknown {
@@ -610,7 +804,12 @@ impl BallAndStickRenderer {
 
                 spheres.push(SphereInstance {
                     center: [pos.x, pos.y, pos.z, WATER_RADIUS],
-                    color: [water_color[0], water_color[1], water_color[2], pick_id as f32],
+                    color: [
+                        water_color[0],
+                        water_color[1],
+                        water_color[2],
+                        pick_id as f32,
+                    ],
                 });
 
                 // Degenerate capsule for picking
@@ -645,6 +844,100 @@ impl BallAndStickRenderer {
                 });
             }
         }
+    }
+
+    /// Carbon tint color for cofactor rendering, keyed by 3-letter residue name.
+    /// Applied to carbon atoms and their bond endpoints; heteroatoms keep CPK.
+    fn cofactor_carbon_tint(res_name: &[u8; 3]) -> [f32; 3] {
+        let name = std::str::from_utf8(res_name).unwrap_or("").trim();
+        match name {
+            "CLA" => [0.2, 0.7, 0.3],       // green
+            "CHL" => [0.2, 0.6, 0.35],       // green (chlorophyll B)
+            "BCR" | "BCB" => [0.9, 0.5, 0.1], // orange
+            "HEM" | "HEC" | "HEA" | "HEB" => [0.7, 0.15, 0.15], // dark red
+            "PHO" => [0.5, 0.7, 0.3],        // yellow-green
+            "PL9" | "PLQ" => [0.6, 0.5, 0.2], // amber
+            _ => [0.5, 0.5, 0.5],            // neutral fallback
+        }
+    }
+
+    /// Generate instances for solvent entities.
+    /// Tiny gray spheres (no bonds), skip H atoms.
+    fn generate_solvent_instances(
+        coords: &foldit_conv::coords::Coords,
+        _entity_id: u32,
+        solvent_color: [f32; 3],
+        spheres: &mut Vec<SphereInstance>,
+        picking: &mut Vec<CapsuleInstance>,
+    ) {
+        const SOLVENT_RADIUS: f32 = 0.15;
+
+        for (i, atom) in coords.atoms.iter().enumerate() {
+            let elem = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+            if elem == Element::H {
+                continue;
+            }
+            let pick_id = 100000 + i as u32;
+
+            spheres.push(SphereInstance {
+                center: [atom.x, atom.y, atom.z, SOLVENT_RADIUS],
+                color: [solvent_color[0], solvent_color[1], solvent_color[2], pick_id as f32],
+            });
+
+            picking.push(CapsuleInstance {
+                endpoint_a: [atom.x, atom.y, atom.z, SOLVENT_RADIUS],
+                endpoint_b: [atom.x, atom.y, atom.z, pick_id as f32],
+                color_a: [0.0; 4],
+                color_b: [0.0; 4],
+            });
+        }
+    }
+
+    /// Apply pre-computed instance data (GPU upload only, no CPU generation).
+    pub fn apply_prepared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sphere_bytes: &[u8],
+        sphere_count: u32,
+        capsule_bytes: &[u8],
+        capsule_count: u32,
+        picking_bytes: &[u8],
+        picking_count: u32,
+    ) {
+        // Zeroed fallbacks for empty buffers (wgpu requires non-zero bind group buffers)
+        let sphere_zero = SphereInstance::zeroed();
+        let capsule_zero = CapsuleInstance::zeroed();
+
+        // Update sphere buffer
+        let sphere_data = if sphere_bytes.is_empty() { bytemuck::bytes_of(&sphere_zero) } else { sphere_bytes };
+        let sphere_reallocated = self.sphere_buffer.write_bytes(device, queue, sphere_data);
+        if sphere_reallocated {
+            self.sphere_bind_group = Self::create_storage_bind_group(
+                device, &self.sphere_bind_group_layout, &self.sphere_buffer, "Sphere",
+            );
+        }
+        self.sphere_count = sphere_count;
+
+        // Update bond buffer
+        let bond_data = if capsule_bytes.is_empty() { bytemuck::bytes_of(&capsule_zero) } else { capsule_bytes };
+        let bond_reallocated = self.bond_buffer.write_bytes(device, queue, bond_data);
+        if bond_reallocated {
+            self.bond_bind_group = Self::create_storage_bind_group(
+                device, &self.bond_bind_group_layout, &self.bond_buffer, "Bond",
+            );
+        }
+        self.bond_count = capsule_count;
+
+        // Update picking buffer
+        let picking_data = if picking_bytes.is_empty() { bytemuck::bytes_of(&capsule_zero) } else { picking_bytes };
+        let picking_reallocated = self.picking_buffer.write_bytes(device, queue, picking_data);
+        if picking_reallocated {
+            self.picking_bind_group = Self::create_storage_bind_group(
+                device, &self.picking_bind_group_layout, &self.picking_buffer, "BnS Picking",
+            );
+        }
+        self.picking_count = picking_count;
     }
 
     /// Draw both spheres and bonds in a single render pass.
@@ -687,16 +980,30 @@ impl BallAndStickRenderer {
     }
 
     /// Get all non-protein atom positions for camera fitting.
-    pub fn collect_positions(entities: &[MoleculeEntity], show_waters: bool) -> Vec<Vec3> {
+    pub fn collect_positions(
+        entities: &[MoleculeEntity],
+        display: &DisplayOptions,
+    ) -> Vec<Vec3> {
         let mut positions = Vec::new();
         for entity in entities {
             match entity.molecule_type {
-                MoleculeType::Ligand | MoleculeType::Ion => {
+                // Ligands, cofactors, lipids: always visible
+                MoleculeType::Ligand | MoleculeType::Cofactor | MoleculeType::Lipid => {
                     for atom in &entity.coords.atoms {
                         positions.push(Vec3::new(atom.x, atom.y, atom.z));
                     }
                 }
-                MoleculeType::Water if show_waters => {
+                MoleculeType::Ion if display.show_ions => {
+                    for atom in &entity.coords.atoms {
+                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
+                    }
+                }
+                MoleculeType::Water if display.show_waters => {
+                    for atom in &entity.coords.atoms {
+                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
+                    }
+                }
+                MoleculeType::Solvent if display.show_solvent => {
                     for atom in &entity.coords.atoms {
                         positions.push(Vec3::new(atom.x, atom.y, atom.z));
                     }
@@ -706,6 +1013,76 @@ impl BallAndStickRenderer {
         }
         positions
     }
+
+    /// Infer bonds per-residue to avoid O(n²) on large multi-molecule entities.
+    /// For single-residue entities (typical ligands), this is identical to `infer_bonds`.
+    /// For multi-residue entities (e.g. all lipids lumped together), this is
+    /// O(sum of k²) where k = atoms per residue (~130), vs O(n²) where n = total (~95K).
+    fn infer_bonds_per_residue(
+        coords: &foldit_conv::coords::Coords,
+    ) -> Vec<InferredBond> {
+        use std::collections::BTreeMap;
+
+        let n = coords.num_atoms;
+        if n < 2 {
+            return Vec::new();
+        }
+
+        // If only one residue, delegate to the standard function
+        let first_res = coords.res_nums[0];
+        if coords.res_nums.iter().all(|&r| r == first_res) {
+            return infer_bonds(coords, DEFAULT_TOLERANCE);
+        }
+
+        let positions: Vec<Vec3> = coords
+            .atoms
+            .iter()
+            .map(|a| Vec3::new(a.x, a.y, a.z))
+            .collect();
+
+        // Group atom indices by residue number
+        let mut residue_atoms: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+        for i in 0..n {
+            residue_atoms.entry(coords.res_nums[i]).or_default().push(i);
+        }
+
+        let mut bonds = Vec::new();
+        for atom_indices in residue_atoms.values() {
+            for (ai, &i) in atom_indices.iter().enumerate() {
+                let elem_i = coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+                if elem_i == Element::H {
+                    continue;
+                }
+                let cov_i = elem_i.covalent_radius();
+
+                for &j in &atom_indices[ai + 1..] {
+                    let elem_j = coords.elements.get(j).copied().unwrap_or(Element::Unknown);
+                    if elem_i == Element::H && elem_j == Element::H {
+                        continue;
+                    }
+                    let cov_j = elem_j.covalent_radius();
+
+                    let dist = positions[i].distance(positions[j]);
+                    let sum_cov = cov_i + cov_j;
+                    let threshold = sum_cov + DEFAULT_TOLERANCE;
+
+                    if dist <= threshold && dist > 0.4 {
+                        let order = if dist < sum_cov * 0.9 {
+                            BondOrder::Double
+                        } else {
+                            BondOrder::Single
+                        };
+                        bonds.push(InferredBond {
+                            atom_a: i,
+                            atom_b: j,
+                            order,
+                        });
+                    }
+                }
+            }
+        }
+        bonds
+    }
 }
 
 /// Find any vector perpendicular to the given vector.
@@ -713,10 +1090,6 @@ fn find_perpendicular(v: Vec3) -> Vec3 {
     if v.length_squared() < 1e-8 {
         return Vec3::X;
     }
-    let candidate = if v.x.abs() < 0.9 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
+    let candidate = if v.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
     v.cross(candidate).normalize()
 }

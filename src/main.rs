@@ -10,6 +10,8 @@ pub mod easing;
 pub mod engine;
 pub mod frame_timing;
 pub mod lighting;
+pub mod nucleic_acid_renderer;
+pub mod options;
 pub mod picking;
 pub mod pull_renderer;
 pub mod render_context;
@@ -17,6 +19,8 @@ pub mod ribbon_renderer;
 pub mod ssao;
 pub mod text_renderer;
 pub mod scene;
+pub mod scene_processor;
+pub mod trajectory;
 pub mod tube_renderer;
 
 use engine::ProteinRenderEngine;
@@ -150,7 +154,7 @@ impl ApplicationHandler for RenderApp {
                             Key::Character(c) if c.as_str() == "v" || c.as_str() == "V" => {
                                 engine.toggle_view_mode();
                             }
-                            // W toggles water visibility
+                            // W toggles water/ion visibility
                             Key::Character(c) if c.as_str() == "w" || c.as_str() == "W" => {
                                 engine.toggle_waters();
                             }

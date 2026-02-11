@@ -21,15 +21,15 @@ const CULL_RADIUS: f32 = 5.0;
 /// Must match the WGSL CapsuleInstance struct layout exactly
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CapsuleInstance {
+pub(crate) struct CapsuleInstance {
     /// Endpoint A position (xyz), radius (w)
-    endpoint_a: [f32; 4],
+    pub(crate) endpoint_a: [f32; 4],
     /// Endpoint B position (xyz), residue_idx (w) - packed as float
-    endpoint_b: [f32; 4],
+    pub(crate) endpoint_b: [f32; 4],
     /// Color at endpoint A (RGB), w unused
-    color_a: [f32; 4],
+    pub(crate) color_a: [f32; 4],
     /// Color at endpoint B (RGB), w unused
-    color_b: [f32; 4],
+    pub(crate) color_b: [f32; 4],
 }
 
 // Color constants
@@ -66,6 +66,7 @@ impl CapsuleSidechainRenderer {
             backbone_sidechain_bonds,
             hydrophobicity,
             residue_indices,
+            None,
             None,
         );
 
@@ -198,22 +199,27 @@ impl CapsuleSidechainRenderer {
     /// Generate capsule instances from sidechain data.
     /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
     /// - `frustum`: Optional frustum for culling (None = no culling)
-    fn generate_instances(
+    /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
+    pub(crate) fn generate_instances(
         sidechain_positions: &[Vec3],
         sidechain_bonds: &[(u32, u32)],
         backbone_sidechain_bonds: &[(Vec3, u32)],
         hydrophobicity: &[bool],
         residue_indices: &[u32],
         frustum: Option<&Frustum>,
+        sidechain_colors: Option<([f32; 3], [f32; 3])>,
     ) -> Vec<CapsuleInstance> {
         let mut instances = Vec::with_capacity(sidechain_bonds.len() + backbone_sidechain_bonds.len());
+
+        let (hydrophobic_color, hydrophilic_color) = sidechain_colors
+            .unwrap_or((HYDROPHOBIC_COLOR, HYDROPHILIC_COLOR));
 
         // Helper to get color for an atom index
         let get_color = |idx: usize| -> [f32; 3] {
             if hydrophobicity.get(idx).copied().unwrap_or(false) {
-                HYDROPHOBIC_COLOR
+                hydrophobic_color
             } else {
-                HYDROPHILIC_COLOR
+                hydrophilic_color
             }
         };
 
@@ -337,6 +343,7 @@ impl CapsuleSidechainRenderer {
             hydrophobicity,
             residue_indices,
             frustum,
+            None,
         );
 
         let reallocated = self.instance_buffer.write(device, queue, &instances);
@@ -367,6 +374,24 @@ impl CapsuleSidechainRenderer {
 
         // 6 vertices per quad, one quad per capsule
         render_pass.draw(0..6, 0..self.instance_count);
+    }
+
+    /// Apply pre-computed instance data (GPU upload only, no CPU generation).
+    ///
+    /// Returns `true` if the buffer was reallocated (picking bind groups need recreation).
+    pub fn apply_prepared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[u8],
+        instance_count: u32,
+    ) -> bool {
+        let reallocated = self.instance_buffer.write_bytes(device, queue, instances);
+        if reallocated {
+            self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
+        }
+        self.instance_count = instance_count;
+        reallocated
     }
 
     /// Get the capsule instance buffer for picking

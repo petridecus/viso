@@ -26,9 +26,9 @@ pub struct CameraController {
 
     pub mouse_pressed: bool,
     pub shift_pressed: bool,
-    rotate_speed: f32,
-    pan_speed: f32,
-    zoom_speed: f32,
+    pub rotate_speed: f32,
+    pub pan_speed: f32,
+    pub zoom_speed: f32,
 }
 
 impl CameraController {
@@ -232,6 +232,9 @@ impl CameraController {
     }
 
     pub fn pan(&mut self, delta: Vec2) {
+        // Cancel any animated focus point — user input takes priority
+        self.target_focus_point = None;
+
         let right = self.orientation * Vec3::X;
         let up = self.orientation * Vec3::Y;
 
@@ -242,6 +245,8 @@ impl CameraController {
     }
 
     pub fn zoom(&mut self, delta: f32) {
+        // Cancel any animated zoom — user input takes priority
+        self.target_distance = None;
         self.distance *= 1.0 - delta * self.zoom_speed;
         self.distance = self.distance.clamp(1.0, 1000.0);
         self.update_camera_pos();

@@ -36,7 +36,7 @@ struct SplinePoint {
 /// Vertex for the tube mesh
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct TubeVertex {
+pub(crate) struct TubeVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
@@ -357,7 +357,7 @@ impl TubeRenderer {
     }
 
     /// Generate tube mesh for all chains
-    fn generate_tube_mesh(
+    pub(crate) fn generate_tube_mesh(
         chains: &[Vec<Vec3>],
         ss_filter: &Option<HashSet<SSType>>,
         ss_override: Option<&[SSType]>,
@@ -704,6 +704,51 @@ impl TubeRenderer {
     /// Get the index buffer for picking
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
+    }
+
+    /// Apply pre-computed mesh data (GPU upload only, no CPU generation).
+    ///
+    /// Called from `apply_pending_scene` with data produced by the background SceneProcessor.
+    pub fn apply_prepared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &[u8],
+        indices: &[u8],
+        index_count: u32,
+        cached_chains: Vec<Vec<Vec3>>,
+        ss_override: Option<Vec<SSType>>,
+    ) {
+        if !vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, vertices);
+            self.index_buffer.write_bytes(device, queue, indices);
+        }
+        self.index_count = index_count;
+        self.cached_chains = cached_chains;
+        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        if let Some(ss) = ss_override {
+            self.ss_override = Some(ss);
+        }
+    }
+
+    /// Apply pre-computed animation frame mesh (GPU upload only).
+    ///
+    /// Lighter-weight than `apply_prepared`: only writes vertex/index buffers
+    /// without updating `cached_chains` or `ss_override` (those are set by
+    /// FullRebuild, not animation frames).
+    pub fn apply_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &[u8],
+        indices: &[u8],
+        index_count: u32,
+    ) {
+        if !vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, vertices);
+            self.index_buffer.write_bytes(device, queue, indices);
+        }
+        self.index_count = index_count;
     }
 
     /// Get a reference to the cached backbone chains.
