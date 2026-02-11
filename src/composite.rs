@@ -51,7 +51,7 @@ pub struct CompositePass {
     pub color_view: wgpu::TextureView,
 
     // Composite params for outline/SSAO control
-    params: CompositeParams,
+    pub params: CompositeParams,
     params_buffer: wgpu::Buffer,
 
     width: u32,
@@ -330,6 +330,11 @@ impl CompositePass {
     pub fn update_fog(&mut self, queue: &wgpu::Queue, fog_start: f32, fog_density: f32) {
         self.params.fog_start = fog_start;
         self.params.fog_density = fog_density;
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[self.params]));
+    }
+
+    /// Flush the current params to the GPU buffer.
+    pub fn flush_params(&self, queue: &wgpu::Queue) {
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[self.params]));
     }
 

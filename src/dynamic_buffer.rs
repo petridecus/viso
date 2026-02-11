@@ -105,6 +105,41 @@ impl DynamicBuffer {
         reallocated
     }
 
+    /// Write raw bytes to buffer, growing if necessary.
+    ///
+    /// Returns `true` if buffer was reallocated (bind groups need recreation).
+    pub fn write_bytes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+    ) -> bool {
+        let needed = data.len();
+
+        let reallocated = if needed > self.capacity {
+            let new_capacity = (needed * 2).max(self.capacity + 1024);
+
+            self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&self.label),
+                size: new_capacity as u64,
+                usage: self.usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            self.capacity = new_capacity;
+            true
+        } else {
+            false
+        };
+
+        if needed > 0 {
+            queue.write_buffer(&self.buffer, 0, data);
+        }
+        self.len = needed;
+
+        reallocated
+    }
+
     /// Get the underlying buffer for binding
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
@@ -181,6 +216,20 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     pub fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[T]) -> bool {
         self.count = data.len();
         self.inner.write(device, queue, data)
+    }
+
+    /// Write raw bytes to buffer, growing if necessary.
+    ///
+    /// Infers item count from byte length / type size.
+    /// Returns `true` if buffer was reallocated (bind groups need recreation).
+    pub fn write_bytes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+    ) -> bool {
+        self.count = data.len() / std::mem::size_of::<T>();
+        self.inner.write_bytes(device, queue, data)
     }
 
     /// Get the underlying buffer for binding

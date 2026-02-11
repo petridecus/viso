@@ -13,6 +13,7 @@
 //! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
 use crate::dynamic_buffer::TypedBuffer;
+use crate::options::ColorOptions;
 use crate::render_context::RenderContext;
 use glam::Vec3;
 
@@ -284,17 +285,17 @@ impl BandRenderer {
     }
 
     /// Compute band color based on type, strength, distance (matches Foldit)
-    fn compute_color(band: &BandRenderInfo, band_type: BandType) -> [f32; 3] {
+    fn compute_color(band: &BandRenderInfo, band_type: BandType, colors: Option<&ColorOptions>) -> [f32; 3] {
         if band.is_disabled {
             return DISABLED_COLOR;
         }
 
-        // Base color from band type
+        // Base color from band type (use ColorOptions if provided, else fallback to constants)
         let mut color = match band_type {
-            BandType::Default => BAND_COLOR,
-            BandType::Backbone => BAND_BB_COLOR,
-            BandType::Disulfide => BAND_DISULF_COLOR,
-            BandType::HBond => BAND_HBOND_COLOR,
+            BandType::Default => colors.map_or(BAND_COLOR, |c| c.band_default),
+            BandType::Backbone => colors.map_or(BAND_BB_COLOR, |c| c.band_backbone),
+            BandType::Disulfide => colors.map_or(BAND_DISULF_COLOR, |c| c.band_disulfide),
+            BandType::HBond => colors.map_or(BAND_HBOND_COLOR, |c| c.band_hbond),
         };
 
         // Compute current distance
@@ -325,13 +326,13 @@ impl BandRenderer {
     }
 
     /// Generate capsule instances from band data
-    fn generate_instances(bands: &[BandRenderInfo]) -> Vec<CapsuleInstance> {
+    fn generate_instances(bands: &[BandRenderInfo], colors: Option<&ColorOptions>) -> Vec<CapsuleInstance> {
         // Each band gets: 1 cylinder + 2 endpoint spheres = 3 instances
         let mut instances = Vec::with_capacity(bands.len() * 3);
 
         for band in bands {
             let band_type = Self::detect_band_type(band);
-            let color = Self::compute_color(band, band_type);
+            let color = Self::compute_color(band, band_type, colors);
             let radius = Self::compute_radius(band.strength);
 
             // Main band capsule (cylinder between endpoints)
@@ -370,8 +371,9 @@ impl BandRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bands: &[BandRenderInfo],
+        colors: Option<&ColorOptions>,
     ) {
-        let instances = Self::generate_instances(bands);
+        let instances = Self::generate_instances(bands, colors);
 
         let reallocated = self.instance_buffer.write(device, queue, &instances);
 

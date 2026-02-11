@@ -20,11 +20,19 @@ pdbtbx = "0.12"
 # Text rendering for UI
 glyphon = "0.10"
 
+# Serialization for options/presets
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
 # Logging
 log = "0.4"
 
 # Time utilities
 instant = "0.1"
+
+# Lock-free triple buffering for scene processor results
+triple_buffer = "8"
 
 [dev-dependencies]
 criterion = "0.5"

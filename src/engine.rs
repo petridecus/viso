@@ -1,17 +1,21 @@
 use crate::animation::{AnimationAction, StructureAnimator};
 use crate::ball_and_stick_renderer::BallAndStickRenderer;
 use crate::band_renderer::{BandRenderer, BandRenderInfo};
+use crate::nucleic_acid_renderer::NucleicAcidRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
 use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
 use crate::composite::CompositePass;
 use crate::frame_timing::FrameTiming;
+use crate::options::Options;
 use crate::picking::{Picking, SelectionBuffer};
 use crate::lighting::Lighting;
 use crate::pull_renderer::{PullRenderer, PullRenderInfo};
 
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
+use crate::scene_processor::{AnimationSidechainData, PreparedScene, SceneProcessor, SceneRequest};
+use crate::trajectory::TrajectoryPlayer;
 use foldit_conv::secondary_structure::SSType;
 use crate::ssao::SsaoRenderer;
 use crate::text_renderer::TextRenderer;
@@ -22,11 +26,12 @@ use crate::scene::{
     CombinedCoordsResult, EntityGroup, Focus, GroupId, Scene,
 };
 use foldit_conv::coords::{
-    get_ca_position_from_chains, mmcif_file_to_coords, split_into_entities,
+    get_ca_position_from_chains, structure_file_to_coords, split_into_entities,
     MoleculeEntity, MoleculeType, RenderCoords,
 };
 use glam::{Mat4, Vec2, Vec3};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::Instant;
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
@@ -101,10 +106,18 @@ pub struct ProteinRenderEngine {
     pub scene: Scene,
     /// Ball-and-stick renderer for ligands, ions, and waters
     pub ball_and_stick_renderer: BallAndStickRenderer,
-    /// Whether water entities are visible
-    pub show_waters: bool,
+    /// Nucleic acid backbone ribbon renderer
+    pub nucleic_acid_renderer: NucleicAcidRenderer,
+    /// Centralized rendering/display options (replaces show_waters, show_ions, etc.)
+    pub options: Options,
+    /// Currently loaded view preset name (if any)
+    pub active_preset: Option<String>,
     /// Bind group for ball-and-stick picking (degenerate capsules)
     bns_picking_bind_group: Option<wgpu::BindGroup>,
+    /// Trajectory playback (DCD file)
+    trajectory_player: Option<TrajectoryPlayer>,
+    /// Background scene processor for non-blocking geometry generation
+    scene_processor: SceneProcessor,
 }
 
 impl ProteinRenderEngine {
@@ -127,9 +140,9 @@ impl ProteinRenderEngine {
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
 
-        // Load coords from mmCIF file, split into entities
-        let coords = mmcif_file_to_coords(std::path::Path::new(cif_path))
-            .expect("Failed to load coords from CIF file");
+        // Load coords from structure file (PDB or mmCIF, detected by extension)
+        let coords = structure_file_to_coords(std::path::Path::new(cif_path))
+            .expect("Failed to load coords from structure file");
 
         let entities = split_into_entities(&coords);
 
@@ -145,17 +158,39 @@ impl ProteinRenderEngine {
         let mut scene = Scene::new();
         let group_id = scene.add_group(entities, group_name);
 
-        // Extract protein coords for rendering
-        let protein_coords = scene.group(group_id)
+        // Extract protein coords for rendering (may be absent for nucleic-acid-only structures)
+        let render_coords = if let Some(protein_coords) = scene.group(group_id)
             .and_then(|g| g.protein_coords())
-            .expect("No protein entities found in CIF file");
-        let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
-
-        let render_coords = RenderCoords::from_coords_with_topology(
-            &protein_coords,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(|b| b.to_vec()),
-        );
+        {
+            eprintln!("[engine::new] protein_coords: {} atoms", protein_coords.num_atoms);
+            let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
+            eprintln!("[engine::new] after protein_only: {} atoms", protein_coords.num_atoms);
+            let rc = RenderCoords::from_coords_with_topology(
+                &protein_coords,
+                is_hydrophobic,
+                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+            );
+            eprintln!("[engine::new] render_coords: {} backbone chains, {} residues",
+                rc.backbone_chains.len(),
+                rc.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>());
+            rc
+        } else {
+            eprintln!("[engine::new] no protein coords found for group");
+            let empty = foldit_conv::coords::Coords {
+                num_atoms: 0,
+                atoms: Vec::new(),
+                chain_ids: Vec::new(),
+                res_names: Vec::new(),
+                res_nums: Vec::new(),
+                atom_names: Vec::new(),
+                elements: Vec::new(),
+            };
+            RenderCoords::from_coords_with_topology(
+                &empty,
+                is_hydrophobic,
+                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+            )
+        };
 
         // Count total residues for selection buffer sizing
         let total_residues = render_coords.residue_count();
@@ -259,7 +294,7 @@ impl ProteinRenderEngine {
             &lighting.layout,
             &selection_buffer.layout,
         );
-        let show_waters = true;
+        let options = Options::default();
         // Collect non-protein entities from the group for ball-and-stick
         let non_protein_entities: Vec<&MoleculeEntity> = scene.group(group_id)
             .map(|g| g.entities().iter()
@@ -271,7 +306,8 @@ impl ProteinRenderEngine {
             &context.device,
             &context.queue,
             &non_protein_refs,
-            show_waters,
+            &options.display,
+            Some(&options.colors),
         );
 
         // Create picking bind group for ball-and-stick (degenerate capsules)
@@ -284,9 +320,33 @@ impl ProteinRenderEngine {
             None
         };
 
-        // Fit camera to all atom positions (protein + non-protein)
+        // Create nucleic acid renderer for DNA/RNA backbone ribbons + base rings
+        let na_entities: Vec<&MoleculeEntity> = scene.group(group_id)
+            .map(|g| g.entities().iter()
+                .filter(|e| matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
+                .collect())
+            .unwrap_or_default();
+        let na_chains: Vec<Vec<Vec3>> = na_entities.iter()
+            .flat_map(|e| e.extract_p_atom_chains())
+            .collect();
+        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = na_entities.iter()
+            .flat_map(|e| e.extract_base_rings())
+            .collect();
+        let nucleic_acid_renderer = NucleicAcidRenderer::new(
+            &context,
+            &camera_controller.layout,
+            &lighting.layout,
+            &selection_buffer.layout,
+            &na_chains,
+            &na_rings,
+        );
+
+        // Fit camera to all atom positions (protein + non-protein + nucleic acid P-atoms)
         let mut all_fit_positions = render_coords.all_positions.clone();
-        all_fit_positions.extend(BallAndStickRenderer::collect_positions(&non_protein_refs, show_waters));
+        all_fit_positions.extend(BallAndStickRenderer::collect_positions(&non_protein_refs, &options.display));
+        for chain in &na_chains {
+            all_fit_positions.extend(chain);
+        }
         camera_controller.fit_to_positions(&all_fit_positions);
 
         // Mark scene as rendered (initial state is synced)
@@ -294,6 +354,9 @@ impl ProteinRenderEngine {
 
         // Create structure animator
         let animator = StructureAnimator::new();
+
+        // Create background scene processor
+        let scene_processor = SceneProcessor::new();
 
         // Set up tube renderer filter based on default view mode
         let view_mode = ViewMode::default();
@@ -345,8 +408,12 @@ impl ProteinRenderEngine {
             last_cull_camera_eye: Vec3::ZERO,
             scene,
             ball_and_stick_renderer,
-            show_waters,
+            nucleic_acid_renderer,
+            options,
+            active_preset: None,
             bns_picking_bind_group,
+            trajectory_player: None,
+            scene_processor,
         }
     }
 
@@ -401,19 +468,21 @@ impl ProteinRenderEngine {
             return Ok(());
         }
 
-        // Update animations for this frame
-        let animating = self.animator.update(Instant::now());
+        // Apply any pending animation frame from the background thread (non-blocking)
+        self.apply_pending_animation();
 
-        // If animation is active, update renderers with interpolated positions
-        if animating {
-            let visual_backbone = self.animator.get_backbone();
-            self.update_backbone(&visual_backbone);
+        // Trajectory playback — submit frames to background thread (non-blocking)
+        if let Some(ref mut player) = self.trajectory_player {
+            if let Some(backbone_chains) = player.tick(Instant::now()) {
+                self.submit_animation_frame_with_backbone(backbone_chains, false);
+            }
+        } else {
+            // Standard animator path
+            let animating = self.animator.update(Instant::now());
 
-            // Get interpolated sidechain positions from animator
-            // (uses behavior's interpolate_position for proper collapse/expand)
-            if self.animator.has_sidechain_data() {
-                let interpolated_positions = self.animator.get_sidechain_positions();
-                self.update_sidechains_with_positions(&interpolated_positions);
+            // If animation is active, submit interpolated positions to background thread
+            if animating {
+                self.submit_animation_frame();
             }
         }
 
@@ -528,15 +597,25 @@ impl ProteinRenderEngine {
                 }
             }
 
-            self.sidechain_renderer.draw(
+            if self.options.display.show_sidechains {
+                self.sidechain_renderer.draw(
+                    &mut rp,
+                    &self.camera_controller.bind_group,
+                    &self.lighting.bind_group,
+                    &self.selection_buffer.bind_group,
+                );
+            }
+
+            // Render ball-and-stick (ligands, ions, waters)
+            self.ball_and_stick_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
                 &self.lighting.bind_group,
                 &self.selection_buffer.bind_group,
             );
 
-            // Render ball-and-stick (ligands, ions, waters)
-            self.ball_and_stick_renderer.draw(
+            // Render nucleic acid backbone ribbons (DNA/RNA)
+            self.nucleic_acid_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
                 &self.lighting.bind_group,
@@ -602,7 +681,7 @@ impl ProteinRenderEngine {
             ribbon_ib,
             ribbon_count,
             self.capsule_picking_bind_group.as_ref(),
-            self.sidechain_renderer.instance_count,
+            if self.options.display.show_sidechains { self.sidechain_renderer.instance_count } else { 0 },
             self.bns_picking_bind_group.as_ref(),
             self.ball_and_stick_renderer.picking_count(),
             self.mouse_pos.0 as u32,
@@ -850,48 +929,6 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Update sidechains with pre-interpolated positions from the animator.
-    fn update_sidechains_with_positions(&mut self, sidechain_positions: &[Vec3]) {
-        // Get CA positions from animator's backbone state (not separate interpolation)
-        // This ensures CA-CB bonds match the actual rendered backbone position
-        let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
-            .target_backbone_sidechain_bonds
-            .iter()
-            .map(|(target_ca_pos, cb_idx)| {
-                let res_idx = self
-                    .cached_sidechain_residue_indices
-                    .get(*cb_idx as usize)
-                    .copied()
-                    .unwrap_or(0) as usize;
-                let ca_pos = self
-                    .animator
-                    .get_ca_position(res_idx)
-                    .unwrap_or(*target_ca_pos);
-                (ca_pos, *cb_idx)
-            })
-            .collect();
-
-        // Translate entire sidechains onto sheet surface
-        let offset_map = self.sheet_offset_map();
-        let res_indices = self.cached_sidechain_residue_indices.clone();
-        let adjusted_positions = Self::adjust_sidechains_for_sheet(
-            sidechain_positions, &res_indices, &offset_map,
-        );
-        let adjusted_bonds = Self::adjust_bonds_for_sheet(
-            &interpolated_bs_bonds, &res_indices, &offset_map,
-        );
-
-        self.sidechain_renderer.update(
-            &self.context.device,
-            &self.context.queue,
-            &adjusted_positions,
-            &self.cached_sidechain_bonds,
-            &adjusted_bonds,
-            &self.cached_sidechain_hydrophobicity,
-            &self.cached_sidechain_residue_indices,
-        );
-    }
-
     /// Update sidechain instances with frustum culling when camera moves significantly.
     /// This filters out sidechains behind the camera to reduce draw calls.
     fn update_frustum_culling(&mut self) {
@@ -1007,21 +1044,289 @@ impl ProteinRenderEngine {
         self.set_view_mode(new_mode);
     }
 
+    /// Get a reference to the current options.
+    pub fn options(&self) -> &Options {
+        &self.options
+    }
+
+    /// Replace options and apply all changes to subsystems.
+    pub fn set_options(&mut self, new: Options) {
+        self.options = new;
+        self.apply_options();
+    }
+
+    /// Push current option values to all subsystems (lighting, camera, composite, etc.).
+    pub fn apply_options(&mut self) {
+        // Lighting
+        let lo = &self.options.lighting;
+        self.lighting.uniform.light1_intensity = lo.light1_intensity;
+        self.lighting.uniform.light2_intensity = lo.light2_intensity;
+        self.lighting.uniform.ambient = lo.ambient;
+        self.lighting.uniform.specular_intensity = lo.specular_intensity;
+        self.lighting.uniform.shininess = lo.shininess;
+        self.lighting.uniform.rim_power = lo.rim_power;
+        self.lighting.uniform.rim_intensity = lo.rim_intensity;
+        self.lighting.uniform.rim_directionality = lo.rim_directionality;
+        self.lighting.uniform.rim_color = lo.rim_color;
+        self.lighting.uniform.ibl_strength = lo.ibl_strength;
+        self.lighting.update_gpu(&self.context.queue);
+
+        // Post-processing (outline/AO params; fog is dynamic per-frame)
+        let pp = &self.options.post_processing;
+        self.composite_pass.params.outline_thickness = pp.outline_thickness;
+        self.composite_pass.params.outline_strength = pp.outline_strength;
+        self.composite_pass.params.ao_strength = pp.ao_strength;
+        self.composite_pass.flush_params(&self.context.queue);
+
+        // Camera
+        let co = &self.options.camera;
+        self.camera_controller.camera.fovy = co.fovy;
+        self.camera_controller.camera.znear = co.znear;
+        self.camera_controller.camera.zfar = co.zfar;
+        self.camera_controller.rotate_speed = co.rotate_speed * 0.02; // scale to match internal units
+        self.camera_controller.pan_speed = co.pan_speed * 0.2;
+        self.camera_controller.zoom_speed = co.zoom_speed * 0.5;
+
+        // Display: view mode
+        let vm = match self.options.display.view_mode.as_str() {
+            "tube" => ViewMode::Tube,
+            _ => ViewMode::Ribbon,
+        };
+        if vm != self.view_mode {
+            self.set_view_mode(vm);
+        }
+
+        // Display: ball-and-stick visibility
+        self.refresh_ball_and_stick();
+    }
+
+    /// Apply a single view option by key/value from the frontend.
+    /// Returns true if the option was recognized and applied.
+    pub fn apply_view_option(&mut self, key: &str, value: &serde_json::Value) -> bool {
+        match key {
+            "view_mode" => {
+                if let Some(mode_str) = value.as_str() {
+                    let mode = match mode_str {
+                        "ribbon" => ViewMode::Ribbon,
+                        "tube" => ViewMode::Tube,
+                        _ => {
+                            log::warn!("Unknown view mode: {}", mode_str);
+                            return false;
+                        }
+                    };
+                    self.options.display.view_mode = mode_str.to_string();
+                    self.set_view_mode(mode);
+                    self.sync_scene_to_renderers(None);
+                    true
+                } else {
+                    false
+                }
+            }
+            "show_sidechains" => {
+                if let Some(v) = value.as_bool() {
+                    self.options.display.show_sidechains = v;
+                    true
+                } else {
+                    false
+                }
+            }
+            "show_waters" => {
+                if let Some(v) = value.as_bool() {
+                    self.options.display.show_waters = v;
+                    self.refresh_ball_and_stick();
+                    true
+                } else {
+                    false
+                }
+            }
+            "show_ions" => {
+                if let Some(v) = value.as_bool() {
+                    self.options.display.show_ions = v;
+                    self.refresh_ball_and_stick();
+                    true
+                } else {
+                    false
+                }
+            }
+            "show_solvent" => {
+                if let Some(v) = value.as_bool() {
+                    self.options.display.show_solvent = v;
+                    self.refresh_ball_and_stick();
+                    true
+                } else {
+                    false
+                }
+            }
+            // --- Lighting ---
+            "lighting.light1_intensity" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.light1_intensity = v;
+                s.apply_options();
+            }),
+            "lighting.light2_intensity" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.light2_intensity = v;
+                s.apply_options();
+            }),
+            "lighting.ambient" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.ambient = v;
+                s.apply_options();
+            }),
+            "lighting.specular_intensity" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.specular_intensity = v;
+                s.apply_options();
+            }),
+            "lighting.shininess" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.shininess = v;
+                s.apply_options();
+            }),
+            "lighting.rim_power" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.rim_power = v;
+                s.apply_options();
+            }),
+            "lighting.rim_intensity" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.rim_intensity = v;
+                s.apply_options();
+            }),
+            "lighting.ibl_strength" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.ibl_strength = v;
+                s.apply_options();
+            }),
+            // --- Post-processing ---
+            "post_processing.outline_thickness" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.outline_thickness = v;
+                s.apply_options();
+            }),
+            "post_processing.outline_strength" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.outline_strength = v;
+                s.apply_options();
+            }),
+            "post_processing.ao_strength" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.ao_strength = v;
+                s.apply_options();
+            }),
+            "post_processing.fog_start" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.fog_start = v;
+                s.apply_options();
+            }),
+            "post_processing.fog_density" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.fog_density = v;
+                s.apply_options();
+            }),
+            // --- Camera ---
+            "camera.fovy" => self.set_f32_option(value, |s, v| {
+                s.options.camera.fovy = v;
+                s.apply_options();
+            }),
+            "camera.rotate_speed" => self.set_f32_option(value, |s, v| {
+                s.options.camera.rotate_speed = v;
+                s.apply_options();
+            }),
+            "camera.pan_speed" => self.set_f32_option(value, |s, v| {
+                s.options.camera.pan_speed = v;
+                s.apply_options();
+            }),
+            "camera.zoom_speed" => self.set_f32_option(value, |s, v| {
+                s.options.camera.zoom_speed = v;
+                s.apply_options();
+            }),
+            _ => {
+                log::debug!("Unhandled view option: {}", key);
+                false
+            }
+        }
+    }
+
+    /// Helper: extract an f64/f32 from a JSON value and apply a mutation.
+    fn set_f32_option(
+        &mut self,
+        value: &serde_json::Value,
+        apply: impl FnOnce(&mut Self, f32),
+    ) -> bool {
+        if let Some(v) = value.as_f64() {
+            apply(self, v as f32);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Load a named view preset from the presets directory.
+    /// Returns true on success.
+    pub fn load_preset(&mut self, name: &str, presets_dir: &std::path::Path) -> bool {
+        let path = presets_dir.join(format!("{}.toml", name));
+        match Options::load(&path) {
+            Ok(opts) => {
+                log::info!("Loaded view preset '{}'", name);
+                self.set_options(opts);
+                self.active_preset = Some(name.to_string());
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to load view preset '{}': {}", name, e);
+                false
+            }
+        }
+    }
+
+    /// Save the current options as a named view preset.
+    /// Returns true on success.
+    pub fn save_preset(&self, name: &str, presets_dir: &std::path::Path) -> bool {
+        let path = presets_dir.join(format!("{}.toml", name));
+        match self.options.save(&path) {
+            Ok(()) => {
+                log::info!("Saved view preset '{}'", name);
+                true
+            }
+            Err(e) => {
+                log::error!("Failed to save view preset '{}': {}", name, e);
+                false
+            }
+        }
+    }
+
     /// Toggle water visibility
     pub fn toggle_waters(&mut self) {
-        self.show_waters = !self.show_waters;
-        // Collect all non-protein entities from all visible groups
-        let non_protein: Vec<MoleculeEntity> = self.scene.iter()
+        self.options.display.show_waters = !self.options.display.show_waters;
+        self.refresh_ball_and_stick();
+    }
+
+    /// Toggle ion visibility
+    pub fn toggle_ions(&mut self) {
+        self.options.display.show_ions = !self.options.display.show_ions;
+        self.refresh_ball_and_stick();
+    }
+
+    /// Toggle solvent visibility
+    pub fn toggle_solvent(&mut self) {
+        self.options.display.show_solvent = !self.options.display.show_solvent;
+        self.refresh_ball_and_stick();
+    }
+
+    /// Cycle lipid display mode (coarse → ball_and_stick → coarse)
+    pub fn toggle_lipids(&mut self) {
+        self.options.display.lipid_mode = if self.options.display.lipid_ball_and_stick() {
+            "coarse".to_string()
+        } else {
+            "ball_and_stick".to_string()
+        };
+        self.refresh_ball_and_stick();
+    }
+
+    /// Refresh ball-and-stick renderer with current visibility flags.
+    fn refresh_ball_and_stick(&mut self) {
+        // Collect all non-protein entities from visible groups
+        let entities: Vec<MoleculeEntity> = self.scene.iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
-            .filter(|e| e.molecule_type != MoleculeType::Protein)
+            .filter(|e| e.molecule_type != MoleculeType::Protein
+                && !matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
             .cloned()
             .collect();
         self.ball_and_stick_renderer.update_from_entities(
             &self.context.device,
             &self.context.queue,
-            &non_protein,
-            self.show_waters,
+            &entities,
+            &self.options.display,
+            Some(&self.options.colors),
         );
         // Recreate picking bind group
         self.bns_picking_bind_group = if self.ball_and_stick_renderer.picking_count() > 0 {
@@ -1032,6 +1337,77 @@ impl ProteinRenderEngine {
         } else {
             None
         };
+    }
+
+    /// Load a DCD trajectory file and begin playback.
+    pub fn load_trajectory(&mut self, path: &Path) {
+        use foldit_conv::coords::{dcd_file_to_frames, protein_only};
+        use crate::trajectory::build_backbone_atom_indices;
+
+        let (header, frames) = match dcd_file_to_frames(path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to load DCD trajectory: {e}");
+                return;
+            }
+        };
+
+        // Get protein coords from the first visible group to build backbone mapping
+        let protein_coords = self.scene.iter()
+            .filter(|g| g.visible)
+            .find_map(|g| g.protein_coords());
+
+        let protein_coords = match protein_coords {
+            Some(c) => protein_only(&c),
+            None => {
+                log::error!("No protein structure loaded — cannot play trajectory");
+                return;
+            }
+        };
+
+        // Validate atom count
+        if (header.num_atoms as usize) < protein_coords.num_atoms {
+            log::error!(
+                "DCD atom count ({}) is less than protein atom count ({})",
+                header.num_atoms,
+                protein_coords.num_atoms,
+            );
+            return;
+        }
+
+        // Build backbone atom index mapping
+        let backbone_indices = build_backbone_atom_indices(&protein_coords);
+
+        // Get current backbone chains for topology
+        let backbone_chains = foldit_conv::coords::extract_backbone_chains(&protein_coords);
+
+        let num_atoms = header.num_atoms as usize;
+        let num_frames = frames.len();
+        let duration_secs = num_frames as f64 / 30.0;
+
+        let player = TrajectoryPlayer::new(frames, num_atoms, &backbone_chains, backbone_indices);
+        self.trajectory_player = Some(player);
+
+        log::info!(
+            "Trajectory loaded: {} frames, {} atoms, ~{:.1}s at 30fps",
+            num_frames,
+            num_atoms,
+            duration_secs,
+        );
+    }
+
+    /// Toggle trajectory playback (play/pause). No-op if no trajectory loaded.
+    pub fn toggle_trajectory(&mut self) {
+        if let Some(ref mut player) = self.trajectory_player {
+            player.toggle_playback();
+            let state = if player.is_playing() { "playing" } else { "paused" };
+            log::info!("Trajectory {state} (frame {}/{})", player.current_frame(), player.total_frames());
+        }
+    }
+
+    /// Whether a trajectory is loaded.
+    pub fn has_trajectory(&self) -> bool {
+        self.trajectory_player.is_some()
     }
 
     /// Fit the camera to show all provided positions (instant)
@@ -1386,6 +1762,7 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.context.queue,
             bands,
+            Some(&self.options.colors),
         );
     }
 
@@ -1701,52 +2078,100 @@ impl ProteinRenderEngine {
     // ── Updates from backends (with animation) ──
 
     /// Sync scene to renderers with the given animation action.
-    /// Called when scene data has changed (e.g. after loading, Rosetta update, etc.).
+    ///
+    /// **Non-blocking**: clones the aggregated data and sends it to the background
+    /// SceneProcessor thread for CPU geometry generation. Call `apply_pending_scene()`
+    /// each frame to pick up the results.
     pub fn sync_scene_to_renderers(&mut self, action: Option<AnimationAction>) {
         if !self.scene.is_dirty() && action.is_none() {
             return;
         }
 
-        let agg = self.scene.aggregated().clone();
+        let agg = self.scene.aggregated(); // Arc::clone (~1ns), no deep copy
+        self.scene.mark_rendered();
 
-        if let Some(action) = action {
-            self.animate_to_full_pose_with_action(
-                &agg.backbone_chains,
-                &agg.sidechain_positions,
-                &agg.sidechain_bonds,
-                &agg.sidechain_hydrophobicity,
-                &agg.sidechain_residue_indices,
-                &agg.sidechain_atom_names,
-                &agg.backbone_sidechain_bonds,
-                action,
-            );
+        self.scene_processor.submit(SceneRequest::FullRebuild {
+            aggregated: agg,
+            action,
+            view_mode: self.view_mode,
+            display: self.options.display.clone(),
+            colors: self.options.colors.clone(),
+        });
+    }
 
-            if let Some(ref ss) = agg.ss_types {
-                self.set_ss_override(ss);
-            }
+    /// Apply any pending scene data from the background SceneProcessor.
+    ///
+    /// Called every frame from the main loop. If the background thread has finished
+    /// generating geometry, this uploads it to the GPU (<1ms) and sets up animation.
+    pub fn apply_pending_scene(&mut self) {
+        let prepared = match self.scene_processor.try_recv_scene() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Triple buffer automatically returns only the latest result,
+        // so no drain loop needed — stale intermediates are skipped.
+
+        // Animation target setup or snap update (fast: array copies + animator)
+        if let Some(action) = prepared.action {
+            self.setup_animation_targets_from_prepared(&prepared, action);
         } else {
-            // No animation: snap update
-            self.update_from_aggregated(
-                &agg.backbone_chains,
-                &agg.sidechain_positions,
-                &agg.sidechain_hydrophobicity,
-                &agg.sidechain_residue_indices,
-                &agg.sidechain_atom_names,
-                &agg.sidechain_bonds,
-                &agg.backbone_sidechain_bonds,
-                &agg.all_positions,
-                false,
-                agg.ss_types.as_deref(),
-            );
+            self.snap_from_prepared(&prepared);
         }
 
-        // Update ball-and-stick with non-protein entities
-        self.ball_and_stick_renderer.update_from_entities(
+        // GPU uploads only — each is <0.2ms
+        self.tube_renderer.apply_prepared(
             &self.context.device,
             &self.context.queue,
-            &agg.non_protein_entities,
-            self.show_waters,
+            &prepared.tube_vertices,
+            &prepared.tube_indices,
+            prepared.tube_index_count,
+            prepared.backbone_chains.clone(),
+            prepared.ss_types.clone(),
         );
+
+        self.ribbon_renderer.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.ribbon_vertices,
+            &prepared.ribbon_indices,
+            prepared.ribbon_index_count,
+            prepared.sheet_offsets.clone(),
+            prepared.backbone_chains.clone(),
+            prepared.ss_types.clone(),
+        );
+
+        self.sidechain_renderer.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.sidechain_instances,
+            prepared.sidechain_instance_count,
+        );
+
+        self.ball_and_stick_renderer.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.bns_sphere_instances,
+            prepared.bns_sphere_count,
+            &prepared.bns_capsule_instances,
+            prepared.bns_capsule_count,
+            &prepared.bns_picking_capsules,
+            prepared.bns_picking_count,
+        );
+
+        self.nucleic_acid_renderer.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.na_vertices,
+            &prepared.na_indices,
+            prepared.na_index_count,
+        );
+
+        // Recreate picking bind groups (buffers may have been reallocated)
+        self.capsule_picking_bind_group = Some(self.picking.create_capsule_bind_group(
+            &self.context.device,
+            self.sidechain_renderer.capsule_buffer(),
+        ));
         self.bns_picking_bind_group = if self.ball_and_stick_renderer.picking_count() > 0 {
             Some(self.picking.create_capsule_bind_group(
                 &self.context.device,
@@ -1755,8 +2180,226 @@ impl ProteinRenderEngine {
         } else {
             None
         };
+    }
 
-        self.scene.mark_rendered();
+    /// Set up animation targets from prepared scene data.
+    ///
+    /// This is the fast path extracted from `animate_to_full_pose_with_action`:
+    /// only array copies and animator state, no mesh generation.
+    fn setup_animation_targets_from_prepared(
+        &mut self,
+        prepared: &PreparedScene,
+        action: AnimationAction,
+    ) {
+        let new_backbone = &prepared.backbone_chains;
+        let sidechain_positions = &prepared.sidechain_positions;
+        let sidechain_bonds = &prepared.sidechain_bonds;
+        let sidechain_hydrophobicity = &prepared.sidechain_hydrophobicity;
+        let sidechain_residue_indices = &prepared.sidechain_residue_indices;
+        let sidechain_atom_names = &prepared.sidechain_atom_names;
+        let backbone_sidechain_bonds = &prepared.backbone_sidechain_bonds;
+
+        // Capture current VISUAL positions as start (for smooth preemption)
+        if self.target_sidechain_positions.len() == sidechain_positions.len() {
+            if self.animator.is_animating() && self.animator.has_sidechain_data() {
+                self.start_sidechain_positions = self.animator.get_sidechain_positions();
+                let ctx = self.animator.interpolation_context();
+                self.start_backbone_sidechain_bonds = self
+                    .start_backbone_sidechain_bonds
+                    .iter()
+                    .zip(self.target_backbone_sidechain_bonds.iter())
+                    .map(|((start_pos, idx), (target_pos, _))| {
+                        let pos = *start_pos + (*target_pos - *start_pos) * ctx.eased_t;
+                        (pos, *idx)
+                    })
+                    .collect();
+            } else {
+                self.start_sidechain_positions = self.target_sidechain_positions.clone();
+                self.start_backbone_sidechain_bonds =
+                    self.target_backbone_sidechain_bonds.clone();
+            }
+        } else {
+            self.start_sidechain_positions = sidechain_positions.to_vec();
+            self.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+        }
+
+        // Set new targets and cached data
+        self.target_sidechain_positions = sidechain_positions.to_vec();
+        self.target_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+        self.cached_sidechain_bonds = sidechain_bonds.to_vec();
+        self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
+        self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
+        self.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
+
+        // Cache secondary structure types
+        if let Some(ref ss) = prepared.ss_types {
+            self.cached_ss_types = ss.clone();
+        } else {
+            self.cached_ss_types = self.compute_ss_types(new_backbone);
+        }
+
+        // Extract CA positions for sidechain collapse animation
+        let ca_positions: Vec<Vec3> = new_backbone
+            .iter()
+            .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+            .collect();
+
+        // Pass sidechain data to animator FIRST (before set_target)
+        self.animator.set_sidechain_target_with_action(
+            sidechain_positions,
+            sidechain_residue_indices,
+            &ca_positions,
+            Some(action),
+        );
+
+        // Set backbone target (starts the animation)
+        self.animator.set_target(new_backbone, action);
+
+        // Ensure selection buffer has capacity
+        let total_residues: usize = new_backbone.iter().map(|c| c.len() / 3).sum();
+        self.selection_buffer
+            .ensure_capacity(&self.context.device, total_residues);
+    }
+
+    /// Snap update from prepared scene data (no animation).
+    fn snap_from_prepared(&mut self, prepared: &PreparedScene) {
+        // Cache all passthrough data
+        self.target_sidechain_positions = prepared.sidechain_positions.clone();
+        self.start_sidechain_positions = prepared.sidechain_positions.clone();
+        self.target_backbone_sidechain_bonds = prepared.backbone_sidechain_bonds.clone();
+        self.start_backbone_sidechain_bonds = prepared.backbone_sidechain_bonds.clone();
+        self.cached_sidechain_bonds = prepared.sidechain_bonds.clone();
+        self.cached_sidechain_hydrophobicity = prepared.sidechain_hydrophobicity.clone();
+        self.cached_sidechain_residue_indices = prepared.sidechain_residue_indices.clone();
+        self.cached_sidechain_atom_names = prepared.sidechain_atom_names.clone();
+
+        // Cache secondary structure types
+        if let Some(ref ss) = prepared.ss_types {
+            self.cached_ss_types = ss.clone();
+        } else {
+            self.cached_ss_types = self.compute_ss_types(&prepared.backbone_chains);
+        }
+
+        // Ensure selection buffer has capacity
+        let total_residues: usize = prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
+        self.selection_buffer
+            .ensure_capacity(&self.context.device, total_residues);
+    }
+
+    /// Shut down the background scene processor thread.
+    pub fn shutdown_scene_processor(&mut self) {
+        self.scene_processor.shutdown();
+    }
+
+    /// Submit an animation frame to the background thread for mesh generation.
+    ///
+    /// Gets interpolated backbone and sidechain positions from the animator
+    /// and sends them to the SceneProcessor. Returns immediately (~0.3ms).
+    fn submit_animation_frame(&mut self) {
+        let visual_backbone = self.animator.get_backbone();
+        let has_sidechains = self.animator.has_sidechain_data();
+        self.submit_animation_frame_with_backbone(visual_backbone, has_sidechains);
+    }
+
+    /// Submit an animation frame with explicit backbone chains.
+    ///
+    /// Used by both the animator path and trajectory playback.
+    fn submit_animation_frame_with_backbone(
+        &mut self,
+        backbone_chains: Vec<Vec<Vec3>>,
+        include_sidechains: bool,
+    ) {
+        let sidechains = if include_sidechains {
+            let interpolated_positions = self.animator.get_sidechain_positions();
+
+            // Compute interpolated backbone-sidechain bond CA positions
+            let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
+                .target_backbone_sidechain_bonds
+                .iter()
+                .map(|(target_ca_pos, cb_idx)| {
+                    let res_idx = self
+                        .cached_sidechain_residue_indices
+                        .get(*cb_idx as usize)
+                        .copied()
+                        .unwrap_or(0) as usize;
+                    let ca_pos = self
+                        .animator
+                        .get_ca_position(res_idx)
+                        .unwrap_or(*target_ca_pos);
+                    (ca_pos, *cb_idx)
+                })
+                .collect();
+
+            Some(AnimationSidechainData {
+                sidechain_positions: interpolated_positions,
+                sidechain_bonds: self.cached_sidechain_bonds.clone(),
+                backbone_sidechain_bonds: interpolated_bs_bonds,
+                sidechain_hydrophobicity: self.cached_sidechain_hydrophobicity.clone(),
+                sidechain_residue_indices: self.cached_sidechain_residue_indices.clone(),
+            })
+        } else {
+            None
+        };
+
+        let ss_types = if self.cached_ss_types.is_empty() {
+            None
+        } else {
+            Some(self.cached_ss_types.clone())
+        };
+
+        self.scene_processor.submit(SceneRequest::AnimationFrame {
+            backbone_chains,
+            sidechains,
+            view_mode: self.view_mode,
+            ss_types,
+        });
+    }
+
+    /// Apply any pending animation frame from the background thread.
+    ///
+    /// Called every frame before the animator update. If the background thread
+    /// has finished generating mesh, uploads it to the GPU (<0.5ms).
+    fn apply_pending_animation(&mut self) {
+        let prepared = match self.scene_processor.try_recv_animation() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Upload tube mesh
+        self.tube_renderer.apply_mesh(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.tube_vertices,
+            &prepared.tube_indices,
+            prepared.tube_index_count,
+        );
+
+        // Upload ribbon mesh
+        self.ribbon_renderer.apply_mesh(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.ribbon_vertices,
+            &prepared.ribbon_indices,
+            prepared.ribbon_index_count,
+            prepared.sheet_offsets,
+        );
+
+        // Upload sidechain instances if present
+        if let Some(ref instances) = prepared.sidechain_instances {
+            let reallocated = self.sidechain_renderer.apply_prepared(
+                &self.context.device,
+                &self.context.queue,
+                instances,
+                prepared.sidechain_instance_count,
+            );
+            // Recreate capsule picking bind group if buffer was reallocated
+            if reallocated {
+                self.capsule_picking_bind_group = Some(self.picking.create_capsule_bind_group(
+                    &self.context.device,
+                    self.sidechain_renderer.capsule_buffer(),
+                ));
+            }
+        }
     }
 
     /// Apply combined Rosetta update to all groups.

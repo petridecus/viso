@@ -4,7 +4,7 @@
 //! (entities loaded/created together from one file or operation).
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType};
+use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType, NucleotideRing};
 use foldit_conv::coords::render::extract_sequences;
 use foldit_conv::coords::types::Coords;
 use foldit_conv::coords::{protein_only, RenderCoords};
@@ -13,6 +13,7 @@ use foldit_conv::types::assembly::{Assembly, prepare_combined_assembly, split_co
 use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // IDs
@@ -182,6 +183,10 @@ pub struct AggregatedRenderData {
     pub residue_render_data: ResidueRenderData,
     /// All non-protein entities across all visible groups (for ball-and-stick).
     pub non_protein_entities: Vec<MoleculeEntity>,
+    /// P-atom chains from DNA/RNA entities (for nucleic acid ribbon rendering).
+    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
+    /// Base ring geometry from DNA/RNA entities (for filled polygon rendering).
+    pub nucleic_acid_rings: Vec<NucleotideRing>,
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +213,7 @@ pub struct Scene {
     groups: Vec<EntityGroup>,
     focus: Focus,
     next_entity_id: u32,
-    agg_cache: Option<AggregatedRenderData>,
+    agg_cache: Option<Arc<AggregatedRenderData>>,
     /// Monotonically increasing generation; bumped on any mutation.
     generation: u64,
     /// Generation that was last consumed by the renderer.
@@ -446,11 +451,13 @@ impl Scene {
     // ── Aggregated data (lazy cached) ──
 
     /// Get aggregated render data. Computed lazily and cached.
-    pub fn aggregated(&mut self) -> &AggregatedRenderData {
+    /// Returns an `Arc` so callers can cheaply share the data across threads
+    /// without deep-cloning.
+    pub fn aggregated(&mut self) -> Arc<AggregatedRenderData> {
         if self.agg_cache.is_none() {
-            self.agg_cache = Some(self.compute_aggregated());
+            self.agg_cache = Some(Arc::new(self.compute_aggregated()));
         }
-        self.agg_cache.as_ref().unwrap()
+        Arc::clone(self.agg_cache.as_ref().unwrap())
     }
 
     fn compute_aggregated(&mut self) -> AggregatedRenderData {
@@ -464,19 +471,39 @@ impl Scene {
                 continue;
             }
 
-            // Collect non-protein entities for ball-and-stick
+            // Collect non-protein entities for ball-and-stick, and NA chains for ribbon
             for entity in group.entities() {
                 if entity.molecule_type != MoleculeType::Protein {
                     data.non_protein_entities.push(entity.clone());
+                }
+                if matches!(entity.molecule_type, MoleculeType::DNA | MoleculeType::RNA) {
+                    let p_chains = entity.extract_p_atom_chains();
+                    for chain in &p_chains {
+                        data.all_positions.extend(chain);
+                    }
+                    data.nucleic_acid_chains.extend(p_chains);
+                    data.nucleic_acid_rings.extend(entity.extract_base_rings());
                 }
             }
 
             // Capture ss_override before the mutable borrow from render_data()
             let ss_override = group.ss_override.clone();
 
+            let group_name = group.name().to_string();
             let render_data = match group.render_data() {
-                Some(rd) => rd,
-                None => continue,
+                Some(rd) => {
+                    eprintln!("[scene::aggregated] group '{}': {} backbone chains, {} residues, {} sidechain atoms",
+                        group_name,
+                        rd.render_coords.backbone_chains.len(),
+                        rd.render_coords.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>(),
+                        rd.render_coords.sidechain_atoms.len(),
+                    );
+                    rd
+                }
+                None => {
+                    eprintln!("[scene::aggregated] group '{}': no protein render data", group_name);
+                    continue;
+                }
             };
 
             let atom_offset = data.sidechain_positions.len() as u32;

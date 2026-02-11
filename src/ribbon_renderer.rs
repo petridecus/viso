@@ -42,7 +42,7 @@ impl Default for RibbonParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RibbonVertex {
+pub(crate) struct RibbonVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
@@ -385,7 +385,7 @@ impl RibbonRenderer {
         (all_verts, all_inds, all_surface_pos)
     }
 
-    fn generate_from_ca_only(chains: &[Vec<Vec3>], params: &RibbonParams, ss_override: Option<&[SSType]>) -> (Vec<RibbonVertex>, Vec<u32>, Vec<(u32, Vec3)>) {
+    pub(crate) fn generate_from_ca_only(chains: &[Vec<Vec3>], params: &RibbonParams, ss_override: Option<&[SSType]>) -> (Vec<RibbonVertex>, Vec<u32>, Vec<(u32, Vec3)>) {
         let mut all_verts = Vec::new();
         let mut all_inds = Vec::new();
         let mut all_surface_pos = Vec::new();
@@ -494,6 +494,53 @@ impl RibbonRenderer {
     /// Get the index buffer for picking
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
+    }
+
+    /// Apply pre-computed animation frame mesh (GPU upload only).
+    ///
+    /// Lighter-weight than `apply_prepared`: only writes vertex/index buffers
+    /// and updates `sheet_offsets` (needed for sidechain positioning), without
+    /// updating `cached_chains` or `ss_override`.
+    pub fn apply_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &[u8],
+        indices: &[u8],
+        index_count: u32,
+        sheet_offsets: Vec<(u32, Vec3)>,
+    ) {
+        if !vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, vertices);
+            self.index_buffer.write_bytes(device, queue, indices);
+        }
+        self.index_count = index_count;
+        self.sheet_offsets = sheet_offsets;
+    }
+
+    /// Apply pre-computed mesh data (GPU upload only, no CPU generation).
+    pub fn apply_prepared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &[u8],
+        indices: &[u8],
+        index_count: u32,
+        sheet_offsets: Vec<(u32, Vec3)>,
+        cached_chains: Vec<Vec<Vec3>>,
+        ss_override: Option<Vec<SSType>>,
+    ) {
+        if !vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, vertices);
+            self.index_buffer.write_bytes(device, queue, indices);
+        }
+        self.index_count = index_count;
+        self.sheet_offsets = sheet_offsets;
+        self.cached_chains = cached_chains;
+        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        if let Some(ss) = ss_override {
+            self.ss_override = Some(ss);
+        }
     }
 }
 
