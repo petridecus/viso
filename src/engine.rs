@@ -6,6 +6,7 @@ use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
 use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
 use crate::composite::CompositePass;
+use crate::fxaa::FxaaPass;
 use crate::frame_timing::FrameTiming;
 use crate::options::Options;
 use crate::picking::{Picking, SelectionBuffer};
@@ -18,7 +19,6 @@ use crate::scene_processor::{AnimationSidechainData, PreparedScene, SceneProcess
 use crate::trajectory::TrajectoryPlayer;
 use foldit_conv::secondary_structure::SSType;
 use crate::ssao::SsaoRenderer;
-use crate::text_renderer::TextRenderer;
 use crate::tube_renderer::TubeRenderer;
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
@@ -59,7 +59,6 @@ pub struct ProteinRenderEngine {
     pub tube_renderer: TubeRenderer,
     pub ribbon_renderer: RibbonRenderer,
     pub view_mode: ViewMode,
-    pub text_renderer: TextRenderer,
     pub frame_timing: FrameTiming,
     pub input_handler: InputHandler,
     pub depth_texture: wgpu::Texture,
@@ -68,6 +67,7 @@ pub struct ProteinRenderEngine {
     pub normal_view: wgpu::TextureView,
     pub ssao_renderer: SsaoRenderer,
     pub composite_pass: CompositePass,
+    pub fxaa_pass: FxaaPass,
     pub picking: Picking,
     pub selection_buffer: SelectionBuffer,
     /// Bind group for capsule picking (needs to be recreated when capsule buffer changes)
@@ -125,17 +125,25 @@ impl ProteinRenderEngine {
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
+        scale_factor: f64,
     ) -> Self {
-        Self::new_with_path(window, size, "assets/models/4pnk.cif").await
+        Self::new_with_path(window, size, scale_factor, "assets/models/4pnk.cif").await
     }
 
     /// Create a new engine with a specified molecule path
     pub async fn new_with_path(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
+        scale_factor: f64,
         cif_path: &str,
     ) -> Self {
-        let context = RenderContext::new(window, size).await;
+        let mut context = RenderContext::new(window, size).await;
+
+        // 2x supersampling on standard-DPI displays to compensate for low pixel density
+        if scale_factor < 2.0 {
+            context.render_scale = 2;
+        }
+
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
         let input_handler = InputHandler::new();
@@ -272,8 +280,8 @@ impl ProteinRenderEngine {
         // Create composite pass (applies SSAO and outlines to final image)
         let composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view);
 
-        // Create text renderer for FPS display
-        let text_renderer = TextRenderer::new(&context);
+        // Create FXAA post-process pass (smooths remaining edges after composite)
+        let fxaa_pass = FxaaPass::new(&context);
 
         // Create frame timing with 300 FPS limit
         let frame_timing = FrameTiming::new(TARGET_FPS);
@@ -378,7 +386,6 @@ impl ProteinRenderEngine {
             sidechain_renderer,
             band_renderer,
             pull_renderer,
-            text_renderer,
             frame_timing,
             input_handler,
             depth_texture,
@@ -387,6 +394,7 @@ impl ProteinRenderEngine {
             normal_view,
             ssao_renderer,
             composite_pass,
+            fxaa_pass,
             picking,
             selection_buffer,
             capsule_picking_bind_group,
@@ -419,8 +427,8 @@ impl ProteinRenderEngine {
 
     fn create_depth_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
-            width: context.config.width,
-            height: context.config.height,
+            width: context.render_width(),
+            height: context.render_height(),
             depth_or_array_layers: 1,
         };
 
@@ -442,8 +450,8 @@ impl ProteinRenderEngine {
 
     fn create_normal_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
-            width: context.config.width,
-            height: context.config.height,
+            width: context.render_width(),
+            height: context.render_height(),
             depth_or_array_layers: 1,
         };
 
@@ -511,34 +519,22 @@ impl ProteinRenderEngine {
         self.lighting.update_headlamp(right, up, forward);
         self.lighting.update_gpu(&self.context.queue);
 
-        // Update FPS display
-        self.text_renderer.update_fps(self.frame_timing.fps());
-        self.text_renderer.prepare(&self.context);
-
         // Frustum culling for sidechains - update when camera moves significantly
         self.update_frustum_culling();
 
         let frame = self.context.get_next_frame()?;
-        let tex = &frame.texture;
-        eprintln!("[engine::render] swapchain_texture={}x{} config={}x{} depth={}x{} normal={}x{} composite_color={}x{} ssao={}x{}",
-            tex.size().width, tex.size().height,
-            self.context.config.width, self.context.config.height,
-            self.depth_texture.size().width, self.depth_texture.size().height,
-            self.normal_texture.size().width, self.normal_texture.size().height,
-            self.composite_pass.color_texture.size().width, self.composite_pass.color_texture.size().height,
-            self.ssao_renderer.ssao_texture.size().width, self.ssao_renderer.ssao_texture.size().height);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.context.create_encoder();
 
-        // Geometry pass - render to intermediate color texture + normal G-buffer
+        // Geometry pass — render to intermediate color/normal textures at render_scale resolution.
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main render pass"),
                 color_attachments: &[
                     Some(wgpu::RenderPassColorAttachment {
-                        view: self.composite_pass.get_color_view(),
+                        view: &self.composite_pass.color_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -580,7 +576,6 @@ impl ProteinRenderEngine {
             // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
             match self.view_mode {
                 ViewMode::Tube => {
-                    // Tube mode: render all SS types as tubes
                     self.tube_renderer.draw(
                         &mut rp,
                         &self.camera_controller.bind_group,
@@ -589,7 +584,6 @@ impl ProteinRenderEngine {
                     );
                 }
                 ViewMode::Ribbon => {
-                    // Ribbon mode: tubes for coils, ribbons for helices/sheets
                     self.tube_renderer.draw(
                         &mut rp,
                         &self.camera_controller.bind_group,
@@ -614,7 +608,6 @@ impl ProteinRenderEngine {
                 );
             }
 
-            // Render ball-and-stick (ligands, ions, waters)
             self.ball_and_stick_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
@@ -622,7 +615,6 @@ impl ProteinRenderEngine {
                 &self.selection_buffer.bind_group,
             );
 
-            // Render nucleic acid backbone ribbons (DNA/RNA)
             self.nucleic_acid_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
@@ -630,7 +622,6 @@ impl ProteinRenderEngine {
                 &self.selection_buffer.bind_group,
             );
 
-            // Render bands (constraint visualizations)
             self.band_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
@@ -638,7 +629,6 @@ impl ProteinRenderEngine {
                 &self.selection_buffer.bind_group,
             );
 
-            // Render pull (temporary drag constraint - only one at a time)
             self.pull_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
@@ -647,7 +637,7 @@ impl ProteinRenderEngine {
             );
         }
 
-        // Update SSAO projection and view matrices
+        // SSAO pass (compute ambient occlusion from depth buffer)
         let proj = self.camera_controller.camera.build_projection();
         let view_matrix = Mat4::look_at_rh(
             self.camera_controller.camera.eye,
@@ -661,12 +651,13 @@ impl ProteinRenderEngine {
             self.camera_controller.camera.znear,
             self.camera_controller.camera.zfar,
         );
-
-        // SSAO pass (compute ambient occlusion from depth buffer)
         self.ssao_renderer.render_ssao(&mut encoder);
 
-        // Composite pass - apply SSAO to the geometry and output to swapchain
-        self.composite_pass.render(&mut encoder, &view);
+        // Composite pass — apply SSAO + outlines, output to FXAA input texture
+        self.composite_pass.render(&mut encoder, self.fxaa_pass.get_input_view());
+
+        // FXAA pass — screen-space anti-aliasing, output to swapchain
+        self.fxaa_pass.render(&mut encoder, &view);
 
         // GPU Picking pass - render residue IDs to picking buffer
         // In Ribbon mode, also render ribbons for picking (helices/sheets)
@@ -696,26 +687,6 @@ impl ProteinRenderEngine {
             self.mouse_pos.1 as u32,
         );
 
-        // Text rendering pass (no depth testing needed, renders on top of composited image)
-        {
-            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("text render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Don't clear - render on top
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-
-            self.text_renderer.render(&mut rp);
-        }
-
         self.context.submit(encoder);
 
         // Start async GPU picking readback (non-blocking)
@@ -733,27 +704,25 @@ impl ProteinRenderEngine {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        eprintln!("[engine::resize] requested={}x{} current_config={}x{}",
-            width, height, self.context.config.width, self.context.config.height);
         if width > 0 && height > 0 {
             self.context.resize(width, height);
             self.camera_controller.resize(width, height);
             let (depth_texture, depth_view) = Self::create_depth_texture(&self.context);
-            eprintln!("[engine::resize] depth_texture={}x{}", depth_texture.size().width, depth_texture.size().height);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
             let (normal_texture, normal_view) = Self::create_normal_texture(&self.context);
-            eprintln!("[engine::resize] normal_texture={}x{}", normal_texture.size().width, normal_texture.size().height);
             self.normal_texture = normal_texture;
             self.normal_view = normal_view;
             self.ssao_renderer.resize(&self.context, &self.depth_view, &self.normal_view);
-            eprintln!("[engine::resize] ssao={}x{}", self.ssao_renderer.ssao_texture.size().width, self.ssao_renderer.ssao_texture.size().height);
             self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
-            eprintln!("[engine::resize] composite_color={}x{}", self.composite_pass.color_texture.size().width, self.composite_pass.color_texture.size().height);
-            self.text_renderer.resize(width, height);
+            self.fxaa_pass.resize(&self.context);
             self.picking.resize(&self.context.device, width, height);
-            eprintln!("[engine::resize] all textures resized to {}x{}", width, height);
         }
+    }
+
+    pub fn set_scale_factor(&mut self, scale: f64) {
+        let new_render_scale: u32 = if scale < 2.0 { 2 } else { 1 };
+        self.context.render_scale = new_render_scale;
     }
 
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
