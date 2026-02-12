@@ -22,6 +22,11 @@ struct SsaoParams {
     // Near/far planes
     near: f32,
     far: f32,
+    // Tunable SSAO parameters
+    radius: f32,
+    bias: f32,
+    power: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var depth_texture: texture_depth_2d;
@@ -32,8 +37,7 @@ struct SsaoParams {
 @group(0) @binding(5) var<uniform> params: SsaoParams;
 @group(0) @binding(6) var normal_texture: texture_2d<f32>;
 
-const RADIUS: f32 = 2.0;
-const BIAS: f32 = 0.05;
+// RADIUS, BIAS, and POWER are now driven by params uniforms
 
 // Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
 fn load_depth(uv: vec2<f32>) -> f32 {
@@ -114,7 +118,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     for (var i = 0; i < 32; i++) {
         // Transform sample from tangent space to view space
         let sample_offset = tbn * kernel.samples[i].xyz;
-        let sample_pos = frag_pos + sample_offset * RADIUS;
+        let sample_pos = frag_pos + sample_offset * params.radius;
 
         // Project sample to screen space
         let sample_uv = project_to_uv(sample_pos);
@@ -129,16 +133,16 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
         let sample_view_pos = get_view_pos(sample_uv, sample_depth);
 
         // Range check - only count occlusion from nearby geometry
-        let range_check = smoothstep(0.0, 1.0, RADIUS / abs(frag_pos.z - sample_view_pos.z));
+        let range_check = smoothstep(0.0, 1.0, params.radius / abs(frag_pos.z - sample_view_pos.z));
 
         // Occlusion test: is the actual surface closer than our sample point?
         // In view space, more negative Z is further from camera
-        if (sample_view_pos.z > sample_pos.z + BIAS) {
+        if (sample_view_pos.z > sample_pos.z + params.bias) {
             occlusion += range_check;
         }
     }
 
     occlusion = 1.0 - (occlusion / 32.0);
 
-    return pow(occlusion, 2.0);
+    return pow(occlusion, params.power);
 }

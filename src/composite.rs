@@ -19,7 +19,13 @@ pub struct CompositeParams {
     pub far: f32,
     pub fog_start: f32,
     pub fog_density: f32,
+    pub normal_outline_strength: f32,
+    pub exposure: f32,
+    pub gamma: f32,
+    pub bloom_intensity: f32,
     pub _pad: f32,
+    pub _pad2: f32,
+    pub _pad3: f32,
 }
 
 impl Default for CompositeParams {
@@ -33,7 +39,13 @@ impl Default for CompositeParams {
             far: 2000.0,
             fog_start: 100.0,
             fog_density: 0.005,
+            normal_outline_strength: 0.5,
+            exposure: 1.0,
+            gamma: 1.0,
+            bloom_intensity: 0.0,
             _pad: 0.0,
+            _pad2: 0.0,
+            _pad3: 0.0,
         }
     }
 }
@@ -63,6 +75,8 @@ impl CompositePass {
         context: &RenderContext,
         ssao_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
+        normal_view: &wgpu::TextureView,
+        bloom_view: &wgpu::TextureView,
     ) -> Self {
         let width = context.render_width();
         let height = context.render_height();
@@ -161,6 +175,28 @@ impl CompositePass {
                     },
                     count: None,
                 },
+                // binding 6: normal G-buffer texture (for ambient ratio + normal outlines)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 7: bloom texture (half-res blurred bright pixels)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -174,6 +210,8 @@ impl CompositePass {
             &sampler,
             &depth_sampler,
             &params_buffer,
+            normal_view,
+            bloom_view,
         );
 
         // Load shader
@@ -249,7 +287,7 @@ impl CompositePass {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: context.config.format,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -266,6 +304,8 @@ impl CompositePass {
         sampler: &wgpu::Sampler,
         depth_sampler: &wgpu::Sampler,
         params_buffer: &wgpu::Buffer,
+        normal_view: &wgpu::TextureView,
+        bloom_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Composite Bind Group"),
@@ -294,6 +334,14 @@ impl CompositePass {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(bloom_view),
                 },
             ],
         })
@@ -339,7 +387,14 @@ impl CompositePass {
     }
 
     /// Resize textures and recreate bind groups
-    pub fn resize(&mut self, context: &RenderContext, ssao_view: &wgpu::TextureView, depth_view: &wgpu::TextureView) {
+    pub fn resize(
+        &mut self,
+        context: &RenderContext,
+        ssao_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        normal_view: &wgpu::TextureView,
+        bloom_view: &wgpu::TextureView,
+    ) {
         if context.render_width() == self.width && context.render_height() == self.height {
             return;
         }
@@ -366,6 +421,8 @@ impl CompositePass {
             &self.sampler,
             &self.depth_sampler,
             &self.params_buffer,
+            normal_view,
+            bloom_view,
         );
     }
 }

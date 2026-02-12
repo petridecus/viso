@@ -34,6 +34,9 @@ instant = "0.1"
 # Lock-free triple buffering for scene processor results
 triple_buffer = "8"
 
+# Half-precision floats for BRDF LUT texture (Rg16Float)
+half = "2"
+
 [dev-dependencies]
 criterion = "0.5"
 

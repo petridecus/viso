@@ -130,6 +130,8 @@ pub struct LightingOptions {
     pub rim_color: [f32; 3],
     pub ibl_strength: f32,
     pub rim_dir: [f32; 3],
+    pub roughness: f32,
+    pub metalness: f32,
 }
 
 impl Default for LightingOptions {
@@ -137,9 +139,9 @@ impl Default for LightingOptions {
         Self {
             light1_dir: [-0.3, 0.9, -0.3],
             light2_dir: [0.3, 0.6, -0.4],
-            light1_intensity: 0.7,
-            light2_intensity: 0.3,
-            ambient: 0.12,
+            light1_intensity: 2.0,
+            light2_intensity: 0.8,
+            ambient: 0.15,
             specular_intensity: 0.35,
             shininess: 38.0,
             rim_power: 3.0,
@@ -148,6 +150,8 @@ impl Default for LightingOptions {
             rim_color: [1.0, 0.85, 0.7],
             ibl_strength: 1.0,
             rim_dir: [0.0, -0.7, 0.5],
+            roughness: 0.5,
+            metalness: 0.0,
         }
     }
 }
@@ -162,8 +166,15 @@ pub struct PostProcessingOptions {
     pub outline_thickness: f32,
     pub outline_strength: f32,
     pub ao_strength: f32,
+    pub ao_radius: f32,
+    pub ao_bias: f32,
+    pub ao_power: f32,
     pub fog_start: f32,
     pub fog_density: f32,
+    pub exposure: f32,
+    pub normal_outline_strength: f32,
+    pub bloom_intensity: f32,
+    pub bloom_threshold: f32,
 }
 
 impl Default for PostProcessingOptions {
@@ -172,8 +183,15 @@ impl Default for PostProcessingOptions {
             outline_thickness: 1.0,
             outline_strength: 0.7,
             ao_strength: 0.85,
+            ao_radius: 0.5,
+            ao_bias: 0.025,
+            ao_power: 2.0,
             fog_start: 100.0,
             fog_density: 0.005,
+            exposure: 1.0,
+            normal_outline_strength: 0.5,
+            bloom_intensity: 0.0,
+            bloom_threshold: 1.0,
         }
     }
 }

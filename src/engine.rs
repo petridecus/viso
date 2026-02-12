@@ -1,6 +1,7 @@
 use crate::animation::{AnimationAction, StructureAnimator};
 use crate::ball_and_stick_renderer::BallAndStickRenderer;
 use crate::band_renderer::{BandRenderer, BandRenderInfo};
+use crate::bloom::BloomPass;
 use crate::nucleic_acid_renderer::NucleicAcidRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
@@ -66,6 +67,7 @@ pub struct ProteinRenderEngine {
     pub normal_texture: wgpu::Texture,
     pub normal_view: wgpu::TextureView,
     pub ssao_renderer: SsaoRenderer,
+    pub bloom_pass: BloomPass,
     pub composite_pass: CompositePass,
     pub fxaa_pass: FxaaPass,
     pub picking: Picking,
@@ -277,8 +279,18 @@ impl ProteinRenderEngine {
         // Create SSAO renderer
         let ssao_renderer = SsaoRenderer::new(&context, &depth_view, &normal_view);
 
+        // Create bloom pass (initially with placeholder input; rebind after composite creates color texture)
+        let mut bloom_pass = BloomPass::new(&context, &normal_view); // placeholder input
+
         // Create composite pass (applies SSAO and outlines to final image)
-        let composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view);
+        let mut composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view, &normal_view, bloom_pass.get_output_view());
+
+        // Now rebind bloom to read from composite's HDR color texture
+        bloom_pass.rebind_input(&context, composite_pass.get_color_view());
+        // Set gamma based on whether the swapchain surface format is sRGB
+        // If sRGB, the hardware does gamma correction, so gamma = 1.0
+        // If non-sRGB (linear), we apply gamma = 1/2.2 in the shader
+        composite_pass.params.gamma = if context.config.format.is_srgb() { 1.0 } else { 1.0 / 2.2 };
 
         // Create FXAA post-process pass (smooths remaining edges after composite)
         let fxaa_pass = FxaaPass::new(&context);
@@ -393,6 +405,7 @@ impl ProteinRenderEngine {
             normal_texture,
             normal_view,
             ssao_renderer,
+            bloom_pass,
             composite_pass,
             fxaa_pass,
             picking,
@@ -653,7 +666,10 @@ impl ProteinRenderEngine {
         );
         self.ssao_renderer.render_ssao(&mut encoder);
 
-        // Composite pass — apply SSAO + outlines, output to FXAA input texture
+        // Bloom pass — extract bright pixels and blur for glow effect
+        self.bloom_pass.render(&mut encoder);
+
+        // Composite pass — apply SSAO + bloom + outlines, output to FXAA input texture
         self.composite_pass.render(&mut encoder, self.fxaa_pass.get_input_view());
 
         // FXAA pass — screen-space anti-aliasing, output to swapchain
@@ -714,7 +730,9 @@ impl ProteinRenderEngine {
             self.normal_texture = normal_texture;
             self.normal_view = normal_view;
             self.ssao_renderer.resize(&self.context, &self.depth_view, &self.normal_view);
-            self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
+            self.bloom_pass.resize(&self.context, &self.normal_view); // placeholder, rebind below
+            self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view, &self.normal_view, self.bloom_pass.get_output_view());
+            self.bloom_pass.rebind_input(&self.context, self.composite_pass.get_color_view());
             self.fxaa_pass.resize(&self.context);
             self.picking.resize(&self.context.device, width, height);
         }
@@ -1051,6 +1069,8 @@ impl ProteinRenderEngine {
         self.lighting.uniform.rim_directionality = lo.rim_directionality;
         self.lighting.uniform.rim_color = lo.rim_color;
         self.lighting.uniform.ibl_strength = lo.ibl_strength;
+        self.lighting.uniform.roughness = lo.roughness;
+        self.lighting.uniform.metalness = lo.metalness;
         self.lighting.update_gpu(&self.context.queue);
 
         // Post-processing (outline/AO params; fog is dynamic per-frame)
@@ -1058,7 +1078,20 @@ impl ProteinRenderEngine {
         self.composite_pass.params.outline_thickness = pp.outline_thickness;
         self.composite_pass.params.outline_strength = pp.outline_strength;
         self.composite_pass.params.ao_strength = pp.ao_strength;
+        self.composite_pass.params.normal_outline_strength = pp.normal_outline_strength;
+        self.composite_pass.params.exposure = pp.exposure;
+        self.composite_pass.params.bloom_intensity = pp.bloom_intensity;
         self.composite_pass.flush_params(&self.context.queue);
+
+        // Bloom tuning
+        self.bloom_pass.threshold = pp.bloom_threshold;
+        self.bloom_pass.intensity = pp.bloom_intensity;
+        self.bloom_pass.update_params(&self.context.queue);
+
+        // SSAO tuning
+        self.ssao_renderer.radius = pp.ao_radius;
+        self.ssao_renderer.bias = pp.ao_bias;
+        self.ssao_renderer.power = pp.ao_power;
 
         // Camera
         let co = &self.options.camera;
@@ -1191,6 +1224,42 @@ impl ProteinRenderEngine {
             }),
             "post_processing.fog_density" => self.set_f32_option(value, |s, v| {
                 s.options.post_processing.fog_density = v;
+                s.apply_options();
+            }),
+            "post_processing.ao_radius" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.ao_radius = v;
+                s.apply_options();
+            }),
+            "post_processing.ao_bias" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.ao_bias = v;
+                s.apply_options();
+            }),
+            "post_processing.ao_power" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.ao_power = v;
+                s.apply_options();
+            }),
+            "post_processing.exposure" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.exposure = v;
+                s.apply_options();
+            }),
+            "post_processing.normal_outline_strength" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.normal_outline_strength = v;
+                s.apply_options();
+            }),
+            "post_processing.bloom_intensity" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.bloom_intensity = v;
+                s.apply_options();
+            }),
+            "post_processing.bloom_threshold" => self.set_f32_option(value, |s, v| {
+                s.options.post_processing.bloom_threshold = v;
+                s.apply_options();
+            }),
+            "lighting.roughness" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.roughness = v;
+                s.apply_options();
+            }),
+            "lighting.metalness" => self.set_f32_option(value, |s, v| {
+                s.options.lighting.metalness = v;
                 s.apply_options();
             }),
             // --- Camera ---
