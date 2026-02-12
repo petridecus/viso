@@ -519,6 +519,14 @@ impl ProteinRenderEngine {
         self.update_frustum_culling();
 
         let frame = self.context.get_next_frame()?;
+        let tex = &frame.texture;
+        eprintln!("[engine::render] swapchain_texture={}x{} config={}x{} depth={}x{} normal={}x{} composite_color={}x{} ssao={}x{}",
+            tex.size().width, tex.size().height,
+            self.context.config.width, self.context.config.height,
+            self.depth_texture.size().width, self.depth_texture.size().height,
+            self.normal_texture.size().width, self.normal_texture.size().height,
+            self.composite_pass.color_texture.size().width, self.composite_pass.color_texture.size().height,
+            self.ssao_renderer.ssao_texture.size().width, self.ssao_renderer.ssao_texture.size().height);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -725,21 +733,26 @@ impl ProteinRenderEngine {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        log::info!("engine.resize: {}x{} (current config: {}x{})",
+        eprintln!("[engine::resize] requested={}x{} current_config={}x{}",
             width, height, self.context.config.width, self.context.config.height);
         if width > 0 && height > 0 {
             self.context.resize(width, height);
             self.camera_controller.resize(width, height);
             let (depth_texture, depth_view) = Self::create_depth_texture(&self.context);
+            eprintln!("[engine::resize] depth_texture={}x{}", depth_texture.size().width, depth_texture.size().height);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
             let (normal_texture, normal_view) = Self::create_normal_texture(&self.context);
+            eprintln!("[engine::resize] normal_texture={}x{}", normal_texture.size().width, normal_texture.size().height);
             self.normal_texture = normal_texture;
             self.normal_view = normal_view;
             self.ssao_renderer.resize(&self.context, &self.depth_view, &self.normal_view);
+            eprintln!("[engine::resize] ssao={}x{}", self.ssao_renderer.ssao_texture.size().width, self.ssao_renderer.ssao_texture.size().height);
             self.composite_pass.resize(&self.context, self.ssao_renderer.get_ssao_view(), &self.depth_view);
+            eprintln!("[engine::resize] composite_color={}x{}", self.composite_pass.color_texture.size().width, self.composite_pass.color_texture.size().height);
             self.text_renderer.resize(width, height);
             self.picking.resize(&self.context.device, width, height);
+            eprintln!("[engine::resize] all textures resized to {}x{}", width, height);
         }
     }
 

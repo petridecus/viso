@@ -15,6 +15,7 @@ impl RenderContext {
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         initial_size: (u32, u32),
     ) -> Self {
+        eprintln!("[RenderContext::new] initial_size={}x{}", initial_size.0, initial_size.1);
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window).unwrap();
 
@@ -26,6 +27,7 @@ impl RenderContext {
             })
             .await
             .unwrap();
+        eprintln!("[RenderContext::new] adapter: {:?}, backend: {:?}", adapter.get_info().name, adapter.get_info().backend);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -43,6 +45,9 @@ impl RenderContext {
 
         // Use Immediate for uncapped FPS (Mailbox not supported on this system)
         config.present_mode = wgpu::PresentMode::Immediate;
+
+        eprintln!("[RenderContext::new] surface config: {}x{} format={:?} present_mode={:?}",
+            config.width, config.height, config.format, config.present_mode);
 
         surface.configure(&device, &config);
 
@@ -85,6 +90,7 @@ impl RenderContext {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
+            eprintln!("[RenderContext::resize] {}x{} -> {}x{}", self.config.width, self.config.height, width, height);
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);

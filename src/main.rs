@@ -54,8 +54,17 @@ impl ApplicationHandler for RenderApp {
                     .create_window(Window::default_attributes())
                     .unwrap(),
             );
+
             let size = window.inner_size();
-            let engine = pollster::block_on(ProteinRenderEngine::new(window.clone(), (size.width, size.height)));
+            let scale = window.scale_factor();
+            let outer = window.outer_size();
+            let monitor = window.current_monitor();
+            eprintln!("[main::resumed] inner_size={:?} outer_size={:?} scale_factor={} monitor={:?}",
+                size, outer, scale, monitor.as_ref().map(|m| (m.size(), m.scale_factor(), m.name())));
+            let (width, height) = (size.width, size.height);
+            eprintln!("[main::resumed] passing size={}x{} to engine", width, height);
+
+            let engine = pollster::block_on(ProteinRenderEngine::new(window.clone(), (width, height)));
 
             window.request_redraw();
             self.window = Some(window);
@@ -69,16 +78,20 @@ impl ApplicationHandler for RenderApp {
                 event_loop.exit();
             }
 
-            WindowEvent::Resized(newsize) => {
-                if let Some(engine) = &mut self.engine {
-                    engine.resize(newsize.width, newsize.height);
+            WindowEvent::Resized(event_size) => {
+                if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
+                    let size = window.inner_size();
+                    eprintln!("[main::Resized] event_payload={:?} inner_size={:?} outer_size={:?} scale={}",
+                        event_size, size, window.outer_size(), window.scale_factor());
+                    engine.resize(size.width, size.height);
                 }
             }
 
-            WindowEvent::ScaleFactorChanged { .. } => {
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let newsize = window.inner_size();
-                    engine.resize(newsize.width, newsize.height);
+                    let size = window.inner_size();
+                    eprintln!("[main::ScaleFactorChanged] new_scale={} inner_size={:?}", scale_factor, size);
+                    engine.resize(size.width, size.height);
                 }
             }
 
@@ -111,7 +124,7 @@ impl ApplicationHandler for RenderApp {
                 if let Some(engine) = &mut self.engine {
                     // Update camera (drag)
                     engine.handle_mouse_move(delta_x, delta_y);
-                    
+
                     // Update hover (always, for picking)
                     engine.handle_mouse_position(position.x as f32, position.y as f32);
                 }
