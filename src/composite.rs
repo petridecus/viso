@@ -143,7 +143,7 @@ impl CompositePass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // binding 4: depth sampler
+                // binding 4: depth sampler (NonFiltering — sampler uses Nearest)
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
