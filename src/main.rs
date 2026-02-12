@@ -25,15 +25,28 @@ pub mod tube_renderer;
 
 use engine::ProteinRenderEngine;
 use std::sync::Arc;
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+/// Duration after the last resize event before we consider the startup burst
+/// over and allow downsizes again. 500ms is generous — EDID negotiation is
+/// typically 10-100ms, and winit's spurious events arrive within ~50ms.
+const RESIZE_STABILISATION_MS: u128 = 500;
+
 struct RenderApp {
     window: Option<Arc<Window>>,
     engine: Option<ProteinRenderEngine>,
     last_mouse_pos: (f32, f32),
+    /// Largest size (by area) seen during the current resize burst.
+    /// Prevents later spurious smaller events from clobbering the correct size.
+    max_size_seen: Option<(u32, u32)>,
+    /// Timestamp of the last resize event — used to detect when the startup
+    /// burst has settled so that intentional user resizes (e.g. window drag,
+    /// snap to half-screen) can take effect.
+    last_resize_at: Option<Instant>,
 }
 
 impl RenderApp {
@@ -42,6 +55,8 @@ impl RenderApp {
             window: None,
             engine: None,
             last_mouse_pos: (0.0, 0.0),
+            max_size_seen: None,
+            last_resize_at: None,
         }
     }
 }
@@ -49,9 +64,15 @@ impl RenderApp {
 impl ApplicationHandler for RenderApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
+            // Use an explicit initial size to avoid winit's 800x600 hardcoded default.
+            // This prevents the most common spurious resize event on external monitors
+            // where EDID negotiation delays cause transient 800x600 states.
+            let attrs = Window::default_attributes()
+                .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+
             let window = Arc::new(
                 event_loop
-                    .create_window(Window::default_attributes())
+                    .create_window(attrs)
                     .unwrap(),
             );
 
@@ -80,10 +101,51 @@ impl ApplicationHandler for RenderApp {
 
             WindowEvent::Resized(event_size) => {
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let size = window.inner_size();
-                    eprintln!("[main::Resized] event_payload={:?} inner_size={:?} outer_size={:?} scale={}",
-                        event_size, size, window.outer_size(), window.scale_factor());
-                    engine.resize(size.width, size.height);
+                    let inner = window.inner_size();
+                    let (ew, eh) = (event_size.width, event_size.height);
+                    let (iw, ih) = (inner.width, inner.height);
+
+                    // Use whichever is larger — event_size leads inner_size when
+                    // Windows snaps/tiles the window, but inner_size is more
+                    // trustworthy for downsizes.
+                    let (w, h) = if (ew as u64) * (eh as u64) >= (iw as u64) * (ih as u64) {
+                        (ew, eh)
+                    } else {
+                        (iw, ih)
+                    };
+
+                    let now = Instant::now();
+
+                    // If enough time has passed since the last resize, reset
+                    // max_size_seen so intentional user resizes (drag, snap)
+                    // are not blocked.
+                    if let Some(last) = self.last_resize_at {
+                        if now.duration_since(last).as_millis() > RESIZE_STABILISATION_MS {
+                            eprintln!("[main::Resized] stabilisation period elapsed — resetting max_size_seen");
+                            self.max_size_seen = None;
+                        }
+                    }
+                    self.last_resize_at = Some(now);
+
+                    // Never go smaller than the max we've seen during this burst.
+                    // This prevents spurious 1280x720 events from clobbering the
+                    // correct 1904x1020 during the startup resize sequence.
+                    let candidate_area = (w as u64) * (h as u64);
+                    if let Some((mw, mh)) = self.max_size_seen {
+                        let max_area = (mw as u64) * (mh as u64);
+                        if candidate_area < max_area {
+                            eprintln!(
+                                "[main::Resized] IGNORING downsize {}x{} (area {}), max seen {}x{} (area {})",
+                                w, h, candidate_area, mw, mh, max_area
+                            );
+                            return;
+                        }
+                    }
+
+                    self.max_size_seen = Some((w, h));
+                    eprintln!("[main::Resized] event={:?} inner={:?} using={}x{} (new max)",
+                        event_size, inner, w, h);
+                    engine.resize(w, h);
                 }
             }
 
@@ -97,7 +159,26 @@ impl ApplicationHandler for RenderApp {
 
             WindowEvent::RedrawRequested => {
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let _ = engine.render();
+                    match engine.render() {
+                        Ok(()) => {}
+                        Err(wgpu::SurfaceError::Outdated) => {
+                            // Surface/swapchain out of sync with window — the GPU
+                            // backend is telling us the configured size is wrong.
+                            // Trust inner_size() here (this is the "ground truth"
+                            // correction) and reset max_size_seen so we don't block
+                            // the corrected size.
+                            let size = window.inner_size();
+                            eprintln!(
+                                "[main::RedrawRequested] Outdated — reconfiguring to {}x{}, resetting max_size_seen",
+                                size.width, size.height
+                            );
+                            self.max_size_seen = Some((size.width, size.height));
+                            engine.resize(size.width, size.height);
+                        }
+                        Err(e) => {
+                            eprintln!("[main::RedrawRequested] render error: {:?}", e);
+                        }
+                    }
                     // Request continuous redraws for smooth FPS updates
                     window.request_redraw();
                 }

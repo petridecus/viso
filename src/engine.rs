@@ -518,7 +518,14 @@ impl ProteinRenderEngine {
         // Frustum culling for sidechains - update when camera moves significantly
         self.update_frustum_culling();
 
-        let frame = self.context.get_next_frame()?;
+        let frame = match self.context.get_next_frame() {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("[engine::render] get_current_texture FAILED: {:?} (config={}x{})",
+                    e, self.context.config.width, self.context.config.height);
+                return Err(e);
+            }
+        };
         let tex = &frame.texture;
         eprintln!("[engine::render] swapchain_texture={}x{} config={}x{} depth={}x{} normal={}x{} composite_color={}x{} ssao={}x{}",
             tex.size().width, tex.size().height,
@@ -735,6 +742,23 @@ impl ProteinRenderEngine {
     pub fn resize(&mut self, width: u32, height: u32) {
         eprintln!("[engine::resize] requested={}x{} current_config={}x{}",
             width, height, self.context.config.width, self.context.config.height);
+
+        // Guard: skip if size is unchanged (deduplication).
+        // Winit can emit duplicate/spurious resize events (see winit #2094, #4041)
+        // especially on external monitors with non-standard EDID timings.
+        if width == self.context.config.width && height == self.context.config.height {
+            eprintln!("[engine::resize] skipping — size unchanged");
+            return;
+        }
+
+        // Guard: reject unreasonably small sizes that indicate EDID fallback
+        // (e.g., 800x600 safe-mode when the OS hasn't finished reading monitor EDID).
+        const MIN_REASONABLE_DIMENSION: u32 = 64;
+        if width < MIN_REASONABLE_DIMENSION || height < MIN_REASONABLE_DIMENSION {
+            eprintln!("[engine::resize] skipping — size {}x{} below minimum threshold", width, height);
+            return;
+        }
+
         if width > 0 && height > 0 {
             self.context.resize(width, height);
             self.camera_controller.resize(width, height);

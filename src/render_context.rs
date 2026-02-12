@@ -43,8 +43,7 @@ impl RenderContext {
             .get_default_config(&adapter, initial_size.0, initial_size.1)
             .unwrap();
 
-        // Use Immediate for uncapped FPS (Mailbox not supported on this system)
-        config.present_mode = wgpu::PresentMode::Immediate;
+        config.present_mode = wgpu::PresentMode::Fifo;
 
         eprintln!("[RenderContext::new] surface config: {}x{} format={:?} present_mode={:?}",
             config.width, config.height, config.format, config.present_mode);
@@ -89,6 +88,10 @@ impl RenderContext {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        // Guard: skip if size is unchanged (matches pattern in ssao.rs, composite.rs, picking.rs)
+        if width == self.config.width && height == self.config.height {
+            return;
+        }
         if width > 0 && height > 0 {
             eprintln!("[RenderContext::resize] {}x{} -> {}x{}", self.config.width, self.config.height, width, height);
             self.config.width = width;
