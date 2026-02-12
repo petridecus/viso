@@ -35,6 +35,13 @@ struct SsaoParams {
 const RADIUS: f32 = 2.0;
 const BIAS: f32 = 0.05;
 
+// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
+fn load_depth(uv: vec2<f32>) -> f32 {
+    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
+    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
+    return textureLoad(depth_texture, texel, 0);
+}
+
 // Full-screen triangle
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -81,7 +88,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     let noise_scale = params.screen_size / 4.0;
 
     // Sample depth
-    let depth = textureSample(depth_texture, tex_sampler, in.uv);
+    let depth = load_depth(in.uv);
 
     // Skip background (depth buffer cleared to 1.0)
     if (depth > 0.9999) {
@@ -118,7 +125,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
         }
 
         // Get depth at sample position
-        let sample_depth = textureSample(depth_texture, tex_sampler, sample_uv);
+        let sample_depth = load_depth(sample_uv);
         let sample_view_pos = get_view_pos(sample_uv, sample_depth);
 
         // Range check - only count occlusion from nearby geometry

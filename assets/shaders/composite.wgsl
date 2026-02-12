@@ -37,6 +37,13 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
+// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
+fn load_depth(uv: vec2<f32>) -> f32 {
+    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
+    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
+    return textureLoad(depth_texture, texel, 0);
+}
+
 // Linearize depth from NDC to view-space distance
 fn linearize_depth(d: f32, near: f32, far: f32) -> f32 {
     return near * far / (far - d * (far - near));
@@ -48,11 +55,11 @@ fn detect_edges(uv: vec2<f32>, texel_size: vec2<f32>, thickness: f32) -> f32 {
     let offset = texel_size * thickness;
 
     // Sample depth at center and 4 neighbors
-    let d_c = textureSample(depth_texture, depth_sampler, uv);
-    let d_t = textureSample(depth_texture, depth_sampler, uv + vec2(0.0, -offset.y));
-    let d_b = textureSample(depth_texture, depth_sampler, uv + vec2(0.0, offset.y));
-    let d_l = textureSample(depth_texture, depth_sampler, uv + vec2(-offset.x, 0.0));
-    let d_r = textureSample(depth_texture, depth_sampler, uv + vec2(offset.x, 0.0));
+    let d_c = load_depth(uv);
+    let d_t = load_depth(uv + vec2(0.0, -offset.y));
+    let d_b = load_depth(uv + vec2(0.0, offset.y));
+    let d_l = load_depth(uv + vec2(-offset.x, 0.0));
+    let d_r = load_depth(uv + vec2(offset.x, 0.0));
 
     // Linearize all depths for meaningful distance comparison
     let l_c = linearize_depth(d_c, params.near, params.far);
@@ -80,7 +87,7 @@ fn detect_edges(uv: vec2<f32>, texel_size: vec2<f32>, thickness: f32) -> f32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(color_texture, tex_sampler, in.uv);
     let ao = textureSample(ssao_texture, tex_sampler, in.uv).r;
-    let depth = textureSample(depth_texture, depth_sampler, in.uv);
+    let depth = load_depth(in.uv);
 
     // Background early-out (no outline on empty space)
     if (depth > 0.9999) {
