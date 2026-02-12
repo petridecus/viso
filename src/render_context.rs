@@ -43,8 +43,8 @@ impl RenderContext {
             .get_default_config(&adapter, initial_size.0, initial_size.1)
             .unwrap();
 
-        // Use Immediate for uncapped FPS (Mailbox not supported on this system)
-        config.present_mode = wgpu::PresentMode::Immediate;
+        // Use Fifo (vsync) — widely supported across all backends
+        config.present_mode = wgpu::PresentMode::Fifo;
 
         eprintln!("[RenderContext::new] surface config: {}x{} format={:?} present_mode={:?}",
             config.width, config.height, config.format, config.present_mode);
