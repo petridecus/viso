@@ -1,6 +1,7 @@
 pub mod animation;
 pub mod ball_and_stick_renderer;
 pub mod band_renderer;
+pub mod bloom;
 pub mod bond_topology;
 pub mod camera;
 pub mod capsule_sidechain_renderer;

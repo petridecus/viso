@@ -13,6 +13,10 @@ pub struct SsaoParams {
     pub screen_size: [f32; 2],
     pub near: f32,
     pub far: f32,
+    pub radius: f32,
+    pub bias: f32,
+    pub power: f32,
+    pub _pad: f32,
 }
 
 /// SSAO (Screen Space Ambient Occlusion) renderer
@@ -43,6 +47,11 @@ pub struct SsaoRenderer {
 
     width: u32,
     height: u32,
+
+    // Tunable SSAO parameters
+    pub radius: f32,
+    pub bias: f32,
+    pub power: f32,
 }
 
 const KERNEL_SIZE: usize = 32;
@@ -68,6 +77,9 @@ impl SsaoRenderer {
         });
 
         // Create params buffer with default values
+        let radius = 0.5;
+        let bias = 0.025;
+        let power = 2.0;
         let params = SsaoParams {
             inv_proj: Mat4::IDENTITY.to_cols_array_2d(),
             proj: Mat4::IDENTITY.to_cols_array_2d(),
@@ -75,6 +87,10 @@ impl SsaoRenderer {
             screen_size: [width as f32, height as f32],
             near: 0.1,
             far: 1000.0,
+            radius,
+            bias,
+            power,
+            _pad: 0.0,
         };
         let params_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("SSAO Params"),
@@ -227,13 +243,14 @@ impl SsaoRenderer {
                     cache: None,
                 });
 
-        // Blur bind group layout
+        // Blur bind group layout (bilateral: needs depth + normal + params)
         let blur_bind_group_layout =
             context
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("SSAO Blur Layout"),
                     entries: &[
+                        // binding 0: SSAO texture
                         wgpu::BindGroupLayoutEntry {
                             binding: 0,
                             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -244,10 +261,44 @@ impl SsaoRenderer {
                             },
                             count: None,
                         },
+                        // binding 1: sampler
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // binding 2: depth texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Depth,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // binding 3: normal texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // binding 4: SSAO params (for near/far)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
                             count: None,
                         },
                     ],
@@ -314,6 +365,9 @@ impl SsaoRenderer {
             &blur_bind_group_layout,
             &ssao_view,
             &ssao_sampler,
+            depth_view,
+            normal_view,
+            &params_buffer,
         );
 
         Self {
@@ -335,6 +389,9 @@ impl SsaoRenderer {
             blur_bind_group,
             width,
             height,
+            radius,
+            bias,
+            power,
         }
     }
 
@@ -496,6 +553,9 @@ impl SsaoRenderer {
         layout: &wgpu::BindGroupLayout,
         ssao_view: &wgpu::TextureView,
         sampler: &wgpu::Sampler,
+        depth_view: &wgpu::TextureView,
+        normal_view: &wgpu::TextureView,
+        params_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SSAO Blur Bind Group"),
@@ -508,6 +568,18 @@ impl SsaoRenderer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
                 },
             ],
         })
@@ -523,6 +595,10 @@ impl SsaoRenderer {
             screen_size: [self.width as f32, self.height as f32],
             near,
             far,
+            radius: self.radius,
+            bias: self.bias,
+            power: self.power,
+            _pad: 0.0,
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
     }
@@ -557,6 +633,9 @@ impl SsaoRenderer {
             &self.blur_bind_group_layout,
             &self.ssao_view,
             &self.ssao_sampler,
+            depth_view,
+            normal_view,
+            &self.params_buffer,
         );
     }
 
