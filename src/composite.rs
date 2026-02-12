@@ -64,8 +64,8 @@ impl CompositePass {
         ssao_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
     ) -> Self {
-        let width = context.config.width;
-        let height = context.config.height;
+        let width = context.render_width();
+        let height = context.render_height();
 
         // Create intermediate color texture (geometry renders here)
         let (color_texture, color_view) = Self::create_color_texture(context, width, height);
@@ -340,12 +340,12 @@ impl CompositePass {
 
     /// Resize textures and recreate bind groups
     pub fn resize(&mut self, context: &RenderContext, ssao_view: &wgpu::TextureView, depth_view: &wgpu::TextureView) {
-        if context.config.width == self.width && context.config.height == self.height {
+        if context.render_width() == self.width && context.render_height() == self.height {
             return;
         }
 
-        self.width = context.config.width;
-        self.height = context.config.height;
+        self.width = context.render_width();
+        self.height = context.render_height();
 
         // Recreate color texture
         let (color_texture, color_view) = Self::create_color_texture(context, self.width, self.height);

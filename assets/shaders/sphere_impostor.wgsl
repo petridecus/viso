@@ -191,9 +191,14 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
     let ndc_depth = clip_pos.z / clip_pos.w;
 
+    // SDF edge AA: smooth alpha at sphere boundary for alpha-to-coverage MSAA
+    let sdf = length(in.world_pos - in.sphere_center) - in.radius;
+    let aa_edge = fwidth(sdf);
+    let alpha = smoothstep(aa_edge, -aa_edge, sdf);
+
     var out: FragOut;
     out.depth = ndc_depth;
-    out.color = vec4<f32>(final_color, 1.0);
+    out.color = vec4<f32>(final_color, alpha);
     out.normal = vec4<f32>(normal, 0.0);
     return out;
 }

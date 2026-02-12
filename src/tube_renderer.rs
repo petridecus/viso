@@ -74,7 +74,7 @@ pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 pub struct TubeRenderer {
-    pub pipeline: wgpu::RenderPipeline,
+    pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
     pub index_count: u32,

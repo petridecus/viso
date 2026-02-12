@@ -50,8 +50,8 @@ const NOISE_SIZE: u32 = 4;
 
 impl SsaoRenderer {
     pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) -> Self {
-        let width = context.config.width;
-        let height = context.config.height;
+        let width = context.render_width();
+        let height = context.render_height();
 
         // Create output textures
         let ssao_texture = Self::create_ssao_texture(context, width, height);
@@ -528,12 +528,12 @@ impl SsaoRenderer {
     }
 
     pub fn resize(&mut self, context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) {
-        if context.config.width == self.width && context.config.height == self.height {
+        if context.render_width() == self.width && context.render_height() == self.height {
             return;
         }
 
-        self.width = context.config.width;
-        self.height = context.config.height;
+        self.width = context.render_width();
+        self.height = context.render_height();
 
         self.ssao_texture = Self::create_ssao_texture(context, self.width, self.height);
         self.ssao_view = self.ssao_texture.create_view(&Default::default());

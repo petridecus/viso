@@ -66,7 +66,7 @@ struct SSSegment {
 }
 
 pub struct RibbonRenderer {
-    pub pipeline: wgpu::RenderPipeline,
+    pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
     pub index_count: u32,
