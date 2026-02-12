@@ -25,15 +25,30 @@ pub mod tube_renderer;
 
 use engine::ProteinRenderEngine;
 use std::sync::Arc;
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+/// Format a diagnostic timestamp: elapsed ms since t0 + sequence number.
+fn ts(t0: &Instant, seq: &mut u64) -> String {
+    *seq += 1;
+    let elapsed = t0.elapsed();
+    format!("[{:>6}.{:03}ms seq={}]",
+        elapsed.as_millis(),
+        elapsed.as_micros() % 1000,
+        *seq)
+}
+
 struct RenderApp {
     window: Option<Arc<Window>>,
     engine: Option<ProteinRenderEngine>,
     last_mouse_pos: (f32, f32),
+    /// Monotonic clock used for all diagnostic timestamps
+    t0: Instant,
+    /// Sequence counter for events (to spot ordering even with identical timestamps)
+    event_seq: u64,
 }
 
 impl RenderApp {
@@ -42,6 +57,8 @@ impl RenderApp {
             window: None,
             engine: None,
             last_mouse_pos: (0.0, 0.0),
+            t0: Instant::now(),
+            event_seq: 0,
         }
     }
 }
@@ -59,10 +76,11 @@ impl ApplicationHandler for RenderApp {
             let scale = window.scale_factor();
             let outer = window.outer_size();
             let monitor = window.current_monitor();
-            eprintln!("[main::resumed] inner_size={:?} outer_size={:?} scale_factor={} monitor={:?}",
-                size, outer, scale, monitor.as_ref().map(|m| (m.size(), m.scale_factor(), m.name())));
+            let t = ts(&self.t0, &mut self.event_seq);
+            eprintln!("{} [RESUMED] inner_size={:?} outer_size={:?} scale_factor={} monitor={:?}",
+                t, size, outer, scale, monitor.as_ref().map(|m| (m.size(), m.scale_factor(), m.name())));
             let (width, height) = (size.width, size.height);
-            eprintln!("[main::resumed] passing size={}x{} to engine", width, height);
+            eprintln!("{} [RESUMED] passing size={}x{} (physical px) to engine", t, width, height);
 
             let engine = pollster::block_on(ProteinRenderEngine::new(window.clone(), (width, height)));
 
@@ -79,25 +97,99 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::Resized(event_size) => {
+                let t = ts(&self.t0, &mut self.event_seq);
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let size = window.inner_size();
-                    eprintln!("[main::Resized] event_payload={:?} inner_size={:?} outer_size={:?} scale={}",
-                        event_size, size, window.outer_size(), window.scale_factor());
-                    engine.resize(size.width, size.height);
+                    let inner = window.inner_size();
+                    let outer = window.outer_size();
+                    let scale = window.scale_factor();
+                    let cfg_w = engine.context.config.width;
+                    let cfg_h = engine.context.config.height;
+                    eprintln!("{} [RESIZED] event_payload={}x{} \
+                        inner_size={}x{} outer_size={}x{} scale_factor={:.4} \
+                        surface_config={}x{} \
+                        event_vs_inner={}",
+                        t,
+                        event_size.width, event_size.height,
+                        inner.width, inner.height,
+                        outer.width, outer.height,
+                        scale,
+                        cfg_w, cfg_h,
+                        if event_size == inner { "MATCH" } else { "MISMATCH" },
+                    );
+                    // Use inner_size (physical pixels) — the authoritative value
+                    engine.resize(inner.width, inner.height);
+                    // Log surface config AFTER the resize to confirm what was applied
+                    let t2 = ts(&self.t0, &mut self.event_seq);
+                    eprintln!("{} [RESIZED] post-resize surface_config={}x{}",
+                        t2, engine.context.config.width, engine.context.config.height);
                 }
             }
 
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer: _ } => {
+                let t = ts(&self.t0, &mut self.event_seq);
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let size = window.inner_size();
-                    eprintln!("[main::ScaleFactorChanged] new_scale={} inner_size={:?}", scale_factor, size);
-                    engine.resize(size.width, size.height);
+                    let inner = window.inner_size();
+                    let outer = window.outer_size();
+                    let cfg_w = engine.context.config.width;
+                    let cfg_h = engine.context.config.height;
+                    eprintln!("{} [SCALE_FACTOR_CHANGED] new_scale={:.4} \
+                        inner_size={}x{} outer_size={}x{} \
+                        surface_config_before={}x{}",
+                        t,
+                        scale_factor,
+                        inner.width, inner.height,
+                        outer.width, outer.height,
+                        cfg_w, cfg_h,
+                    );
+                    engine.resize(inner.width, inner.height);
+                    let t2 = ts(&self.t0, &mut self.event_seq);
+                    eprintln!("{} [SCALE_FACTOR_CHANGED] post-resize surface_config={}x{}",
+                        t2, engine.context.config.width, engine.context.config.height);
                 }
             }
 
             WindowEvent::RedrawRequested => {
+                // Compute log-gating fields before borrowing engine/window
+                let elapsed_ms = self.t0.elapsed().as_millis();
+                let should_log = elapsed_ms < 3000 || self.event_seq % 300 == 0;
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-                    let _ = engine.render();
+                    if should_log {
+                        let inner = window.inner_size();
+                        let scale = window.scale_factor();
+                        let cfg_w = engine.context.config.width;
+                        let cfg_h = engine.context.config.height;
+                        let t = ts(&self.t0, &mut self.event_seq);
+                        eprintln!("{} [REDRAW] inner_size={}x{} scale={:.4} surface_config={}x{} match={}",
+                            t,
+                            inner.width, inner.height,
+                            scale,
+                            cfg_w, cfg_h,
+                            if inner.width == cfg_w && inner.height == cfg_h { "YES" } else { "NO" },
+                        );
+                    }
+                    match engine.render() {
+                        Ok(()) => {}
+                        Err(wgpu::SurfaceError::Outdated) => {
+                            let inner = window.inner_size();
+                            let t = ts(&self.t0, &mut self.event_seq);
+                            eprintln!("{} [REDRAW] SurfaceError::Outdated! \
+                                inner_size={}x{} scale={:.4} — forcing resize",
+                                t, inner.width, inner.height, window.scale_factor());
+                            engine.resize(inner.width, inner.height);
+                        }
+                        Err(wgpu::SurfaceError::Lost) => {
+                            let inner = window.inner_size();
+                            let t = ts(&self.t0, &mut self.event_seq);
+                            eprintln!("{} [REDRAW] SurfaceError::Lost! \
+                                inner_size={}x{} — forcing resize",
+                                t, inner.width, inner.height);
+                            engine.resize(inner.width, inner.height);
+                        }
+                        Err(e) => {
+                            let t = ts(&self.t0, &mut self.event_seq);
+                            eprintln!("{} [REDRAW] render error: {:?}", t, e);
+                        }
+                    }
                     // Request continuous redraws for smooth FPS updates
                     window.request_redraw();
                 }
@@ -178,6 +270,31 @@ impl ApplicationHandler for RenderApp {
                             _ => {}
                         }
                     }
+                }
+            }
+
+            WindowEvent::Moved(position) => {
+                // Log window movement — fires when dragging between monitors
+                // and may correlate with scale_factor changes
+                if let Some(window) = &self.window {
+                    let inner = window.inner_size();
+                    let scale = window.scale_factor();
+                    let monitor = window.current_monitor();
+                    let t = ts(&self.t0, &mut self.event_seq);
+                    eprintln!("{} [MOVED] position={:?} inner_size={}x{} scale={:.4} monitor={:?}",
+                        t, position,
+                        inner.width, inner.height,
+                        scale,
+                        monitor.as_ref().map(|m| (m.size(), m.scale_factor(), m.name())),
+                    );
+                }
+            }
+
+            WindowEvent::Occluded(occluded) => {
+                if let Some(window) = &self.window {
+                    let t = ts(&self.t0, &mut self.event_seq);
+                    eprintln!("{} [OCCLUDED] occluded={} inner_size={:?} scale={:.4}",
+                        t, occluded, window.inner_size(), window.scale_factor());
                 }
             }
 
