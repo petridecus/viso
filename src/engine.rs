@@ -2024,9 +2024,9 @@ impl ProteinRenderEngine {
         if fit_camera {
             // Sync immediately so aggregated data is available for camera fit
             self.sync_scene_to_renderers(Some(AnimationAction::Load));
-            let agg = self.scene.aggregated();
-            if !agg.all_positions.is_empty() {
-                self.camera_controller.fit_to_positions(&agg.all_positions);
+            let positions = self.scene.all_positions();
+            if !positions.is_empty() {
+                self.camera_controller.fit_to_positions(&positions);
             }
         }
         id
@@ -2083,9 +2083,9 @@ impl ProteinRenderEngine {
     pub fn fit_camera_to_focus(&mut self) {
         match *self.scene.focus() {
             Focus::Session => {
-                let agg = self.scene.aggregated();
-                if !agg.all_positions.is_empty() {
-                    self.camera_controller.fit_to_positions_animated(&agg.all_positions);
+                let positions = self.scene.all_positions();
+                if !positions.is_empty() {
+                    self.camera_controller.fit_to_positions_animated(&positions);
                 }
             }
             Focus::Group(id) => {
@@ -2138,10 +2138,12 @@ impl ProteinRenderEngine {
             return;
         }
 
+        let groups = self.scene.per_group_data();
         let agg = self.scene.aggregated(); // Arc::clone (~1ns), no deep copy
         self.scene.mark_rendered();
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
+            groups,
             aggregated: agg,
             action,
             view_mode: self.view_mode,

@@ -4,12 +4,17 @@
 //! (entities loaded/created together from one file or operation).
 
 use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType, NucleotideRing};
+use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType, NucleotideRing, merge_entities};
 use foldit_conv::coords::render::extract_sequences;
 use foldit_conv::coords::types::Coords;
-use foldit_conv::coords::{protein_only, RenderCoords};
+use foldit_conv::coords::{protein_only, RenderCoords, RenderBackboneResidue};
 use foldit_conv::secondary_structure::SSType;
-use foldit_conv::types::assembly::{Assembly, prepare_combined_assembly, split_combined_result};
+use foldit_conv::types::assembly::{
+    prepare_combined_assembly, split_combined_result,
+    update_entities_from_backend, update_protein_entities,
+    residue_count as assembly_residue_count,
+    protein_coords as assembly_protein_coords,
+};
 use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -82,6 +87,44 @@ pub struct GroupRenderData {
 }
 
 // ---------------------------------------------------------------------------
+// PerGroupData — per-group data for scene processor
+// ---------------------------------------------------------------------------
+
+/// Sidechain atom data for a single group (local indices).
+#[derive(Debug, Clone)]
+pub struct SidechainAtom {
+    pub position: Vec3,
+    pub is_hydrophobic: bool,
+    pub residue_idx: u32,
+    pub atom_name: String,
+}
+
+/// All render data for a single group, ready for the scene processor.
+/// Indices are LOCAL (0-based within the group).
+#[derive(Debug, Clone)]
+pub struct PerGroupData {
+    pub id: GroupId,
+    pub mesh_version: u64,
+    // Protein backbone
+    pub backbone_chains: Vec<Vec<Vec3>>,
+    pub backbone_chain_ids: Vec<u8>,
+    pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
+    // Sidechain (local residue indices)
+    pub sidechain_atoms: Vec<SidechainAtom>,
+    pub sidechain_bonds: Vec<(u32, u32)>,
+    pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    // Secondary structure
+    pub ss_override: Option<Vec<SSType>>,
+    // Non-protein
+    pub non_protein_entities: Vec<MoleculeEntity>,
+    // Nucleic acid
+    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
+    pub nucleic_acid_rings: Vec<NucleotideRing>,
+    // Counts
+    pub residue_count: u32,
+}
+
+// ---------------------------------------------------------------------------
 // EntityGroup
 // ---------------------------------------------------------------------------
 
@@ -90,27 +133,40 @@ pub struct GroupRenderData {
 pub struct EntityGroup {
     pub id: GroupId,
     pub visible: bool,
-    pub assembly: Assembly,
+    pub name: String,
+    entities: Vec<MoleculeEntity>,
+    mesh_version: u64,
     pub ss_override: Option<Vec<SSType>>,
     /// Cached per-group rendering data (derived from protein entities).
     render_cache: Option<GroupRenderData>,
 }
 
 impl EntityGroup {
-    /// Human-readable name (delegates to assembly).
+    /// Human-readable name.
     pub fn name(&self) -> &str {
-        &self.assembly.name
+        &self.name
     }
 
-    /// Access entities (delegates to assembly).
+    /// Access entities (immutable).
     pub fn entities(&self) -> &[MoleculeEntity] {
-        self.assembly.entities()
+        &self.entities
     }
 
-    /// Replace entities (rebuilds assembly, preserving name).
+    /// Mutable access to entities. Bumps mesh_version.
+    pub fn entities_mut(&mut self) -> &mut Vec<MoleculeEntity> {
+        self.mesh_version += 1;
+        &mut self.entities
+    }
+
+    /// Replace entities. Bumps mesh_version.
     pub fn set_entities(&mut self, entities: Vec<MoleculeEntity>) {
-        let name = self.assembly.name.clone();
-        self.assembly = Assembly::from_entities(entities, name);
+        self.entities = entities;
+        self.mesh_version += 1;
+    }
+
+    /// Current mesh version (cache key for scene processor).
+    pub fn mesh_version(&self) -> u64 {
+        self.mesh_version
     }
 
     /// Derive (or return cached) render data from protein entities.
@@ -124,23 +180,99 @@ impl EntityGroup {
     /// Invalidate cached render data (call after coord changes).
     pub fn invalidate_render_cache(&mut self) {
         self.render_cache = None;
+        self.mesh_version += 1;
     }
 
-    /// Get protein-only Coords for this group (original atom order via Assembly).
+    /// Get protein-only Coords for this group.
     pub fn protein_coords(&self) -> Option<Coords> {
-        let coords = self.assembly.protein_coords();
+        let coords = assembly_protein_coords(&self.entities);
         if coords.num_atoms == 0 { None } else { Some(coords) }
     }
 
     /// Get merged Coords for ALL entities.
     pub fn all_coords(&self) -> Option<Coords> {
-        let coords = self.assembly.coords();
-        if coords.num_atoms == 0 { None } else { Some(coords.clone()) }
+        if self.entities.is_empty() { return None; }
+        let coords = merge_entities(&self.entities);
+        if coords.num_atoms == 0 { None } else { Some(coords) }
+    }
+
+    /// Build PerGroupData from this group's current state.
+    pub fn to_per_group_data(&mut self) -> Option<PerGroupData> {
+        // Collect non-protein entities and nucleic acid data
+        let mut non_protein_entities = Vec::new();
+        let mut nucleic_acid_chains = Vec::new();
+        let mut nucleic_acid_rings = Vec::new();
+
+        for entity in &self.entities {
+            if entity.molecule_type != MoleculeType::Protein {
+                non_protein_entities.push(entity.clone());
+            }
+            if matches!(entity.molecule_type, MoleculeType::DNA | MoleculeType::RNA) {
+                nucleic_acid_chains.extend(entity.extract_p_atom_chains());
+                nucleic_acid_rings.extend(entity.extract_base_rings());
+            }
+        }
+
+        let ss_override = self.ss_override.clone();
+
+        // Get protein render data
+        let render_data = self.render_data();
+        let (backbone_chains, backbone_chain_ids, backbone_residue_chains,
+             sidechain_atoms, sidechain_bonds, backbone_sidechain_bonds, residue_count_val) =
+            if let Some(rd) = render_data {
+                let rc = &rd.render_coords;
+                let res_count: u32 = rc.backbone_chains.iter()
+                    .map(|c| (c.len() / 3) as u32)
+                    .sum();
+
+                let sc_atoms: Vec<SidechainAtom> = rc.sidechain_atoms.iter()
+                    .map(|a| SidechainAtom {
+                        position: a.position,
+                        is_hydrophobic: a.is_hydrophobic,
+                        residue_idx: a.residue_idx,
+                        atom_name: a.atom_name.clone(),
+                    })
+                    .collect();
+
+                (
+                    rc.backbone_chains.clone(),
+                    rc.backbone_chain_ids.clone(),
+                    rc.backbone_residue_chains.clone(),
+                    sc_atoms,
+                    rc.sidechain_bonds.clone(),
+                    rc.backbone_sidechain_bonds.clone(),
+                    res_count,
+                )
+            } else {
+                (vec![], vec![], vec![], vec![], vec![], vec![], 0)
+            };
+
+        // Skip groups with no geometry at all
+        if backbone_chains.is_empty() && non_protein_entities.is_empty()
+            && nucleic_acid_chains.is_empty()
+        {
+            return None;
+        }
+
+        Some(PerGroupData {
+            id: self.id,
+            mesh_version: self.mesh_version,
+            backbone_chains,
+            backbone_chain_ids,
+            backbone_residue_chains,
+            sidechain_atoms,
+            sidechain_bonds,
+            backbone_sidechain_bonds,
+            ss_override,
+            non_protein_entities,
+            nucleic_acid_chains,
+            nucleic_acid_rings,
+            residue_count: residue_count_val,
+        })
     }
 
     fn compute_render_data(&self) -> Option<GroupRenderData> {
         let protein_coords = self.protein_coords()?;
-        // Filter to protein-only (remove water/ligands if they snuck in)
         let coords = protein_only(&protein_coords);
         if coords.num_atoms == 0 {
             return None;
@@ -163,7 +295,7 @@ impl EntityGroup {
 }
 
 // ---------------------------------------------------------------------------
-// Aggregated render data
+// Aggregated render data (kept for backward compat with animation etc.)
 // ---------------------------------------------------------------------------
 
 /// Pre-computed aggregated data for efficient rendering across all visible groups.
@@ -171,7 +303,7 @@ impl EntityGroup {
 pub struct AggregatedRenderData {
     pub backbone_chains: Vec<Vec<Vec3>>,
     pub backbone_chain_ids: Vec<u8>,
-    pub backbone_residue_chains: Vec<Vec<foldit_conv::coords::render::RenderBackboneResidue>>,
+    pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
     pub sidechain_positions: Vec<Vec3>,
     pub sidechain_hydrophobicity: Vec<bool>,
     pub sidechain_residue_indices: Vec<u32>,
@@ -232,7 +364,7 @@ impl Scene {
         }
     }
 
-    // ── Mutation helpers ──
+    // -- Mutation helpers --
 
     fn invalidate(&mut self) {
         self.agg_cache = None;
@@ -249,7 +381,7 @@ impl Scene {
         self.rendered_generation = self.generation;
     }
 
-    // ── Group management ──
+    // -- Group management --
 
     /// Add a group of entities. Entity IDs are reassigned to be globally unique.
     pub fn add_group(&mut self, mut entities: Vec<MoleculeEntity>, name: impl Into<String>) -> GroupId {
@@ -259,36 +391,13 @@ impl Scene {
             self.next_entity_id += 1;
         }
 
-        let assembly = Assembly::from_entities(entities, name);
         let id = GroupId::next();
         self.groups.push(EntityGroup {
             id,
             visible: true,
-            assembly,
-            ss_override: None,
-            render_cache: None,
-        });
-        self.invalidate();
-        id
-    }
-
-    /// Add a group from an Assembly. Entity IDs are reassigned to be globally unique.
-    pub fn add_assembly(&mut self, mut assembly: Assembly) -> GroupId {
-        // Reassign globally unique entity IDs on the assembly's entities
-        // We need mutable access to entities — rebuild them
-        let mut entities: Vec<MoleculeEntity> = assembly.entities().to_vec();
-        for entity in &mut entities {
-            entity.entity_id = self.next_entity_id;
-            self.next_entity_id += 1;
-        }
-        // Rebuild assembly with updated entity IDs
-        assembly = Assembly::from_entities(entities, assembly.name.clone());
-
-        let id = GroupId::next();
-        self.groups.push(EntityGroup {
-            id,
-            visible: true,
-            assembly,
+            name: name.into(),
+            entities,
+            mesh_version: 0,
             ss_override: None,
             render_cache: None,
         });
@@ -352,7 +461,7 @@ impl Scene {
         self.groups.iter()
     }
 
-    // ── Focus / tab cycling ──
+    // -- Focus / tab cycling --
 
     pub fn focus(&self) -> &Focus {
         &self.focus
@@ -362,9 +471,8 @@ impl Scene {
         self.focus = focus;
     }
 
-    /// Cycle: Session → Group1 → ... → GroupN → focusable entities → Session.
+    /// Cycle: Session -> Group1 -> ... -> GroupN -> focusable entities -> Session.
     pub fn cycle_focus(&mut self) -> Focus {
-        // Collect focusable entity IDs from all visible groups
         let focusable_entities: Vec<u32> = self.groups.iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
@@ -386,7 +494,6 @@ impl Scene {
                 match idx {
                     Some(i) if i + 1 < group_ids.len() => Focus::Group(group_ids[i + 1]),
                     _ => {
-                        // Past last group → first focusable entity, or Session
                         focusable_entities.first()
                             .map(|&id| Focus::Entity(id))
                             .unwrap_or(Focus::Session)
@@ -448,11 +555,28 @@ impl Scene {
         }
     }
 
-    // ── Aggregated data (lazy cached) ──
+    // -- Per-group data for scene processor --
+
+    /// Collect per-group render data for all visible groups.
+    pub fn per_group_data(&mut self) -> Vec<PerGroupData> {
+        self.groups.iter_mut()
+            .filter(|g| g.visible)
+            .filter_map(|g| g.to_per_group_data())
+            .collect()
+    }
+
+    /// All atom positions across all visible groups (for camera fitting).
+    pub fn all_positions(&self) -> Vec<Vec3> {
+        self.groups.iter()
+            .filter(|g| g.visible)
+            .flat_map(|g| g.entities().iter())
+            .flat_map(|e| e.coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z)))
+            .collect()
+    }
+
+    // -- Aggregated data (lazy cached, for animation/passthrough) --
 
     /// Get aggregated render data. Computed lazily and cached.
-    /// Returns an `Arc` so callers can cheaply share the data across threads
-    /// without deep-cloning.
     pub fn aggregated(&mut self) -> Arc<AggregatedRenderData> {
         if self.agg_cache.is_none() {
             self.agg_cache = Some(Arc::new(self.compute_aggregated()));
@@ -575,28 +699,26 @@ impl Scene {
         data
     }
 
-    // ── Backend support (combined coords for Rosetta) ──
+    // -- Backend support (combined coords for Rosetta) --
 
     /// Get combined ASSEM01 bytes from all visible groups for Rosetta operations.
-    /// Uses prepare_combined_assembly to include all entity types (protein, ligand, etc.)
-    /// so the Rosetta backend can handle ligands and ions.
     pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
         let visible_groups: Vec<&EntityGroup> = self.groups.iter()
-            .filter(|g| g.visible && g.assembly.residue_count() > 0)
+            .filter(|g| g.visible && assembly_residue_count(g.entities()) > 0)
             .collect();
 
         if visible_groups.is_empty() {
             return None;
         }
 
-        let assemblies: Vec<&Assembly> = visible_groups.iter()
-            .map(|g| &g.assembly)
+        let entity_slices: Vec<&[MoleculeEntity]> = visible_groups.iter()
+            .map(|g| g.entities())
             .collect();
         let group_ids: Vec<GroupId> = visible_groups.iter()
             .map(|g| g.id)
             .collect();
 
-        let combined = prepare_combined_assembly(&assemblies)?;
+        let combined = prepare_combined_assembly(&entity_slices)?;
 
         let chain_ids_per_group: Vec<(GroupId, Vec<u8>)> = group_ids.iter()
             .zip(combined.chain_ids.iter())
@@ -616,9 +738,6 @@ impl Scene {
     }
 
     /// Apply combined Rosetta update to all groups in the session.
-    /// Uses split_combined_result for correct per-assembly splitting.
-    /// Uses update_from_backend to replace entity types Rosetta exported while
-    /// preserving entity types Rosetta skipped (water, unknown ligands).
     pub fn apply_combined_update(
         &mut self,
         coords_bytes: &[u8],
@@ -638,7 +757,7 @@ impl Scene {
             }
 
             if let Some(group) = self.groups.iter_mut().find(|g| g.id == *group_id) {
-                group.assembly.update_from_backend(structure_coords.clone());
+                update_entities_from_backend(group.entities_mut(), structure_coords.clone());
                 group.invalidate_render_cache();
                 log::info!("Updated group {:?} from backend ({} atoms)",
                     group_id, structure_coords.num_atoms);
@@ -649,10 +768,10 @@ impl Scene {
         Ok(())
     }
 
-    /// Update protein entities' coords in a specific group, re-derive RenderCoords.
+    /// Update protein entities' coords in a specific group.
     pub fn update_group_protein_coords(&mut self, id: GroupId, coords: Coords) {
         if let Some(group) = self.groups.iter_mut().find(|g| g.id == id) {
-            group.assembly.update_protein_coords(coords);
+            update_protein_entities(group.entities_mut(), coords);
             group.invalidate_render_cache();
         }
         self.invalidate();
@@ -662,7 +781,7 @@ impl Scene {
     pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
         self.groups.iter()
             .filter(|g| g.visible)
-            .map(|g| (g.id, g.assembly.residue_count()))
+            .map(|g| (g.id, assembly_residue_count(g.entities())))
             .collect()
     }
 }
