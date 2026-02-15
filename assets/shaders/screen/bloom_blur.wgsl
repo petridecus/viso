@@ -1,14 +1,11 @@
 // Separable Gaussian blur for bloom downsample/upsample chain
 
+#import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+
 struct BlurParams {
     texel_size: vec2<f32>,
     horizontal: u32,
     _pad: u32,
-};
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
 };
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
@@ -16,13 +13,8 @@ struct VertexOutput {
 @group(0) @binding(2) var<uniform> params: BlurParams;
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var out: VertexOutput;
-    let x = f32(i32(vertex_index & 1u) * 4 - 1);
-    let y = f32(i32(vertex_index >> 1u) * 4 - 1);
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-    return out;
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
+    return fullscreen_vertex(vertex_index);
 }
 
 // 9-tap Gaussian weights (sigma ~= 4)
@@ -31,7 +23,7 @@ const WEIGHTS: array<f32, 5> = array<f32, 5>(
 );
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     var direction: vec2<f32>;
     if (params.horizontal != 0u) {
         direction = vec2<f32>(params.texel_size.x, 0.0);

@@ -17,6 +17,7 @@ use crate::pull_renderer::{PullRenderer, PullRenderInfo};
 use crate::render_context::RenderContext;
 use crate::ribbon_renderer::RibbonRenderer;
 use crate::scene_processor::{AnimationSidechainData, PreparedScene, SceneProcessor, SceneRequest};
+use crate::shader_composer::ShaderComposer;
 use crate::trajectory::TrajectoryPlayer;
 use foldit_conv::secondary_structure::SSType;
 use crate::ssao::SsaoRenderer;
@@ -122,6 +123,8 @@ pub struct ProteinRenderEngine {
     trajectory_player: Option<TrajectoryPlayer>,
     /// Background scene processor for non-blocking geometry generation
     scene_processor: SceneProcessor,
+    /// Shader composer for naga_oil-based shader composition
+    pub shader_composer: ShaderComposer,
 }
 
 impl ProteinRenderEngine {
@@ -147,6 +150,8 @@ impl ProteinRenderEngine {
         if scale_factor < 2.0 {
             context.render_scale = 2;
         }
+
+        let mut shader_composer = ShaderComposer::new();
 
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
@@ -216,6 +221,7 @@ impl ProteinRenderEngine {
             &lighting.layout,
             &selection_buffer.layout,
             &render_coords.backbone_chains,
+            &mut shader_composer,
         );
 
         // Create ribbon renderer for secondary structure visualization
@@ -227,6 +233,7 @@ impl ProteinRenderEngine {
                 &lighting.layout,
                 &selection_buffer.layout,
                 &render_coords.backbone_residue_chains,
+                &mut shader_composer,
             )
         } else {
             // Fallback to legacy renderer if only backbone_chains available
@@ -236,6 +243,7 @@ impl ProteinRenderEngine {
                 &lighting.layout,
                 &selection_buffer.layout,
                 &render_coords.backbone_chains,
+                &mut shader_composer,
             )
         };
 
@@ -254,6 +262,7 @@ impl ProteinRenderEngine {
             &render_coords.backbone_sidechain_bonds,
             &sidechain_hydrophobicity,
             &sidechain_residue_indices,
+            &mut shader_composer,
         );
 
         // Create band renderer (starts empty)
@@ -262,6 +271,7 @@ impl ProteinRenderEngine {
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
+            &mut shader_composer,
         );
 
         // Create pull renderer (starts empty, only one pull at a time)
@@ -270,6 +280,7 @@ impl ProteinRenderEngine {
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
+            &mut shader_composer,
         );
 
         // Create shared depth texture (bindable for SSAO)
@@ -279,13 +290,13 @@ impl ProteinRenderEngine {
         let (normal_texture, normal_view) = Self::create_normal_texture(&context);
 
         // Create SSAO renderer
-        let ssao_renderer = SsaoRenderer::new(&context, &depth_view, &normal_view);
+        let ssao_renderer = SsaoRenderer::new(&context, &depth_view, &normal_view, &mut shader_composer);
 
         // Create bloom pass (initially with placeholder input; rebind after composite creates color texture)
-        let mut bloom_pass = BloomPass::new(&context, &normal_view); // placeholder input
+        let mut bloom_pass = BloomPass::new(&context, &normal_view, &mut shader_composer); // placeholder input
 
         // Create composite pass (applies SSAO and outlines to final image)
-        let mut composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view, &normal_view, bloom_pass.get_output_view());
+        let mut composite_pass = CompositePass::new(&context, ssao_renderer.get_ssao_view(), &depth_view, &normal_view, bloom_pass.get_output_view(), &mut shader_composer);
 
         // Now rebind bloom to read from composite's HDR color texture
         bloom_pass.rebind_input(&context, composite_pass.get_color_view());
@@ -295,13 +306,13 @@ impl ProteinRenderEngine {
         composite_pass.params.gamma = if context.config.format.is_srgb() { 1.0 } else { 1.0 / 2.2 };
 
         // Create FXAA post-process pass (smooths remaining edges after composite)
-        let fxaa_pass = FxaaPass::new(&context);
+        let fxaa_pass = FxaaPass::new(&context, &mut shader_composer);
 
         // Create frame timing with 300 FPS limit
         let frame_timing = FrameTiming::new(TARGET_FPS);
 
         // Create GPU-based picking
-        let picking = Picking::new(&context, &camera_controller.layout);
+        let picking = Picking::new(&context, &camera_controller.layout, &mut shader_composer);
 
         // Create initial capsule picking bind group
         let capsule_picking_bind_group = Some(picking.create_capsule_bind_group(
@@ -315,6 +326,7 @@ impl ProteinRenderEngine {
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
+            &mut shader_composer,
         );
         let options = Options::default();
         // Collect non-protein entities from the group for ball-and-stick
@@ -361,6 +373,7 @@ impl ProteinRenderEngine {
             &selection_buffer.layout,
             &na_chains,
             &na_rings,
+            &mut shader_composer,
         );
 
         // Fit camera to all atom positions (protein + non-protein + nucleic acid P-atoms)
@@ -438,6 +451,7 @@ impl ProteinRenderEngine {
             bns_picking_bind_group,
             trajectory_player: None,
             scene_processor,
+            shader_composer,
         }
     }
 

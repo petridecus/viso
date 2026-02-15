@@ -22,6 +22,7 @@ pub mod ssao;
 pub mod scene;
 pub mod scene_processor;
 pub mod score_color;
+pub mod shader_composer;
 pub mod trajectory;
 pub mod tube_renderer;
 

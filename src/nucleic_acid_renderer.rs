@@ -5,6 +5,7 @@
 
 use crate::dynamic_buffer::DynamicBuffer;
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
@@ -29,6 +30,9 @@ pub(crate) struct NaVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
+    /// Encodes normal direction as position - normal, so the shared shader computes
+    /// normalize(position - center_pos) = normalize(normal) for flat geometry.
+    center_pos: [f32; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -63,6 +67,7 @@ impl NucleicAcidRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         na_chains: &[Vec<Vec3>],
         rings: &[NucleotideRing],
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let (vertices, indices) = Self::generate_mesh(na_chains, rings, None);
 
@@ -98,7 +103,7 @@ impl NucleicAcidRenderer {
             )
         };
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
         let last_chain_hash = Self::compute_combined_hash(na_chains, rings);
 
         Self {
@@ -187,8 +192,9 @@ impl NucleicAcidRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context.device.create_shader_module(wgpu::include_wgsl!("../assets/shaders/backbone_tube.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Nucleic Acid Shader", include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("NA Pipeline Layout"),
@@ -196,16 +202,7 @@ impl NucleicAcidRenderer {
             immediate_size: 0,
         });
 
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<NaVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 24, shader_location: 2 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Uint32, offset: 36, shader_location: 3 },
-            ],
-        };
+        let vertex_layout = crate::tube_renderer::tube_vertex_buffer_layout();
 
         context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("NA Render Pipeline"),
@@ -559,6 +556,7 @@ fn append_stem_tube(
                 normal: normal.into(),
                 color,
                 residue_idx: 0,
+                center_pos: center.into(),
             });
         }
     }
@@ -612,13 +610,16 @@ fn append_ring_triangles(
         normal: normal.into(),
         color,
         residue_idx: 0,
+        center_pos: (top_centroid - normal).into(),
     });
     for &pos in ring_positions {
+        let p = pos + offset;
         vertices.push(NaVertex {
-            position: (pos + offset).into(),
+            position: p.into(),
             normal: normal.into(),
             color,
             residue_idx: 0,
+            center_pos: (p - normal).into(),
         });
     }
     for i in 0..n {
@@ -633,18 +634,22 @@ fn append_ring_triangles(
     let bot_base = vertices.len() as u32;
     let bot_centroid = top_centroid - offset * 2.0;
     let neg_normal: [f32; 3] = (-normal).into();
+    let neg_normal_v: Vec3 = -normal;
     vertices.push(NaVertex {
         position: bot_centroid.into(),
         normal: neg_normal,
         color,
         residue_idx: 0,
+        center_pos: (bot_centroid - neg_normal_v).into(),
     });
     for &pos in ring_positions {
+        let p = pos - offset;
         vertices.push(NaVertex {
-            position: (pos - offset).into(),
+            position: p.into(),
             normal: neg_normal,
             color,
             residue_idx: 0,
+            center_pos: (p - neg_normal_v).into(),
         });
     }
     for i in 0..n {
@@ -669,10 +674,10 @@ fn append_ring_triangles(
         let b1 = ring_positions[next] - offset;
 
         let si = side_base + (i as u32) * 4;
-        vertices.push(NaVertex { position: t0.into(), normal: side_normal.into(), color, residue_idx: 0 });
-        vertices.push(NaVertex { position: t1.into(), normal: side_normal.into(), color, residue_idx: 0 });
-        vertices.push(NaVertex { position: b0.into(), normal: side_normal.into(), color, residue_idx: 0 });
-        vertices.push(NaVertex { position: b1.into(), normal: side_normal.into(), color, residue_idx: 0 });
+        vertices.push(NaVertex { position: t0.into(), normal: side_normal.into(), color, residue_idx: 0, center_pos: (t0 - side_normal).into() });
+        vertices.push(NaVertex { position: t1.into(), normal: side_normal.into(), color, residue_idx: 0, center_pos: (t1 - side_normal).into() });
+        vertices.push(NaVertex { position: b0.into(), normal: side_normal.into(), color, residue_idx: 0, center_pos: (b0 - side_normal).into() });
+        vertices.push(NaVertex { position: b1.into(), normal: side_normal.into(), color, residue_idx: 0, center_pos: (b1 - side_normal).into() });
         indices.extend_from_slice(&[si, si + 1, si + 2, si + 2, si + 1, si + 3]);
     }
 }
@@ -712,10 +717,10 @@ fn build_ribbon_mesh(
             (up, up, down, down)
         };
 
-        vertices.push(NaVertex { position: tl.into(), normal: n_tl.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(NaVertex { position: tr.into(), normal: n_tr.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(NaVertex { position: br.into(), normal: n_br.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(NaVertex { position: bl.into(), normal: n_bl.into(), color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(NaVertex { position: tl.into(), normal: n_tl.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (tl - n_tl).into() });
+        vertices.push(NaVertex { position: tr.into(), normal: n_tr.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (tr - n_tr).into() });
+        vertices.push(NaVertex { position: br.into(), normal: n_br.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (br - n_br).into() });
+        vertices.push(NaVertex { position: bl.into(), normal: n_bl.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (bl - n_bl).into() });
     }
 
     for i in 0..frames.len() - 1 {

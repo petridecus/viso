@@ -1,10 +1,14 @@
 // SSAO (Screen Space Ambient Occlusion) shader
 // Works in VIEW SPACE for camera-independent results
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
+#import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+
+// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
+fn load_depth(uv: vec2<f32>) -> f32 {
+    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
+    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
+    return textureLoad(depth_texture, texel, 0);
+}
 
 struct Kernel {
     samples: array<vec4<f32>, 32>,
@@ -39,25 +43,10 @@ struct SsaoParams {
 
 // RADIUS, BIAS, and POWER are now driven by params uniforms
 
-// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
-fn load_depth(uv: vec2<f32>) -> f32 {
-    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
-    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
-    return textureLoad(depth_texture, texel, 0);
-}
-
 // Full-screen triangle
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var out: VertexOutput;
-
-    let x = f32(i32(vertex_index & 1u) * 4 - 1);
-    let y = f32(i32(vertex_index >> 1u) * 4 - 1);
-
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-
-    return out;
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
+    return fullscreen_vertex(vertex_index);
 }
 
 // Reconstruct view-space position from UV and depth using inverse projection
@@ -87,7 +76,7 @@ fn project_to_uv(view_pos: vec3<f32>) -> vec2<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) f32 {
+fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
     let texel_size = 1.0 / params.screen_size;
     let noise_scale = params.screen_size / 4.0;
 

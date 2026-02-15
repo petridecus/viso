@@ -9,6 +9,7 @@
 use crate::dynamic_buffer::DynamicBuffer;
 use foldit_conv::coords::RenderBackboneResidue;
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 use foldit_conv::secondary_structure::{SSType, merge_short_segments};
 use glam::Vec3;
@@ -47,6 +48,9 @@ pub(crate) struct RibbonVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
+    /// Encodes normal direction as position - normal, so the shared shader computes
+    /// normalize(position - center_pos) = normalize(normal) for flat geometry.
+    center_pos: [f32; 3],
 }
 
 struct RibbonFrame {
@@ -89,6 +93,7 @@ impl RibbonRenderer {
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let params = RibbonParams::default();
         let (vertices, indices, offsets) = Self::generate_from_ca_only(backbone_chains, &params, None);
@@ -96,7 +101,7 @@ impl RibbonRenderer {
         let vertex_buffer = DynamicBuffer::new_with_data(
             &context.device,
             "Ribbon Vertex Buffer",
-            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0 }] } else { &vertices },
+            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0, center_pos: [0.0; 3] }] } else { &vertices },
             wgpu::BufferUsages::VERTEX,
         );
 
@@ -107,7 +112,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -129,6 +134,7 @@ impl RibbonRenderer {
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<RenderBackboneResidue>],
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let params = RibbonParams::default();
         let (vertices, indices, offsets) = Self::generate_from_residues(backbone_chains, &params, None);
@@ -136,7 +142,7 @@ impl RibbonRenderer {
         let vertex_buffer = DynamicBuffer::new_with_data(
             &context.device,
             "Ribbon Vertex Buffer",
-            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0 }] } else { &vertices },
+            if vertices.is_empty() { &[RibbonVertex { position: [0.0; 3], normal: [0.0; 3], color: [0.0; 3], residue_idx: 0, center_pos: [0.0; 3] }] } else { &vertices },
             wgpu::BufferUsages::VERTEX,
         );
 
@@ -147,7 +153,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
         let last_chain_hash = Self::compute_residue_hash(backbone_chains);
 
         Self {
@@ -248,8 +254,9 @@ impl RibbonRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context.device.create_shader_module(wgpu::include_wgsl!("../assets/shaders/backbone_tube.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Ribbon Shader", include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ribbon Pipeline Layout"),
@@ -257,16 +264,7 @@ impl RibbonRenderer {
             immediate_size: 0,
         });
 
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<RibbonVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 24, shader_location: 2 },
-                wgpu::VertexAttribute { format: wgpu::VertexFormat::Uint32, offset: 36, shader_location: 3 },
-            ],
-        };
+        let vertex_layout = crate::tube_renderer::tube_vertex_buffer_layout();
 
         context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Ribbon Pipeline"),
@@ -869,10 +867,10 @@ fn build_ribbon_mesh(frames: &[RibbonFrame], widths: &[f32], thickness: f32, bas
             (up, up, down, down)
         };
 
-        vertices.push(RibbonVertex { position: tl.into(), normal: n_tl.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: tr.into(), normal: n_tr.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: br.into(), normal: n_br.into(), color: frame.color, residue_idx: frame.residue_idx });
-        vertices.push(RibbonVertex { position: bl.into(), normal: n_bl.into(), color: frame.color, residue_idx: frame.residue_idx });
+        vertices.push(RibbonVertex { position: tl.into(), normal: n_tl.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (tl - n_tl).into() });
+        vertices.push(RibbonVertex { position: tr.into(), normal: n_tr.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (tr - n_tr).into() });
+        vertices.push(RibbonVertex { position: br.into(), normal: n_br.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (br - n_br).into() });
+        vertices.push(RibbonVertex { position: bl.into(), normal: n_bl.into(), color: frame.color, residue_idx: frame.residue_idx, center_pos: (bl - n_bl).into() });
     }
     
     // Connect adjacent frames

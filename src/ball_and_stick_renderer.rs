@@ -13,6 +13,7 @@ use glam::Vec3;
 use crate::dynamic_buffer::TypedBuffer;
 use crate::options::{ColorOptions, DisplayOptions};
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;
@@ -105,6 +106,7 @@ impl BallAndStickRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         // Create sphere pipeline
         let sphere_buffer = TypedBuffer::new_with_data(
@@ -127,6 +129,7 @@ impl BallAndStickRenderer {
             camera_layout,
             lighting_layout,
             selection_layout,
+            shader_composer,
         );
 
         // Create bond pipeline (reuses capsule_impostor.wgsl)
@@ -150,6 +153,7 @@ impl BallAndStickRenderer {
             camera_layout,
             lighting_layout,
             selection_layout,
+            shader_composer,
         );
 
         // Create picking buffer (degenerate capsules)
@@ -225,10 +229,9 @@ impl BallAndStickRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context.device.create_shader_module(wgpu::include_wgsl!(
-            "../assets/shaders/sphere_impostor.wgsl"
-        ));
+        let shader = shader_composer.compose(&context.device, "Sphere Impostor Shader", include_str!("../assets/shaders/raster/impostor/sphere.wgsl"), "sphere_impostor.wgsl");
 
         let pipeline_layout =
             context
@@ -292,11 +295,10 @@ impl BallAndStickRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse capsule_impostor.wgsl for bonds
-        let shader = context.device.create_shader_module(wgpu::include_wgsl!(
-            "../assets/shaders/capsule_impostor.wgsl"
-        ));
+        let shader = shader_composer.compose(&context.device, "Ball-and-Stick Bond Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context
