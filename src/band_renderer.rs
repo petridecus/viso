@@ -15,6 +15,7 @@
 use crate::dynamic_buffer::TypedBuffer;
 use crate::options::ColorOptions;
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 /// Per-instance data for capsule impostor
@@ -133,6 +134,7 @@ impl BandRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         // Start with empty buffer
         let instances: Vec<CapsuleInstance> = Vec::new();
@@ -146,7 +148,7 @@ impl BandRenderer {
 
         let bind_group_layout = Self::create_bind_group_layout(&context.device);
         let bind_group = Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
-        let pipeline = Self::create_pipeline(context, &bind_group_layout, camera_layout, lighting_layout, selection_layout);
+        let pipeline = Self::create_pipeline(context, &bind_group_layout, camera_layout, lighting_layout, selection_layout, shader_composer);
 
         Self {
             pipeline,
@@ -194,11 +196,10 @@ impl BandRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse the same capsule impostor shader
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/capsule_impostor.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Band Renderer Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context

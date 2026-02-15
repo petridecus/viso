@@ -1,5 +1,14 @@
 // Composite pass - applies SSAO, outlines, fog, tone mapping to the rendered scene
 
+#import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+
+// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
+fn load_depth(uv: vec2<f32>) -> f32 {
+    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
+    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
+    return textureLoad(depth_texture, texel, 0);
+}
+
 struct CompositeParams {
     screen_size: vec2<f32>,
     outline_thickness: f32,
@@ -18,11 +27,6 @@ struct CompositeParams {
     _pad3: f32,
 };
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
 @group(0) @binding(0) var color_texture: texture_2d<f32>;
 @group(0) @binding(1) var ssao_texture: texture_2d<f32>;
 @group(0) @binding(2) var depth_texture: texture_depth_2d;
@@ -34,21 +38,8 @@ struct VertexOutput {
 
 // Full-screen triangle (more efficient than quad - no diagonal edge)
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var out: VertexOutput;
-    // Generate oversized triangle that covers the screen
-    let x = f32(i32(vertex_index & 1u) * 4 - 1);
-    let y = f32(i32(vertex_index >> 1u) * 4 - 1);
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-    return out;
-}
-
-// Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
-fn load_depth(uv: vec2<f32>) -> f32 {
-    let dims = vec2<f32>(textureDimensions(depth_texture, 0));
-    let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
-    return textureLoad(depth_texture, texel, 0);
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
+    return fullscreen_vertex(vertex_index);
 }
 
 // Linearize depth from NDC to view-space distance
@@ -126,7 +117,7 @@ fn tonemap_pbr_neutral(color: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(color_texture, tex_sampler, in.uv);
     let ao = textureSample(ssao_texture, tex_sampler, in.uv).r;
     let depth = load_depth(in.uv);

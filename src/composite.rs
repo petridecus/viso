@@ -5,6 +5,7 @@
 //! silhouette outlines applied.
 
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)
@@ -77,6 +78,7 @@ impl CompositePass {
         depth_view: &wgpu::TextureView,
         normal_view: &wgpu::TextureView,
         bloom_view: &wgpu::TextureView,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let width = context.render_width();
         let height = context.render_height();
@@ -215,9 +217,7 @@ impl CompositePass {
         );
 
         // Load shader
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/composite.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Composite Shader", include_str!("../assets/shaders/screen/composite.wgsl"), "composite.wgsl");
 
         // Pipeline layout
         let pipeline_layout = context

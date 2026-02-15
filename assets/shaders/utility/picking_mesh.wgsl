@@ -1,14 +1,7 @@
 // Picking shader - renders residue indices to a picking buffer
 // Uses the same geometry as backbone_tube.wgsl but outputs residue_idx as color
 
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-    position: vec3<f32>,
-    aspect: f32,
-    forward: vec3<f32>,
-    fovy: f32,
-    hovered_residue: i32,
-};
+#import viso::camera::CameraUniform
 
 struct VertexInput {
     @location(0) position: vec3<f32>,

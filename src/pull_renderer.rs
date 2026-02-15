@@ -12,6 +12,7 @@
 
 use crate::dynamic_buffer::TypedBuffer;
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 /// Per-instance data for capsule impostor (cylinder part)
@@ -73,6 +74,7 @@ impl PullRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         // Capsule (cylinder) setup
         let capsule_buffer = TypedBuffer::with_capacity(
@@ -93,6 +95,7 @@ impl PullRenderer {
             camera_layout,
             lighting_layout,
             selection_layout,
+            shader_composer,
         );
 
         // Cone (arrow tip) setup
@@ -114,6 +117,7 @@ impl PullRenderer {
             camera_layout,
             lighting_layout,
             selection_layout,
+            shader_composer,
         );
 
         Self {
@@ -182,10 +186,9 @@ impl PullRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/capsule_impostor.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Pull Capsule Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context
@@ -244,10 +247,9 @@ impl PullRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/cone_impostor.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Pull Cone Shader", include_str!("../assets/shaders/raster/impostor/cone.wgsl"), "cone_impostor.wgsl");
 
         let pipeline_layout =
             context

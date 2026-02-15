@@ -1,45 +1,27 @@
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-    position: vec3<f32>,
-    aspect: f32,
-    forward: vec3<f32>,
-    fovy: f32,
-    hovered_residue: i32,
-};
+#import viso::camera::CameraUniform
+#import viso::lighting::{LightingUniform, PI, distribution_ggx, geometry_smith, fresnel_schlick, compute_rim}
 
-struct LightingUniform {
-    light1_dir: vec3<f32>,
-    _pad1: f32,
-    light2_dir: vec3<f32>,
-    _pad2: f32,
-    light1_intensity: f32,
-    light2_intensity: f32,
-    ambient: f32,
-    specular_intensity: f32,
-    shininess: f32,
-    rim_power: f32,
-    rim_intensity: f32,
-    rim_directionality: f32,
-    rim_color: vec3<f32>,
-    ibl_strength: f32,
-    rim_dir: vec3<f32>,
-    _pad3: f32,
-    roughness: f32,
-    metalness: f32,
-    _pad4: f32,
-    _pad5: f32,
-};
+// Selection bit-array lookup (inlined — requires global `selection` storage buffer)
+fn is_selected(residue_idx: u32) -> bool {
+    let word_idx = residue_idx / 32u;
+    let bit_idx = residue_idx % 32u;
+    if (word_idx >= arrayLength(&selection)) {
+        return false;
+    }
+    return (selection[word_idx] & (1u << bit_idx)) != 0u;
+}
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) residue_idx: u32,
+    @location(4) center_pos: vec3<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_normal: vec3<f32>,
+    @location(0) center_pos: vec3<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) vertex_color: vec3<f32>,
     @location(3) @interpolate(flat) residue_idx: u32,
@@ -53,55 +35,6 @@ struct VertexOutput {
 @group(1) @binding(4) var brdf_lut: texture_2d<f32>;
 @group(2) @binding(0) var<storage, read> selection: array<u32>;
 
-// Check if a residue is selected (bit array lookup)
-fn is_selected(residue_idx: u32) -> bool {
-    let word_idx = residue_idx / 32u;
-    let bit_idx = residue_idx % 32u;
-    if (word_idx >= arrayLength(&selection)) {
-        return false;
-    }
-    return (selection[word_idx] & (1u << bit_idx)) != 0u;
-}
-
-const PI: f32 = 3.14159265359;
-
-// GGX/Trowbridge-Reitz normal distribution function
-fn distribution_ggx(NdotH: f32, roughness: f32) -> f32 {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * denom * denom);
-}
-
-// Schlick-GGX geometry function (single direction)
-fn geometry_schlick_ggx(NdotV: f32, roughness: f32) -> f32 {
-    let r = roughness + 1.0;
-    let k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-// Smith's geometry function (both view and light)
-fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
-    return geometry_schlick_ggx(NdotV, roughness) * geometry_schlick_ggx(NdotL, roughness);
-}
-
-// Fresnel-Schlick approximation
-fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
-}
-
-// Compute rim lighting: view-dependent + optional directional back-light
-fn compute_rim(normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
-    let NdotV = max(dot(normal, view_dir), 0.0);
-    let rim = pow(1.0 - NdotV, lighting.rim_power);
-
-    // Directional modulation: surfaces facing away from rim light get brighter rims
-    let back_factor = max(dot(normal, -lighting.rim_dir), 0.0);
-    let directional_rim = rim * mix(1.0, back_factor, lighting.rim_directionality);
-
-    return directional_rim * lighting.rim_intensity * lighting.rim_color;
-}
-
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
@@ -113,7 +46,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
-    out.world_normal = in.normal;
+    out.center_pos = in.center_pos;
     out.world_position = position;
     out.vertex_color = in.color;
     out.residue_idx = in.residue_idx;
@@ -127,7 +60,8 @@ struct FragOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
-    let normal = normalize(in.world_normal);
+    // Per-pixel cylindrical normal: exact outward direction from tube centerline
+    let normal = normalize(in.world_position - in.center_pos);
     let view_dir = normalize(camera.position - in.world_position);
 
     let NdotV = max(dot(normal, view_dir), 0.0);
@@ -157,7 +91,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let ambient_light = mix(vec3(lighting.ambient), ibl_diffuse, lighting.ibl_strength);
 
     // Rim lighting
-    let rim = compute_rim(normal, view_dir);
+    let rim = compute_rim(normal, view_dir, lighting.rim_power, lighting.rim_intensity, lighting.rim_directionality, lighting.rim_color, lighting.rim_dir);
 
     // PBR direct lighting: accumulate from both lights
     var Lo = vec3<f32>(0.0);

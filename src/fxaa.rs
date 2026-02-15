@@ -5,6 +5,7 @@
 //! tubes) that supersampling alone doesn't fully resolve.
 
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 pub struct FxaaPass {
@@ -21,7 +22,7 @@ pub struct FxaaPass {
 }
 
 impl FxaaPass {
-    pub fn new(context: &RenderContext) -> Self {
+    pub fn new(context: &RenderContext, shader_composer: &mut ShaderComposer) -> Self {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -86,9 +87,7 @@ impl FxaaPass {
             &screen_size_buffer,
         );
 
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/fxaa.wgsl"));
+        let shader = shader_composer.compose(&context.device, "FXAA Shader", include_str!("../assets/shaders/screen/fxaa.wgsl"), "fxaa.wgsl");
 
         let pipeline_layout = context
             .device

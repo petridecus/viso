@@ -5,6 +5,7 @@
 //! The composite pass adds the bloom texture to the scene before tone mapping.
 
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Blur direction params — must match WGSL struct
@@ -62,6 +63,7 @@ impl BloomPass {
     pub fn new(
         context: &RenderContext,
         color_view: &wgpu::TextureView,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let width = context.render_width();
         let height = context.render_height();
@@ -136,8 +138,11 @@ impl BloomPass {
             &threshold_buffer,
         );
 
-        let threshold_shader = context.device.create_shader_module(
-            wgpu::include_wgsl!("../assets/shaders/bloom_threshold.wgsl"),
+        let threshold_shader = shader_composer.compose(
+            &context.device,
+            "Bloom Threshold Shader",
+            include_str!("../assets/shaders/screen/bloom_threshold.wgsl"),
+            "bloom_threshold.wgsl",
         );
 
         let threshold_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -205,8 +210,11 @@ impl BloomPass {
             ],
         });
 
-        let blur_shader = context.device.create_shader_module(
-            wgpu::include_wgsl!("../assets/shaders/bloom_blur.wgsl"),
+        let blur_shader = shader_composer.compose(
+            &context.device,
+            "Bloom Blur Shader",
+            include_str!("../assets/shaders/screen/bloom_blur.wgsl"),
+            "bloom_blur.wgsl",
         );
 
         let blur_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -276,10 +284,12 @@ impl BloomPass {
         });
 
         // Simple passthrough shader for upsample (just bilinear sample + additive blend)
-        let upsample_shader = context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Bloom Upsample Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(UPSAMPLE_SHADER)),
-        });
+        let upsample_shader = shader_composer.compose(
+            &context.device,
+            "Bloom Upsample Shader",
+            include_str!("../assets/shaders/screen/bloom_upsample.wgsl"),
+            "bloom_upsample.wgsl",
+        );
 
         let upsample_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Bloom Upsample Pipeline Layout"),
@@ -775,28 +785,3 @@ impl BloomPass {
     }
 }
 
-/// Inline shader for upsample passthrough (bilinear sample only)
-const UPSAMPLE_SHADER: &str = r#"
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@group(0) @binding(0) var input_texture: texture_2d<f32>;
-@group(0) @binding(1) var tex_sampler: sampler;
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var out: VertexOutput;
-    let x = f32(i32(vertex_index & 1u) * 4 - 1);
-    let y = f32(i32(vertex_index >> 1u) * 4 - 1);
-    out.position = vec4<f32>(x, y, 0.0, 1.0);
-    out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(input_texture, tex_sampler, in.uv);
-}
-"#;

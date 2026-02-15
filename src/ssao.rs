@@ -1,4 +1,5 @@
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;
@@ -58,7 +59,7 @@ const KERNEL_SIZE: usize = 32;
 const NOISE_SIZE: u32 = 4;
 
 impl SsaoRenderer {
-    pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) -> Self {
+    pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView, shader_composer: &mut ShaderComposer) -> Self {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -200,10 +201,7 @@ impl SsaoRenderer {
                 });
 
         // SSAO pipeline
-        let ssao_shader =
-            context
-                .device
-                .create_shader_module(wgpu::include_wgsl!("../assets/shaders/ssao.wgsl"));
+        let ssao_shader = shader_composer.compose(&context.device, "SSAO Shader", include_str!("../assets/shaders/screen/ssao.wgsl"), "ssao.wgsl");
 
         let ssao_pipeline_layout =
             context
@@ -305,9 +303,7 @@ impl SsaoRenderer {
                 });
 
         // Blur pipeline
-        let blur_shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/ssao_blur.wgsl"));
+        let blur_shader = shader_composer.compose(&context.device, "SSAO Blur Shader", include_str!("../assets/shaders/screen/ssao_blur.wgsl"), "ssao_blur.wgsl");
 
         let blur_pipeline_layout =
             context

@@ -5,6 +5,7 @@
 //! This is exact - it matches exactly what's rendered on screen.
 
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use crate::tube_renderer::tube_vertex_buffer_layout;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -142,6 +143,7 @@ impl Picking {
     pub fn new(
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let width = context.config.width;
         let height = context.config.height;
@@ -158,9 +160,7 @@ impl Picking {
         });
 
         // Load picking shader for tubes
-        let tube_shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/picking.wgsl"));
+        let tube_shader = shader_composer.compose(&context.device, "Picking Tube Shader", include_str!("../assets/shaders/utility/picking_mesh.wgsl"), "picking.wgsl");
 
         // Tube picking pipeline
         let tube_pipeline_layout =
@@ -212,9 +212,7 @@ impl Picking {
                 });
 
         // Capsule picking pipeline
-        let capsule_shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/picking_capsule.wgsl"));
+        let capsule_shader = shader_composer.compose(&context.device, "Picking Capsule Shader", include_str!("../assets/shaders/utility/picking_capsule.wgsl"), "picking_capsule.wgsl");
 
         let capsule_bind_group_layout =
             context

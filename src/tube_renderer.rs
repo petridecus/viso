@@ -8,6 +8,7 @@
 
 use crate::dynamic_buffer::DynamicBuffer;
 use crate::render_context::RenderContext;
+use crate::shader_composer::ShaderComposer;
 use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 use foldit_conv::secondary_structure::{SSType, merge_short_segments};
 use glam::Vec3;
@@ -41,6 +42,8 @@ pub(crate) struct TubeVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
+    /// Tube centerline position — enables per-pixel cylindrical normals in fragment shader
+    center_pos: [f32; 3],
 }
 
 /// Get the vertex buffer layout for TubeVertex (for use with picking pipeline)
@@ -69,6 +72,11 @@ pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 36,
                 shader_location: 3, // residue_idx
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 40,
+                shader_location: 4, // center_pos
+            },
         ],
     }
 }
@@ -95,6 +103,7 @@ impl TubeRenderer {
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
+        shader_composer: &mut ShaderComposer,
     ) -> Self {
         let ss_filter = None; // Render all SS types by default
 
@@ -132,7 +141,7 @@ impl TubeRenderer {
             )
         };
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -269,10 +278,9 @@ impl TubeRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = context
-            .device
-            .create_shader_module(wgpu::include_wgsl!("../assets/shaders/backbone_tube.wgsl"));
+        let shader = shader_composer.compose(&context.device, "Backbone Tube Shader", include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout =
             context
@@ -283,32 +291,7 @@ impl TubeRenderer {
                     immediate_size: 0,
                 });
 
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<TubeVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0, // position
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 12,
-                    shader_location: 1, // normal
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 24,
-                    shader_location: 2, // color
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Uint32,
-                    offset: 36,
-                    shader_location: 3, // residue_idx
-                },
-            ],
-        };
+        let vertex_layout = tube_vertex_buffer_layout();
 
         context
             .device
@@ -670,6 +653,7 @@ impl TubeRenderer {
                     normal: normal.into(),
                     color,
                     residue_idx,
+                    center_pos: point.pos.into(),
                 });
             }
         }
