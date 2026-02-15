@@ -362,6 +362,16 @@ impl TubeRenderer {
         ss_filter: &Option<HashSet<SSType>>,
         ss_override: Option<&[SSType]>,
     ) -> (Vec<TubeVertex>, Vec<u32>) {
+        Self::generate_tube_mesh_colored(chains, ss_filter, ss_override, None)
+    }
+
+    /// Generate tube mesh with optional per-residue color override
+    pub(crate) fn generate_tube_mesh_colored(
+        chains: &[Vec<Vec3>],
+        ss_filter: &Option<HashSet<SSType>>,
+        ss_override: Option<&[SSType]>,
+        per_residue_colors: Option<&[[f32; 3]]>,
+    ) -> (Vec<TubeVertex>, Vec<u32>) {
         let mut all_vertices: Vec<TubeVertex> = Vec::new();
         let mut all_indices: Vec<u32> = Vec::new();
         let mut global_residue_idx: u32 = 0;
@@ -433,6 +443,16 @@ impl TubeRenderer {
             }
 
             global_residue_idx += ca_positions.len() as u32;
+        }
+
+        // Apply per-residue color override if provided
+        if let Some(colors) = per_residue_colors {
+            for vert in &mut all_vertices {
+                let idx = vert.residue_idx as usize;
+                if idx < colors.len() {
+                    vert.color = colors[idx];
+                }
+            }
         }
 
         (all_vertices, all_indices)

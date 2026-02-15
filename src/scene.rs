@@ -72,6 +72,7 @@ pub enum ResidueColorMode {
     Rama,
     Blueprint,
     Alignment,
+    Score,
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,8 @@ pub struct PerGroupData {
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
     // Secondary structure
     pub ss_override: Option<Vec<SSType>>,
+    // Per-residue energy scores (scene processor derives colors from these)
+    pub per_residue_scores: Option<Vec<f64>>,
     // Non-protein
     pub non_protein_entities: Vec<MoleculeEntity>,
     // Nucleic acid
@@ -137,6 +140,8 @@ pub struct EntityGroup {
     entities: Vec<MoleculeEntity>,
     mesh_version: u64,
     pub ss_override: Option<Vec<SSType>>,
+    /// Cached per-residue energy scores from Rosetta (raw data for viz).
+    pub per_residue_scores: Option<Vec<f64>>,
     /// Cached per-group rendering data (derived from protein entities).
     render_cache: Option<GroupRenderData>,
 }
@@ -181,6 +186,13 @@ impl EntityGroup {
     pub fn invalidate_render_cache(&mut self) {
         self.render_cache = None;
         self.mesh_version += 1;
+    }
+
+    /// Set per-residue energy scores (raw data cached for future viz).
+    /// Does NOT bump mesh_version — the scene processor derives and caches
+    /// colors from these scores, and the animation path reuses cached colors.
+    pub fn set_per_residue_scores(&mut self, scores: Option<Vec<f64>>) {
+        self.per_residue_scores = scores;
     }
 
     /// Get protein-only Coords for this group.
@@ -264,6 +276,7 @@ impl EntityGroup {
             sidechain_bonds,
             backbone_sidechain_bonds,
             ss_override,
+            per_residue_scores: self.per_residue_scores.clone(),
             non_protein_entities,
             nucleic_acid_chains,
             nucleic_acid_rings,
@@ -376,6 +389,11 @@ impl Scene {
         self.generation != self.rendered_generation
     }
 
+    /// Force the scene dirty (e.g. when display options change but scene data hasn't).
+    pub fn force_dirty(&mut self) {
+        self.invalidate();
+    }
+
     /// Mark current generation as rendered (call after updating renderers).
     pub fn mark_rendered(&mut self) {
         self.rendered_generation = self.generation;
@@ -399,6 +417,7 @@ impl Scene {
             entities,
             mesh_version: 0,
             ss_override: None,
+            per_residue_scores: None,
             render_cache: None,
         });
         self.invalidate();
