@@ -87,6 +87,8 @@ pub struct DisplayOptions {
     pub lipid_mode: String,
     pub show_sidechains: bool,
     pub show_hydrogens: bool,
+    /// Backbone coloring mode: "secondary_structure" (default) or "score".
+    pub backbone_color_mode: String,
 }
 
 impl Default for DisplayOptions {
@@ -99,6 +101,7 @@ impl Default for DisplayOptions {
             lipid_mode: "coarse".to_string(),
             show_sidechains: true,
             show_hydrogens: false,
+            backbone_color_mode: "secondary_structure".to_string(),
         }
     }
 }
@@ -140,18 +143,18 @@ impl Default for LightingOptions {
             light1_dir: [-0.3, 0.9, -0.3],
             light2_dir: [0.3, 0.6, -0.4],
             light1_intensity: 2.0,
-            light2_intensity: 0.8,
-            ambient: 0.15,
+            light2_intensity: 1.1,
+            ambient: 0.45,
             specular_intensity: 0.35,
             shininess: 38.0,
-            rim_power: 3.0,
+            rim_power: 5.0,
             rim_intensity: 0.3,
             rim_directionality: 0.3,
             rim_color: [1.0, 0.85, 0.7],
-            ibl_strength: 1.0,
+            ibl_strength: 0.6,
             rim_dir: [0.0, -0.7, 0.5],
-            roughness: 0.5,
-            metalness: 0.0,
+            roughness: 0.35,
+            metalness: 0.15,
         }
     }
 }
@@ -380,7 +383,7 @@ shininess = 80.0
         let opts: Options = toml::from_str(toml_str).unwrap();
         assert_eq!(opts.lighting.shininess, 80.0);
         // Everything else should be default
-        assert_eq!(opts.lighting.ambient, 0.12);
+        assert_eq!(opts.lighting.ambient, 0.45);
         assert_eq!(opts.display.view_mode, "ribbon");
     }
 

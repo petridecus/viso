@@ -386,6 +386,10 @@ impl RibbonRenderer {
     }
 
     pub(crate) fn generate_from_ca_only(chains: &[Vec<Vec3>], params: &RibbonParams, ss_override: Option<&[SSType]>) -> (Vec<RibbonVertex>, Vec<u32>, Vec<(u32, Vec3)>) {
+        Self::generate_from_ca_only_colored(chains, params, ss_override, None)
+    }
+
+    pub(crate) fn generate_from_ca_only_colored(chains: &[Vec<Vec3>], params: &RibbonParams, ss_override: Option<&[SSType]>, per_residue_colors: Option<&[[f32; 3]]>) -> (Vec<RibbonVertex>, Vec<u32>, Vec<(u32, Vec3)>) {
         let mut all_verts = Vec::new();
         let mut all_inds = Vec::new();
         let mut all_surface_pos = Vec::new();
@@ -463,6 +467,16 @@ impl RibbonRenderer {
             }
 
             global_residue_idx += ca_positions.len() as u32;
+        }
+
+        // Apply per-residue color override if provided
+        if let Some(colors) = per_residue_colors {
+            for vert in &mut all_verts {
+                let idx = vert.residue_idx as usize;
+                if idx < colors.len() {
+                    vert.color = colors[idx];
+                }
+            }
         }
 
         (all_verts, all_inds, all_surface_pos)

@@ -86,6 +86,8 @@ pub struct ProteinRenderEngine {
     last_click_residue: i32,
     /// Cached secondary structure types per residue (for double-click segment selection)
     cached_ss_types: Vec<SSType>,
+    /// Cached per-residue colors (derived from scores by scene processor, reused for animation)
+    cached_per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Structure animator for smooth transitions
     pub animator: StructureAnimator,
     /// Start sidechain positions (for animation interpolation)
@@ -417,6 +419,7 @@ impl ProteinRenderEngine {
             last_click_time: Instant::now(),
             last_click_residue: -1,
             cached_ss_types: Vec::new(),
+            cached_per_residue_colors: None,
             animator,
             start_sidechain_positions: Vec::new(),
             target_sidechain_positions: Vec::new(),
@@ -1131,6 +1134,7 @@ impl ProteinRenderEngine {
                     };
                     self.options.display.view_mode = mode_str.to_string();
                     self.set_view_mode(mode);
+                    self.scene.force_dirty();
                     self.sync_scene_to_renderers(None);
                     true
                 } else {
@@ -1167,6 +1171,21 @@ impl ProteinRenderEngine {
                 if let Some(v) = value.as_bool() {
                     self.options.display.show_solvent = v;
                     self.refresh_ball_and_stick();
+                    true
+                } else {
+                    false
+                }
+            }
+            "backbone_color_mode" => {
+                if let Some(mode_str) = value.as_str() {
+                    self.options.display.backbone_color_mode = mode_str.to_string();
+                    // When switching back to secondary structure, clear cached colors
+                    if mode_str == "secondary_structure" {
+                        self.cached_per_residue_colors = None;
+                    }
+                    // Force dirty so FullRebuild is sent even though scene data hasn't changed
+                    self.scene.force_dirty();
+                    self.sync_scene_to_renderers(None);
                     true
                 } else {
                     false
@@ -2291,6 +2310,9 @@ impl ProteinRenderEngine {
             self.cached_ss_types = self.compute_ss_types(new_backbone);
         }
 
+        // Cache per-residue colors (derived from scores by scene processor)
+        self.cached_per_residue_colors = prepared.per_residue_colors.clone();
+
         // Extract CA positions for sidechain collapse animation
         let ca_positions: Vec<Vec3> = new_backbone
             .iter()
@@ -2332,6 +2354,9 @@ impl ProteinRenderEngine {
         } else {
             self.cached_ss_types = self.compute_ss_types(&prepared.backbone_chains);
         }
+
+        // Cache per-residue colors (derived from scores by scene processor)
+        self.cached_per_residue_colors = prepared.per_residue_colors.clone();
 
         // Ensure selection buffer has capacity
         let total_residues: usize = prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
@@ -2405,6 +2430,7 @@ impl ProteinRenderEngine {
             sidechains,
             view_mode: self.view_mode,
             ss_types,
+            per_residue_colors: self.cached_per_residue_colors.clone(),
         });
     }
 

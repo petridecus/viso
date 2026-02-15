@@ -15,6 +15,7 @@ use crate::nucleic_acid_renderer::NucleicAcidRenderer;
 use crate::options::{ColorOptions, DisplayOptions};
 use crate::ribbon_renderer::{RibbonParams, RibbonRenderer};
 use crate::scene::{AggregatedRenderData, GroupId, PerGroupData};
+use crate::score_color;
 use crate::tube_renderer::TubeRenderer;
 use foldit_conv::coords::entity::NucleotideRing;
 use foldit_conv::coords::MoleculeEntity;
@@ -51,6 +52,7 @@ pub enum SceneRequest {
         sidechains: Option<AnimationSidechainData>,
         view_mode: ViewMode,
         ss_types: Option<Vec<SSType>>,
+        per_residue_colors: Option<Vec<[f32; 3]>>,
     },
     /// Shut down the background thread.
     Shutdown,
@@ -96,6 +98,8 @@ pub struct PreparedScene {
     pub sidechain_atom_names: Vec<String>,
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
     pub ss_types: Option<Vec<SSType>>,
+    /// Concatenated per-residue colors (derived from scores, cached for animation).
+    pub per_residue_colors: Option<Vec<[f32; 3]>>,
     pub all_positions: Vec<Vec3>,
     pub action: Option<AnimationAction>,
     pub non_protein_entities: Vec<MoleculeEntity>,
@@ -158,6 +162,8 @@ struct CachedGroupMesh {
     sidechain_atom_names: Vec<String>,
     backbone_sidechain_bonds: Vec<(Vec3, u32)>,
     ss_override: Option<Vec<SSType>>,
+    /// Per-residue colors derived from scores (cached to avoid recomputation).
+    per_residue_colors: Option<Vec<[f32; 3]>>,
     non_protein_entities: Vec<MoleculeEntity>,
     nucleic_acid_chains: Vec<Vec<Vec3>>,
     nucleic_acid_rings: Vec<NucleotideRing>,
@@ -298,9 +304,11 @@ impl SceneProcessor {
                     sidechains,
                     view_mode,
                     ss_types,
+                    per_residue_colors,
                 } => {
                     let prepared = Self::process_animation_frame(
                         backbone_chains, sidechains, view_mode, ss_types,
+                        per_residue_colors,
                     );
                     anim_input.write(Some(prepared));
                 }
@@ -315,6 +323,13 @@ impl SceneProcessor {
         display: &DisplayOptions,
         colors: &ColorOptions,
     ) -> CachedGroupMesh {
+        // Derive per-residue colors from scores when in score coloring mode
+        let per_residue_colors = match display.backbone_color_mode.as_str() {
+            "score" => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors(s)),
+            "score_relative" => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors_relative(s)),
+            _ => None,
+        };
+
         // --- Tube mesh ---
         let tube_filter = match view_mode {
             ViewMode::Ribbon => {
@@ -324,20 +339,22 @@ impl SceneProcessor {
             }
             ViewMode::Tube => None,
         };
-        let (tube_verts_typed, tube_inds) = TubeRenderer::generate_tube_mesh(
+        let (tube_verts_typed, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
             &g.backbone_chains,
             &tube_filter,
             g.ss_override.as_deref(),
+            per_residue_colors.as_deref(),
         );
         let tube_vert_count = tube_verts_typed.len() as u32;
         let tube_verts = bytemuck::cast_slice(&tube_verts_typed).to_vec();
 
         // --- Ribbon mesh ---
         let params = RibbonParams::default();
-        let (ribbon_verts_typed, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only(
+        let (ribbon_verts_typed, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only_colored(
             &g.backbone_chains,
             &params,
             g.ss_override.as_deref(),
+            per_residue_colors.as_deref(),
         );
         let ribbon_vert_count = ribbon_verts_typed.len() as u32;
         let ribbon_verts = bytemuck::cast_slice(&ribbon_verts_typed).to_vec();
@@ -428,6 +445,7 @@ impl SceneProcessor {
             sidechain_atom_names,
             backbone_sidechain_bonds: g.backbone_sidechain_bonds.clone(),
             ss_override: g.ss_override.clone(),
+            per_residue_colors,
             non_protein_entities: g.non_protein_entities.clone(),
             nucleic_acid_chains: g.nucleic_acid_chains.clone(),
             nucleic_acid_rings: g.nucleic_acid_rings.clone(),
@@ -484,6 +502,10 @@ impl SceneProcessor {
         let mut has_any_ss = false;
         let mut ss_parts: Vec<(u32, Option<Vec<SSType>>, u32)> = Vec::new();
         let mut global_residue_offset: u32 = 0;
+
+        // Per-residue colors: concatenated from cached group colors
+        let mut has_any_colors = false;
+        let mut all_per_residue_colors: Vec<[f32; 3]> = Vec::new();
 
         for (_, mesh) in group_meshes {
             let sc_atom_offset = all_sidechain_positions.len() as u32;
@@ -555,6 +577,18 @@ impl SceneProcessor {
                 has_any_ss = true;
             }
             ss_parts.push((global_residue_offset, mesh.ss_override.clone(), mesh.residue_count));
+
+            // Per-residue color tracking
+            if let Some(ref colors) = mesh.per_residue_colors {
+                has_any_colors = true;
+                all_per_residue_colors.extend_from_slice(colors);
+            } else {
+                // Pad with default so indices stay aligned
+                for _ in 0..mesh.residue_count {
+                    all_per_residue_colors.push([0.7, 0.7, 0.7]);
+                }
+            }
+
             global_residue_offset += mesh.residue_count;
         }
 
@@ -605,6 +639,7 @@ impl SceneProcessor {
             sidechain_atom_names: all_sidechain_atom_names,
             backbone_sidechain_bonds: all_backbone_sidechain_bonds,
             ss_types,
+            per_residue_colors: if has_any_colors { Some(all_per_residue_colors) } else { None },
             all_positions,
             action,
             non_protein_entities: all_non_protein,
@@ -619,6 +654,7 @@ impl SceneProcessor {
         sidechains: Option<AnimationSidechainData>,
         view_mode: ViewMode,
         ss_types: Option<Vec<SSType>>,
+        per_residue_colors: Option<Vec<[f32; 3]>>,
     ) -> PreparedAnimationFrame {
         // --- Tube mesh ---
         let tube_filter = match view_mode {
@@ -629,10 +665,11 @@ impl SceneProcessor {
             }
             ViewMode::Tube => None,
         };
-        let (tube_verts, tube_inds) = TubeRenderer::generate_tube_mesh(
+        let (tube_verts, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
             &backbone_chains,
             &tube_filter,
             ss_types.as_deref(),
+            per_residue_colors.as_deref(),
         );
         let tube_index_count = tube_inds.len() as u32;
         let tube_vertices = bytemuck::cast_slice(&tube_verts).to_vec();
@@ -640,10 +677,11 @@ impl SceneProcessor {
 
         // --- Ribbon mesh ---
         let params = RibbonParams::default();
-        let (ribbon_verts, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only(
+        let (ribbon_verts, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only_colored(
             &backbone_chains,
             &params,
             ss_types.as_deref(),
+            per_residue_colors.as_deref(),
         );
         let ribbon_index_count = ribbon_inds.len() as u32;
         let ribbon_vertices = bytemuck::cast_slice(&ribbon_verts).to_vec();
