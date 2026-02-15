@@ -12,10 +12,10 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
-use crate::dynamic_buffer::TypedBuffer;
-use crate::options::ColorOptions;
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::util::options::ColorOptions;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 /// Per-instance data for capsule impostor
@@ -199,7 +199,7 @@ impl BandRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse the same capsule impostor shader
-        let shader = shader_composer.compose(&context.device, "Band Renderer Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Band Renderer Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context

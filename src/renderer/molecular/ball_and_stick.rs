@@ -10,10 +10,10 @@ use foldit_conv::coords::{
 };
 use glam::Vec3;
 
-use crate::dynamic_buffer::TypedBuffer;
-use crate::options::{ColorOptions, DisplayOptions};
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::util::options::{ColorOptions, DisplayOptions};
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;
@@ -231,7 +231,7 @@ impl BallAndStickRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Sphere Impostor Shader", include_str!("../assets/shaders/raster/impostor/sphere.wgsl"), "sphere_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Sphere Impostor Shader", include_str!("../../../assets/shaders/raster/impostor/sphere.wgsl"), "sphere_impostor.wgsl");
 
         let pipeline_layout =
             context
@@ -298,7 +298,7 @@ impl BallAndStickRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse capsule_impostor.wgsl for bonds
-        let shader = shader_composer.compose(&context.device, "Ball-and-Stick Bond Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Ball-and-Stick Bond Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context

@@ -1,30 +1,30 @@
 use crate::animation::{AnimationAction, StructureAnimator};
-use crate::ball_and_stick_renderer::BallAndStickRenderer;
-use crate::band_renderer::{BandRenderer, BandRenderInfo};
-use crate::bloom::BloomPass;
-use crate::nucleic_acid_renderer::NucleicAcidRenderer;
+use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
+use crate::renderer::molecular::band::{BandRenderer, BandRenderInfo};
+use crate::renderer::postprocess::bloom::BloomPass;
+use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
-use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
-use crate::composite::CompositePass;
-use crate::fxaa::FxaaPass;
-use crate::frame_timing::FrameTiming;
-use crate::options::Options;
+use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
+use crate::renderer::postprocess::composite::CompositePass;
+use crate::renderer::postprocess::fxaa::FxaaPass;
+use crate::engine::frame_timing::FrameTiming;
+use crate::util::options::Options;
 use crate::picking::{Picking, SelectionBuffer};
-use crate::lighting::Lighting;
-use crate::pull_renderer::{PullRenderer, PullRenderInfo};
+use crate::util::lighting::Lighting;
+use crate::renderer::molecular::pull::{PullRenderer, PullRenderInfo};
 
-use crate::render_context::RenderContext;
-use crate::ribbon_renderer::RibbonRenderer;
-use crate::scene_processor::{AnimationSidechainData, PreparedScene, SceneProcessor, SceneRequest};
-use crate::shader_composer::ShaderComposer;
-use crate::trajectory::TrajectoryPlayer;
+use crate::engine::render_context::RenderContext;
+use crate::renderer::molecular::ribbon::RibbonRenderer;
+use crate::engine::scene_processor::{AnimationSidechainData, PreparedScene, SceneProcessor, SceneRequest};
+use crate::engine::shader_composer::ShaderComposer;
+use crate::util::trajectory::TrajectoryPlayer;
 use foldit_conv::secondary_structure::SSType;
-use crate::ssao::SsaoRenderer;
-use crate::tube_renderer::TubeRenderer;
+use crate::renderer::postprocess::ssao::SsaoRenderer;
+use crate::renderer::molecular::tube::TubeRenderer;
 
-use crate::bond_topology::{get_residue_bonds, is_hydrophobic};
-use crate::scene::{
+use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
+use crate::engine::scene::{
     CombinedCoordsResult, EntityGroup, Focus, GroupId, Scene,
 };
 use foldit_conv::coords::{
@@ -38,16 +38,6 @@ use std::time::Instant;
 use winit::event::MouseButton;
 use winit::keyboard::ModifiersState;
 
-/// View mode for backbone rendering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ViewMode {
-    /// Uniform-radius tubes for all residues
-    Tube,
-    /// Secondary structure ribbons for helices/sheets, tubes for coils
-    #[default]
-    Ribbon,
-}
-
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
 
@@ -60,7 +50,6 @@ pub struct ProteinRenderEngine {
     pub pull_renderer: PullRenderer,
     pub tube_renderer: TubeRenderer,
     pub ribbon_renderer: RibbonRenderer,
-    pub view_mode: ViewMode,
     pub frame_timing: FrameTiming,
     pub input_handler: InputHandler,
     pub depth_texture: wgpu::Texture,
@@ -393,10 +382,8 @@ impl ProteinRenderEngine {
         // Create background scene processor
         let scene_processor = SceneProcessor::new();
 
-        // Set up tube renderer filter based on default view mode
-        let view_mode = ViewMode::default();
-        if view_mode == ViewMode::Ribbon {
-            // Ribbon mode: tube renderer only renders coils
+        // Tube renderer only renders coils; ribbons handle helices/sheets
+        {
             let mut coil_only = HashSet::new();
             coil_only.insert(SSType::Coil);
             tube_renderer.set_ss_filter(Some(coil_only));
@@ -409,7 +396,6 @@ impl ProteinRenderEngine {
             lighting,
             tube_renderer,
             ribbon_renderer,
-            view_mode,
             sidechain_renderer,
             band_renderer,
             pull_renderer,
@@ -604,30 +590,19 @@ impl ProteinRenderEngine {
             });
 
             // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
-            match self.view_mode {
-                ViewMode::Tube => {
-                    self.tube_renderer.draw(
-                        &mut rp,
-                        &self.camera_controller.bind_group,
-                        &self.lighting.bind_group,
-                        &self.selection_buffer.bind_group,
-                    );
-                }
-                ViewMode::Ribbon => {
-                    self.tube_renderer.draw(
-                        &mut rp,
-                        &self.camera_controller.bind_group,
-                        &self.lighting.bind_group,
-                        &self.selection_buffer.bind_group,
-                    );
-                    self.ribbon_renderer.draw(
-                        &mut rp,
-                        &self.camera_controller.bind_group,
-                        &self.lighting.bind_group,
-                        &self.selection_buffer.bind_group,
-                    );
-                }
-            }
+            // Backbone: tubes for coils, ribbons for helices/sheets
+            self.tube_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
+            );
+            self.ribbon_renderer.draw(
+                &mut rp,
+                &self.camera_controller.bind_group,
+                &self.lighting.bind_group,
+                &self.selection_buffer.bind_group,
+            );
 
             if self.options.display.show_sidechains {
                 self.sidechain_renderer.draw(
@@ -692,16 +667,12 @@ impl ProteinRenderEngine {
         // FXAA pass — screen-space anti-aliasing, output to swapchain
         self.fxaa_pass.render(&mut encoder, &view);
 
-        // GPU Picking pass - render residue IDs to picking buffer
-        // In Ribbon mode, also render ribbons for picking (helices/sheets)
-        let (ribbon_vb, ribbon_ib, ribbon_count) = match self.view_mode {
-            ViewMode::Ribbon => (
-                Some(self.ribbon_renderer.vertex_buffer()),
-                Some(self.ribbon_renderer.index_buffer()),
-                self.ribbon_renderer.index_count,
-            ),
-            ViewMode::Tube => (None, None, 0),
-        };
+        // GPU Picking pass - render residue IDs to picking buffer (includes ribbons)
+        let (ribbon_vb, ribbon_ib, ribbon_count) = (
+            Some(self.ribbon_renderer.vertex_buffer()),
+            Some(self.ribbon_renderer.index_buffer()),
+            self.ribbon_renderer.index_count,
+        );
 
         self.picking.render(
             &mut encoder,
@@ -1027,40 +998,6 @@ impl ProteinRenderEngine {
         ));
     }
 
-    /// Set the view mode for backbone rendering
-    pub fn set_view_mode(&mut self, mode: ViewMode) {
-        if self.view_mode == mode {
-            return;
-        }
-        self.view_mode = mode;
-
-        // Update tube renderer filter based on mode
-        match mode {
-            ViewMode::Tube => {
-                // Tube mode: render all SS types as tubes
-                self.tube_renderer.set_ss_filter(None);
-            }
-            ViewMode::Ribbon => {
-                // Ribbon mode: tube renderer only renders coils
-                let mut coil_only = HashSet::new();
-                coil_only.insert(SSType::Coil);
-                self.tube_renderer.set_ss_filter(Some(coil_only));
-            }
-        }
-
-        // Regenerate mesh with new filter
-        self.tube_renderer.regenerate(&self.context.device, &self.context.queue);
-    }
-
-    /// Toggle between tube and ribbon view modes
-    pub fn toggle_view_mode(&mut self) {
-        let new_mode = match self.view_mode {
-            ViewMode::Tube => ViewMode::Ribbon,
-            ViewMode::Ribbon => ViewMode::Tube,
-        };
-        self.set_view_mode(new_mode);
-    }
-
     /// Get a reference to the current options.
     pub fn options(&self) -> &Options {
         &self.options
@@ -1119,15 +1056,6 @@ impl ProteinRenderEngine {
         self.camera_controller.pan_speed = co.pan_speed * 0.2;
         self.camera_controller.zoom_speed = co.zoom_speed * 0.5;
 
-        // Display: view mode
-        let vm = match self.options.display.view_mode.as_str() {
-            "tube" => ViewMode::Tube,
-            _ => ViewMode::Ribbon,
-        };
-        if vm != self.view_mode {
-            self.set_view_mode(vm);
-        }
-
         // Display: ball-and-stick visibility
         self.refresh_ball_and_stick();
     }
@@ -1136,25 +1064,6 @@ impl ProteinRenderEngine {
     /// Returns true if the option was recognized and applied.
     pub fn apply_view_option(&mut self, key: &str, value: &serde_json::Value) -> bool {
         match key {
-            "view_mode" => {
-                if let Some(mode_str) = value.as_str() {
-                    let mode = match mode_str {
-                        "ribbon" => ViewMode::Ribbon,
-                        "tube" => ViewMode::Tube,
-                        _ => {
-                            log::warn!("Unknown view mode: {}", mode_str);
-                            return false;
-                        }
-                    };
-                    self.options.display.view_mode = mode_str.to_string();
-                    self.set_view_mode(mode);
-                    self.scene.force_dirty();
-                    self.sync_scene_to_renderers(None);
-                    true
-                } else {
-                    false
-                }
-            }
             "show_sidechains" => {
                 if let Some(v) = value.as_bool() {
                     self.options.display.show_sidechains = v;
@@ -1426,7 +1335,7 @@ impl ProteinRenderEngine {
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &Path) {
         use foldit_conv::coords::{dcd_file_to_frames, protein_only};
-        use crate::trajectory::build_backbone_atom_indices;
+        use crate::util::trajectory::build_backbone_atom_indices;
 
         let (header, frames) = match dcd_file_to_frames(path) {
             Ok(r) => r,
@@ -1632,11 +1541,7 @@ impl ProteinRenderEngine {
     }
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
-    /// Returns empty map when not in Ribbon mode.
     fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        if self.view_mode != ViewMode::Ribbon {
-            return HashMap::new();
-        }
         self.ribbon_renderer.sheet_offsets().iter().copied().collect()
     }
 
@@ -2179,7 +2084,6 @@ impl ProteinRenderEngine {
             groups,
             aggregated: agg,
             action,
-            view_mode: self.view_mode,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
         });
@@ -2442,7 +2346,6 @@ impl ProteinRenderEngine {
         self.scene_processor.submit(SceneRequest::AnimationFrame {
             backbone_chains,
             sidechains,
-            view_mode: self.view_mode,
             ss_types,
             per_residue_colors: self.cached_per_residue_colors.clone(),
         });

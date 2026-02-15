@@ -1,32 +1,4 @@
-pub mod animation;
-pub mod ball_and_stick_renderer;
-pub mod band_renderer;
-pub mod bloom;
-pub mod bond_topology;
-pub mod camera;
-pub mod capsule_sidechain_renderer;
-pub mod composite;
-pub mod dynamic_buffer;
-pub mod easing;
-pub mod engine;
-pub mod fxaa;
-pub mod frame_timing;
-pub mod lighting;
-pub mod nucleic_acid_renderer;
-pub mod options;
-pub mod picking;
-pub mod pull_renderer;
-pub mod render_context;
-pub mod ribbon_renderer;
-pub mod ssao;
-pub mod scene;
-pub mod scene_processor;
-pub mod score_color;
-pub mod shader_composer;
-pub mod trajectory;
-pub mod tube_renderer;
-
-use engine::ProteinRenderEngine;
+use viso::engine::core::ProteinRenderEngine;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -167,9 +139,6 @@ impl ApplicationHandler for RenderApp {
                     if let Some(engine) = &mut self.engine {
                         use winit::keyboard::{Key, NamedKey};
                         match &event.logical_key {
-                            Key::Character(c) if c.as_str() == "v" || c.as_str() == "V" => {
-                                engine.toggle_view_mode();
-                            }
                             Key::Character(c) if c.as_str() == "w" || c.as_str() == "W" => {
                                 engine.toggle_waters();
                             }

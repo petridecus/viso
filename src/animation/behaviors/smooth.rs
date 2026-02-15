@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::easing::EasingFunction;
+use crate::util::easing::EasingFunction;
 
 use super::state::ResidueVisualState;
 use super::traits::{AnimationBehavior, PreemptionStrategy};

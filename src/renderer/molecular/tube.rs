@@ -6,9 +6,9 @@
 //! Can render all SS types or filter to specific ones (e.g., coils only
 //! when used alongside RibbonRenderer in ribbon view mode).
 
-use crate::dynamic_buffer::DynamicBuffer;
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::DynamicBuffer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 use foldit_conv::secondary_structure::{SSType, merge_short_segments};
 use glam::Vec3;
@@ -280,7 +280,7 @@ impl TubeRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Backbone Tube Shader", include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
+        let shader = shader_composer.compose(&context.device, "Backbone Tube Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout =
             context

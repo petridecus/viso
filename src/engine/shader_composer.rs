@@ -26,27 +26,27 @@ impl ShaderComposer {
         // Modules with no dependencies first, then modules that depend on earlier ones.
         let modules: &[ModuleDef] = &[
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/fullscreen.wgsl"),
+                source: include_str!("../../assets/shaders/modules/fullscreen.wgsl"),
                 file_path: "modules/fullscreen.wgsl",
             },
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/camera.wgsl"),
+                source: include_str!("../../assets/shaders/modules/camera.wgsl"),
                 file_path: "modules/camera.wgsl",
             },
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/lighting.wgsl"),
+                source: include_str!("../../assets/shaders/modules/lighting.wgsl"),
                 file_path: "modules/lighting.wgsl",
             },
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/sdf.wgsl"),
+                source: include_str!("../../assets/shaders/modules/sdf.wgsl"),
                 file_path: "modules/sdf.wgsl",
             },
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/raymarch.wgsl"),
+                source: include_str!("../../assets/shaders/modules/raymarch.wgsl"),
                 file_path: "modules/raymarch.wgsl",
             },
             ModuleDef {
-                source: include_str!("../assets/shaders/modules/volume.wgsl"),
+                source: include_str!("../../assets/shaders/modules/volume.wgsl"),
                 file_path: "modules/volume.wgsl",
             },
         ];
@@ -119,55 +119,55 @@ mod tests {
     fn all_shader_sources() -> Vec<(&'static str, &'static str)> {
         vec![
             (
-                include_str!("../assets/shaders/screen/bloom_threshold.wgsl"),
+                include_str!("../../assets/shaders/screen/bloom_threshold.wgsl"),
                 "bloom_threshold.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/bloom_blur.wgsl"),
+                include_str!("../../assets/shaders/screen/bloom_blur.wgsl"),
                 "bloom_blur.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/bloom_upsample.wgsl"),
+                include_str!("../../assets/shaders/screen/bloom_upsample.wgsl"),
                 "bloom_upsample.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/fxaa.wgsl"),
+                include_str!("../../assets/shaders/screen/fxaa.wgsl"),
                 "fxaa.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/composite.wgsl"),
+                include_str!("../../assets/shaders/screen/composite.wgsl"),
                 "composite.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/ssao.wgsl"),
+                include_str!("../../assets/shaders/screen/ssao.wgsl"),
                 "ssao.wgsl",
             ),
             (
-                include_str!("../assets/shaders/screen/ssao_blur.wgsl"),
+                include_str!("../../assets/shaders/screen/ssao_blur.wgsl"),
                 "ssao_blur.wgsl",
             ),
             (
-                include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"),
+                include_str!("../../assets/shaders/raster/mesh/backbone_tube.wgsl"),
                 "backbone_tube.wgsl",
             ),
             (
-                include_str!("../assets/shaders/raster/impostor/capsule.wgsl"),
+                include_str!("../../assets/shaders/raster/impostor/capsule.wgsl"),
                 "capsule_impostor.wgsl",
             ),
             (
-                include_str!("../assets/shaders/raster/impostor/sphere.wgsl"),
+                include_str!("../../assets/shaders/raster/impostor/sphere.wgsl"),
                 "sphere_impostor.wgsl",
             ),
             (
-                include_str!("../assets/shaders/raster/impostor/cone.wgsl"),
+                include_str!("../../assets/shaders/raster/impostor/cone.wgsl"),
                 "cone_impostor.wgsl",
             ),
             (
-                include_str!("../assets/shaders/utility/picking_mesh.wgsl"),
+                include_str!("../../assets/shaders/utility/picking_mesh.wgsl"),
                 "picking.wgsl",
             ),
             (
-                include_str!("../assets/shaders/utility/picking_capsule.wgsl"),
+                include_str!("../../assets/shaders/utility/picking_capsule.wgsl"),
                 "picking_capsule.wgsl",
             ),
         ]

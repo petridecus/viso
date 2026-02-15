@@ -10,9 +10,9 @@
 //!
 //! Only one pull can be active at a time.
 
-use crate::dynamic_buffer::TypedBuffer;
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 /// Per-instance data for capsule impostor (cylinder part)
@@ -188,7 +188,7 @@ impl PullRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Pull Capsule Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Pull Capsule Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context
@@ -249,7 +249,7 @@ impl PullRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Pull Cone Shader", include_str!("../assets/shaders/raster/impostor/cone.wgsl"), "cone_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Pull Cone Shader", include_str!("../../../assets/shaders/raster/impostor/cone.wgsl"), "cone_impostor.wgsl");
 
         let pipeline_layout =
             context

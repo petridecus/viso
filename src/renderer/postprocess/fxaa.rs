@@ -4,8 +4,8 @@
 //! swapchain. Smooths jagged silhouette edges on mesh-based geometry (ribbons,
 //! tubes) that supersampling alone doesn't fully resolve.
 
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 pub struct FxaaPass {
@@ -87,7 +87,7 @@ impl FxaaPass {
             &screen_size_buffer,
         );
 
-        let shader = shader_composer.compose(&context.device, "FXAA Shader", include_str!("../assets/shaders/screen/fxaa.wgsl"), "fxaa.wgsl");
+        let shader = shader_composer.compose(&context.device, "FXAA Shader", include_str!("../../../assets/shaders/screen/fxaa.wgsl"), "fxaa.wgsl");
 
         let pipeline_layout = context
             .device

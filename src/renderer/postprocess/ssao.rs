@@ -1,5 +1,5 @@
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;
@@ -201,7 +201,7 @@ impl SsaoRenderer {
                 });
 
         // SSAO pipeline
-        let ssao_shader = shader_composer.compose(&context.device, "SSAO Shader", include_str!("../assets/shaders/screen/ssao.wgsl"), "ssao.wgsl");
+        let ssao_shader = shader_composer.compose(&context.device, "SSAO Shader", include_str!("../../../assets/shaders/screen/ssao.wgsl"), "ssao.wgsl");
 
         let ssao_pipeline_layout =
             context
@@ -303,7 +303,7 @@ impl SsaoRenderer {
                 });
 
         // Blur pipeline
-        let blur_shader = shader_composer.compose(&context.device, "SSAO Blur Shader", include_str!("../assets/shaders/screen/ssao_blur.wgsl"), "ssao_blur.wgsl");
+        let blur_shader = shader_composer.compose(&context.device, "SSAO Blur Shader", include_str!("../../../assets/shaders/screen/ssao_blur.wgsl"), "ssao_blur.wgsl");
 
         let blur_pipeline_layout =
             context

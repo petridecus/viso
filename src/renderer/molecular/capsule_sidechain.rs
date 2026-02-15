@@ -10,9 +10,9 @@
 
 use bytemuck::Zeroable;
 use crate::camera::frustum::Frustum;
-use crate::dynamic_buffer::TypedBuffer;
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 /// Radius used for frustum culling (capsule bounding sphere)
@@ -144,7 +144,7 @@ impl CapsuleSidechainRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse the same capsule impostor shader
-        let shader = shader_composer.compose(&context.device, "Capsule Sidechain Shader", include_str!("../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(&context.device, "Capsule Sidechain Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
 
         let pipeline_layout =
             context

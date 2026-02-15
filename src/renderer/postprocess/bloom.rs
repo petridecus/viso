@@ -4,8 +4,8 @@
 //! Gaussian blur at each level → upsample + accumulate → final bloom texture.
 //! The composite pass adds the bloom texture to the scene before tone mapping.
 
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Blur direction params — must match WGSL struct
@@ -141,7 +141,7 @@ impl BloomPass {
         let threshold_shader = shader_composer.compose(
             &context.device,
             "Bloom Threshold Shader",
-            include_str!("../assets/shaders/screen/bloom_threshold.wgsl"),
+            include_str!("../../../assets/shaders/screen/bloom_threshold.wgsl"),
             "bloom_threshold.wgsl",
         );
 
@@ -213,7 +213,7 @@ impl BloomPass {
         let blur_shader = shader_composer.compose(
             &context.device,
             "Bloom Blur Shader",
-            include_str!("../assets/shaders/screen/bloom_blur.wgsl"),
+            include_str!("../../../assets/shaders/screen/bloom_blur.wgsl"),
             "bloom_blur.wgsl",
         );
 
@@ -287,7 +287,7 @@ impl BloomPass {
         let upsample_shader = shader_composer.compose(
             &context.device,
             "Bloom Upsample Shader",
-            include_str!("../assets/shaders/screen/bloom_upsample.wgsl"),
+            include_str!("../../../assets/shaders/screen/bloom_upsample.wgsl"),
             "bloom_upsample.wgsl",
         );
 

@@ -3,9 +3,9 @@
 //! Renders DNA/RNA backbones as narrow flat ribbons tracing phosphorus (P) atoms,
 //! smoothed with B-splines and oriented with rotation-minimizing frames.
 
-use crate::dynamic_buffer::DynamicBuffer;
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::dynamic_buffer::DynamicBuffer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
@@ -194,7 +194,7 @@ impl NucleicAcidRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Nucleic Acid Shader", include_str!("../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
+        let shader = shader_composer.compose(&context.device, "Nucleic Acid Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("NA Pipeline Layout"),
@@ -202,7 +202,7 @@ impl NucleicAcidRenderer {
             immediate_size: 0,
         });
 
-        let vertex_layout = crate::tube_renderer::tube_vertex_buffer_layout();
+        let vertex_layout = super::tube::tube_vertex_buffer_layout();
 
         context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("NA Render Pipeline"),

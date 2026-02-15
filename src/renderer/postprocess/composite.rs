@@ -4,8 +4,8 @@
 //! combining them to produce the final image with ambient occlusion and
 //! silhouette outlines applied.
 
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)
@@ -217,7 +217,7 @@ impl CompositePass {
         );
 
         // Load shader
-        let shader = shader_composer.compose(&context.device, "Composite Shader", include_str!("../assets/shaders/screen/composite.wgsl"), "composite.wgsl");
+        let shader = shader_composer.compose(&context.device, "Composite Shader", include_str!("../../../assets/shaders/screen/composite.wgsl"), "composite.wgsl");
 
         // Pipeline layout
         let pipeline_layout = context

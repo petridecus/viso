@@ -4,9 +4,9 @@
 //! the pixel at the mouse position to determine which residue is under the cursor.
 //! This is exact - it matches exactly what's rendered on screen.
 
-use crate::render_context::RenderContext;
-use crate::shader_composer::ShaderComposer;
-use crate::tube_renderer::tube_vertex_buffer_layout;
+use crate::engine::render_context::RenderContext;
+use crate::engine::shader_composer::ShaderComposer;
+use crate::renderer::molecular::tube::tube_vertex_buffer_layout;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -160,7 +160,7 @@ impl Picking {
         });
 
         // Load picking shader for tubes
-        let tube_shader = shader_composer.compose(&context.device, "Picking Tube Shader", include_str!("../assets/shaders/utility/picking_mesh.wgsl"), "picking.wgsl");
+        let tube_shader = shader_composer.compose(&context.device, "Picking Tube Shader", include_str!("../../assets/shaders/utility/picking_mesh.wgsl"), "picking.wgsl");
 
         // Tube picking pipeline
         let tube_pipeline_layout =
@@ -212,7 +212,7 @@ impl Picking {
                 });
 
         // Capsule picking pipeline
-        let capsule_shader = shader_composer.compose(&context.device, "Picking Capsule Shader", include_str!("../assets/shaders/utility/picking_capsule.wgsl"), "picking_capsule.wgsl");
+        let capsule_shader = shader_composer.compose(&context.device, "Picking Capsule Shader", include_str!("../../assets/shaders/utility/picking_capsule.wgsl"), "picking_capsule.wgsl");
 
         let capsule_bind_group_layout =
             context

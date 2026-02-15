@@ -8,15 +8,14 @@
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
-use crate::ball_and_stick_renderer::BallAndStickRenderer;
-use crate::capsule_sidechain_renderer::CapsuleSidechainRenderer;
-use crate::engine::ViewMode;
-use crate::nucleic_acid_renderer::NucleicAcidRenderer;
-use crate::options::{ColorOptions, DisplayOptions};
-use crate::ribbon_renderer::{RibbonParams, RibbonRenderer};
-use crate::scene::{AggregatedRenderData, GroupId, PerGroupData};
-use crate::score_color;
-use crate::tube_renderer::TubeRenderer;
+use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
+use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
+use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
+use crate::util::options::{ColorOptions, DisplayOptions};
+use crate::renderer::molecular::ribbon::{RibbonParams, RibbonRenderer};
+use crate::engine::scene::{AggregatedRenderData, GroupId, PerGroupData};
+use crate::util::score_color;
+use crate::renderer::molecular::tube::TubeRenderer;
 use foldit_conv::coords::entity::NucleotideRing;
 use foldit_conv::coords::MoleculeEntity;
 use foldit_conv::secondary_structure::SSType;
@@ -42,7 +41,6 @@ pub enum SceneRequest {
         groups: Vec<PerGroupData>,
         aggregated: Arc<AggregatedRenderData>,
         action: Option<AnimationAction>,
-        view_mode: ViewMode,
         display: DisplayOptions,
         colors: ColorOptions,
     },
@@ -50,7 +48,6 @@ pub enum SceneRequest {
     AnimationFrame {
         backbone_chains: Vec<Vec<Vec3>>,
         sidechains: Option<AnimationSidechainData>,
-        view_mode: ViewMode,
         ss_types: Option<Vec<SSType>>,
         per_residue_colors: Option<Vec<[f32; 3]>>,
     },
@@ -230,7 +227,6 @@ impl SceneProcessor {
         mut anim_input: triple_buffer::Input<Option<PreparedAnimationFrame>>,
     ) {
         let mut mesh_cache: HashMap<GroupId, (u64, CachedGroupMesh)> = HashMap::new();
-        let mut last_view_mode: Option<ViewMode> = None;
         let mut last_display: Option<DisplayOptions> = None;
         let mut last_colors: Option<ColorOptions> = None;
 
@@ -256,19 +252,16 @@ impl SceneProcessor {
                     groups,
                     aggregated: _,
                     action,
-                    view_mode,
                     display,
                     colors,
                 } => {
                     // Clear cache if global settings changed
                     let settings_changed =
-                        last_view_mode.as_ref() != Some(&view_mode)
-                        || last_display.as_ref() != Some(&display)
+                        last_display.as_ref() != Some(&display)
                         || last_colors.as_ref() != Some(&colors);
 
                     if settings_changed {
                         mesh_cache.clear();
-                        last_view_mode = Some(view_mode);
                         last_display = Some(display.clone());
                         last_colors = Some(colors.clone());
                     }
@@ -281,7 +274,7 @@ impl SceneProcessor {
                         };
 
                         if needs_regen {
-                            let mesh = Self::generate_group_mesh(g, view_mode, &display, &colors);
+                            let mesh = Self::generate_group_mesh(g, &display, &colors);
                             mesh_cache.insert(g.id, (g.mesh_version, mesh));
                         }
                     }
@@ -302,12 +295,11 @@ impl SceneProcessor {
                 SceneRequest::AnimationFrame {
                     backbone_chains,
                     sidechains,
-                    view_mode,
                     ss_types,
                     per_residue_colors,
                 } => {
                     let prepared = Self::process_animation_frame(
-                        backbone_chains, sidechains, view_mode, ss_types,
+                        backbone_chains, sidechains, ss_types,
                         per_residue_colors,
                     );
                     anim_input.write(Some(prepared));
@@ -319,7 +311,6 @@ impl SceneProcessor {
     /// Generate mesh for a single group.
     fn generate_group_mesh(
         g: &PerGroupData,
-        view_mode: ViewMode,
         display: &DisplayOptions,
         colors: &ColorOptions,
     ) -> CachedGroupMesh {
@@ -330,14 +321,11 @@ impl SceneProcessor {
             _ => None,
         };
 
-        // --- Tube mesh ---
-        let tube_filter = match view_mode {
-            ViewMode::Ribbon => {
-                let mut coil_only = HashSet::new();
-                coil_only.insert(SSType::Coil);
-                Some(coil_only)
-            }
-            ViewMode::Tube => None,
+        // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
+        let tube_filter = {
+            let mut coil_only = HashSet::new();
+            coil_only.insert(SSType::Coil);
+            Some(coil_only)
         };
         let (tube_verts_typed, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
             &g.backbone_chains,
@@ -364,11 +352,7 @@ impl SceneProcessor {
         let sidechain_hydrophobicity: Vec<bool> = g.sidechain_atoms.iter().map(|a| a.is_hydrophobic).collect();
         let sidechain_residue_indices: Vec<u32> = g.sidechain_atoms.iter().map(|a| a.residue_idx).collect();
 
-        let offset_map: HashMap<u32, Vec3> = if view_mode == ViewMode::Ribbon {
-            sheet_offsets.iter().copied().collect()
-        } else {
-            HashMap::new()
-        };
+        let offset_map: HashMap<u32, Vec3> = sheet_offsets.iter().copied().collect();
         let adjusted_positions = adjust_sidechains_for_sheet(
             &sidechain_positions,
             &sidechain_residue_indices,
@@ -652,18 +636,14 @@ impl SceneProcessor {
     fn process_animation_frame(
         backbone_chains: Vec<Vec<Vec3>>,
         sidechains: Option<AnimationSidechainData>,
-        view_mode: ViewMode,
         ss_types: Option<Vec<SSType>>,
         per_residue_colors: Option<Vec<[f32; 3]>>,
     ) -> PreparedAnimationFrame {
-        // --- Tube mesh ---
-        let tube_filter = match view_mode {
-            ViewMode::Ribbon => {
-                let mut coil_only = HashSet::new();
-                coil_only.insert(SSType::Coil);
-                Some(coil_only)
-            }
-            ViewMode::Tube => None,
+        // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
+        let tube_filter = {
+            let mut coil_only = HashSet::new();
+            coil_only.insert(SSType::Coil);
+            Some(coil_only)
         };
         let (tube_verts, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
             &backbone_chains,
@@ -689,11 +669,7 @@ impl SceneProcessor {
 
         // --- Optional sidechain capsules ---
         let (sidechain_instances, sidechain_instance_count) = if let Some(sc) = sidechains {
-            let offset_map: HashMap<u32, Vec3> = if view_mode == ViewMode::Ribbon {
-                sheet_offsets.iter().copied().collect()
-            } else {
-                HashMap::new()
-            };
+            let offset_map: HashMap<u32, Vec3> = sheet_offsets.iter().copied().collect();
             let adjusted_positions = adjust_sidechains_for_sheet(
                 &sc.sidechain_positions,
                 &sc.sidechain_residue_indices,
