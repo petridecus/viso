@@ -59,6 +59,9 @@ pub struct StructureAnimator {
     /// Current frame's animation progress (0.0 to 1.0) - single source of truth
     /// Set by update(), used by all getters in the same frame
     current_frame_progress: f32,
+    /// Residue ranges that have been snapped (non-targeted entities).
+    /// Sidechain atoms in these ranges skip interpolation entirely.
+    snapped_residue_ranges: Vec<(usize, usize)>,
 }
 
 impl StructureAnimator {
@@ -76,6 +79,7 @@ impl StructureAnimator {
             sidechains_changed: false,
             pending_sidechain_action: None,
             current_frame_progress: 1.0,
+            snapped_residue_ranges: Vec::new(),
         }
     }
 
@@ -93,6 +97,7 @@ impl StructureAnimator {
             sidechains_changed: false,
             pending_sidechain_action: None,
             current_frame_progress: 1.0,
+            snapped_residue_ranges: Vec::new(),
         }
     }
 
@@ -259,6 +264,9 @@ impl StructureAnimator {
         ca_positions: &[Vec3],
         action: Option<AnimationAction>,
     ) {
+        // Clear per-entity snap ranges (will be re-set by remove_non_targeted_from_runner if needed)
+        self.snapped_residue_ranges.clear();
+
         // Check if sidechains actually changed
         let sidechains_changed = self.sidechains_differ(positions);
 
@@ -342,8 +350,16 @@ impl StructureAnimator {
             .zip(self.target_sidechain_positions.iter())
             .enumerate()
             .map(|(i, (start, end))| {
-                // Get the collapse point (CA position) for this atom's residue
                 let res_idx = self.sidechain_residue_indices.get(i).copied().unwrap_or(0) as usize;
+
+                // Skip interpolation for snapped (non-targeted) entities —
+                // CollapseExpand's 3-point path (start→CA→end) produces visible
+                // motion even when start==end, so we must bypass it entirely.
+                if self.snapped_residue_ranges.iter().any(|&(s, e)| res_idx >= s && res_idx < e) {
+                    return *end;
+                }
+
+                // Get the collapse point (CA position) for this atom's residue
                 let start_ca = self.start_ca_positions.get(res_idx).copied().unwrap_or(*start);
                 let end_ca = self.target_ca_positions.get(res_idx).copied().unwrap_or(*end);
 
@@ -354,6 +370,90 @@ impl StructureAnimator {
                 behavior.interpolate_position(raw_t, *start, *end, collapse_point)
             })
             .collect()
+    }
+
+    /// Snap sidechain and CA positions for entities NOT covered by any action.
+    ///
+    /// For each entity range whose id is NOT in `active_entities`, sets
+    /// `start = target` so those residues produce zero displacement during
+    /// interpolation (they snap instantly).
+    ///
+    /// Call this AFTER `set_sidechain_target_with_action` and `set_target` when
+    /// per-entity actions are in use.
+    pub fn snap_entities_without_action<K: std::hash::Hash + Eq + Copy>(
+        &mut self,
+        entity_residue_ranges: &[(K, u32, u32)],
+        active_entities: &std::collections::HashSet<K>,
+    ) {
+        for &(ref entity_id, start_residue, residue_count) in entity_residue_ranges {
+            if active_entities.contains(entity_id) {
+                continue; // This entity has an action, let it animate
+            }
+
+            let res_start = start_residue as usize;
+            let res_end = (start_residue + residue_count) as usize;
+
+            // Snap CA positions for this group's residues
+            for r in res_start..res_end.min(self.start_ca_positions.len()) {
+                if let Some(target) = self.target_ca_positions.get(r) {
+                    self.start_ca_positions[r] = *target;
+                }
+            }
+
+            // Snap sidechain positions for atoms belonging to this group's residues
+            for (i, &res_idx) in self.sidechain_residue_indices.iter().enumerate() {
+                let r = res_idx as usize;
+                if r >= res_start && r < res_end {
+                    if let Some(target) = self.target_sidechain_positions.get(i) {
+                        if i < self.start_sidechain_positions.len() {
+                            self.start_sidechain_positions[i] = *target;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remove non-targeted entity residues from the active AnimationRunner.
+    ///
+    /// For entities NOT in `active_entities`, removes their residues from
+    /// the runner's list so `apply_to_state` never touches them. Also snaps
+    /// their backbone `current = target` so they show no visual motion.
+    ///
+    /// Call this AFTER `set_target` (which creates the runner) and AFTER
+    /// `snap_entities_without_action` when per-entity actions are in use.
+    pub fn remove_non_targeted_from_runner<K: std::hash::Hash + Eq + Copy>(
+        &mut self,
+        entity_residue_ranges: &[(K, u32, u32)],
+        active_entities: &std::collections::HashSet<K>,
+    ) {
+        // Collect residue ranges for non-targeted entities
+        let snap_ranges: Vec<(usize, usize)> = entity_residue_ranges
+            .iter()
+            .filter(|(id, _, _)| !active_entities.contains(id))
+            .map(|(_, start, count)| (*start as usize, (*start + *count) as usize))
+            .collect();
+
+        if snap_ranges.is_empty() {
+            return;
+        }
+
+        // Snap backbone state so current = target for those residues
+        for &(start, end) in &snap_ranges {
+            for r in start..end {
+                if let Some(target) = self.state.get_target(r).cloned() {
+                    self.state.set_current(r, target);
+                }
+            }
+        }
+
+        // Remove from runner so apply_to_state never overwrites them
+        if let Some(ref mut runner) = self.runner {
+            runner.remove_residue_ranges(&snap_ranges);
+        }
+
+        // Store snapped ranges so get_sidechain_positions() can skip them
+        self.snapped_residue_ranges = snap_ranges;
     }
 
     /// Check if sidechain animation state is valid (has data).

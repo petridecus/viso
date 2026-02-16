@@ -40,7 +40,9 @@ pub enum SceneRequest {
     FullRebuild {
         groups: Vec<PerGroupData>,
         aggregated: Arc<AggregatedRenderData>,
-        action: Option<AnimationAction>,
+        /// Per-entity animation actions. Entities in the map animate with their
+        /// action; entities not in the map snap. Empty map = snap all.
+        entity_actions: HashMap<GroupId, AnimationAction>,
         display: DisplayOptions,
         colors: ColorOptions,
     },
@@ -98,7 +100,12 @@ pub struct PreparedScene {
     /// Concatenated per-residue colors (derived from scores, cached for animation).
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     pub all_positions: Vec<Vec3>,
-    pub action: Option<AnimationAction>,
+    /// Per-entity animation actions. Entities in the map animate; others snap.
+    /// Empty map = snap all (no animation).
+    pub entity_actions: HashMap<GroupId, AnimationAction>,
+    /// Where each entity's residues land in the flat concatenated arrays:
+    /// `(entity_id, global_residue_start, residue_count)`.
+    pub entity_residue_ranges: Vec<(GroupId, u32, u32)>,
     pub non_protein_entities: Vec<MoleculeEntity>,
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
     pub nucleic_acid_rings: Vec<NucleotideRing>,
@@ -251,7 +258,7 @@ impl SceneProcessor {
                 SceneRequest::FullRebuild {
                     groups,
                     aggregated: _,
-                    action,
+                    entity_actions,
                     display,
                     colors,
                 } => {
@@ -289,7 +296,7 @@ impl SceneProcessor {
                         .collect();
 
                     // Concatenate into PreparedScene
-                    let prepared = Self::concatenate_meshes(&group_meshes, action);
+                    let prepared = Self::concatenate_meshes(&group_meshes, entity_actions);
                     scene_input.write(Some(prepared));
                 }
                 SceneRequest::AnimationFrame {
@@ -436,10 +443,10 @@ impl SceneProcessor {
         }
     }
 
-    /// Concatenate per-group cached meshes into a single PreparedScene.
+    /// Concatenate per-entity cached meshes into a single PreparedScene.
     fn concatenate_meshes(
         group_meshes: &[(GroupId, &CachedGroupMesh)],
-        action: Option<AnimationAction>,
+        entity_actions: HashMap<GroupId, AnimationAction>,
     ) -> PreparedScene {
         // --- Tube ---
         let mut all_tube_verts: Vec<u8> = Vec::new();
@@ -491,7 +498,10 @@ impl SceneProcessor {
         let mut has_any_colors = false;
         let mut all_per_residue_colors: Vec<[f32; 3]> = Vec::new();
 
-        for (_, mesh) in group_meshes {
+        // Track where each entity's residues land in the flat arrays
+        let mut entity_residue_ranges: Vec<(GroupId, u32, u32)> = Vec::new();
+
+        for (group_id, mesh) in group_meshes {
             let sc_atom_offset = all_sidechain_positions.len() as u32;
 
             // Tube: offset indices
@@ -573,6 +583,9 @@ impl SceneProcessor {
                 }
             }
 
+            // Track entity residue range
+            entity_residue_ranges.push((*group_id, global_residue_offset, mesh.residue_count));
+
             global_residue_offset += mesh.residue_count;
         }
 
@@ -625,7 +638,8 @@ impl SceneProcessor {
             ss_types,
             per_residue_colors: if has_any_colors { Some(all_per_residue_colors) } else { None },
             all_positions,
-            action,
+            entity_actions,
+            entity_residue_ranges,
             non_protein_entities: all_non_protein,
             nucleic_acid_chains: all_na_chains,
             nucleic_acid_rings: all_na_rings,

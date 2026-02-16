@@ -107,6 +107,16 @@ impl AnimationRunner {
     pub fn residue_count(&self) -> usize {
         self.residues.len()
     }
+
+    /// Remove residues whose global index falls within any of the given ranges.
+    /// Used to exclude non-targeted entity residues from animation.
+    pub fn remove_residue_ranges(&mut self, ranges: &[(usize, usize)]) {
+        self.residues.retain(|data| {
+            !ranges.iter().any(|&(start, end)| {
+                data.residue_idx >= start && data.residue_idx < end
+            })
+        });
+    }
 }
 
 impl std::fmt::Debug for AnimationRunner {

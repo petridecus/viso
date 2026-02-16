@@ -2071,19 +2071,51 @@ impl ProteinRenderEngine {
     /// **Non-blocking**: clones the aggregated data and sends it to the background
     /// SceneProcessor thread for CPU geometry generation. Call `apply_pending_scene()`
     /// each frame to pick up the results.
+    /// Sync scene data to renderers with a global animation action.
+    ///
+    /// All entities animate with the same action (or snap if `None`).
     pub fn sync_scene_to_renderers(&mut self, action: Option<AnimationAction>) {
         if !self.scene.is_dirty() && action.is_none() {
             return;
         }
 
         let groups = self.scene.per_group_data();
-        let agg = self.scene.aggregated(); // Arc::clone (~1ns), no deep copy
+        // Build entity_actions: all entities get the same action
+        let entity_actions = match action {
+            Some(a) => groups.iter().map(|g| (g.id, a)).collect(),
+            None => HashMap::new(),
+        };
+        let agg = self.scene.aggregated();
         self.scene.mark_rendered();
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
             groups,
             aggregated: agg,
-            action,
+            entity_actions,
+            display: self.options.display.clone(),
+            colors: self.options.colors.clone(),
+        });
+    }
+
+    /// Sync scene data to renderers with per-entity animation actions.
+    ///
+    /// Entities in the map animate with their action; all others snap.
+    pub fn sync_scene_to_renderers_targeted(
+        &mut self,
+        entity_actions: HashMap<GroupId, AnimationAction>,
+    ) {
+        if !self.scene.is_dirty() && entity_actions.is_empty() {
+            return;
+        }
+
+        let groups = self.scene.per_group_data();
+        let agg = self.scene.aggregated();
+        self.scene.mark_rendered();
+
+        self.scene_processor.submit(SceneRequest::FullRebuild {
+            groups,
+            aggregated: agg,
+            entity_actions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
         });
@@ -2103,8 +2135,56 @@ impl ProteinRenderEngine {
         // so no drain loop needed — stale intermediates are skipped.
 
         // Animation target setup or snap update (fast: array copies + animator)
-        if let Some(action) = prepared.action {
-            self.setup_animation_targets_from_prepared(&prepared, action);
+        if !prepared.entity_actions.is_empty() {
+            // Pick the first action as the "dominant" for animator behavior
+            let dominant_action = prepared.entity_actions.values().next().copied()
+                .unwrap_or(AnimationAction::Wiggle);
+            self.setup_animation_targets_from_prepared(&prepared, dominant_action);
+
+            // Snap residues for entities NOT in entity_actions
+            let active: HashSet<GroupId> = prepared.entity_actions.keys().copied().collect();
+            self.animator.snap_entities_without_action(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
+
+            // Remove non-targeted entity residues from the AnimationRunner
+            // so apply_to_state doesn't overwrite their snapped backbone state
+            self.animator.remove_non_targeted_from_runner(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
+
+            // Also snap engine-level sidechain start positions for non-targeted entities
+            for &(eid, start_residue, residue_count) in &prepared.entity_residue_ranges {
+                if active.contains(&eid) {
+                    continue;
+                }
+                let res_start = start_residue as usize;
+                let res_end = (start_residue + residue_count) as usize;
+                for (i, &res_idx) in self.cached_sidechain_residue_indices.iter().enumerate() {
+                    let r = res_idx as usize;
+                    if r >= res_start && r < res_end {
+                        if i < self.start_sidechain_positions.len()
+                            && i < self.target_sidechain_positions.len()
+                        {
+                            self.start_sidechain_positions[i] = self.target_sidechain_positions[i];
+                        }
+                    }
+                }
+                for (j, &(_, cb_idx)) in self.target_backbone_sidechain_bonds.iter().enumerate() {
+                    let res_idx = self.cached_sidechain_residue_indices
+                        .get(cb_idx as usize)
+                        .copied()
+                        .unwrap_or(u32::MAX) as usize;
+                    if res_idx >= res_start && res_idx < res_end {
+                        if j < self.start_backbone_sidechain_bonds.len() {
+                            self.start_backbone_sidechain_bonds[j] =
+                                self.target_backbone_sidechain_bonds[j];
+                        }
+                    }
+                }
+            }
         } else {
             self.snap_from_prepared(&prepared);
         }
