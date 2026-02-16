@@ -87,7 +87,7 @@ pub struct DisplayOptions {
     pub lipid_mode: String,
     pub show_sidechains: bool,
     pub show_hydrogens: bool,
-    /// Backbone coloring mode: "secondary_structure" (default) or "score".
+    /// Backbone coloring mode: "score" (default) or "secondary_structure".
     pub backbone_color_mode: String,
 }
 
@@ -101,7 +101,7 @@ impl Default for DisplayOptions {
             lipid_mode: "coarse".to_string(),
             show_sidechains: true,
             show_hydrogens: false,
-            backbone_color_mode: "secondary_structure".to_string(),
+            backbone_color_mode: "score".to_string(),
         }
     }
 }
