@@ -143,16 +143,9 @@ impl TrajectoryPlayer {
 /// This mirrors the logic in `extract_backbone_chains` from foldit-conv so
 /// the mapping is consistent with the chain topology the renderer uses.
 pub fn build_backbone_atom_indices(coords: &foldit_conv::coords::Coords) -> Vec<usize> {
-    use glam::Vec3;
-
-    /// Must match the constant in extract_backbone_chains.
-    const BACKBONE_BREAK_DIST: f32 = 4.0;
-
     let mut indices = Vec::new();
     let mut last_chain_id: Option<u8> = None;
     let mut last_res_num: Option<i32> = None;
-    let mut last_pos: Option<Vec3> = None;
-    // Temp buffer to detect chain breaks (we need to mirror extract_backbone_chains exactly)
     let mut current_chain_indices: Vec<usize> = Vec::new();
 
     for i in 0..coords.num_atoms {
@@ -166,19 +159,16 @@ pub fn build_backbone_atom_indices(coords: &foldit_conv::coords::Coords) -> Vec<
 
         let chain_id = coords.chain_ids[i];
         let res_num = coords.res_nums[i];
-        let pos = Vec3::new(coords.atoms[i].x, coords.atoms[i].y, coords.atoms[i].z);
 
         let is_chain_break = last_chain_id.map_or(false, |c| c != chain_id);
         let is_sequence_gap = last_res_num.map_or(false, |r| (res_num - r).abs() > 1);
-        let is_distance_break = last_pos.map_or(false, |p| pos.distance(p) > BACKBONE_BREAK_DIST);
 
-        if (is_chain_break || is_sequence_gap || is_distance_break) && !current_chain_indices.is_empty() {
+        if (is_chain_break || is_sequence_gap) && !current_chain_indices.is_empty() {
             indices.append(&mut current_chain_indices);
         }
 
         current_chain_indices.push(i);
         last_chain_id = Some(chain_id);
-        last_pos = Some(pos);
 
         if atom_name == "CA" {
             last_res_num = Some(res_num);

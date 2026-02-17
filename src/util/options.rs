@@ -336,6 +336,8 @@ impl Default for KeybindingOptions {
         bindings.insert("toggle_solvent".to_string(), "KeyO".to_string());
         bindings.insert("toggle_lipids".to_string(), "KeyL".to_string());
         bindings.insert("cycle_focus".to_string(), "Tab".to_string());
+        bindings.insert("toggle_auto_rotate".to_string(), "KeyR".to_string());
+        bindings.insert("reset_focus".to_string(), "Backquote".to_string());
         bindings.insert("cancel".to_string(), "Escape".to_string());
 
         let mut opts = Self {

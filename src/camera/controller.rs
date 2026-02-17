@@ -7,6 +7,9 @@ use wgpu::util::DeviceExt;
 /// Speed of camera animation (higher = faster, 1.0 = instant)
 const CAMERA_ANIMATION_SPEED: f32 = 3.0;
 
+/// Turntable auto-rotation speed in radians/sec (~29 deg/sec)
+const TURNTABLE_SPEED: f32 = 0.5;
+
 pub struct CameraController {
     orientation: Quat,
     distance: f32,
@@ -24,6 +27,8 @@ pub struct CameraController {
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
 
+    /// When Some, the camera spins around the captured axis (camera up at toggle time).
+    auto_rotate_axis: Option<Vec3>,
     pub mouse_pressed: bool,
     pub shift_pressed: bool,
     pub rotate_speed: f32,
@@ -98,6 +103,7 @@ impl CameraController {
             buffer,
             layout,
             bind_group,
+            auto_rotate_axis: None,
             mouse_pressed: false,
             shift_pressed: false,
             rotate_speed: 0.01,
@@ -152,6 +158,14 @@ impl CameraController {
             self.update_camera_pos();
         }
 
+        // Turntable auto-rotation (independent of animation lerps)
+        if let Some(axis) = self.auto_rotate_axis {
+            let rot = Quat::from_axis_angle(axis, dt * TURNTABLE_SPEED);
+            self.orientation = rot * self.orientation;
+            self.update_camera_pos();
+            return true;
+        }
+
         animating
     }
 
@@ -160,6 +174,23 @@ impl CameraController {
         self.target_focus_point.is_some()
             || self.target_distance.is_some()
             || self.target_bounding_radius.is_some()
+    }
+
+    /// Toggle turntable auto-rotation. Captures the camera's current up vector
+    /// as the spin axis when enabling.
+    pub fn toggle_auto_rotate(&mut self) -> bool {
+        if self.auto_rotate_axis.is_some() {
+            self.auto_rotate_axis = None;
+            false
+        } else {
+            self.auto_rotate_axis = Some((self.orientation * Vec3::Y).normalize());
+            true
+        }
+    }
+
+    /// Whether auto-rotation is currently active.
+    pub fn is_auto_rotating(&self) -> bool {
+        self.auto_rotate_axis.is_some()
     }
 
     /// Get the orbital distance from focus point.
