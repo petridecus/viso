@@ -5,11 +5,14 @@ Viso is a GPU-accelerated 3D protein visualization engine written in Rust. It re
 Viso supports multiple representation styles — backbone ribbons, tubes, ball-and-stick, sidechains, and nucleic acids — combined with a full post-processing pipeline (bloom, SSAO, FXAA, tone mapping) and an animation system for smooth structural transitions.
 
 <p align="center">
-  <img src="gallery/spike-protein.png" width="19%" />
-  <img src="gallery/fatty-acid-synthase.png" width="19%" />
-  <img src="gallery/hemolysin.png" width="19%" />
-  <img src="gallery/mitochondrial-complex.png" width="19%" />
-  <img src="gallery/tetranucleosome.png" width="19%" />
+  <img src="gallery/spike-protein.png" width="32%" />
+  <img src="gallery/fatty-acid-synthase.png" width="32%" />
+  <img src="gallery/hemolysin.png" width="32%" />
+</p>
+<p align="center">
+  <img src="gallery/mitochondrial-complex.png" width="32%" />
+  <img src="gallery/tetranucleosome.png" width="32%" />
+  <img src="gallery/tri-snrnp-spliceosome.png" width="32%" />
 </p>
 
 ## Features
@@ -84,14 +87,23 @@ src/
   main.rs                       Binary entry point and event loop
 
   engine/                       Core rendering engine
-    core.rs                     ProteinRenderEngine — central orchestrator
-    scene.rs                    Entity-based scene graph
-    scene_processor.rs          Background CPU thread for mesh generation
+    mod.rs                      ProteinRenderEngine — central orchestrator
+    animation.rs                Animation methods (impl ProteinRenderEngine)
+    input.rs                    Input and selection methods
+    options.rs                  Options methods
+    queries.rs                  Queries and backend methods
+    scene_management.rs         Scene management methods
+    scene_sync.rs               Scene sync and GPU upload methods
+
+  gpu/                          GPU infrastructure
     render_context.rs           wgpu device/surface management
+    shader_composer.rs          WGSL shader module compilation
     dynamic_buffer.rs           GPU buffer utilities
     residue_color.rs            Per-residue color buffer with animated transitions
-    frame_timing.rs             FPS limiting and frame statistics
-    shader_composer.rs          WGSL shader module compilation
+
+  scene/                        Scene graph and background processing
+    mod.rs                      Entity-based scene graph
+    processor.rs                Background CPU thread for mesh generation
 
   renderer/
     molecular/                  Protein/molecule renderers
@@ -103,6 +115,7 @@ src/
       band.rs                   Band visualization
       pull.rs                   Pull/constraint visualization
     postprocess/                Screen-space post-processing
+      post_process.rs           Post-processing stack orchestrator
       bloom.rs                  Bloom (glow) effect
       ssao.rs                   Screen-space ambient occlusion
       composite.rs              Final composite pass (SSAO + outlines + tone mapping)
@@ -113,19 +126,23 @@ src/
     controller.rs               Arcball-style interactive camera control
     frustum.rs                  View frustum culling
     input.rs                    Input state tracking
+    input_state.rs              Mouse click state machine
 
   animation/                    Structure animation system
     interpolation.rs            Interpolation functions
     preferences.rs              Animation behavior configuration
+    sidechain_state.rs          Sidechain animation state
     animator/                   Animation controller, runner, and state
     behaviors/                  Animation styles (snap, smooth, cascade, collapse/expand)
 
   picking/                      GPU-based residue selection
     picking.rs                  Render residue IDs to offscreen texture, read back at cursor
+    picking_state.rs            Picking bind group state
 
   util/                         Utilities and configuration
     options.rs                  TOML-based preset system (display, lighting, color, geometry)
     lighting.rs                 Dual-light PBR lighting with rim light and IBL
+    frame_timing.rs             FPS limiting and frame statistics
     bond_topology.rs            Residue bond connectivity data
     easing.rs                   Easing functions
     score_color.rs              Score-based coloring
