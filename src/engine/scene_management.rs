@@ -309,4 +309,9 @@ impl ProteinRenderEngine {
     pub fn focus(&self) -> &Focus {
         self.scene.focus()
     }
+
+    /// Set the focus explicitly.
+    pub fn set_focus(&mut self, focus: Focus) {
+        self.scene.set_focus(focus);
+    }
 }

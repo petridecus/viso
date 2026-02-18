@@ -754,6 +754,11 @@ impl ProteinRenderEngine {
         )
     }
 
+    /// Toggle auto-rotation. Returns the new state (true = rotating).
+    pub fn toggle_auto_rotate(&mut self) -> bool {
+        self.camera_controller.toggle_auto_rotate()
+    }
+
     /// Fit camera to the currently focused element.
     pub fn fit_camera_to_focus(&mut self) {
         match *self.scene.focus() {

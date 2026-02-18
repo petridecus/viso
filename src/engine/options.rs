@@ -294,7 +294,7 @@ impl ProteinRenderEngine {
     /// Save the current options as a named view preset.
     /// Returns true on success.
     pub fn save_preset(
-        &self,
+        &mut self,
         name: &str,
         presets_dir: &std::path::Path,
     ) -> bool {
@@ -302,6 +302,7 @@ impl ProteinRenderEngine {
         match self.options.save(&path) {
             Ok(()) => {
                 log::info!("Saved view preset '{}'", name);
+                self.active_preset = Some(name.to_string());
                 true
             }
             Err(e) => {

@@ -119,6 +119,41 @@ impl ProteinRenderEngine {
         )
     }
 
+    /// Get the closest atom position and name for a given residue relative to
+    /// a reference point. Returns both backbone and sidechain atoms.
+    pub fn get_closest_atom_with_name(
+        &self,
+        residue_idx: usize,
+        reference_point: Vec3,
+    ) -> Option<(Vec3, String)> {
+        let backbone_chains = self.get_current_backbone_chains();
+        let sidechain_positions = self.get_current_sidechain_positions();
+
+        foldit_conv::coords::get_closest_atom_with_name(
+            &backbone_chains,
+            &sidechain_positions,
+            &self.sc.cached_sidechain_residue_indices,
+            &self.sc.cached_sidechain_atom_names,
+            residue_idx,
+            reference_point,
+        )
+    }
+
+    /// Current frames-per-second.
+    pub fn fps(&self) -> f32 {
+        self.frame_timing.fps()
+    }
+
+    /// Human-readable description of the current focus.
+    pub fn focus_description(&self) -> String {
+        self.scene.focus_description()
+    }
+
+    /// Get the current active preset name, if any.
+    pub fn active_preset(&self) -> &Option<String> {
+        &self.active_preset
+    }
+
     /// Get the interpolated position of a specific atom by residue index and
     /// atom name.
     pub fn get_atom_position_by_name(
