@@ -18,7 +18,7 @@ pub struct DynamicBuffer {
 }
 
 impl DynamicBuffer {
-    /// Create a new dynamic buffer with initial capacity
+    /// Buffer with the given initial byte capacity.
     pub fn new(
         device: &wgpu::Device,
         label: &str,
@@ -43,7 +43,7 @@ impl DynamicBuffer {
         }
     }
 
-    /// Create a new dynamic buffer initialized with data
+    /// Buffer initialized from existing data.
     pub fn new_with_data<T: bytemuck::Pod>(
         device: &wgpu::Device,
         label: &str,
@@ -81,7 +81,7 @@ impl DynamicBuffer {
         let needed = data_bytes.len();
 
         let reallocated = if needed > self.capacity {
-            // Grow with 2x strategy, minimum 1KB growth
+            // 2x growth, minimum 1KB
             let new_capacity = (needed * 2).max(self.capacity + 1024);
 
             self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -140,22 +140,18 @@ impl DynamicBuffer {
         reallocated
     }
 
-    /// Get the underlying buffer for binding
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
     }
 
-    /// Current data length in bytes
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Check if buffer is empty
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Buffer capacity in bytes
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -171,7 +167,7 @@ pub struct TypedBuffer<T> {
 }
 
 impl<T: bytemuck::Pod> TypedBuffer<T> {
-    /// Create a new typed buffer with default initial capacity (1000 items)
+    /// Default initial capacity: 1000 items.
     pub fn new(device: &wgpu::Device, label: &str, usage: wgpu::BufferUsages) -> Self {
         let initial_capacity = std::mem::size_of::<T>() * 1000;
         Self {
@@ -181,7 +177,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         }
     }
 
-    /// Create a new typed buffer with specified initial capacity (in items)
+    /// Specified initial capacity (in items).
     pub fn with_capacity(
         device: &wgpu::Device,
         label: &str,
@@ -196,7 +192,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         }
     }
 
-    /// Create a new typed buffer initialized with data
+    /// Typed buffer initialized from existing data.
     pub fn new_with_data(
         device: &wgpu::Device,
         label: &str,
@@ -232,22 +228,18 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         self.inner.write_bytes(device, queue, data)
     }
 
-    /// Get the underlying buffer for binding
     pub fn buffer(&self) -> &wgpu::Buffer {
         self.inner.buffer()
     }
 
-    /// Number of items in the buffer
     pub fn count(&self) -> usize {
         self.count
     }
 
-    /// Check if buffer is empty
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
 
-    /// Capacity in items
     pub fn capacity(&self) -> usize {
         self.inner.capacity() / std::mem::size_of::<T>()
     }

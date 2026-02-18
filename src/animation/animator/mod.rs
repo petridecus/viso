@@ -19,25 +19,8 @@ use glam::Vec3;
 use super::interpolation::InterpolationContext;
 use super::preferences::AnimationAction;
 
-/// Structure animator manages animation state and applies behaviors.
-///
-/// This is a thin facade composing:
-/// - `StructureState` for current/target visual state
-/// - `AnimationRunner` for executing animations
-/// - `AnimationController` for preemption and preferences
-///
-/// # Usage
-///
-/// ```ignore
-/// let mut animator = StructureAnimator::new();
-///
-/// // Set target when data changes
-/// animator.set_target(&backbone_chains, AnimationAction::Wiggle);
-///
-/// // Each frame
-/// animator.update(Instant::now());
-/// let visual = animator.get_backbone();
-/// ```
+/// Composes [`StructureState`], [`AnimationRunner`], and [`AnimationController`]
+/// to animate backbone/sidechain transitions.
 pub struct StructureAnimator {
     state: StructureState,
     runner: Option<AnimationRunner>,
@@ -56,8 +39,7 @@ pub struct StructureAnimator {
     sidechains_changed: bool,
     /// Pending action for sidechain-only animation
     pending_sidechain_action: Option<AnimationAction>,
-    /// Current frame's animation progress (0.0 to 1.0) - single source of truth
-    /// Set by update(), used by all getters in the same frame
+    /// Current frame's animation progress (0.0 to 1.0), set by update().
     current_frame_progress: f32,
     /// Residue ranges that have been snapped (non-targeted entities).
     /// Sidechain atoms in these ranges skip interpolation entirely.
@@ -65,7 +47,7 @@ pub struct StructureAnimator {
 }
 
 impl StructureAnimator {
-    /// Create a new animator with default preferences.
+    /// Animator with default preferences.
     pub fn new() -> Self {
         Self {
             state: StructureState::new(),
@@ -106,7 +88,6 @@ impl StructureAnimator {
         &mut self.controller
     }
 
-    /// Get the controller.
     pub fn controller(&self) -> &AnimationController {
         &self.controller
     }
@@ -119,19 +100,15 @@ impl StructureAnimator {
         }
     }
 
-    /// Check if animations are enabled.
     pub fn is_enabled(&self) -> bool {
         self.controller.is_enabled()
     }
 
-    /// Check if an animation is currently active.
     pub fn is_animating(&self) -> bool {
         self.runner.is_some()
     }
 
-    /// Get the current animation progress (0.0 to 1.0).
-    /// Returns the progress computed in the last update() call.
-    /// This is the single source of truth for animation timing within a frame.
+    /// Animation progress (0.0 to 1.0), computed in the last `update()` call.
     pub fn progress(&self) -> f32 {
         self.current_frame_progress
     }
@@ -177,7 +154,6 @@ impl StructureAnimator {
             return false;
         };
 
-        // Compute and store progress once - this is the single source of truth for this frame
         self.current_frame_progress = runner.progress(now);
 
         // Apply interpolated states using the same progress value
@@ -211,26 +187,19 @@ impl StructureAnimator {
         self.state.to_backbone_chains()
     }
 
-    /// Get the number of residues.
     pub fn residue_count(&self) -> usize {
         self.state.residue_count()
     }
 
-    /// Get the underlying state (for advanced usage).
     pub fn state(&self) -> &StructureState {
         &self.state
     }
 
-    /// Get the current animation runner (if any).
     pub fn runner(&self) -> Option<&AnimationRunner> {
         self.runner.as_ref()
     }
 
-    /// Get the current interpolation context.
-    ///
-    /// Returns the unified context that should be used for all interpolation
-    /// in the current frame. This ensures backbone, sidechains, and bonds
-    /// all use the same eased progress values.
+    /// Current interpolation context (unified across backbone, sidechains, bonds).
     pub fn interpolation_context(&self) -> InterpolationContext {
         let raw_t = self.progress();
         match self.runner.as_ref() {
@@ -290,8 +259,22 @@ impl StructureAnimator {
                 self.start_ca_positions = self.target_ca_positions.clone();
             }
         } else {
-            // Size changed - snap to new positions
-            self.start_sidechain_positions = positions.to_vec();
+            // Size changed.
+            // If the pending action allows size-change animation, initialize
+            // sidechain starts at their CA (collapsed) so CollapseExpand can
+            // animate them expanding outward. Otherwise snap to target.
+            let allows_resize = action
+                .map(|a| a.allows_size_change())
+                .unwrap_or(false);
+            if allows_resize {
+                // Start each sidechain atom at its residue's CA position
+                self.start_sidechain_positions = residue_indices
+                    .iter()
+                    .map(|&ri| ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO))
+                    .collect();
+            } else {
+                self.start_sidechain_positions = positions.to_vec();
+            }
             self.start_ca_positions = ca_positions.to_vec();
         }
 
@@ -342,7 +325,6 @@ impl StructureAnimator {
         let runner = self.runner.as_ref().unwrap();
         let behavior = runner.behavior();
 
-        // Get unified interpolation context - single source of truth for progress
         let ctx = behavior.compute_context(raw_t);
 
         self.start_sidechain_positions
@@ -363,8 +345,6 @@ impl StructureAnimator {
                 let start_ca = self.start_ca_positions.get(res_idx).copied().unwrap_or(*start);
                 let end_ca = self.target_ca_positions.get(res_idx).copied().unwrap_or(*end);
 
-                // CRITICAL: Use eased_t for collapse point (same as backbone)
-                // This ensures sidechain collapse point matches backbone CA position
                 let collapse_point = start_ca + (end_ca - start_ca) * ctx.eased_t;
 
                 behavior.interpolate_position(raw_t, *start, *end, collapse_point)
@@ -459,6 +439,17 @@ impl StructureAnimator {
     /// Check if sidechain animation state is valid (has data).
     pub fn has_sidechain_data(&self) -> bool {
         !self.target_sidechain_positions.is_empty()
+    }
+
+    /// Whether sidechains should be included in animation frames right now.
+    ///
+    /// Multi-phase behaviors (BackboneThenExpand) hide sidechains during
+    /// the backbone-lerp phase so new atoms don't flash at their final positions.
+    pub fn should_include_sidechains(&self) -> bool {
+        match self.runner.as_ref() {
+            Some(runner) => runner.behavior().should_include_sidechains(self.progress()),
+            None => true,
+        }
     }
 
     /// Get the CA position of a residue by index.

@@ -194,7 +194,7 @@ impl NucleicAcidRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Nucleic Acid Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
+        let shader = shader_composer.compose(&context.device, "Nucleic Acid Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_na.wgsl"), "backbone_na.wgsl");
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("NA Pipeline Layout"),
@@ -373,42 +373,6 @@ impl NucleicAcidRenderer {
         }
         hasher.finish()
     }
-}
-
-// ── Spline utilities (local copies from ribbon_renderer) ──
-
-fn cubic_bspline(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
-    let n = points.len();
-    if n < 2 { return points.to_vec(); }
-    if n < 4 { return linear_interpolate(points, segments_per_span); }
-
-    let mut result = Vec::new();
-
-    fn b0(t: f32) -> f32 { (1.0 - t).powi(3) / 6.0 }
-    fn b1(t: f32) -> f32 { (3.0 * t.powi(3) - 6.0 * t.powi(2) + 4.0) / 6.0 }
-    fn b2(t: f32) -> f32 { (-3.0 * t.powi(3) + 3.0 * t.powi(2) + 3.0 * t + 1.0) / 6.0 }
-    fn b3(t: f32) -> f32 { t.powi(3) / 6.0 }
-
-    let mut padded = Vec::with_capacity(n + 2);
-    padded.push(points[0] * 2.0 - points[1]);
-    padded.extend_from_slice(points);
-    padded.push(points[n - 1] * 2.0 - points[n - 2]);
-
-    for i in 0..n - 1 {
-        let p0 = padded[i];
-        let p1 = padded[i + 1];
-        let p2 = padded[i + 2];
-        let p3 = padded[i + 3];
-
-        for j in 0..segments_per_span {
-            let t = j as f32 / segments_per_span as f32;
-            let pos = p0 * b0(t) + p1 * b1(t) + p2 * b2(t) + p3 * b3(t);
-            result.push(pos);
-        }
-    }
-
-    result.push(points[n - 1]);
-    result
 }
 
 /// Catmull-Rom spline: interpolates through every control point.

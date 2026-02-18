@@ -9,11 +9,6 @@ use super::runner::{AnimationRunner, ResidueAnimationData};
 use super::state::StructureState;
 
 /// Controls animation lifecycle: when to start, preempt, or ignore new targets.
-///
-/// Responsibilities:
-/// - Map actions to behaviors via preferences
-/// - Decide preemption strategy when new target arrives
-/// - Build AnimationRunner when animation should start
 #[derive(Clone)]
 pub struct AnimationController {
     preferences: AnimationPreferences,
@@ -37,12 +32,10 @@ impl AnimationController {
         }
     }
 
-    /// Get mutable access to preferences.
     pub fn preferences_mut(&mut self) -> &mut AnimationPreferences {
         &mut self.preferences
     }
 
-    /// Get preferences.
     pub fn preferences(&self) -> &AnimationPreferences {
         &self.preferences
     }
@@ -52,7 +45,6 @@ impl AnimationController {
         self.enabled = enabled;
     }
 
-    /// Check if animations are enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
@@ -83,11 +75,23 @@ impl AnimationController {
             return None;
         }
 
-        // Structure size changed - snap, no animation
+        // Structure size changed
+        let did_resize;
         if current_state.size_differs(new_target) {
-            // Replace current state entirely
-            *current_state = new_target.clone();
-            return None;
+            if action.allows_size_change() {
+                // Resize current state to match the new target dimensions.
+                // Existing residues keep their current visual positions (and will
+                // lerp to the new target). New residues start at their target
+                // positions (no visible motion for those).
+                current_state.resize_to_match(new_target);
+                did_resize = true;
+            } else {
+                // Replace current state entirely - snap, no animation
+                *current_state = new_target.clone();
+                return None;
+            }
+        } else {
+            did_resize = false;
         }
 
         // First time (empty state) - snap, no animation
@@ -114,8 +118,10 @@ impl AnimationController {
             }
         }
 
-        // Check if backbone target actually changed (compare against previous target)
-        let backbone_changed = current_state.target_differs(new_target);
+        // Check if backbone target actually changed (compare against previous target).
+        // If we just resized, the backbone definitely changed — skip the target_differs
+        // check since resize_to_match already set self.target = new_target.target.
+        let backbone_changed = did_resize || current_state.target_differs(new_target);
 
         // If neither backbone nor sidechains changed (and not forced), skip animation
         if !backbone_changed && !force {
@@ -306,6 +312,49 @@ mod tests {
         );
 
         assert!(runner.is_none());
+    }
+
+    #[test]
+    fn test_controller_size_change_animates_for_diffusion_finalize() {
+        let controller = AnimationController::new();
+        let mut state = StructureState::from_backbone(&make_backbone(0.0, 3));
+        let new_target = StructureState::from_backbone(&make_backbone(5.0, 5)); // Larger
+
+        let runner = controller.handle_new_target(
+            &mut state,
+            &new_target,
+            None,
+            AnimationAction::DiffusionFinalize,
+            false,
+        );
+
+        // DiffusionFinalize allows size change — should create animation
+        assert!(runner.is_some());
+        // State should be resized to match new target
+        assert_eq!(state.residue_count(), 5);
+        // The first 3 residues should still have their old positions (y=0)
+        assert!((state.get_current(0).unwrap().backbone[0].y - 0.0).abs() < 0.001);
+        // The extra residues (4th, 5th) should start at their target positions (y=5)
+        assert!((state.get_current(3).unwrap().backbone[0].y - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_controller_size_change_smaller_animates_for_diffusion_finalize() {
+        let controller = AnimationController::new();
+        let mut state = StructureState::from_backbone(&make_backbone(0.0, 5));
+        let new_target = StructureState::from_backbone(&make_backbone(5.0, 3)); // Smaller
+
+        let runner = controller.handle_new_target(
+            &mut state,
+            &new_target,
+            None,
+            AnimationAction::DiffusionFinalize,
+            false,
+        );
+
+        // Should still animate — just truncated
+        assert!(runner.is_some());
+        assert_eq!(state.residue_count(), 3);
     }
 
     #[test]

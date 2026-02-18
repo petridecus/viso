@@ -24,7 +24,7 @@ pub struct TrajectoryPlayer {
 }
 
 impl TrajectoryPlayer {
-    /// Create a new trajectory player.
+    /// Trajectory player over pre-loaded DCD frames.
     ///
     /// - `frames`: all DCD frames (loaded into memory)
     /// - `num_atoms`: atom count per frame (from DCD header)

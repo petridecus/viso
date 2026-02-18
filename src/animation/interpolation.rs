@@ -1,34 +1,9 @@
 //! Centralized interpolation utilities for animation.
-//!
-//! This module provides a single source of truth for progress values
-//! used in animation interpolation. All animation code (backbone, sidechain,
-//! bonds) should use `InterpolationContext` to ensure consistent timing.
 
 use glam::Vec3;
 
-/// Single source of truth for progress values in a single animation frame.
-///
-/// This context is computed once per frame from the behavior and raw progress,
-/// then passed to all interpolation functions to ensure consistency.
-///
-/// # Why This Exists
-///
-/// Different animation behaviors may apply different easing curves or have
-/// multiple phases (e.g., CollapseExpand). Without a centralized context,
-/// different parts of the code (backbone vs sidechain interpolation) could
-/// compute different progress values, causing visual desync.
-///
-/// # Usage
-///
-/// ```ignore
-/// // In animation update loop:
-/// let ctx = behavior.compute_context(raw_t);
-///
-/// // For all interpolations in this frame:
-/// let backbone_pos = lerp_position(&ctx, start_backbone, end_backbone);
-/// let sidechain_pos = lerp_position(&ctx, start_sidechain, end_sidechain);
-/// // Both use the same eased_t value
-/// ```
+/// Per-frame interpolation context computed once from behavior + raw progress,
+/// then shared across all interpolation to prevent backbone/sidechain desync.
 #[derive(Debug, Clone, Copy)]
 pub struct InterpolationContext {
     /// Raw progress (0.0 to 1.0), unmodified from animation timer.
@@ -43,7 +18,7 @@ pub struct InterpolationContext {
 }
 
 impl InterpolationContext {
-    /// Create a simple context with just raw and eased values.
+    /// Context with just raw and eased values (no phase info).
     pub fn simple(raw_t: f32, eased_t: f32) -> Self {
         Self {
             raw_t,
@@ -53,7 +28,7 @@ impl InterpolationContext {
         }
     }
 
-    /// Create a context with phase information (for CollapseExpand, etc).
+    /// Context with phase information (for CollapseExpand, etc).
     pub fn with_phase(raw_t: f32, eased_t: f32, phase_t: f32, phase_eased_t: f32) -> Self {
         Self {
             raw_t,
@@ -63,8 +38,7 @@ impl InterpolationContext {
         }
     }
 
-    /// Create an "identity" context representing animation complete (t=1.0).
-    /// Use this when no animation is running.
+    /// Animation complete (t=1.0). Used when no animation is running.
     pub fn identity() -> Self {
         Self {
             raw_t: 1.0,
@@ -74,14 +48,12 @@ impl InterpolationContext {
         }
     }
 
-    /// Create a linear context (no easing).
+    /// Linear context (no easing).
     pub fn linear(raw_t: f32) -> Self {
         Self::simple(raw_t, raw_t)
     }
 
-    /// Get the unified progress value that all interpolation should use.
-    ///
-    /// For most behaviors, this returns `eased_t`. Override if needed.
+    /// Unified progress value for interpolation (`eased_t` for most behaviors).
     #[inline]
     pub fn unified_t(&self) -> f32 {
         self.eased_t
@@ -94,17 +66,14 @@ impl Default for InterpolationContext {
     }
 }
 
-/// Interpolate between two positions using the unified progress from context.
-///
-/// This is the primary interpolation function for positions.
-/// All position interpolation should use this to ensure consistency.
+/// Lerp two positions using the context's unified progress.
 #[inline]
 pub fn lerp_position(ctx: &InterpolationContext, start: Vec3, end: Vec3) -> Vec3 {
     let t = ctx.unified_t();
     start + (end - start) * t
 }
 
-/// Interpolate between two f32 values using the unified progress from context.
+/// Lerp two f32 values using the context's unified progress.
 #[inline]
 pub fn lerp_f32(ctx: &InterpolationContext, start: f32, end: f32) -> f32 {
     let t = ctx.unified_t();

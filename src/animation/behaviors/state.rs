@@ -14,7 +14,7 @@ pub struct ResidueVisualState {
 }
 
 impl ResidueVisualState {
-    /// Create a new residue visual state.
+    /// Residue state from backbone position and chi angles.
     pub fn new(backbone: [Vec3; 3], chis: [f32; 4], num_chis: usize) -> Self {
         Self {
             backbone,

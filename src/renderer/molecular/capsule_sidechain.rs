@@ -47,8 +47,7 @@ pub struct CapsuleSidechainRenderer {
 }
 
 impl CapsuleSidechainRenderer {
-    /// Create a new capsule sidechain renderer.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+    /// `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,

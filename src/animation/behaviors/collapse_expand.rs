@@ -123,8 +123,6 @@ impl AnimationBehavior for CollapseExpand {
         let ctx = self.compute_context(t);
         let collapse_frac = self.collapse_fraction();
 
-        // CRITICAL FIX: Backbone now uses eased_t (same as sidechains)
-        // This ensures backbone and sidechains move at the same pace
         let backbone_t = ctx.eased_t;
         let backbone = [
             start.backbone[0] + (end.backbone[0] - start.backbone[0]) * backbone_t,

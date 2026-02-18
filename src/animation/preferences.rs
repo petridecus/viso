@@ -3,7 +3,7 @@
 //! Users can customize which animation behavior is used for each action type.
 
 use super::behaviors::{
-    Cascade, CollapseExpand, SharedBehavior, Snap, SmoothInterpolation, shared,
+    BackboneThenExpand, Cascade, CollapseExpand, SharedBehavior, Snap, SmoothInterpolation, shared,
 };
 
 /// Actions that can trigger animations.
@@ -19,25 +19,29 @@ pub enum AnimationAction {
     Mutation,
     /// ML diffusion process (RFD3, SimpleFold).
     Diffusion,
+    /// Final transition from diffusion streaming to full-atom result.
+    DiffusionFinalize,
     /// Instant prediction result reveal.
     Reveal,
     /// Loading a new structure.
     Load,
 }
 
+impl AnimationAction {
+    /// Whether this action supports animating across backbone size changes.
+    ///
+    /// Most actions (Wiggle, Shake, Mutation) operate on the same structure
+    /// and always have the same residue count. But some transitions — like
+    /// `DiffusionFinalize` — change the residue count (e.g., backbone-only
+    /// streaming frames → full-atom result). For these, the animator will
+    /// resize the current state to match the new target and animate the
+    /// residues that overlap.
+    pub fn allows_size_change(self) -> bool {
+        matches!(self, AnimationAction::DiffusionFinalize | AnimationAction::Load)
+    }
+}
+
 /// User-configurable mapping from actions to animation behaviors.
-///
-/// # Example
-///
-/// ```ignore
-/// let mut prefs = AnimationPreferences::default();
-///
-/// // Make shake animations faster
-/// prefs.shake = shared(SmoothInterpolation::fast());
-///
-/// // Disable animation for wiggle (instant snap)
-/// prefs.wiggle = shared(Snap);
-/// ```
 #[derive(Clone)]
 pub struct AnimationPreferences {
     /// Animation for wiggle (Rosetta minimize).
@@ -48,6 +52,8 @@ pub struct AnimationPreferences {
     pub mutation: SharedBehavior,
     /// Animation for diffusion intermediates (RFD3, SimpleFold).
     pub diffusion: SharedBehavior,
+    /// Animation for final diffusion result (backbone lerp + sidechain expand).
+    pub diffusion_finalize: SharedBehavior,
     /// Animation for revealing instant prediction results.
     pub reveal: SharedBehavior,
     /// Animation for loading new structures.
@@ -55,13 +61,14 @@ pub struct AnimationPreferences {
 }
 
 impl AnimationPreferences {
-    /// Get the behavior for a given action.
+    /// Behavior for a given action.
     pub fn get(&self, action: AnimationAction) -> &SharedBehavior {
         match action {
             AnimationAction::Wiggle => &self.wiggle,
             AnimationAction::Shake => &self.shake,
             AnimationAction::Mutation => &self.mutation,
             AnimationAction::Diffusion => &self.diffusion,
+            AnimationAction::DiffusionFinalize => &self.diffusion_finalize,
             AnimationAction::Reveal => &self.reveal,
             AnimationAction::Load => &self.load,
         }
@@ -74,6 +81,7 @@ impl AnimationPreferences {
             AnimationAction::Shake => self.shake = behavior,
             AnimationAction::Mutation => self.mutation = behavior,
             AnimationAction::Diffusion => self.diffusion = behavior,
+            AnimationAction::DiffusionFinalize => self.diffusion_finalize = behavior,
             AnimationAction::Reveal => self.reveal = behavior,
             AnimationAction::Load => self.load = behavior,
         }
@@ -87,15 +95,12 @@ impl AnimationPreferences {
             shake: snap.clone(),
             mutation: snap.clone(),
             diffusion: snap.clone(),
+            diffusion_finalize: snap.clone(),
             reveal: snap.clone(),
             load: snap,
         }
     }
 
-    /// Create preferences matching Rosetta-Interactive defaults.
-    pub fn rosetta_defaults() -> Self {
-        Self::default()
-    }
 }
 
 impl Default for AnimationPreferences {
@@ -113,6 +118,12 @@ impl Default for AnimationPreferences {
             // Diffusion uses linear interpolation to not distort ML intermediates
             diffusion: shared(SmoothInterpolation::linear(Duration::from_millis(100))),
 
+            // Final diffusion result: backbone lerps to end FIRST, then sidechains expand
+            diffusion_finalize: shared(BackboneThenExpand::new(
+                Duration::from_millis(400),
+                Duration::from_millis(600),
+            )),
+
             // Reveals use cascade for dramatic effect
             reveal: shared(Cascade::default()),
 
@@ -129,6 +140,7 @@ impl std::fmt::Debug for AnimationPreferences {
             .field("shake", &self.shake.name())
             .field("mutation", &self.mutation.name())
             .field("diffusion", &self.diffusion.name())
+            .field("diffusion_finalize", &self.diffusion_finalize.name())
             .field("reveal", &self.reveal.name())
             .field("load", &self.load.name())
             .finish()
@@ -147,6 +159,7 @@ mod tests {
         assert_eq!(prefs.shake.name(), "smooth");
         assert_eq!(prefs.mutation.name(), "collapse-expand");
         assert_eq!(prefs.diffusion.name(), "smooth");
+        assert_eq!(prefs.diffusion_finalize.name(), "backbone-then-expand");
         assert_eq!(prefs.reveal.name(), "cascade");
         assert_eq!(prefs.load.name(), "snap");
     }

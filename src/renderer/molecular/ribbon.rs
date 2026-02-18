@@ -92,6 +92,7 @@ impl RibbonRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        color_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<Vec3>],
         shader_composer: &mut ShaderComposer,
     ) -> Self {
@@ -112,7 +113,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, color_layout, shader_composer);
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -133,6 +134,7 @@ impl RibbonRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        color_layout: &wgpu::BindGroupLayout,
         backbone_chains: &[Vec<RenderBackboneResidue>],
         shader_composer: &mut ShaderComposer,
     ) -> Self {
@@ -153,7 +155,7 @@ impl RibbonRenderer {
             wgpu::BufferUsages::INDEX,
         );
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, shader_composer);
+        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, color_layout, shader_composer);
         let last_chain_hash = Self::compute_residue_hash(backbone_chains);
 
         Self {
@@ -254,13 +256,14 @@ impl RibbonRenderer {
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
+        color_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         let shader = shader_composer.compose(&context.device, "Ribbon Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
 
         let pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ribbon Pipeline Layout"),
-            bind_group_layouts: &[camera_layout, lighting_layout, selection_layout],
+            bind_group_layouts: &[camera_layout, lighting_layout, selection_layout, color_layout],
             immediate_size: 0,
         });
 
@@ -486,6 +489,7 @@ impl RibbonRenderer {
         camera_bind_group: &'a wgpu::BindGroup,
         lighting_bind_group: &'a wgpu::BindGroup,
         selection_bind_group: &'a wgpu::BindGroup,
+        color_bind_group: &'a wgpu::BindGroup,
     ) {
         if self.index_count == 0 { return; }
 
@@ -493,6 +497,7 @@ impl RibbonRenderer {
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, lighting_bind_group, &[]);
         render_pass.set_bind_group(2, selection_bind_group, &[]);
+        render_pass.set_bind_group(3, color_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -506,6 +511,23 @@ impl RibbonRenderer {
     /// Get the index buffer for picking
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
+    }
+
+    /// Update only metadata (chains, SS types) without uploading vertex data.
+    ///
+    /// Used when a FullRebuild arrives during animation: we need the metadata
+    /// for subsequent animation frames, but vertex data should come from the
+    /// animation frame path to avoid a one-frame jump to target positions.
+    pub fn update_metadata(
+        &mut self,
+        cached_chains: Vec<Vec<Vec3>>,
+        ss_override: Option<Vec<SSType>>,
+    ) {
+        self.cached_chains = cached_chains;
+        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        if let Some(ss) = ss_override {
+            self.ss_override = Some(ss);
+        }
     }
 
     /// Apply pre-computed animation frame mesh (GPU upload only).

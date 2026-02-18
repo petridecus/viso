@@ -322,10 +322,11 @@ impl SceneProcessor {
         colors: &ColorOptions,
     ) -> CachedGroupMesh {
         // Derive per-residue colors from scores when in score coloring mode
-        let per_residue_colors = match display.backbone_color_mode.as_str() {
-            "score" => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors(s)),
-            "score_relative" => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors_relative(s)),
-            _ => None,
+        use crate::util::options::BackboneColorMode;
+        let per_residue_colors = match display.backbone_color_mode {
+            BackboneColorMode::Score => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors(s)),
+            BackboneColorMode::ScoreRelative => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors_relative(s)),
+            BackboneColorMode::SecondaryStructure => None,
         };
 
         // --- Tube mesh (coils only; ribbons handle helices/sheets) ---

@@ -34,14 +34,6 @@ struct VertexOutput {
 @group(1) @binding(3) var prefiltered_map: texture_cube<f32>;
 @group(1) @binding(4) var brdf_lut: texture_2d<f32>;
 @group(2) @binding(0) var<storage, read> selection: array<u32>;
-@group(3) @binding(0) var<storage, read> residue_colors: array<vec4<f32>>;
-
-fn lookup_residue_color(residue_idx: u32) -> vec3<f32> {
-    if (residue_idx < arrayLength(&residue_colors)) {
-        return residue_colors[residue_idx].xyz;
-    }
-    return vec3<f32>(0.5, 0.5, 0.5);
-}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -56,7 +48,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
     out.center_pos = in.center_pos;
     out.world_position = position;
-    out.vertex_color = lookup_residue_color(in.residue_idx);
+    out.vertex_color = in.color;
     out.residue_idx = in.residue_idx;
     return out;
 }

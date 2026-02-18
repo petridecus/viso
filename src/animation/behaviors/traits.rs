@@ -24,42 +24,11 @@ pub enum PreemptionStrategy {
 
 /// Defines how a structural change should be animated.
 ///
-/// This trait is the core abstraction for animation behaviors. Implementations
-/// control the interpolation curve, timing, and visual effects.
-///
-/// # Examples
-///
-/// Simple interpolation:
-/// ```ignore
-/// impl AnimationBehavior for MyBehavior {
-///     fn compute_state(&self, t: f32, start: &ResidueVisualState, end: &ResidueVisualState) -> ResidueVisualState {
-///         start.lerp(end, t)  // Linear interpolation
-///     }
-///     fn duration(&self) -> Duration { Duration::from_millis(300) }
-/// }
-/// ```
-///
-/// Multi-phase animation:
-/// ```ignore
-/// fn compute_state(&self, t: f32, start: &ResidueVisualState, end: &ResidueVisualState) -> ResidueVisualState {
-///     if t < 0.5 {
-///         // Phase 1: collapse
-///         let phase_t = t * 2.0;
-///         collapse(start, phase_t)
-///     } else {
-///         // Phase 2: expand
-///         let phase_t = (t - 0.5) * 2.0;
-///         expand(end, phase_t)
-///     }
-/// }
-/// ```
+/// Implementations control the interpolation curve, timing, and visual effects.
+/// See [`SmoothInterpolation`], [`CollapseExpand`], [`Cascade`] for examples.
 pub trait AnimationBehavior: Send + Sync {
-    /// Get the eased time value for a given raw progress t (0.0 to 1.0).
-    ///
-    /// This is the single source of truth for easing. Override this to apply
-    /// custom easing curves. Used by both backbone and sidechain interpolation.
-    ///
-    /// Default implementation: linear (no easing).
+    /// Eased time for a given raw progress. Override for custom easing.
+    /// Default: linear (no easing).
     fn eased_t(&self, t: f32) -> f32 {
         t
     }
@@ -107,16 +76,21 @@ pub trait AnimationBehavior: Send + Sync {
         "unnamed"
     }
 
-    /// Compute the interpolation context for this behavior at raw progress t.
-    ///
-    /// This provides a single source of truth for all progress values in a frame.
-    /// Both backbone and sidechain interpolation should use the same context
-    /// to ensure they move in sync.
-    ///
-    /// Default implementation: applies eased_t for simple behaviors.
+    /// Interpolation context for this behavior at raw progress t.
     /// Complex behaviors (CollapseExpand) should override with phase-aware logic.
     fn compute_context(&self, raw_t: f32) -> InterpolationContext {
         InterpolationContext::simple(raw_t, self.eased_t(raw_t))
+    }
+
+    /// Whether sidechain atoms should be included in animation frames at this progress.
+    ///
+    /// Multi-phase behaviors (like BackboneThenExpand) can return false during phases
+    /// where sidechains should be hidden, preventing visual artifacts when new sidechain
+    /// atoms appear before the backbone has finished easing.
+    ///
+    /// Default: always include sidechains.
+    fn should_include_sidechains(&self, _raw_t: f32) -> bool {
+        true
     }
 }
 

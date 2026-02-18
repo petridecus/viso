@@ -10,8 +10,10 @@ use crate::renderer::postprocess::composite::CompositePass;
 use crate::renderer::postprocess::fxaa::FxaaPass;
 use crate::engine::frame_timing::FrameTiming;
 use crate::util::options::Options;
+use crate::engine::residue_color::ResidueColorBuffer;
 use crate::picking::{Picking, SelectionBuffer};
 use crate::util::lighting::Lighting;
+use crate::util::score_color;
 use crate::renderer::molecular::pull::{PullRenderer, PullRenderInfo};
 
 use crate::engine::render_context::RenderContext;
@@ -62,6 +64,8 @@ pub struct ProteinRenderEngine {
     pub fxaa_pass: FxaaPass,
     pub picking: Picking,
     pub selection_buffer: SelectionBuffer,
+    /// Per-residue color buffer for GPU-driven color transitions
+    pub residue_color_buffer: ResidueColorBuffer,
     /// Bind group for capsule picking (needs to be recreated when capsule buffer changes)
     capsule_picking_bind_group: Option<wgpu::BindGroup>,
     /// Current mouse position for picking
@@ -70,10 +74,12 @@ pub struct ProteinRenderEngine {
     mouse_down_residue: i32,
     /// Whether we're in a drag operation (mouse moved significantly after mouse down)
     is_dragging: bool,
-    /// Last click time for double-click detection
+    /// Last click time for multi-click detection
     last_click_time: Instant,
-    /// Last clicked residue for double-click detection
+    /// Last clicked residue for multi-click detection
     last_click_residue: i32,
+    /// Consecutive click count (1=single, 2=double, 3=triple)
+    click_count: u32,
     /// Cached secondary structure types per residue (for double-click segment selection)
     cached_ss_types: Vec<SSType>,
     /// Cached per-residue colors (derived from scores by scene processor, reused for animation)
@@ -117,7 +123,7 @@ pub struct ProteinRenderEngine {
 }
 
 impl ProteinRenderEngine {
-    /// Create a new engine with a default molecule path
+    /// Engine with a default molecule path.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -126,7 +132,7 @@ impl ProteinRenderEngine {
         Self::new_with_path(window, size, scale_factor, "assets/models/4pnk.cif").await
     }
 
-    /// Create a new engine with a specified molecule path
+    /// Engine with a specified molecule path.
     pub async fn new_with_path(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -154,7 +160,7 @@ impl ProteinRenderEngine {
 
         // Log entity breakdown
         for e in &entities {
-            eprintln!("  entity {} — {:?}: {} atoms", e.entity_id, e.molecule_type, e.coords.num_atoms);
+            log::debug!("  entity {} — {:?}: {} atoms", e.entity_id, e.molecule_type, e.coords.num_atoms);
         }
 
         let group_name = std::path::Path::new(cif_path)
@@ -168,20 +174,20 @@ impl ProteinRenderEngine {
         let render_coords = if let Some(protein_coords) = scene.group(group_id)
             .and_then(|g| g.protein_coords())
         {
-            eprintln!("[engine::new] protein_coords: {} atoms", protein_coords.num_atoms);
+            log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
             let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
-            eprintln!("[engine::new] after protein_only: {} atoms", protein_coords.num_atoms);
+            log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
             let rc = RenderCoords::from_coords_with_topology(
                 &protein_coords,
                 is_hydrophobic,
                 |name| get_residue_bonds(name).map(|b| b.to_vec()),
             );
-            eprintln!("[engine::new] render_coords: {} backbone chains, {} residues",
+            log::debug!("render_coords: {} backbone chains, {} residues",
                 rc.backbone_chains.len(),
                 rc.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>());
             rc
         } else {
-            eprintln!("[engine::new] no protein coords found for group");
+            log::debug!("no protein coords found for group");
             let empty = foldit_conv::coords::Coords {
                 num_atoms: 0,
                 atoms: Vec::new(),
@@ -204,11 +210,15 @@ impl ProteinRenderEngine {
         // Create selection buffer (shared by all renderers)
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
 
+        // Create per-residue color buffer (shared by all renderers)
+        let residue_color_buffer = ResidueColorBuffer::new(&context.device, total_residues.max(1));
+
         let mut tube_renderer = TubeRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
+            &residue_color_buffer.layout,
             &render_coords.backbone_chains,
             &mut shader_composer,
         );
@@ -221,6 +231,7 @@ impl ProteinRenderEngine {
                 &camera_controller.layout,
                 &lighting.layout,
                 &selection_buffer.layout,
+                &residue_color_buffer.layout,
                 &render_coords.backbone_residue_chains,
                 &mut shader_composer,
             )
@@ -231,6 +242,7 @@ impl ProteinRenderEngine {
                 &camera_controller.layout,
                 &lighting.layout,
                 &selection_buffer.layout,
+                &residue_color_buffer.layout,
                 &render_coords.backbone_chains,
                 &mut shader_composer,
             )
@@ -411,12 +423,14 @@ impl ProteinRenderEngine {
             fxaa_pass,
             picking,
             selection_buffer,
+            residue_color_buffer,
             capsule_picking_bind_group,
             mouse_pos: (0.0, 0.0),
             mouse_down_residue: -1,
             is_dragging: false,
             last_click_time: Instant::now(),
             last_click_residue: -1,
+            click_count: 0,
             cached_ss_types: Vec::new(),
             cached_per_residue_colors: None,
             animator,
@@ -526,6 +540,9 @@ impl ProteinRenderEngine {
         // Update selection buffer (from GPU picking)
         self.selection_buffer.update(&self.context.queue, &self.picking.selected_residues);
 
+        // Update per-residue color buffer (transition interpolation)
+        let _color_transitioning = self.residue_color_buffer.update(&self.context.queue);
+
         // Update lighting to follow camera (headlamp mode)
         // Use camera.up (set by quaternion) for consistent basis vectors
         let camera = &self.camera_controller.camera;
@@ -596,12 +613,14 @@ impl ProteinRenderEngine {
                 &self.camera_controller.bind_group,
                 &self.lighting.bind_group,
                 &self.selection_buffer.bind_group,
+                &self.residue_color_buffer.bind_group,
             );
             self.ribbon_renderer.draw(
                 &mut rp,
                 &self.camera_controller.bind_group,
                 &self.lighting.bind_group,
                 &self.selection_buffer.bind_group,
+                &self.residue_color_buffer.bind_group,
             );
 
             if self.options.display.show_sidechains {
@@ -785,6 +804,7 @@ impl ProteinRenderEngine {
         if was_dragging {
             self.last_click_time = now;
             self.last_click_residue = -1;
+            self.click_count = 0;
             return false;
         }
 
@@ -792,9 +812,14 @@ impl ProteinRenderEngine {
         // 1. Mouse down was on a residue AND mouse up is on the SAME residue
         // 2. Mouse down AND up are both on background (clear selection)
         if mouse_down_residue >= 0 && mouse_down_residue == mouse_up_residue {
-            // Check for double-click on the same residue
-            let is_double_click = now.duration_since(self.last_click_time) < DOUBLE_CLICK_THRESHOLD
-                && self.last_click_residue == mouse_up_residue;
+            // Check for multi-click on the same residue
+            if now.duration_since(self.last_click_time) < DOUBLE_CLICK_THRESHOLD
+                && self.last_click_residue == mouse_up_residue
+            {
+                self.click_count = (self.click_count + 1).min(3);
+            } else {
+                self.click_count = 1;
+            }
 
             // Update click tracking
             self.last_click_time = now;
@@ -802,18 +827,25 @@ impl ProteinRenderEngine {
 
             let shift_held = self.camera_controller.shift_pressed;
 
-            if is_double_click {
-                // Double-click: select entire secondary structure segment
-                // With shift: add to existing selection
-                self.select_ss_segment(mouse_up_residue, shift_held)
-            } else {
-                // Single click: select just this residue
-                self.picking.handle_click(shift_held)
+            match self.click_count {
+                3 => {
+                    // Triple-click: select entire chain
+                    self.select_chain(mouse_up_residue, shift_held)
+                }
+                2 => {
+                    // Double-click: select entire secondary structure segment
+                    self.select_ss_segment(mouse_up_residue, shift_held)
+                }
+                _ => {
+                    // Single click: select just this residue
+                    self.picking.handle_click(shift_held)
+                }
             }
         } else if mouse_down_residue < 0 && mouse_up_residue < 0 {
             // Clicked on background - clear selection (only if not dragging)
             self.last_click_time = now;
             self.last_click_residue = -1;
+            self.click_count = 0;
             if !self.picking.selected_residues.is_empty() {
                 self.picking.selected_residues.clear();
                 true
@@ -824,6 +856,7 @@ impl ProteinRenderEngine {
             // Mouse down and up on different things - no action
             self.last_click_time = now;
             self.last_click_residue = -1;
+            self.click_count = 0;
             false
         }
     }
@@ -866,16 +899,50 @@ impl ProteinRenderEngine {
         true
     }
 
+    /// Select all residues in the same chain as the given residue.
+    /// If shift_held is true, adds to existing selection; otherwise replaces selection.
+    fn select_chain(&mut self, residue_idx: i32, shift_held: bool) -> bool {
+        if residue_idx < 0 {
+            return false;
+        }
+        let target = residue_idx as usize;
+
+        // Get backbone chains to determine chain boundaries
+        let agg = self.scene.aggregated();
+        let chains = &agg.backbone_chains;
+
+        // Walk chains to find which one contains this residue
+        let mut global_start = 0usize;
+        for chain in chains {
+            let chain_residues = chain.len() / 3;
+            let global_end = global_start + chain_residues;
+            if target >= global_start && target < global_end {
+                // Found the chain — select all its residues
+                if !shift_held {
+                    self.picking.selected_residues.clear();
+                }
+                for i in global_start..global_end {
+                    let residue = i as i32;
+                    if !self.picking.selected_residues.contains(&residue) {
+                        self.picking.selected_residues.push(residue);
+                    }
+                }
+                return true;
+            }
+            global_start = global_end;
+        }
+
+        false
+    }
+
     /// Handle mouse position update for hover detection
     /// GPU picking uses this position in the next render pass
     pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
         self.mouse_pos = (x, y);
     }
 
-    /// Handle click for residue selection (deprecated - use handle_mouse_up instead)
-    /// Returns true if selection changed
+    #[deprecated(note = "use handle_mouse_up instead")]
     pub fn handle_click(&mut self, _x: f32, _y: f32) -> bool {
-        // This is now handled by handle_mouse_up
         false
     }
 
@@ -896,12 +963,6 @@ impl ProteinRenderEngine {
     /// Set shift state directly (from frontend IPC, no winit dependency needed).
     pub fn set_shift_pressed(&mut self, shift: bool) {
         self.camera_controller.shift_pressed = shift;
-    }
-
-    /// Update protein atom positions for animation
-    /// Handles dynamic buffer resizing if new positions exceed current capacity
-    pub fn update_positions(&mut self, _positions: &[Vec3], _hydrophobicity: &[bool]) {
-        todo!("need a new update_positions method for capsule sidechains");
     }
 
     /// Update backbone with new chains (regenerates the tube mesh)
@@ -929,9 +990,13 @@ impl ProteinRenderEngine {
         let camera_delta = (camera_eye - self.last_cull_camera_eye).length();
 
         // Only update culling when camera moves more than 5 units
-        // This prevents expensive updates on minor camera movements
+        // This prevents expensive updates on minor camera movements.
+        // Exception: always update during animation so sidechain positions
+        // reflect the interpolated state (not the final target uploaded by
+        // apply_pending_scene).
         const CULL_UPDATE_THRESHOLD: f32 = 5.0;
-        if camera_delta < CULL_UPDATE_THRESHOLD {
+        let animating = self.animator.is_animating() && self.animator.has_sidechain_data();
+        if camera_delta < CULL_UPDATE_THRESHOLD && !animating {
             return;
         }
 
@@ -1101,14 +1166,18 @@ impl ProteinRenderEngine {
             }
             "backbone_color_mode" => {
                 if let Some(mode_str) = value.as_str() {
-                    self.options.display.backbone_color_mode = mode_str.to_string();
-                    // When switching back to secondary structure, clear cached colors
-                    if mode_str == "secondary_structure" {
-                        self.cached_per_residue_colors = None;
-                    }
-                    // Force dirty so FullRebuild is sent even though scene data hasn't changed
-                    self.scene.force_dirty();
-                    self.sync_scene_to_renderers(None);
+                    use crate::util::options::BackboneColorMode;
+                    let mode = match mode_str {
+                        "score" => BackboneColorMode::Score,
+                        "score_relative" => BackboneColorMode::ScoreRelative,
+                        "secondary_structure" => BackboneColorMode::SecondaryStructure,
+                        _ => return false,
+                    };
+                    self.options.display.backbone_color_mode = mode;
+                    // Compute new colors and transition smoothly via GPU buffer
+                    let new_colors = self.compute_per_residue_colors();
+                    self.residue_color_buffer.set_target_colors(&new_colors);
+                    self.cached_per_residue_colors = Some(new_colors);
                     true
                 } else {
                     false
@@ -2135,11 +2204,10 @@ impl ProteinRenderEngine {
         // so no drain loop needed — stale intermediates are skipped.
 
         // Animation target setup or snap update (fast: array copies + animator)
+        let dominant_action = prepared.entity_actions.values().next().copied();
         if !prepared.entity_actions.is_empty() {
-            // Pick the first action as the "dominant" for animator behavior
-            let dominant_action = prepared.entity_actions.values().next().copied()
-                .unwrap_or(AnimationAction::Wiggle);
-            self.setup_animation_targets_from_prepared(&prepared, dominant_action);
+            let action = dominant_action.unwrap_or(AnimationAction::Wiggle);
+            self.setup_animation_targets_from_prepared(&prepared, action);
 
             // Snap residues for entities NOT in entity_actions
             let active: HashSet<GroupId> = prepared.entity_actions.keys().copied().collect();
@@ -2185,38 +2253,70 @@ impl ProteinRenderEngine {
                     }
                 }
             }
+
+            // Immediately submit an animation frame so the background thread
+            // starts generating an interpolated mesh right away.  Since we skip
+            // vertex uploads from the FullRebuild during animation (to avoid a
+            // one-frame jump), this ensures the next render picks up a correctly
+            // interpolated mesh with minimal latency.
+            self.submit_animation_frame();
         } else {
             self.snap_from_prepared(&prepared);
         }
 
-        // GPU uploads only — each is <0.2ms
-        self.tube_renderer.apply_prepared(
-            &self.context.device,
-            &self.context.queue,
-            &prepared.tube_vertices,
-            &prepared.tube_indices,
-            prepared.tube_index_count,
-            prepared.backbone_chains.clone(),
-            prepared.ss_types.clone(),
-        );
-
-        self.ribbon_renderer.apply_prepared(
-            &self.context.device,
-            &self.context.queue,
-            &prepared.ribbon_vertices,
-            &prepared.ribbon_indices,
-            prepared.ribbon_index_count,
-            prepared.sheet_offsets.clone(),
-            prepared.backbone_chains.clone(),
-            prepared.ss_types.clone(),
-        );
-
-        self.sidechain_renderer.apply_prepared(
-            &self.context.device,
-            &self.context.queue,
-            &prepared.sidechain_instances,
-            prepared.sidechain_instance_count,
-        );
+        // GPU uploads — each is <0.2ms
+        // When animating, skip uploading vertex data for backbone renderers
+        // (tube + ribbon + sidechains) to avoid a one-frame jump to target
+        // positions. The animation frame path will provide interpolated meshes.
+        // We still update metadata (chains, SS types) so animation frames
+        // generate correct topology.
+        let animating = !prepared.entity_actions.is_empty();
+        if animating {
+            self.tube_renderer.update_metadata(
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
+            self.ribbon_renderer.update_metadata(
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
+            // Sidechains also skip vertex upload during animation — the
+            // animation frame path handles sidechain mesh generation.
+            // DiffusionFinalize already suppresses sidechains separately.
+        } else {
+            self.tube_renderer.apply_prepared(
+                &self.context.device,
+                &self.context.queue,
+                &prepared.tube_vertices,
+                &prepared.tube_indices,
+                prepared.tube_index_count,
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
+            self.ribbon_renderer.apply_prepared(
+                &self.context.device,
+                &self.context.queue,
+                &prepared.ribbon_vertices,
+                &prepared.ribbon_indices,
+                prepared.ribbon_index_count,
+                prepared.sheet_offsets.clone(),
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
+            // For DiffusionFinalize, suppress sidechain upload so they don't flash
+            // at their final positions during the backbone-lerp phase. The animation
+            // frames will include sidechains once the expand phase begins.
+            let suppress_sidechains =
+                dominant_action == Some(AnimationAction::DiffusionFinalize);
+            if !suppress_sidechains {
+                self.sidechain_renderer.apply_prepared(
+                    &self.context.device,
+                    &self.context.queue,
+                    &prepared.sidechain_instances,
+                    prepared.sidechain_instance_count,
+                );
+            }
+        }
 
         self.ball_and_stick_renderer.apply_prepared(
             &self.context.device,
@@ -2289,7 +2389,17 @@ impl ProteinRenderEngine {
                     self.target_backbone_sidechain_bonds.clone();
             }
         } else {
-            self.start_sidechain_positions = sidechain_positions.to_vec();
+            // Sidechain count changed (e.g., streaming backbone → full atoms).
+            // Initialize start positions at their residue's CA (collapsed) so
+            // CollapseExpand animates sidechains expanding outward.
+            let ca_positions: Vec<Vec3> = new_backbone
+                .iter()
+                .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+                .collect();
+            self.start_sidechain_positions = sidechain_residue_indices
+                .iter()
+                .map(|&ri| ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO))
+                .collect();
             self.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
         }
 
@@ -2328,10 +2438,17 @@ impl ProteinRenderEngine {
         // Set backbone target (starts the animation)
         self.animator.set_target(new_backbone, action);
 
-        // Ensure selection buffer has capacity
+        // Ensure selection/color buffers have capacity and update colors
         let total_residues: usize = new_backbone.iter().map(|c| c.len() / 3).sum();
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
+        self.residue_color_buffer
+            .ensure_capacity(&self.context.device, total_residues);
+
+        // Animate colors to new target
+        let colors = self.compute_per_residue_colors();
+        self.residue_color_buffer.set_target_colors(&colors);
+        self.cached_per_residue_colors = Some(colors);
     }
 
     /// Snap update from prepared scene data (no animation).
@@ -2356,10 +2473,52 @@ impl ProteinRenderEngine {
         // Cache per-residue colors (derived from scores by scene processor)
         self.cached_per_residue_colors = prepared.per_residue_colors.clone();
 
-        // Ensure selection buffer has capacity
+        // Ensure selection/color buffers have capacity and update colors
         let total_residues: usize = prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
+        self.residue_color_buffer
+            .ensure_capacity(&self.context.device, total_residues);
+
+        // Snap colors immediately (no transition for snap updates)
+        let colors = self.compute_per_residue_colors();
+        self.residue_color_buffer.set_colors_immediate(&self.context.queue, &colors);
+        self.cached_per_residue_colors = Some(colors);
+    }
+
+    /// Compute per-residue colors based on the current backbone_color_mode.
+    ///
+    /// Uses cached scores and SS types to derive colors without mesh rebuild.
+    fn compute_per_residue_colors(&self) -> Vec<[f32; 3]> {
+        use crate::util::options::BackboneColorMode;
+        let residue_count = self.cached_ss_types.len().max(1);
+        match self.options.display.backbone_color_mode {
+            BackboneColorMode::Score | BackboneColorMode::ScoreRelative => {
+                // Concatenate scores from all groups (same order as scene processor)
+                let mut all_scores: Vec<f64> = Vec::new();
+                let mut has_any = false;
+                for group in self.scene.iter() {
+                    if let Some(ref scores) = group.per_residue_scores {
+                        has_any = true;
+                        all_scores.extend_from_slice(scores);
+                    }
+                }
+                if !has_any {
+                    return vec![[0.5, 0.5, 0.5]; residue_count];
+                }
+                match self.options.display.backbone_color_mode {
+                    BackboneColorMode::Score => score_color::per_residue_score_colors(&all_scores),
+                    _ => score_color::per_residue_score_colors_relative(&all_scores),
+                }
+            }
+            BackboneColorMode::SecondaryStructure => {
+                if self.cached_ss_types.is_empty() {
+                    vec![[0.5, 0.5, 0.5]; residue_count]
+                } else {
+                    self.cached_ss_types.iter().map(|ss| ss.color()).collect()
+                }
+            }
+        }
     }
 
     /// Shut down the background scene processor thread.
@@ -2373,7 +2532,8 @@ impl ProteinRenderEngine {
     /// and sends them to the SceneProcessor. Returns immediately (~0.3ms).
     fn submit_animation_frame(&mut self) {
         let visual_backbone = self.animator.get_backbone();
-        let has_sidechains = self.animator.has_sidechain_data();
+        let has_sidechains =
+            self.animator.has_sidechain_data() && self.animator.should_include_sidechains();
         self.submit_animation_frame_with_backbone(visual_backbone, has_sidechains);
     }
 

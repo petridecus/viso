@@ -61,18 +61,6 @@ pub struct ResidueRenderData {
     pub rama_colors: Option<Vec<[f32; 3]>>,
     pub blueprint_colors: Option<Vec<[f32; 3]>>,
     pub selection: Vec<u32>,
-    pub color_mode: ResidueColorMode,
-}
-
-/// Which controller provides the current residue coloring.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum ResidueColorMode {
-    #[default]
-    Default,
-    Rama,
-    Blueprint,
-    Alignment,
-    Score,
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +623,7 @@ impl Scene {
             let group_name = group.name().to_string();
             let render_data = match group.render_data() {
                 Some(rd) => {
-                    eprintln!("[scene::aggregated] group '{}': {} backbone chains, {} residues, {} sidechain atoms",
+                    log::debug!("group '{}': {} backbone chains, {} residues, {} sidechain atoms",
                         group_name,
                         rd.render_coords.backbone_chains.len(),
                         rd.render_coords.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>(),
@@ -644,7 +632,7 @@ impl Scene {
                     rd
                 }
                 None => {
-                    eprintln!("[scene::aggregated] group '{}': no protein render data", group_name);
+                    log::debug!("group '{}': no protein render data", group_name);
                     continue;
                 }
             };

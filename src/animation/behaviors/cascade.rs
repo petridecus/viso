@@ -32,7 +32,7 @@ pub struct Cascade {
 }
 
 impl Cascade {
-    /// Create a new cascade animation.
+    /// Cascade with the given per-residue timing.
     pub fn new(base_duration: Duration, delay_per_residue: Duration) -> Self {
         Self {
             base_duration,
@@ -47,18 +47,8 @@ impl Cascade {
         self
     }
 
-    /// Compute the local t value for a specific residue index.
-    ///
-    /// This maps the global animation progress to a per-residue progress,
+    /// Maps global animation progress to per-residue progress,
     /// accounting for staggered start times.
-    ///
-    /// # Arguments
-    /// * `global_t` - Overall animation progress (0.0 to 1.0)
-    /// * `residue_idx` - Index of the residue
-    /// * `total_residues` - Total number of residues being animated
-    ///
-    /// # Returns
-    /// Local progress for this residue (0.0 to 1.0)
     pub fn residue_t(&self, global_t: f32, residue_idx: usize, total_residues: usize) -> f32 {
         if total_residues == 0 {
             return global_t;
@@ -122,9 +112,8 @@ impl AnimationBehavior for Cascade {
         start: &ResidueVisualState,
         end: &ResidueVisualState,
     ) -> ResidueVisualState {
-        // Note: Cascade is special - it needs residue index context for proper behavior.
-        // When used through the animator, residue_t() should be called first to get
-        // the per-residue progress. This basic implementation applies easing to global t.
+        // Applies easing to global t; the animator calls residue_t() first
+        // to compute per-residue staggered progress.
         let eased_t = self.eased_t(t);
         start.lerp(end, eased_t)
     }

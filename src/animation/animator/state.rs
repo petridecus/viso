@@ -78,7 +78,6 @@ impl StructureState {
         self.current.len()
     }
 
-    /// Check if state is empty (no residues).
     pub fn is_empty(&self) -> bool {
         self.current.is_empty()
     }
@@ -101,12 +100,10 @@ impl StructureState {
         }
     }
 
-    /// Check if structure size changed (different residue count).
     pub fn size_differs(&self, other: &StructureState) -> bool {
         self.current.len() != other.current.len()
     }
 
-    /// Check if target differs from another state's target.
     pub fn target_differs(&self, other: &StructureState) -> bool {
         if self.target.len() != other.target.len() {
             return true;
@@ -172,7 +169,7 @@ impl StructureState {
         chains
     }
 
-    /// Check if two states differ significantly.
+    /// Whether two states differ above a small epsilon threshold.
     pub fn states_differ(a: &ResidueVisualState, b: &ResidueVisualState) -> bool {
         const EPSILON: f32 = 0.0001;
 
@@ -192,6 +189,33 @@ impl StructureState {
         }
 
         false
+    }
+
+    /// Resize current state to match a new target's dimensions.
+    ///
+    /// Preserves existing residue positions where possible:
+    /// - If new target is larger: existing residues keep their current positions,
+    ///   new residues start at their target positions (no animation for those).
+    /// - If new target is smaller: truncate to the new size.
+    ///
+    /// After calling this, `current` and `target` will have the same length
+    /// as `new_target`, enabling normal animation logic to proceed.
+    pub fn resize_to_match(&mut self, new_target: &StructureState) {
+        let old_len = self.current.len();
+        let new_len = new_target.target.len();
+
+        if new_len > old_len {
+            // Grow: append target positions for new residues (they won't animate)
+            self.current
+                .extend_from_slice(&new_target.target[old_len..]);
+        } else if new_len < old_len {
+            // Shrink: truncate to new size
+            self.current.truncate(new_len);
+        }
+
+        // Update target and chain_lengths to match the new target
+        self.target = new_target.target.clone();
+        self.chain_lengths = new_target.chain_lengths.clone();
     }
 
     /// Convert backbone chains to per-residue visual states.
@@ -279,5 +303,36 @@ mod tests {
 
         // Now current should be at 10
         assert!((state.current[0].backbone[0].y - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resize_to_match_grow() {
+        let mut state = StructureState::from_backbone(&make_backbone(0.0, 2));
+        let larger = StructureState::from_backbone(&make_backbone(5.0, 4));
+
+        state.resize_to_match(&larger);
+
+        // Should now have 4 residues
+        assert_eq!(state.residue_count(), 4);
+        // First 2 keep their old positions (y=0)
+        assert!((state.current[0].backbone[0].y - 0.0).abs() < 0.001);
+        assert!((state.current[1].backbone[0].y - 0.0).abs() < 0.001);
+        // Extra residues get target positions (y=5)
+        assert!((state.current[2].backbone[0].y - 5.0).abs() < 0.001);
+        assert!((state.current[3].backbone[0].y - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resize_to_match_shrink() {
+        let mut state = StructureState::from_backbone(&make_backbone(0.0, 4));
+        let smaller = StructureState::from_backbone(&make_backbone(5.0, 2));
+
+        state.resize_to_match(&smaller);
+
+        // Should now have 2 residues
+        assert_eq!(state.residue_count(), 2);
+        // Keep first 2 residues at old positions
+        assert!((state.current[0].backbone[0].y - 0.0).abs() < 0.001);
+        assert!((state.current[1].backbone[0].y - 0.0).abs() < 0.001);
     }
 }

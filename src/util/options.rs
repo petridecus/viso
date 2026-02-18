@@ -77,6 +77,32 @@ impl Options {
 // Display
 // ---------------------------------------------------------------------------
 
+/// How protein backbone is colored.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackboneColorMode {
+    #[default]
+    Score,
+    ScoreRelative,
+    SecondaryStructure,
+}
+
+/// How sidechains are colored.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SidechainColorMode {
+    #[default]
+    Hydrophobicity,
+}
+
+/// How nucleic acid backbone is colored.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NaColorMode {
+    #[default]
+    Uniform,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DisplayOptions {
@@ -87,8 +113,12 @@ pub struct DisplayOptions {
     pub lipid_mode: String,
     pub show_sidechains: bool,
     pub show_hydrogens: bool,
-    /// Backbone coloring mode: "score" (default) or "secondary_structure".
-    pub backbone_color_mode: String,
+    /// Backbone coloring mode.
+    pub backbone_color_mode: BackboneColorMode,
+    /// Sidechain coloring mode.
+    pub sidechain_color_mode: SidechainColorMode,
+    /// Nucleic acid coloring mode.
+    pub na_color_mode: NaColorMode,
 }
 
 impl Default for DisplayOptions {
@@ -101,7 +131,9 @@ impl Default for DisplayOptions {
             lipid_mode: "coarse".to_string(),
             show_sidechains: true,
             show_hydrogens: false,
-            backbone_color_mode: "score".to_string(),
+            backbone_color_mode: BackboneColorMode::default(),
+            sidechain_color_mode: SidechainColorMode::default(),
+            na_color_mode: NaColorMode::default(),
         }
     }
 }

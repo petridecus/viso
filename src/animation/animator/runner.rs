@@ -33,7 +33,7 @@ pub struct AnimationRunner {
 }
 
 impl AnimationRunner {
-    /// Create a new animation runner.
+    /// Start a new animation with the given behavior and residue data.
     pub fn new(
         behavior: SharedBehavior,
         residues: Vec<ResidueAnimationData>,
@@ -58,12 +58,10 @@ impl AnimationRunner {
         }
     }
 
-    /// Get the behavior being used.
     pub fn behavior(&self) -> &SharedBehavior {
         &self.behavior
     }
 
-    /// Get animation duration.
     pub fn duration(&self) -> Duration {
         self.behavior.duration()
     }
@@ -80,7 +78,6 @@ impl AnimationRunner {
         }
     }
 
-    /// Check if animation is complete.
     pub fn is_complete(&self, now: Instant) -> bool {
         self.progress(now) >= 1.0
     }
@@ -98,12 +95,10 @@ impl AnimationRunner {
         }
     }
 
-    /// Get the residues being animated.
     pub fn residues(&self) -> &[ResidueAnimationData] {
         &self.residues
     }
 
-    /// Get the number of residues being animated.
     pub fn residue_count(&self) -> usize {
         self.residues.len()
     }
