@@ -24,9 +24,8 @@ impl PickingState {
         device: &wgpu::Device,
         sidechain_renderer: &CapsuleSidechainRenderer,
     ) {
-        self.capsule_picking_bind_group = Some(
-            picking.create_capsule_bind_group(device, sidechain_renderer.capsule_buffer()),
-        );
+        self.capsule_picking_bind_group =
+            Some(picking.create_capsule_bind_group(device, sidechain_renderer.capsule_buffer()));
     }
 
     /// Rebuild the ball-and-stick picking bind group from current buffer.

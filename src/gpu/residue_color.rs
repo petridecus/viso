@@ -89,10 +89,7 @@ impl ResidueColorBuffer {
     ///
     /// Used on structure load or when residue count changes.
     pub fn set_colors_immediate(&mut self, queue: &wgpu::Queue, colors: &[[f32; 3]]) {
-        let mut padded: Vec<[f32; 4]> = colors
-            .iter()
-            .map(|c| [c[0], c[1], c[2], 1.0])
-            .collect();
+        let mut padded: Vec<[f32; 4]> = colors.iter().map(|c| [c[0], c[1], c[2], 1.0]).collect();
         padded.resize(self.capacity, DEFAULT_RESIDUE_COLOR);
 
         self.current_colors = padded.clone();
@@ -111,10 +108,7 @@ impl ResidueColorBuffer {
     pub fn set_target_colors(&mut self, colors: &[[f32; 3]]) {
         self.start_colors = self.current_colors.clone();
 
-        let data: Vec<[f32; 4]> = colors
-            .iter()
-            .map(|c| [c[0], c[1], c[2], 1.0])
-            .collect();
+        let data: Vec<[f32; 4]> = colors.iter().map(|c| [c[0], c[1], c[2], 1.0]).collect();
         let mut padded = data;
         padded.resize(self.capacity, DEFAULT_RESIDUE_COLOR);
         self.target_colors = padded;
@@ -138,8 +132,8 @@ impl ResidueColorBuffer {
 
         for i in 0..self.current_colors.len() {
             for c in 0..3 {
-                self.current_colors[i][c] =
-                    self.start_colors[i][c] + (self.target_colors[i][c] - self.start_colors[i][c]) * t;
+                self.current_colors[i][c] = self.start_colors[i][c]
+                    + (self.target_colors[i][c] - self.start_colors[i][c]) * t;
             }
             self.current_colors[i][3] = 1.0;
         }

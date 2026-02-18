@@ -32,8 +32,8 @@ pub(crate) mod sidechain_state;
 // Re-export commonly used types
 pub use animator::{AnimationController, AnimationRunner, StructureAnimator, StructureState};
 pub use behaviors::{
-    AnimationBehavior, Cascade, CollapseExpand, PreemptionStrategy, ResidueVisualState,
-    SharedBehavior, SmoothInterpolation, Snap, shared,
+    shared, AnimationBehavior, Cascade, CollapseExpand, PreemptionStrategy, ResidueVisualState,
+    SharedBehavior, SmoothInterpolation, Snap,
 };
-pub use interpolation::{InterpolationContext, lerp_position, lerp_f32};
+pub use interpolation::{lerp_f32, lerp_position, InterpolationContext};
 pub use preferences::{AnimationAction, AnimationPreferences};

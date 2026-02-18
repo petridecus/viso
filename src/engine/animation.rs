@@ -10,8 +10,8 @@ use std::path::Path;
 impl ProteinRenderEngine {
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &Path) {
-        use foldit_conv::coords::{dcd_file_to_frames, protein_only};
         use crate::util::trajectory::build_backbone_atom_indices;
+        use foldit_conv::coords::{dcd_file_to_frames, protein_only};
 
         let (header, frames) = match dcd_file_to_frames(path) {
             Ok(r) => r,
@@ -22,7 +22,9 @@ impl ProteinRenderEngine {
         };
 
         // Get protein coords from the first visible group to build backbone mapping
-        let protein_coords = self.scene.iter()
+        let protein_coords = self
+            .scene
+            .iter()
             .filter(|g| g.visible)
             .find_map(|g| g.protein_coords());
 
@@ -69,8 +71,16 @@ impl ProteinRenderEngine {
     pub fn toggle_trajectory(&mut self) {
         if let Some(ref mut player) = self.trajectory_player {
             player.toggle_playback();
-            let state = if player.is_playing() { "playing" } else { "paused" };
-            log::info!("Trajectory {state} (frame {}/{})", player.current_frame(), player.total_frames());
+            let state = if player.is_playing() {
+                "playing"
+            } else {
+                "paused"
+            };
+            log::info!(
+                "Trajectory {state} (frame {}/{})",
+                player.current_frame(),
+                player.total_frames()
+            );
         }
     }
 
@@ -118,7 +128,8 @@ impl ProteinRenderEngine {
                 self.sc.start_sidechain_positions = self.animator.get_sidechain_positions();
                 // Also interpolate backbone-sidechain bonds
                 let ctx = self.animator.interpolation_context();
-                self.sc.start_backbone_sidechain_bonds = self.sc
+                self.sc.start_backbone_sidechain_bonds = self
+                    .sc
                     .start_backbone_sidechain_bonds
                     .iter()
                     .zip(self.sc.target_backbone_sidechain_bonds.iter())
@@ -130,7 +141,8 @@ impl ProteinRenderEngine {
             } else {
                 // No animation - use previous target as new start
                 self.sc.start_sidechain_positions = self.sc.target_sidechain_positions.clone();
-                self.sc.start_backbone_sidechain_bonds = self.sc.target_backbone_sidechain_bonds.clone();
+                self.sc.start_backbone_sidechain_bonds =
+                    self.sc.target_backbone_sidechain_bonds.clone();
             }
         } else {
             // Size changed - snap to new positions
@@ -175,10 +187,14 @@ impl ProteinRenderEngine {
         // Update sidechain renderer with start positions (adjusted for sheet surface)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            &self.sc.start_sidechain_positions, sidechain.residue_indices, &offset_map,
+            &self.sc.start_sidechain_positions,
+            sidechain.residue_indices,
+            &offset_map,
         );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            &self.sc.start_backbone_sidechain_bonds, sidechain.residue_indices, &offset_map,
+            &self.sc.start_backbone_sidechain_bonds,
+            sidechain.residue_indices,
+            &offset_map,
         );
         self.sidechain_renderer.update(
             &self.context.device,

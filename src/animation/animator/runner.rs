@@ -34,10 +34,7 @@ pub struct AnimationRunner {
 
 impl AnimationRunner {
     /// Start a new animation with the given behavior and residue data.
-    pub fn new(
-        behavior: SharedBehavior,
-        residues: Vec<ResidueAnimationData>,
-    ) -> Self {
+    pub fn new(behavior: SharedBehavior, residues: Vec<ResidueAnimationData>) -> Self {
         Self {
             start_time: Instant::now(),
             behavior,
@@ -107,9 +104,9 @@ impl AnimationRunner {
     /// Used to exclude non-targeted entity residues from animation.
     pub fn remove_residue_ranges(&mut self, ranges: &[(usize, usize)]) {
         self.residues.retain(|data| {
-            !ranges.iter().any(|&(start, end)| {
-                data.residue_idx >= start && data.residue_idx < end
-            })
+            !ranges
+                .iter()
+                .any(|&(start, end)| data.residue_idx >= start && data.residue_idx < end)
         });
     }
 }
@@ -127,7 +124,7 @@ impl std::fmt::Debug for AnimationRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::behaviors::{SmoothInterpolation, Snap, shared};
+    use crate::animation::behaviors::{shared, SmoothInterpolation, Snap};
     use glam::Vec3;
 
     fn make_residue_data(idx: usize, start_y: f32, end_y: f32) -> ResidueAnimationData {

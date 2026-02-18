@@ -34,7 +34,8 @@ impl ProteinRenderEngine {
         self.lighting.update_gpu(&self.context.queue);
 
         // Post-processing (outline/AO params; fog is dynamic per-frame)
-        self.post_process.apply_options(&self.options, &self.context.queue);
+        self.post_process
+            .apply_options(&self.options, &self.context.queue);
 
         // Camera
         let co = &self.options.camera;

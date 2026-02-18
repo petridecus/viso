@@ -13,20 +13,20 @@
 //! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
 use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::util::options::ColorOptions;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
+use crate::util::options::ColorOptions;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
 use crate::renderer::pipeline_util;
 
 // Foldit color constants for bands
-const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5];        // Purple - default band
-const BAND_BB_COLOR: [f32; 3] = [1.0, 0.75, 0.0];    // Yellow-orange - backbone-backbone
+const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - default band
+const BAND_BB_COLOR: [f32; 3] = [1.0, 0.75, 0.0]; // Yellow-orange - backbone-backbone
 const BAND_DISULF_COLOR: [f32; 3] = [0.5, 1.0, 0.0]; // Yellow-green - disulfide bridge
 const BAND_HBOND_COLOR: [f32; 3] = [0.0, 0.75, 1.0]; // Cyan - hydrogen bond
-const DISABLED_COLOR: [f32; 3] = [0.5, 0.5, 0.5];    // Gray - disabled
+const DISABLED_COLOR: [f32; 3] = [0.5, 0.5, 0.5]; // Gray - disabled
 
 // Radius constants (varies with strength)
 const BAND_MIN_RADIUS: f32 = 0.1;
@@ -135,8 +135,16 @@ impl BandRenderer {
         );
 
         let bind_group_layout = Self::create_bind_group_layout(&context.device);
-        let bind_group = Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
-        let pipeline = Self::create_pipeline(context, &bind_group_layout, camera_layout, lighting_layout, selection_layout, shader_composer);
+        let bind_group =
+            Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
+        let pipeline = Self::create_pipeline(
+            context,
+            &bind_group_layout,
+            camera_layout,
+            lighting_layout,
+            selection_layout,
+            shader_composer,
+        );
 
         Self {
             pipeline,
@@ -187,14 +195,24 @@ impl BandRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse the same capsule impostor shader
-        let shader = shader_composer.compose(&context.device, "Band Renderer Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Band Renderer Shader",
+            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            "capsule_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Band Renderer Pipeline Layout"),
-                    bind_group_layouts: &[bind_group_layout, camera_layout, lighting_layout, selection_layout],
+                    bind_group_layouts: &[
+                        bind_group_layout,
+                        camera_layout,
+                        lighting_layout,
+                        selection_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -257,7 +275,11 @@ impl BandRenderer {
     }
 
     /// Compute band color based on type, strength, distance (matches Foldit)
-    fn compute_color(band: &BandRenderInfo, band_type: BandType, colors: Option<&ColorOptions>) -> [f32; 3] {
+    fn compute_color(
+        band: &BandRenderInfo,
+        band_type: BandType,
+        colors: Option<&ColorOptions>,
+    ) -> [f32; 3] {
         if band.is_disabled {
             return DISABLED_COLOR;
         }
@@ -298,7 +320,10 @@ impl BandRenderer {
     }
 
     /// Generate capsule instances from band data
-    fn generate_instances(bands: &[BandRenderInfo], colors: Option<&ColorOptions>) -> Vec<CapsuleInstance> {
+    fn generate_instances(
+        bands: &[BandRenderInfo],
+        colors: Option<&ColorOptions>,
+    ) -> Vec<CapsuleInstance> {
         // Each band gets: 1 cylinder + 2 endpoint spheres = 3 instances
         let mut instances = Vec::with_capacity(bands.len() * 3);
 
@@ -309,8 +334,18 @@ impl BandRenderer {
 
             // Main band capsule (cylinder between endpoints)
             instances.push(CapsuleInstance {
-                endpoint_a: [band.endpoint_a.x, band.endpoint_a.y, band.endpoint_a.z, radius],
-                endpoint_b: [band.endpoint_b.x, band.endpoint_b.y, band.endpoint_b.z, band.residue_idx as f32],
+                endpoint_a: [
+                    band.endpoint_a.x,
+                    band.endpoint_a.y,
+                    band.endpoint_a.z,
+                    radius,
+                ],
+                endpoint_b: [
+                    band.endpoint_b.x,
+                    band.endpoint_b.y,
+                    band.endpoint_b.z,
+                    band.residue_idx as f32,
+                ],
                 color_a: [color[0], color[1], color[2], 0.0],
                 color_b: [color[0], color[1], color[2], 0.0],
             });
@@ -319,16 +354,36 @@ impl BandRenderer {
             // Rendered as a very short, fat capsule (sphere-like)
             let offset = Vec3::new(0.001, 0.0, 0.0); // Minimal offset to avoid degenerate capsule
             instances.push(CapsuleInstance {
-                endpoint_a: [band.endpoint_a.x, band.endpoint_a.y, band.endpoint_a.z, BAND_ANCHOR_RADIUS],
-                endpoint_b: [band.endpoint_a.x + offset.x, band.endpoint_a.y + offset.y, band.endpoint_a.z + offset.z, band.residue_idx as f32],
+                endpoint_a: [
+                    band.endpoint_a.x,
+                    band.endpoint_a.y,
+                    band.endpoint_a.z,
+                    BAND_ANCHOR_RADIUS,
+                ],
+                endpoint_b: [
+                    band.endpoint_a.x + offset.x,
+                    band.endpoint_a.y + offset.y,
+                    band.endpoint_a.z + offset.z,
+                    band.residue_idx as f32,
+                ],
                 color_a: [color[0], color[1], color[2], 0.0],
                 color_b: [color[0], color[1], color[2], 0.0],
             });
 
             // Anchor sphere at endpoint B
             instances.push(CapsuleInstance {
-                endpoint_a: [band.endpoint_b.x, band.endpoint_b.y, band.endpoint_b.z, BAND_ANCHOR_RADIUS],
-                endpoint_b: [band.endpoint_b.x + offset.x, band.endpoint_b.y + offset.y, band.endpoint_b.z + offset.z, band.residue_idx as f32],
+                endpoint_a: [
+                    band.endpoint_b.x,
+                    band.endpoint_b.y,
+                    band.endpoint_b.z,
+                    BAND_ANCHOR_RADIUS,
+                ],
+                endpoint_b: [
+                    band.endpoint_b.x + offset.x,
+                    band.endpoint_b.y + offset.y,
+                    band.endpoint_b.z + offset.z,
+                    band.residue_idx as f32,
+                ],
                 color_a: [color[0], color[1], color[2], 0.0],
                 color_b: [color[0], color[1], color[2], 0.0],
             });
@@ -350,7 +405,8 @@ impl BandRenderer {
         let reallocated = self.instance_buffer.write(device, queue, &instances);
 
         if reallocated {
-            self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
+            self.bind_group =
+                Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
         }
 
         self.instance_count = instances.len() as u32;

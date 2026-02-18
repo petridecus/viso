@@ -8,11 +8,11 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the tube renderer.
 
-use bytemuck::Zeroable;
 use crate::camera::frustum::Frustum;
 use crate::gpu::dynamic_buffer::TypedBuffer;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
+use bytemuck::Zeroable;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
@@ -84,8 +84,16 @@ impl CapsuleSidechainRenderer {
         };
 
         let bind_group_layout = Self::create_bind_group_layout(&context.device);
-        let bind_group = Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
-        let pipeline = Self::create_pipeline(context, &bind_group_layout, camera_layout, lighting_layout, selection_layout, shader_composer);
+        let bind_group =
+            Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
+        let pipeline = Self::create_pipeline(
+            context,
+            &bind_group_layout,
+            camera_layout,
+            lighting_layout,
+            selection_layout,
+            shader_composer,
+        );
 
         Self {
             pipeline,
@@ -136,14 +144,24 @@ impl CapsuleSidechainRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse the same capsule impostor shader
-        let shader = shader_composer.compose(&context.device, "Capsule Sidechain Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Capsule Sidechain Shader",
+            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            "capsule_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Capsule Sidechain Pipeline Layout"),
-                    bind_group_layouts: &[bind_group_layout, camera_layout, lighting_layout, selection_layout],
+                    bind_group_layouts: &[
+                        bind_group_layout,
+                        camera_layout,
+                        lighting_layout,
+                        selection_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -185,10 +203,11 @@ impl CapsuleSidechainRenderer {
         frustum: Option<&Frustum>,
         sidechain_colors: Option<([f32; 3], [f32; 3])>,
     ) -> Vec<CapsuleInstance> {
-        let mut instances = Vec::with_capacity(sidechain_bonds.len() + backbone_sidechain_bonds.len());
+        let mut instances =
+            Vec::with_capacity(sidechain_bonds.len() + backbone_sidechain_bonds.len());
 
-        let (hydrophobic_color, hydrophilic_color) = sidechain_colors
-            .unwrap_or((HYDROPHOBIC_COLOR, HYDROPHILIC_COLOR));
+        let (hydrophobic_color, hydrophilic_color) =
+            sidechain_colors.unwrap_or((HYDROPHOBIC_COLOR, HYDROPHILIC_COLOR));
 
         // Helper to get color for an atom index
         let get_color = |idx: usize| -> [f32; 3] {
@@ -200,9 +219,8 @@ impl CapsuleSidechainRenderer {
         };
 
         // Helper to get residue index for an atom
-        let get_residue_idx = |idx: usize| -> f32 {
-            residue_indices.get(idx).copied().unwrap_or(0) as f32
-        };
+        let get_residue_idx =
+            |idx: usize| -> f32 { residue_indices.get(idx).copied().unwrap_or(0) as f32 };
 
         // Helper to check if a capsule is visible (either endpoint in frustum)
         let is_visible = |pos_a: Vec3, pos_b: Vec3| -> bool {
@@ -305,7 +323,8 @@ impl CapsuleSidechainRenderer {
         let reallocated = self.instance_buffer.write(device, queue, &instances);
 
         if reallocated {
-            self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
+            self.bind_group =
+                Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
         }
 
         self.instance_count = instances.len() as u32;
@@ -342,7 +361,8 @@ impl CapsuleSidechainRenderer {
     ) -> bool {
         let reallocated = self.instance_buffer.write_bytes(device, queue, instances);
         if reallocated {
-            self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
+            self.bind_group =
+                Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
         }
         self.instance_count = instance_count;
         reallocated

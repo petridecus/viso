@@ -22,16 +22,16 @@ use crate::renderer::pipeline_util;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ConeInstance {
-    base: [f32; 4],      // xyz = base position, w = base radius
-    tip: [f32; 4],       // xyz = tip position, w = residue_idx
-    color: [f32; 4],     // xyz = RGB, w = unused
-    _pad: [f32; 4],      // padding for alignment
+    base: [f32; 4],  // xyz = base position, w = base radius
+    tip: [f32; 4],   // xyz = tip position, w = residue_idx
+    color: [f32; 4], // xyz = RGB, w = unused
+    _pad: [f32; 4],  // padding for alignment
 }
 
 // Pull visual constants - match band defaults
 const PULL_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - same as BAND_COLOR
-const PULL_CYLINDER_RADIUS: f32 = 0.25;       // Same as BAND_MID_RADIUS (default strength)
-const PULL_CONE_RADIUS: f32 = 0.6;            // Larger than cylinder for visible arrow
+const PULL_CYLINDER_RADIUS: f32 = 0.25; // Same as BAND_MID_RADIUS (default strength)
+const PULL_CONE_RADIUS: f32 = 0.6; // Larger than cylinder for visible arrow
 const PULL_CONE_LENGTH: f32 = 2.0;
 
 /// Information about the active pull
@@ -76,7 +76,8 @@ impl PullRenderer {
             1,
             wgpu::BufferUsages::STORAGE,
         );
-        let capsule_bind_group_layout = Self::create_bind_group_layout(&context.device, "Pull Capsule");
+        let capsule_bind_group_layout =
+            Self::create_bind_group_layout(&context.device, "Pull Capsule");
         let capsule_bind_group = Self::create_capsule_bind_group(
             &context.device,
             &capsule_bind_group_layout,
@@ -99,11 +100,8 @@ impl PullRenderer {
             wgpu::BufferUsages::STORAGE,
         );
         let cone_bind_group_layout = Self::create_bind_group_layout(&context.device, "Pull Cone");
-        let cone_bind_group = Self::create_cone_bind_group(
-            &context.device,
-            &cone_bind_group_layout,
-            &cone_buffer,
-        );
+        let cone_bind_group =
+            Self::create_cone_bind_group(&context.device, &cone_bind_group_layout, &cone_buffer);
         let cone_pipeline = Self::create_cone_pipeline(
             context,
             &cone_bind_group_layout,
@@ -181,14 +179,24 @@ impl PullRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Pull Capsule Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Pull Capsule Shader",
+            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            "capsule_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Pull Capsule Pipeline Layout"),
-                    bind_group_layouts: &[bind_group_layout, camera_layout, lighting_layout, selection_layout],
+                    bind_group_layouts: &[
+                        bind_group_layout,
+                        camera_layout,
+                        lighting_layout,
+                        selection_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -225,14 +233,24 @@ impl PullRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Pull Cone Shader", include_str!("../../../assets/shaders/raster/impostor/cone.wgsl"), "cone_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Pull Cone Shader",
+            include_str!("../../../assets/shaders/raster/impostor/cone.wgsl"),
+            "cone_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Pull Cone Pipeline Layout"),
-                    bind_group_layouts: &[bind_group_layout, camera_layout, lighting_layout, selection_layout],
+                    bind_group_layouts: &[
+                        bind_group_layout,
+                        camera_layout,
+                        lighting_layout,
+                        selection_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -331,7 +349,12 @@ impl PullRenderer {
         if atom_pos.distance_squared(cone_base) > 0.001 {
             capsules.push(CapsuleInstance {
                 endpoint_a: [atom_pos.x, atom_pos.y, atom_pos.z, PULL_CYLINDER_RADIUS],
-                endpoint_b: [cone_base.x, cone_base.y, cone_base.z, pull.residue_idx as f32],
+                endpoint_b: [
+                    cone_base.x,
+                    cone_base.y,
+                    cone_base.z,
+                    pull.residue_idx as f32,
+                ],
                 color_a: [PULL_COLOR[0], PULL_COLOR[1], PULL_COLOR[2], 0.0],
                 color_b: [PULL_COLOR[0], PULL_COLOR[1], PULL_COLOR[2], 0.0],
             });
@@ -341,7 +364,12 @@ impl PullRenderer {
         if cone_base.distance_squared(target_pos) > 0.001 {
             cones.push(ConeInstance {
                 base: [cone_base.x, cone_base.y, cone_base.z, PULL_CONE_RADIUS],
-                tip: [target_pos.x, target_pos.y, target_pos.z, pull.residue_idx as f32],
+                tip: [
+                    target_pos.x,
+                    target_pos.y,
+                    target_pos.z,
+                    pull.residue_idx as f32,
+                ],
                 color: [PULL_COLOR[0], PULL_COLOR[1], PULL_COLOR[2], 0.0],
                 _pad: [0.0, 0.0, 0.0, 0.0],
             });

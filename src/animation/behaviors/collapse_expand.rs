@@ -70,7 +70,6 @@ impl CollapseExpand {
             self.collapse_duration.as_secs_f32() / total
         }
     }
-
 }
 
 impl Default for CollapseExpand {
@@ -239,10 +238,7 @@ mod tests {
 
     #[test]
     fn test_collapse_expand_midpoint() {
-        let behavior = CollapseExpand::new(
-            Duration::from_millis(100),
-            Duration::from_millis(100),
-        );
+        let behavior = CollapseExpand::new(Duration::from_millis(100), Duration::from_millis(100));
         let a = test_state_a();
         let b = test_state_b();
 
@@ -261,10 +257,7 @@ mod tests {
 
     #[test]
     fn test_collapse_expand_duration() {
-        let behavior = CollapseExpand::new(
-            Duration::from_millis(100),
-            Duration::from_millis(200),
-        );
+        let behavior = CollapseExpand::new(Duration::from_millis(100), Duration::from_millis(200));
         assert_eq!(behavior.duration(), Duration::from_millis(300));
     }
 }

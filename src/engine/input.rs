@@ -49,12 +49,14 @@ impl ProteinRenderEngine {
         match self.input.process_mouse_up(hovered, shift_held) {
             ClickResult::NoAction => false,
             ClickResult::SingleClick { shift_held } => self.picking.handle_click(shift_held),
-            ClickResult::DoubleClick { residue, shift_held } => {
-                self.select_ss_segment(residue, shift_held)
-            }
-            ClickResult::TripleClick { residue, shift_held } => {
-                self.select_chain(residue, shift_held)
-            }
+            ClickResult::DoubleClick {
+                residue,
+                shift_held,
+            } => self.select_ss_segment(residue, shift_held),
+            ClickResult::TripleClick {
+                residue,
+                shift_held,
+            } => self.select_chain(residue, shift_held),
             ClickResult::ClearSelection => {
                 if !self.picking.selected_residues.is_empty() {
                     self.picking.selected_residues.clear();
@@ -84,7 +86,9 @@ impl ProteinRenderEngine {
 
         // Find the end of this SS segment (walk forwards)
         let mut end = idx;
-        while end + 1 < self.sc.cached_ss_types.len() && self.sc.cached_ss_types[end + 1] == target_ss {
+        while end + 1 < self.sc.cached_ss_types.len()
+            && self.sc.cached_ss_types[end + 1] == target_ss
+        {
             end += 1;
         }
 

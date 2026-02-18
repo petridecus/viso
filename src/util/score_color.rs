@@ -75,7 +75,10 @@ pub fn per_residue_score_colors(scores: &[f64]) -> Vec<[f32; 3]> {
 
 /// Absolute per-residue score colors using a custom color ramp.
 pub fn per_residue_score_colors_with_ramp(scores: &[f64], ramp: &ColorRamp) -> Vec<[f32; 3]> {
-    scores.iter().map(|&s| ramp.sample(score_to_t_absolute(s))).collect()
+    scores
+        .iter()
+        .map(|&s| ramp.sample(score_to_t_absolute(s)))
+        .collect()
 }
 
 /// Relative per-residue score colors using the default color ramp.
@@ -85,7 +88,10 @@ pub fn per_residue_score_colors_relative(scores: &[f64]) -> Vec<[f32; 3]> {
 }
 
 /// Relative per-residue score colors using a custom color ramp.
-pub fn per_residue_score_colors_relative_with_ramp(scores: &[f64], ramp: &ColorRamp) -> Vec<[f32; 3]> {
+pub fn per_residue_score_colors_relative_with_ramp(
+    scores: &[f64],
+    ramp: &ColorRamp,
+) -> Vec<[f32; 3]> {
     if scores.is_empty() {
         return Vec::new();
     }
@@ -99,12 +105,15 @@ pub fn per_residue_score_colors_relative_with_ramp(scores: &[f64], ramp: &ColorR
     let max_score = sorted[hi_idx];
     let range = max_score - min_score;
 
-    scores.iter().map(|&score| {
-        let t = if range.abs() < 1e-6 {
-            0.5
-        } else {
-            ((score - min_score) / range).clamp(0.0, 1.0) as f32
-        };
-        ramp.sample(t)
-    }).collect()
+    scores
+        .iter()
+        .map(|&score| {
+            let t = if range.abs() < 1e-6 {
+                0.5
+            } else {
+                ((score - min_score) / range).clamp(0.0, 1.0) as f32
+            };
+            ramp.sample(t)
+        })
+        .collect()
 }

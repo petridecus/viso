@@ -79,11 +79,14 @@ impl BloomPass {
 
         let threshold = 1.0f32;
         let intensity = 0.0f32;
-        let threshold_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Bloom Threshold Buffer"),
-            contents: bytemuck::cast_slice(&[threshold]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let threshold_buffer =
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Bloom Threshold Buffer"),
+                    contents: bytemuck::cast_slice(&[threshold]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create mip chain textures
         let (mip_textures, mip_views) = Self::create_mip_chain(context, width, height);
@@ -98,37 +101,40 @@ impl BloomPass {
         );
 
         // --- Threshold pipeline ---
-        let threshold_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bloom Threshold Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let threshold_bind_group_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bloom Threshold Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
         let threshold_bind_group = Self::create_threshold_bind_group(
             context,
@@ -145,70 +151,79 @@ impl BloomPass {
             "bloom_threshold.wgsl",
         );
 
-        let threshold_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Bloom Threshold Pipeline Layout"),
-            bind_group_layouts: &[&threshold_bind_group_layout],
-            immediate_size: 0,
-        });
+        let threshold_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Bloom Threshold Pipeline Layout"),
+                    bind_group_layouts: &[&threshold_bind_group_layout],
+                    immediate_size: 0,
+                });
 
-        let threshold_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Bloom Threshold Pipeline"),
-            layout: Some(&threshold_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &threshold_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &threshold_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let threshold_pipeline =
+            context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Threshold Pipeline"),
+                    layout: Some(&threshold_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &threshold_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &threshold_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
         // --- Blur pipeline ---
-        let blur_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bloom Blur Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let blur_bind_group_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bloom Blur Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
         let blur_shader = shader_composer.compose(
             &context.device,
@@ -217,37 +232,43 @@ impl BloomPass {
             "bloom_blur.wgsl",
         );
 
-        let blur_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Bloom Blur Pipeline Layout"),
-            bind_group_layouts: &[&blur_bind_group_layout],
-            immediate_size: 0,
-        });
+        let blur_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Bloom Blur Pipeline Layout"),
+                    bind_group_layouts: &[&blur_bind_group_layout],
+                    immediate_size: 0,
+                });
 
-        let blur_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Bloom Blur Pipeline"),
-            layout: Some(&blur_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &blur_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blur_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let blur_pipeline =
+            context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Blur Pipeline"),
+                    layout: Some(&blur_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &blur_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &blur_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
         // Create blur bind groups and params buffers for each mip level
         let (blur_bind_groups, blur_params_buffers) = Self::create_blur_resources(
@@ -261,27 +282,30 @@ impl BloomPass {
         );
 
         // --- Upsample + accumulate pipeline (reuses blur shader with additive blend) ---
-        let upsample_bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bloom Upsample Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let upsample_bind_group_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bloom Upsample Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
 
         // Simple passthrough shader for upsample (just bilinear sample + additive blend)
         let upsample_shader = shader_composer.compose(
@@ -291,44 +315,50 @@ impl BloomPass {
             "bloom_upsample.wgsl",
         );
 
-        let upsample_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Bloom Upsample Pipeline Layout"),
-            bind_group_layouts: &[&upsample_bind_group_layout],
-            immediate_size: 0,
-        });
+        let upsample_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Bloom Upsample Pipeline Layout"),
+                    bind_group_layouts: &[&upsample_bind_group_layout],
+                    immediate_size: 0,
+                });
 
-        let upsample_pipeline = context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Bloom Upsample Pipeline"),
-            layout: Some(&upsample_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &upsample_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &upsample_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent::OVER,
+        let upsample_pipeline =
+            context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Upsample Pipeline"),
+                    layout: Some(&upsample_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &upsample_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &upsample_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent::OVER,
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
                     }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
         let upsample_bind_groups = Self::create_upsample_bind_groups(
             context,
@@ -415,24 +445,26 @@ impl BloomPass {
         sampler: &wgpu::Sampler,
         threshold_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bloom Threshold Bind Group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: threshold_buffer.as_entire_binding(),
-                },
-            ],
-        })
+        context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom Threshold Bind Group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(color_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: threshold_buffer.as_entire_binding(),
+                    },
+                ],
+            })
     }
 
     fn create_blur_resources(
@@ -461,29 +493,33 @@ impl BloomPass {
                 horizontal: 1,
                 _pad: 0,
             };
-            let h_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("Bloom Blur H Params {}", i)),
-                contents: bytemuck::cast_slice(&[h_params]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let h_bg = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Bloom Blur H BG {}", i)),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&mip_views[i]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: h_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+            let h_buffer = context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Bloom Blur H Params {}", i)),
+                    contents: bytemuck::cast_slice(&[h_params]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let h_bg = context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Bloom Blur H BG {}", i)),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&mip_views[i]),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: h_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
 
             // Vertical: read from ping[i], write back to mip[i]
             let v_params = BlurParams {
@@ -491,29 +527,33 @@ impl BloomPass {
                 horizontal: 0,
                 _pad: 0,
             };
-            let v_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("Bloom Blur V Params {}", i)),
-                contents: bytemuck::cast_slice(&[v_params]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let v_bg = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Bloom Blur V BG {}", i)),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&ping_views[i]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: v_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+            let v_buffer = context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Bloom Blur V Params {}", i)),
+                    contents: bytemuck::cast_slice(&[v_params]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let v_bg = context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Bloom Blur V BG {}", i)),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&ping_views[i]),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: v_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
 
             bind_groups.push([h_bg, v_bg]);
             buffers.push([h_buffer, v_buffer]);
@@ -532,20 +572,22 @@ impl BloomPass {
         // So we need bind groups for mip levels 1..MIP_LEVELS (reading from those levels)
         let mut bind_groups = Vec::with_capacity(MIP_LEVELS - 1);
         for i in 1..MIP_LEVELS {
-            let bg = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Bloom Upsample BG {}", i)),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&mip_views[i]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            });
+            let bg = context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Bloom Upsample BG {}", i)),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&mip_views[i]),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
             bind_groups.push(bg);
         }
         bind_groups
@@ -721,15 +763,15 @@ impl BloomPass {
 
     /// Update threshold value on GPU
     pub fn update_params(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.threshold_buffer, 0, bytemuck::cast_slice(&[self.threshold]));
+        queue.write_buffer(
+            &self.threshold_buffer,
+            0,
+            bytemuck::cast_slice(&[self.threshold]),
+        );
     }
 
     /// Resize all textures on window resize
-    pub fn resize(
-        &mut self,
-        context: &RenderContext,
-        color_view: &wgpu::TextureView,
-    ) {
+    pub fn resize(&mut self, context: &RenderContext, color_view: &wgpu::TextureView) {
         let width = context.render_width();
         let height = context.render_height();
         if width == self.width && height == self.height {
@@ -784,4 +826,3 @@ impl BloomPass {
         self.output_view = output_view;
     }
 }
-

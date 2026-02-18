@@ -26,8 +26,7 @@ impl PostProcessStack {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
         let (normal_texture, normal_view) = Self::create_normal_texture(context);
 
-        let ssao_renderer =
-            SsaoRenderer::new(context, &depth_view, &normal_view, shader_composer);
+        let ssao_renderer = SsaoRenderer::new(context, &depth_view, &normal_view, shader_composer);
 
         let mut bloom_pass = BloomPass::new(context, &normal_view, shader_composer);
 
@@ -116,7 +115,8 @@ impl PostProcessStack {
 
     /// Update fog uniforms.
     pub fn update_fog(&mut self, queue: &wgpu::Queue, fog_start: f32, fog_density: f32) {
-        self.composite_pass.update_fog(queue, fog_start, fog_density);
+        self.composite_pass
+            .update_fog(queue, fog_start, fog_density);
     }
 
     /// Push post-processing option values to GPU.
@@ -158,8 +158,7 @@ impl PostProcessStack {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
@@ -181,8 +180,7 @@ impl PostProcessStack {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 

@@ -2,10 +2,10 @@
 
 use super::ProteinRenderEngine;
 use crate::animation::AnimationAction;
-use crate::scene::{EntityGroup, Focus, GroupId};
 use crate::renderer::molecular::band::BandRenderInfo;
 use crate::renderer::molecular::capsule_sidechain::SidechainData;
 use crate::renderer::molecular::pull::PullRenderInfo;
+use crate::scene::{EntityGroup, Focus, GroupId};
 use foldit_conv::coords::{MoleculeEntity, MoleculeType};
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
@@ -62,18 +62,17 @@ impl ProteinRenderEngine {
         // Get current backbone-sidechain bonds (may be interpolated)
         let bs_bonds = if self.animator.is_animating() {
             // Interpolate CA positions
-            self.sc.target_backbone_sidechain_bonds
+            self.sc
+                .target_backbone_sidechain_bonds
                 .iter()
                 .map(|(target_ca, cb_idx)| {
-                    let res_idx = self.sc
+                    let res_idx = self
+                        .sc
                         .cached_sidechain_residue_indices
                         .get(*cb_idx as usize)
                         .copied()
                         .unwrap_or(0) as usize;
-                    let ca_pos = self
-                        .animator
-                        .get_ca_position(res_idx)
-                        .unwrap_or(*target_ca);
+                    let ca_pos = self.animator.get_ca_position(res_idx).unwrap_or(*target_ca);
                     (ca_pos, *cb_idx)
                 })
                 .collect::<Vec<_>>()
@@ -85,11 +84,12 @@ impl ProteinRenderEngine {
         let offset_map = self.sheet_offset_map();
         let res_indices = self.sc.cached_sidechain_residue_indices.clone();
         let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            &positions, &res_indices, &offset_map,
+            &positions,
+            &res_indices,
+            &offset_map,
         );
-        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            &bs_bonds, &res_indices, &offset_map,
-        );
+        let adjusted_bonds =
+            crate::util::sheet_adjust::adjust_bonds_for_sheet(&bs_bonds, &res_indices, &offset_map);
 
         // Update sidechains with frustum culling
         self.sidechain_renderer.update_with_frustum(
@@ -106,17 +106,25 @@ impl ProteinRenderEngine {
         );
 
         // Recreate picking bind group since buffer may have changed
-        self.picking_groups.rebuild_capsule(&self.picking, &self.context.device, &self.sidechain_renderer);
+        self.picking_groups.rebuild_capsule(
+            &self.picking,
+            &self.context.device,
+            &self.sidechain_renderer,
+        );
     }
 
     /// Refresh ball-and-stick renderer with current visibility flags.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
         // Collect all non-protein entities from visible groups
-        let entities: Vec<MoleculeEntity> = self.scene.iter()
+        let entities: Vec<MoleculeEntity> = self
+            .scene
+            .iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
-            .filter(|e| e.molecule_type != MoleculeType::Protein
-                && !matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
+            .filter(|e| {
+                e.molecule_type != MoleculeType::Protein
+                    && !matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA)
+            })
             .cloned()
             .collect();
         self.ball_and_stick_renderer.update_from_entities(
@@ -127,7 +135,11 @@ impl ProteinRenderEngine {
             Some(&self.options.colors),
         );
         // Recreate picking bind group
-        self.picking_groups.rebuild_bns(&self.picking, &self.context.device, &self.ball_and_stick_renderer);
+        self.picking_groups.rebuild_bns(
+            &self.picking,
+            &self.context.device,
+            &self.ball_and_stick_renderer,
+        );
     }
 
     /// Set SS override (from puzzle.toml annotation). Updates cached types
@@ -135,9 +147,12 @@ impl ProteinRenderEngine {
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
         self.sc.cached_ss_types = ss_types.to_vec();
         self.tube_renderer.set_ss_override(Some(ss_types.to_vec()));
-        self.tube_renderer.regenerate(&self.context.device, &self.context.queue);
-        self.ribbon_renderer.set_ss_override(Some(ss_types.to_vec()));
-        self.ribbon_renderer.regenerate(&self.context.device, &self.context.queue);
+        self.tube_renderer
+            .regenerate(&self.context.device, &self.context.queue);
+        self.ribbon_renderer
+            .set_ss_override(Some(ss_types.to_vec()));
+        self.ribbon_renderer
+            .regenerate(&self.context.device, &self.context.queue);
     }
 
     /// Compute secondary structure types for all residues across all chains
@@ -164,7 +179,11 @@ impl ProteinRenderEngine {
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.ribbon_renderer.sheet_offsets().iter().copied().collect()
+        self.ribbon_renderer
+            .sheet_offsets()
+            .iter()
+            .copied()
+            .collect()
     }
 
     /// Update the band visualization.
@@ -186,11 +205,8 @@ impl ProteinRenderEngine {
     /// Update the pull visualization (only one pull at a time).
     /// Pass None to clear the pull visualization.
     pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
-        self.pull_renderer.update(
-            &self.context.device,
-            &self.context.queue,
-            pull,
-        );
+        self.pull_renderer
+            .update(&self.context.device, &self.context.queue, pull);
     }
 
     /// Clear the pull visualization.

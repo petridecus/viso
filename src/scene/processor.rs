@@ -8,18 +8,18 @@
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
+use super::{AggregatedRenderData, GroupId, PerGroupData};
+use crate::animation::AnimationAction;
 use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
 use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
 use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
-use crate::util::options::{ColorOptions, DisplayOptions};
 use crate::renderer::molecular::ribbon::{RibbonParams, RibbonRenderer};
-use super::{AggregatedRenderData, GroupId, PerGroupData};
-use crate::util::score_color;
 use crate::renderer::molecular::tube::TubeRenderer;
+use crate::util::options::{ColorOptions, DisplayOptions};
+use crate::util::score_color;
 use foldit_conv::coords::entity::NucleotideRing;
 use foldit_conv::coords::MoleculeEntity;
 use foldit_conv::secondary_structure::SSType;
-use crate::animation::AnimationAction;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
@@ -252,7 +252,9 @@ impl SceneProcessor {
             while let Ok(newer) = request_rx.try_recv() {
                 match (&latest, &newer) {
                     (SceneRequest::FullRebuild { .. }, SceneRequest::AnimationFrame { .. }) => {}
-                    _ => { latest = newer; }
+                    _ => {
+                        latest = newer;
+                    }
                 }
             }
 
@@ -266,8 +268,7 @@ impl SceneProcessor {
                     colors,
                 } => {
                     // Clear cache if global settings changed
-                    let settings_changed =
-                        last_display.as_ref() != Some(&display)
+                    let settings_changed = last_display.as_ref() != Some(&display)
                         || last_colors.as_ref() != Some(&colors);
 
                     if settings_changed {
@@ -294,7 +295,8 @@ impl SceneProcessor {
                     mesh_cache.retain(|id, _| active_ids.contains(id));
 
                     // Collect references in group order
-                    let group_meshes: Vec<(GroupId, &CachedGroupMesh)> = groups.iter()
+                    let group_meshes: Vec<(GroupId, &CachedGroupMesh)> = groups
+                        .iter()
                         .filter_map(|g| mesh_cache.get(&g.id).map(|(_, mesh)| (g.id, mesh)))
                         .collect();
 
@@ -309,7 +311,9 @@ impl SceneProcessor {
                     per_residue_colors,
                 } => {
                     let prepared = Self::process_animation_frame(
-                        backbone_chains, sidechains, ss_types,
+                        backbone_chains,
+                        sidechains,
+                        ss_types,
                         per_residue_colors,
                     );
                     anim_input.write(Some(prepared));
@@ -327,8 +331,14 @@ impl SceneProcessor {
         // Derive per-residue colors from scores when in score coloring mode
         use crate::util::options::BackboneColorMode;
         let per_residue_colors = match display.backbone_color_mode {
-            BackboneColorMode::Score => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors(s)),
-            BackboneColorMode::ScoreRelative => g.per_residue_scores.as_ref().map(|s| score_color::per_residue_score_colors_relative(s)),
+            BackboneColorMode::Score => g
+                .per_residue_scores
+                .as_ref()
+                .map(|s| score_color::per_residue_score_colors(s)),
+            BackboneColorMode::ScoreRelative => g
+                .per_residue_scores
+                .as_ref()
+                .map(|s| score_color::per_residue_score_colors_relative(s)),
             BackboneColorMode::SecondaryStructure | BackboneColorMode::Chain => None,
         };
 
@@ -349,19 +359,22 @@ impl SceneProcessor {
 
         // --- Ribbon mesh ---
         let params = RibbonParams::default();
-        let (ribbon_verts_typed, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only_colored(
-            &g.backbone_chains,
-            &params,
-            g.ss_override.as_deref(),
-            per_residue_colors.as_deref(),
-        );
+        let (ribbon_verts_typed, ribbon_inds, sheet_offsets) =
+            RibbonRenderer::generate_from_ca_only_colored(
+                &g.backbone_chains,
+                &params,
+                g.ss_override.as_deref(),
+                per_residue_colors.as_deref(),
+            );
         let ribbon_vert_count = ribbon_verts_typed.len() as u32;
         let ribbon_verts = bytemuck::cast_slice(&ribbon_verts_typed).to_vec();
 
         // --- Sidechain capsules ---
         let sidechain_positions: Vec<Vec3> = g.sidechain_atoms.iter().map(|a| a.position).collect();
-        let sidechain_hydrophobicity: Vec<bool> = g.sidechain_atoms.iter().map(|a| a.is_hydrophobic).collect();
-        let sidechain_residue_indices: Vec<u32> = g.sidechain_atoms.iter().map(|a| a.residue_idx).collect();
+        let sidechain_hydrophobicity: Vec<bool> =
+            g.sidechain_atoms.iter().map(|a| a.is_hydrophobic).collect();
+        let sidechain_residue_indices: Vec<u32> =
+            g.sidechain_atoms.iter().map(|a| a.residue_idx).collect();
 
         let offset_map: HashMap<u32, Vec3> = sheet_offsets.iter().copied().collect();
         let adjusted_positions = adjust_sidechains_for_sheet(
@@ -387,12 +400,11 @@ impl SceneProcessor {
         let sidechain_instances = bytemuck::cast_slice(&sidechain_insts).to_vec();
 
         // --- Ball-and-stick instances ---
-        let (bns_spheres, bns_capsules, bns_picking) =
-            BallAndStickRenderer::generate_all_instances(
-                &g.non_protein_entities,
-                display,
-                Some(colors),
-            );
+        let (bns_spheres, bns_capsules, bns_picking) = BallAndStickRenderer::generate_all_instances(
+            &g.non_protein_entities,
+            display,
+            Some(colors),
+        );
         let bns_sphere_count = bns_spheres.len() as u32;
         let bns_capsule_count = bns_capsules.len() as u32;
         let bns_picking_count = bns_picking.len() as u32;
@@ -410,7 +422,11 @@ impl SceneProcessor {
         let na_verts = bytemuck::cast_slice(&na_verts_typed).to_vec();
 
         // --- Passthrough data ---
-        let sidechain_atom_names: Vec<String> = g.sidechain_atoms.iter().map(|a| a.atom_name.clone()).collect();
+        let sidechain_atom_names: Vec<String> = g
+            .sidechain_atoms
+            .iter()
+            .map(|a| a.atom_name.clone())
+            .collect();
 
         CachedGroupMesh {
             tube_verts,
@@ -574,7 +590,11 @@ impl SceneProcessor {
             if mesh.ss_override.is_some() {
                 has_any_ss = true;
             }
-            ss_parts.push((global_residue_offset, mesh.ss_override.clone(), mesh.residue_count));
+            ss_parts.push((
+                global_residue_offset,
+                mesh.ss_override.clone(),
+                mesh.residue_count,
+            ));
 
             // Per-residue color tracking
             if let Some(ref colors) = mesh.per_residue_colors {
@@ -640,7 +660,11 @@ impl SceneProcessor {
             sidechain_atom_names: all_sidechain_atom_names,
             backbone_sidechain_bonds: all_backbone_sidechain_bonds,
             ss_types,
-            per_residue_colors: if has_any_colors { Some(all_per_residue_colors) } else { None },
+            per_residue_colors: if has_any_colors {
+                Some(all_per_residue_colors)
+            } else {
+                None
+            },
             all_positions,
             entity_actions,
             entity_residue_ranges,
@@ -675,12 +699,13 @@ impl SceneProcessor {
 
         // --- Ribbon mesh ---
         let params = RibbonParams::default();
-        let (ribbon_verts, ribbon_inds, sheet_offsets) = RibbonRenderer::generate_from_ca_only_colored(
-            &backbone_chains,
-            &params,
-            ss_types.as_deref(),
-            per_residue_colors.as_deref(),
-        );
+        let (ribbon_verts, ribbon_inds, sheet_offsets) =
+            RibbonRenderer::generate_from_ca_only_colored(
+                &backbone_chains,
+                &params,
+                ss_types.as_deref(),
+                per_residue_colors.as_deref(),
+            );
         let ribbon_index_count = ribbon_inds.len() as u32;
         let ribbon_vertices = bytemuck::cast_slice(&ribbon_verts).to_vec();
         let ribbon_indices = bytemuck::cast_slice(&ribbon_inds).to_vec();
@@ -733,4 +758,4 @@ impl Drop for SceneProcessor {
     }
 }
 
-use crate::util::sheet_adjust::{adjust_sidechains_for_sheet, adjust_bonds_for_sheet};
+use crate::util::sheet_adjust::{adjust_bonds_for_sheet, adjust_sidechains_for_sheet};

@@ -38,7 +38,6 @@ pub fn is_hydrophobic(residue_name: &str) -> bool {
     )
 }
 
-
 // Glycine has no sidechain atoms (only backbone N, CA, C, O)
 const GLYCINE_BONDS: &[(&str, &str)] = &[];
 
@@ -46,91 +45,45 @@ const GLYCINE_BONDS: &[(&str, &str)] = &[];
 const ALANINE_BONDS: &[(&str, &str)] = &[];
 
 // Valine: CA-CB-CG1, CB-CG2
-const VALINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG1"),
-    ("CB", "CG2"),
-];
+const VALINE_BONDS: &[(&str, &str)] = &[("CB", "CG1"), ("CB", "CG2")];
 
 // Leucine: CA-CB-CG-CD1, CG-CD2
-const LEUCINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "CD1"),
-    ("CG", "CD2"),
-];
+const LEUCINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD1"), ("CG", "CD2")];
 
 // Isoleucine: CA-CB-CG1-CD1, CB-CG2
-const ISOLEUCINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG1"),
-    ("CG1", "CD1"),
-    ("CB", "CG2"),
-];
+const ISOLEUCINE_BONDS: &[(&str, &str)] = &[("CB", "CG1"), ("CG1", "CD1"), ("CB", "CG2")];
 
 // Proline: CA-CB-CG-CD-N (ring)
-const PROLINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "CD"),
-];
+const PROLINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD")];
 
 // Serine: CA-CB-OG
-const SERINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "OG"),
-];
+const SERINE_BONDS: &[(&str, &str)] = &[("CB", "OG")];
 
 // Threonine: CA-CB-OG1, CB-CG2
-const THREONINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "OG1"),
-    ("CB", "CG2"),
-];
+const THREONINE_BONDS: &[(&str, &str)] = &[("CB", "OG1"), ("CB", "CG2")];
 
 // Cysteine: CA-CB-SG
-const CYSTEINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "SG"),
-];
+const CYSTEINE_BONDS: &[(&str, &str)] = &[("CB", "SG")];
 
 // Methionine: CA-CB-CG-SD-CE
-const METHIONINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "SD"),
-    ("SD", "CE"),
-];
+const METHIONINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "SD"), ("SD", "CE")];
 
 // Asparagine: CA-CB-CG-OD1, CG-ND2
-const ASPARAGINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "OD1"),
-    ("CG", "ND2"),
-];
+const ASPARAGINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "OD1"), ("CG", "ND2")];
 
 // Aspartate: CA-CB-CG-OD1, CG-OD2
-const ASPARTATE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "OD1"),
-    ("CG", "OD2"),
-];
+const ASPARTATE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "OD1"), ("CG", "OD2")];
 
 // Glutamine: CA-CB-CG-CD-OE1, CD-NE2
-const GLUTAMINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "CD"),
-    ("CD", "OE1"),
-    ("CD", "NE2"),
-];
+const GLUTAMINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "CD"), ("CD", "OE1"), ("CD", "NE2")];
 
 // Glutamate: CA-CB-CG-CD-OE1, CD-OE2
-const GLUTAMATE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "CD"),
-    ("CD", "OE1"),
-    ("CD", "OE2"),
-];
+const GLUTAMATE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "CD"), ("CD", "OE1"), ("CD", "OE2")];
 
 // Lysine: CA-CB-CG-CD-CE-NZ
-const LYSINE_BONDS: &[(&str, &str)] = &[
-    ("CB", "CG"),
-    ("CG", "CD"),
-    ("CD", "CE"),
-    ("CE", "NZ"),
-];
+const LYSINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD"), ("CD", "CE"), ("CE", "NZ")];
 
 // Arginine: CA-CB-CG-CD-NE-CZ-NH1, CZ-NH2
 const ARGININE_BONDS: &[(&str, &str)] = &[

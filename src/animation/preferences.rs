@@ -3,7 +3,7 @@
 //! Users can customize which animation behavior is used for each action type.
 
 use super::behaviors::{
-    BackboneThenExpand, Cascade, CollapseExpand, SharedBehavior, Snap, SmoothInterpolation, shared,
+    shared, BackboneThenExpand, Cascade, CollapseExpand, SharedBehavior, SmoothInterpolation, Snap,
 };
 
 /// Actions that can trigger animations.
@@ -37,7 +37,10 @@ impl AnimationAction {
     /// resize the current state to match the new target and animate the
     /// residues that overlap.
     pub fn allows_size_change(self) -> bool {
-        matches!(self, AnimationAction::DiffusionFinalize | AnimationAction::Load)
+        matches!(
+            self,
+            AnimationAction::DiffusionFinalize | AnimationAction::Load
+        )
     }
 }
 
@@ -100,7 +103,6 @@ impl AnimationPreferences {
             load: snap,
         }
     }
-
 }
 
 impl Default for AnimationPreferences {

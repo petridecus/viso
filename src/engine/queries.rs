@@ -110,11 +110,7 @@ impl ProteinRenderEngine {
     }
 
     /// Get the interpolated position of a specific atom by residue index and atom name.
-    pub fn get_atom_position_by_name(
-        &self,
-        residue_idx: usize,
-        atom_name: &str,
-    ) -> Option<Vec3> {
+    pub fn get_atom_position_by_name(&self, residue_idx: usize, atom_name: &str) -> Option<Vec3> {
         // Check backbone atoms first (N, CA, C)
         if atom_name == "N" || atom_name == "CA" || atom_name == "C" {
             let backbone_chains = self.get_current_backbone_chains();
@@ -140,7 +136,9 @@ impl ProteinRenderEngine {
 
         // Check sidechain atoms
         let sidechain_positions = self.get_current_sidechain_positions();
-        for (i, (res_idx, name)) in self.sc.cached_sidechain_residue_indices
+        for (i, (res_idx, name)) in self
+            .sc
+            .cached_sidechain_residue_indices
             .iter()
             .zip(self.sc.cached_sidechain_atom_names.iter())
             .enumerate()

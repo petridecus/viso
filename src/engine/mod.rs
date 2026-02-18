@@ -5,38 +5,37 @@ mod queries;
 mod scene_management;
 mod scene_sync;
 
+use crate::animation::sidechain_state::SidechainAnimationState;
 use crate::animation::StructureAnimator;
-use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::molecular::band::BandRenderer;
-use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
+use crate::camera::input_state::InputState;
+use crate::gpu::residue_color::ResidueColorBuffer;
+use crate::picking::picking_state::PickingState;
+use crate::picking::{Picking, SelectionBuffer};
+use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
+use crate::renderer::molecular::band::BandRenderer;
 use crate::renderer::molecular::capsule_sidechain::{CapsuleSidechainRenderer, SidechainData};
 use crate::renderer::molecular::draw_context::DrawBindGroups;
-use crate::util::frame_timing::FrameTiming;
-use crate::camera::input_state::InputState;
-use crate::picking::picking_state::PickingState;
-use crate::renderer::postprocess::post_process::PostProcessStack;
-use crate::animation::sidechain_state::SidechainAnimationState;
-use crate::util::options::Options;
-use crate::gpu::residue_color::ResidueColorBuffer;
-use crate::picking::{Picking, SelectionBuffer};
-use crate::util::lighting::Lighting;
+use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::renderer::molecular::pull::PullRenderer;
+use crate::renderer::postprocess::post_process::PostProcessStack;
+use crate::util::frame_timing::FrameTiming;
+use crate::util::lighting::Lighting;
+use crate::util::options::Options;
 
 use crate::gpu::render_context::RenderContext;
-use crate::renderer::molecular::ribbon::RibbonRenderer;
-use crate::scene::processor::SceneProcessor;
 use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::molecular::ribbon::RibbonRenderer;
+use crate::renderer::molecular::tube::TubeRenderer;
+use crate::scene::processor::SceneProcessor;
 use crate::util::trajectory::TrajectoryPlayer;
 use foldit_conv::secondary_structure::SSType;
-use crate::renderer::molecular::tube::TubeRenderer;
 
-use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 use crate::scene::{Focus, Scene};
+use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 use foldit_conv::coords::{
-    structure_file_to_coords, split_into_entities,
-    MoleculeEntity, MoleculeType, RenderCoords,
+    split_into_entities, structure_file_to_coords, MoleculeEntity, MoleculeType, RenderCoords,
 };
 use glam::{Mat4, Vec3};
 use std::collections::HashSet;
@@ -83,7 +82,6 @@ pub struct ProteinRenderEngine {
     pub(crate) residue_color_buffer: ResidueColorBuffer,
 }
 
-
 // =============================================================================
 // Core
 // =============================================================================
@@ -126,7 +124,12 @@ impl ProteinRenderEngine {
 
         // Log entity breakdown
         for e in &entities {
-            log::debug!("  entity {} — {:?}: {} atoms", e.entity_id, e.molecule_type, e.coords.num_atoms);
+            log::debug!(
+                "  entity {} — {:?}: {} atoms",
+                e.entity_id,
+                e.molecule_type,
+                e.coords.num_atoms
+            );
         }
 
         let group_name = std::path::Path::new(cif_path)
@@ -137,20 +140,24 @@ impl ProteinRenderEngine {
         let group_id = scene.add_group(entities, group_name);
 
         // Extract protein coords for rendering (may be absent for nucleic-acid-only structures)
-        let render_coords = if let Some(protein_coords) = scene.group(group_id)
-            .and_then(|g| g.protein_coords())
+        let render_coords = if let Some(protein_coords) =
+            scene.group(group_id).and_then(|g| g.protein_coords())
         {
             log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
             let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
             log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
-            let rc = RenderCoords::from_coords_with_topology(
-                &protein_coords,
-                is_hydrophobic,
-                |name| get_residue_bonds(name).map(|b| b.to_vec()),
-            );
-            log::debug!("render_coords: {} backbone chains, {} residues",
+            let rc =
+                RenderCoords::from_coords_with_topology(&protein_coords, is_hydrophobic, |name| {
+                    get_residue_bonds(name).map(|b| b.to_vec())
+                });
+            log::debug!(
+                "render_coords: {} backbone chains, {} residues",
                 rc.backbone_chains.len(),
-                rc.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>());
+                rc.backbone_chains
+                    .iter()
+                    .map(|c| c.len() / 3)
+                    .sum::<usize>()
+            );
             rc
         } else {
             log::debug!("no protein coords found for group");
@@ -163,11 +170,9 @@ impl ProteinRenderEngine {
                 atom_names: Vec::new(),
                 elements: Vec::new(),
             };
-            RenderCoords::from_coords_with_topology(
-                &empty,
-                is_hydrophobic,
-                |name| get_residue_bonds(name).map(|b| b.to_vec()),
-            )
+            RenderCoords::from_coords_with_topology(&empty, is_hydrophobic, |name| {
+                get_residue_bonds(name).map(|b| b.to_vec())
+            })
         };
 
         // Count total residues for selection buffer sizing
@@ -177,7 +182,8 @@ impl ProteinRenderEngine {
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
 
         // Create per-residue color buffer (shared by all renderers)
-        let mut residue_color_buffer = ResidueColorBuffer::new(&context.device, total_residues.max(1));
+        let mut residue_color_buffer =
+            ResidueColorBuffer::new(&context.device, total_residues.max(1));
 
         let mut tube_renderer = TubeRenderer::new(
             &context,
@@ -301,12 +307,17 @@ impl ProteinRenderEngine {
         }
 
         // Collect non-protein entities from the group for ball-and-stick
-        let non_protein_entities: Vec<&MoleculeEntity> = scene.group(group_id)
-            .map(|g| g.entities().iter()
-                .filter(|e| e.molecule_type != MoleculeType::Protein)
-                .collect())
+        let non_protein_entities: Vec<&MoleculeEntity> = scene
+            .group(group_id)
+            .map(|g| {
+                g.entities()
+                    .iter()
+                    .filter(|e| e.molecule_type != MoleculeType::Protein)
+                    .collect()
+            })
             .unwrap_or_default();
-        let non_protein_refs: Vec<MoleculeEntity> = non_protein_entities.into_iter().cloned().collect();
+        let non_protein_refs: Vec<MoleculeEntity> =
+            non_protein_entities.into_iter().cloned().collect();
         ball_and_stick_renderer.update_from_entities(
             &context.device,
             &context.queue,
@@ -319,15 +330,21 @@ impl ProteinRenderEngine {
         picking_groups.rebuild_bns(&picking, &context.device, &ball_and_stick_renderer);
 
         // Create nucleic acid renderer for DNA/RNA backbone ribbons + base rings
-        let na_entities: Vec<&MoleculeEntity> = scene.group(group_id)
-            .map(|g| g.entities().iter()
-                .filter(|e| matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
-                .collect())
+        let na_entities: Vec<&MoleculeEntity> = scene
+            .group(group_id)
+            .map(|g| {
+                g.entities()
+                    .iter()
+                    .filter(|e| matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
+                    .collect()
+            })
             .unwrap_or_default();
-        let na_chains: Vec<Vec<Vec3>> = na_entities.iter()
+        let na_chains: Vec<Vec<Vec3>> = na_entities
+            .iter()
             .flat_map(|e| e.extract_p_atom_chains())
             .collect();
-        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = na_entities.iter()
+        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = na_entities
+            .iter()
             .flat_map(|e| e.extract_base_rings())
             .collect();
         let nucleic_acid_renderer = NucleicAcidRenderer::new(
@@ -342,7 +359,10 @@ impl ProteinRenderEngine {
 
         // Fit camera to all atom positions (protein + non-protein + nucleic acid P-atoms)
         let mut all_fit_positions = render_coords.all_positions.clone();
-        all_fit_positions.extend(BallAndStickRenderer::collect_positions(&non_protein_refs, &options.display));
+        all_fit_positions.extend(BallAndStickRenderer::collect_positions(
+            &non_protein_refs,
+            &options.display,
+        ));
         for chain in &na_chains {
             all_fit_positions.extend(chain);
         }
@@ -427,10 +447,12 @@ impl ProteinRenderEngine {
         let bounding_radius = self.camera_controller.bounding_radius();
         let fog_start = distance;
         let fog_density = 2.0 / bounding_radius.max(10.0);
-        self.post_process.update_fog(&self.context.queue, fog_start, fog_density);
+        self.post_process
+            .update_fog(&self.context.queue, fog_start, fog_density);
 
         // Update selection buffer (from GPU picking)
-        self.selection_buffer.update(&self.context.queue, &self.picking.selected_residues);
+        self.selection_buffer
+            .update(&self.context.queue, &self.picking.selected_residues);
 
         // Update per-residue color buffer (transition interpolation)
         let _color_transitioning = self.residue_color_buffer.update(&self.context.queue);
@@ -439,8 +461,8 @@ impl ProteinRenderEngine {
         // Use camera.up (set by quaternion) for consistent basis vectors
         let camera = &self.camera_controller.camera;
         let forward = (camera.target - camera.eye).normalize();
-        let right = camera.up.cross(forward).normalize();  // right = up × forward
-        let up = forward.cross(right);  // recalculate up to ensure orthonormal
+        let right = camera.up.cross(forward).normalize(); // right = up × forward
+        let up = forward.cross(right); // recalculate up to ensure orthonormal
         self.lighting.update_headlamp(right, up, forward);
         self.lighting.update_gpu(&self.context.queue);
 
@@ -554,7 +576,11 @@ impl ProteinRenderEngine {
             ribbon_ib,
             ribbon_count,
             self.picking_groups.capsule_picking_bind_group.as_ref(),
-            if self.options.display.show_sidechains { self.sidechain_renderer.instance_count } else { 0 },
+            if self.options.display.show_sidechains {
+                self.sidechain_renderer.instance_count
+            } else {
+                0
+            },
             self.picking_groups.bns_picking_bind_group.as_ref(),
             self.ball_and_stick_renderer.picking_count(),
             self.input.mouse_pos.0 as u32,
@@ -625,7 +651,8 @@ impl ProteinRenderEngine {
     /// Convert screen delta (pixels) to world-space offset.
     /// Useful for drag operations like pulling.
     pub fn screen_delta_to_world(&self, delta_x: f32, delta_y: f32) -> Vec3 {
-        self.camera_controller.screen_delta_to_world(delta_x, delta_y)
+        self.camera_controller
+            .screen_delta_to_world(delta_x, delta_y)
     }
 
     /// Unproject screen coordinates to a world-space point at the depth of a reference point.
@@ -656,7 +683,9 @@ impl ProteinRenderEngine {
             }
             Focus::Group(id) => {
                 if let Some(group) = self.scene.group(id) {
-                    let positions: Vec<Vec3> = group.entities().iter()
+                    let positions: Vec<Vec3> = group
+                        .entities()
+                        .iter()
                         .flat_map(|e: &MoleculeEntity| e.positions())
                         .collect();
                     if !positions.is_empty() {

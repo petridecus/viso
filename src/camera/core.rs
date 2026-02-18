@@ -16,9 +16,9 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub position: [f32; 3],
     pub aspect: f32,
-    pub forward: [f32; 3],  // Camera forward direction for lighting
+    pub forward: [f32; 3], // Camera forward direction for lighting
     pub fovy: f32,
-    pub hovered_residue: i32,  // Currently hovered residue (-1 if none)
+    pub hovered_residue: i32, // Currently hovered residue (-1 if none)
     pub _pad: [f32; 3],
 }
 

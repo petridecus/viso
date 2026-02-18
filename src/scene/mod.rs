@@ -6,16 +6,15 @@
 pub mod processor;
 
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType, NucleotideRing, merge_entities};
+use foldit_conv::coords::entity::{merge_entities, MoleculeEntity, MoleculeType, NucleotideRing};
 use foldit_conv::coords::render::extract_sequences;
 use foldit_conv::coords::types::Coords;
-use foldit_conv::coords::{protein_only, RenderCoords, RenderBackboneResidue};
+use foldit_conv::coords::{protein_only, RenderBackboneResidue, RenderCoords};
 use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::assembly::{
-    prepare_combined_assembly, split_combined_result,
-    update_entities_from_backend, update_protein_entities,
-    residue_count as assembly_residue_count,
-    protein_coords as assembly_protein_coords,
+    prepare_combined_assembly, protein_coords as assembly_protein_coords,
+    residue_count as assembly_residue_count, split_combined_result, update_entities_from_backend,
+    update_protein_entities,
 };
 use glam::Vec3;
 use std::collections::HashMap;
@@ -188,14 +187,24 @@ impl EntityGroup {
     /// Get protein-only Coords for this group.
     pub fn protein_coords(&self) -> Option<Coords> {
         let coords = assembly_protein_coords(&self.entities);
-        if coords.num_atoms == 0 { None } else { Some(coords) }
+        if coords.num_atoms == 0 {
+            None
+        } else {
+            Some(coords)
+        }
     }
 
     /// Get merged Coords for ALL entities.
     pub fn all_coords(&self) -> Option<Coords> {
-        if self.entities.is_empty() { return None; }
+        if self.entities.is_empty() {
+            return None;
+        }
         let coords = merge_entities(&self.entities);
-        if coords.num_atoms == 0 { None } else { Some(coords) }
+        if coords.num_atoms == 0 {
+            None
+        } else {
+            Some(coords)
+        }
     }
 
     /// Build PerGroupData from this group's current state.
@@ -219,38 +228,49 @@ impl EntityGroup {
 
         // Get protein render data
         let render_data = self.render_data();
-        let (backbone_chains, backbone_chain_ids, backbone_residue_chains,
-             sidechain_atoms, sidechain_bonds, backbone_sidechain_bonds, residue_count_val) =
-            if let Some(rd) = render_data {
-                let rc = &rd.render_coords;
-                let res_count: u32 = rc.backbone_chains.iter()
-                    .map(|c| (c.len() / 3) as u32)
-                    .sum();
+        let (
+            backbone_chains,
+            backbone_chain_ids,
+            backbone_residue_chains,
+            sidechain_atoms,
+            sidechain_bonds,
+            backbone_sidechain_bonds,
+            residue_count_val,
+        ) = if let Some(rd) = render_data {
+            let rc = &rd.render_coords;
+            let res_count: u32 = rc
+                .backbone_chains
+                .iter()
+                .map(|c| (c.len() / 3) as u32)
+                .sum();
 
-                let sc_atoms: Vec<SidechainAtom> = rc.sidechain_atoms.iter()
-                    .map(|a| SidechainAtom {
-                        position: a.position,
-                        is_hydrophobic: a.is_hydrophobic,
-                        residue_idx: a.residue_idx,
-                        atom_name: a.atom_name.clone(),
-                    })
-                    .collect();
+            let sc_atoms: Vec<SidechainAtom> = rc
+                .sidechain_atoms
+                .iter()
+                .map(|a| SidechainAtom {
+                    position: a.position,
+                    is_hydrophobic: a.is_hydrophobic,
+                    residue_idx: a.residue_idx,
+                    atom_name: a.atom_name.clone(),
+                })
+                .collect();
 
-                (
-                    rc.backbone_chains.clone(),
-                    rc.backbone_chain_ids.clone(),
-                    rc.backbone_residue_chains.clone(),
-                    sc_atoms,
-                    rc.sidechain_bonds.clone(),
-                    rc.backbone_sidechain_bonds.clone(),
-                    res_count,
-                )
-            } else {
-                (vec![], vec![], vec![], vec![], vec![], vec![], 0)
-            };
+            (
+                rc.backbone_chains.clone(),
+                rc.backbone_chain_ids.clone(),
+                rc.backbone_residue_chains.clone(),
+                sc_atoms,
+                rc.sidechain_bonds.clone(),
+                rc.backbone_sidechain_bonds.clone(),
+                res_count,
+            )
+        } else {
+            (vec![], vec![], vec![], vec![], vec![], vec![], 0)
+        };
 
         // Skip groups with no geometry at all
-        if backbone_chains.is_empty() && non_protein_entities.is_empty()
+        if backbone_chains.is_empty()
+            && non_protein_entities.is_empty()
             && nucleic_acid_chains.is_empty()
         {
             return None;
@@ -281,11 +301,10 @@ impl EntityGroup {
             return None;
         }
 
-        let render_coords = RenderCoords::from_coords_with_topology(
-            &coords,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(|b| b.to_vec()),
-        );
+        let render_coords =
+            RenderCoords::from_coords_with_topology(&coords, is_hydrophobic, |name| {
+                get_residue_bonds(name).map(|b| b.to_vec())
+            });
 
         let (sequence, chain_sequences) = extract_sequences(&coords);
 
@@ -392,7 +411,11 @@ impl Scene {
     // -- Group management --
 
     /// Add a group of entities. Entity IDs are reassigned to be globally unique.
-    pub fn add_group(&mut self, mut entities: Vec<MoleculeEntity>, name: impl Into<String>) -> GroupId {
+    pub fn add_group(
+        &mut self,
+        mut entities: Vec<MoleculeEntity>,
+        name: impl Into<String>,
+    ) -> GroupId {
         // Reassign globally unique entity IDs
         for entity in &mut entities {
             entity.entity_id = self.next_entity_id;
@@ -482,7 +505,9 @@ impl Scene {
 
     /// Cycle: Session -> Group1 -> ... -> GroupN -> focusable entities -> Session.
     pub fn cycle_focus(&mut self) -> Focus {
-        let focusable_entities: Vec<u32> = self.groups.iter()
+        let focusable_entities: Vec<u32> = self
+            .groups
+            .iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
             .filter(|e| e.is_focusable())
@@ -492,21 +517,19 @@ impl Scene {
         let group_ids = self.group_ids();
 
         self.focus = match self.focus {
-            Focus::Session => {
-                group_ids.first()
-                    .map(|&id| Focus::Group(id))
-                    .or_else(|| focusable_entities.first().map(|&id| Focus::Entity(id)))
-                    .unwrap_or(Focus::Session)
-            }
+            Focus::Session => group_ids
+                .first()
+                .map(|&id| Focus::Group(id))
+                .or_else(|| focusable_entities.first().map(|&id| Focus::Entity(id)))
+                .unwrap_or(Focus::Session),
             Focus::Group(current_id) => {
                 let idx = group_ids.iter().position(|&id| id == current_id);
                 match idx {
                     Some(i) if i + 1 < group_ids.len() => Focus::Group(group_ids[i + 1]),
-                    _ => {
-                        focusable_entities.first()
-                            .map(|&id| Focus::Entity(id))
-                            .unwrap_or(Focus::Session)
-                    }
+                    _ => focusable_entities
+                        .first()
+                        .map(|&id| Focus::Entity(id))
+                        .unwrap_or(Focus::Session),
                 }
             }
             Focus::Entity(current_id) => {
@@ -532,7 +555,9 @@ impl Scene {
                 }
             }
             Focus::Entity(eid) => {
-                let exists = self.groups.iter()
+                let exists = self
+                    .groups
+                    .iter()
                     .flat_map(|g| g.entities().iter())
                     .any(|e| e.entity_id == eid);
                 if !exists {
@@ -548,7 +573,10 @@ impl Scene {
             Focus::Session => "Session (all structures)".to_string(),
             Focus::Group(id) => {
                 let idx = self.groups.iter().position(|g| g.id == id).unwrap_or(0) + 1;
-                let name = self.group(id).map(|g| g.name().to_string()).unwrap_or_default();
+                let name = self
+                    .group(id)
+                    .map(|g| g.name().to_string())
+                    .unwrap_or_default();
                 format!("Structure {} ({})", idx, name)
             }
             Focus::Entity(eid) => {
@@ -568,7 +596,8 @@ impl Scene {
 
     /// Collect per-group render data for all visible groups.
     pub fn per_group_data(&mut self) -> Vec<PerGroupData> {
-        self.groups.iter_mut()
+        self.groups
+            .iter_mut()
             .filter(|g| g.visible)
             .filter_map(|g| g.to_per_group_data())
             .collect()
@@ -576,7 +605,8 @@ impl Scene {
 
     /// All atom positions across all visible groups (for camera fitting).
     pub fn all_positions(&self) -> Vec<Vec3> {
-        self.groups.iter()
+        self.groups
+            .iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
             .flat_map(|e| e.coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z)))
@@ -625,10 +655,15 @@ impl Scene {
             let group_name = group.name().to_string();
             let render_data = match group.render_data() {
                 Some(rd) => {
-                    log::debug!("group '{}': {} backbone chains, {} residues, {} sidechain atoms",
+                    log::debug!(
+                        "group '{}': {} backbone chains, {} residues, {} sidechain atoms",
                         group_name,
                         rd.render_coords.backbone_chains.len(),
-                        rd.render_coords.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>(),
+                        rd.render_coords
+                            .backbone_chains
+                            .iter()
+                            .map(|c| c.len() / 3)
+                            .sum::<usize>(),
                         rd.render_coords.sidechain_atoms.len(),
                     );
                     rd
@@ -642,7 +677,9 @@ impl Scene {
             let atom_offset = data.sidechain_positions.len() as u32;
 
             // Count residues
-            let structure_residue_count: u32 = render_data.render_coords.backbone_chains
+            let structure_residue_count: u32 = render_data
+                .render_coords
+                .backbone_chains
                 .iter()
                 .map(|c| (c.len() / 3) as u32)
                 .sum();
@@ -669,19 +706,22 @@ impl Scene {
             for atom in &render_data.render_coords.sidechain_atoms {
                 data.sidechain_positions.push(atom.position);
                 data.sidechain_hydrophobicity.push(atom.is_hydrophobic);
-                data.sidechain_residue_indices.push(atom.residue_idx + global_residue_offset);
+                data.sidechain_residue_indices
+                    .push(atom.residue_idx + global_residue_offset);
                 data.sidechain_atom_names.push(atom.atom_name.clone());
                 data.all_positions.push(atom.position);
             }
 
             // Aggregate bonds (adjust indices by offset)
             for &(a, b) in &render_data.render_coords.sidechain_bonds {
-                data.sidechain_bonds.push((a + atom_offset, b + atom_offset));
+                data.sidechain_bonds
+                    .push((a + atom_offset, b + atom_offset));
             }
 
             // Aggregate backbone-sidechain bonds
             for &(ca_pos, cb_idx) in &render_data.render_coords.backbone_sidechain_bonds {
-                data.backbone_sidechain_bonds.push((ca_pos, cb_idx + atom_offset));
+                data.backbone_sidechain_bonds
+                    .push((ca_pos, cb_idx + atom_offset));
             }
 
             global_residue_offset += structure_residue_count;
@@ -712,7 +752,9 @@ impl Scene {
 
     /// Get combined ASSEM01 bytes from all visible groups for Rosetta operations.
     pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
-        let visible_groups: Vec<&EntityGroup> = self.groups.iter()
+        let visible_groups: Vec<&EntityGroup> = self
+            .groups
+            .iter()
             .filter(|g| g.visible && assembly_residue_count(g.entities()) > 0)
             .collect();
 
@@ -720,21 +762,20 @@ impl Scene {
             return None;
         }
 
-        let entity_slices: Vec<&[MoleculeEntity]> = visible_groups.iter()
-            .map(|g| g.entities())
-            .collect();
-        let group_ids: Vec<GroupId> = visible_groups.iter()
-            .map(|g| g.id)
-            .collect();
+        let entity_slices: Vec<&[MoleculeEntity]> =
+            visible_groups.iter().map(|g| g.entities()).collect();
+        let group_ids: Vec<GroupId> = visible_groups.iter().map(|g| g.id).collect();
 
         let combined = prepare_combined_assembly(&entity_slices)?;
 
-        let chain_ids_per_group: Vec<(GroupId, Vec<u8>)> = group_ids.iter()
+        let chain_ids_per_group: Vec<(GroupId, Vec<u8>)> = group_ids
+            .iter()
             .zip(combined.chain_ids.iter())
             .map(|(&gid, chains)| (gid, chains.clone()))
             .collect();
 
-        let residue_ranges: HashMap<GroupId, (usize, usize)> = group_ids.iter()
+        let residue_ranges: HashMap<GroupId, (usize, usize)> = group_ids
+            .iter()
             .zip(combined.residue_ranges.iter())
             .map(|(&gid, &range)| (gid, range))
             .collect();
@@ -752,7 +793,8 @@ impl Scene {
         coords_bytes: &[u8],
         chain_ids_per_group: &[(GroupId, Vec<u8>)],
     ) -> Result<(), String> {
-        let chain_ids_list: Vec<Vec<u8>> = chain_ids_per_group.iter()
+        let chain_ids_list: Vec<Vec<u8>> = chain_ids_per_group
+            .iter()
             .map(|(_, chains)| chains.clone())
             .collect();
 
@@ -768,8 +810,11 @@ impl Scene {
             if let Some(group) = self.groups.iter_mut().find(|g| g.id == *group_id) {
                 update_entities_from_backend(group.entities_mut(), structure_coords.clone());
                 group.invalidate_render_cache();
-                log::info!("Updated group {:?} from backend ({} atoms)",
-                    group_id, structure_coords.num_atoms);
+                log::info!(
+                    "Updated group {:?} from backend ({} atoms)",
+                    group_id,
+                    structure_coords.num_atoms
+                );
             }
         }
 
@@ -788,7 +833,8 @@ impl Scene {
 
     /// Get visible group IDs and their residue counts (for Rosetta topology check).
     pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
-        self.groups.iter()
+        self.groups
+            .iter()
             .filter(|g| g.visible)
             .map(|g| (g.id, assembly_residue_count(g.entities())))
             .collect()

@@ -11,9 +11,9 @@ use foldit_conv::coords::{
 use glam::Vec3;
 
 use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::util::options::{ColorOptions, DisplayOptions};
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
+use crate::util::options::{ColorOptions, DisplayOptions};
 
 use super::capsule_instance::CapsuleInstance;
 use crate::renderer::pipeline_util;
@@ -219,7 +219,12 @@ impl BallAndStickRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Sphere Impostor Shader", include_str!("../../../assets/shaders/raster/impostor/sphere.wgsl"), "sphere_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Sphere Impostor Shader",
+            include_str!("../../../assets/shaders/raster/impostor/sphere.wgsl"),
+            "sphere_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
@@ -269,7 +274,12 @@ impl BallAndStickRenderer {
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
         // Reuse capsule_impostor.wgsl for bonds
-        let shader = shader_composer.compose(&context.device, "Ball-and-Stick Bond Shader", include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"), "capsule_impostor.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Ball-and-Stick Bond Shader",
+            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            "capsule_impostor.wgsl",
+        );
 
         let pipeline_layout =
             context
@@ -317,7 +327,11 @@ impl BallAndStickRenderer {
         entities: &[MoleculeEntity],
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
-    ) -> (Vec<SphereInstance>, Vec<CapsuleInstance>, Vec<CapsuleInstance>) {
+    ) -> (
+        Vec<SphereInstance>,
+        Vec<CapsuleInstance>,
+        Vec<CapsuleInstance>,
+    ) {
         let mut sphere_instances = Vec::new();
         let mut bond_instances = Vec::new();
         let mut picking_instances = Vec::new();
@@ -335,7 +349,10 @@ impl BallAndStickRenderer {
                     );
                 }
                 MoleculeType::Cofactor => {
-                    let tint = entity.coords.res_names.first()
+                    let tint = entity
+                        .coords
+                        .res_names
+                        .first()
                         .map(|rn| {
                             if let Some(c) = colors {
                                 c.cofactor_tint(std::str::from_utf8(rn).unwrap_or("").trim())
@@ -374,7 +391,7 @@ impl BallAndStickRenderer {
                             &mut picking_instances,
                         );
                     }
-                },
+                }
                 MoleculeType::Ion if display.show_ions => {
                     Self::generate_ion_instances(
                         &entity.coords,
@@ -420,7 +437,13 @@ impl BallAndStickRenderer {
     ) {
         let (sphere_instances, bond_instances, picking_instances) =
             Self::generate_all_instances(entities, display, colors);
-        self.apply_instances(device, queue, &sphere_instances, &bond_instances, &picking_instances);
+        self.apply_instances(
+            device,
+            queue,
+            &sphere_instances,
+            &bond_instances,
+            &picking_instances,
+        );
     }
 
     /// Upload pre-computed instances to GPU buffers, recreating bind groups if reallocated.
@@ -807,13 +830,13 @@ impl BallAndStickRenderer {
     fn cofactor_carbon_tint(res_name: &[u8; 3]) -> [f32; 3] {
         let name = std::str::from_utf8(res_name).unwrap_or("").trim();
         match name {
-            "CLA" => [0.2, 0.7, 0.3],       // green
-            "CHL" => [0.2, 0.6, 0.35],       // green (chlorophyll B)
-            "BCR" | "BCB" => [0.9, 0.5, 0.1], // orange
+            "CLA" => [0.2, 0.7, 0.3],                           // green
+            "CHL" => [0.2, 0.6, 0.35],                          // green (chlorophyll B)
+            "BCR" | "BCB" => [0.9, 0.5, 0.1],                   // orange
             "HEM" | "HEC" | "HEA" | "HEB" => [0.7, 0.15, 0.15], // dark red
-            "PHO" => [0.5, 0.7, 0.3],        // yellow-green
-            "PL9" | "PLQ" => [0.6, 0.5, 0.2], // amber
-            _ => [0.5, 0.5, 0.5],            // neutral fallback
+            "PHO" => [0.5, 0.7, 0.3],                           // yellow-green
+            "PL9" | "PLQ" => [0.6, 0.5, 0.2],                   // amber
+            _ => [0.5, 0.5, 0.5],                               // neutral fallback
         }
     }
 
@@ -837,7 +860,12 @@ impl BallAndStickRenderer {
 
             spheres.push(SphereInstance {
                 center: [atom.x, atom.y, atom.z, SOLVENT_RADIUS],
-                color: [solvent_color[0], solvent_color[1], solvent_color[2], pick_id as f32],
+                color: [
+                    solvent_color[0],
+                    solvent_color[1],
+                    solvent_color[2],
+                    pick_id as f32,
+                ],
             });
 
             picking.push(CapsuleInstance {
@@ -866,31 +894,52 @@ impl BallAndStickRenderer {
         let capsule_zero = CapsuleInstance::zeroed();
 
         // Update sphere buffer
-        let sphere_data = if sphere_bytes.is_empty() { bytemuck::bytes_of(&sphere_zero) } else { sphere_bytes };
+        let sphere_data = if sphere_bytes.is_empty() {
+            bytemuck::bytes_of(&sphere_zero)
+        } else {
+            sphere_bytes
+        };
         let sphere_reallocated = self.sphere_buffer.write_bytes(device, queue, sphere_data);
         if sphere_reallocated {
             self.sphere_bind_group = Self::create_storage_bind_group(
-                device, &self.sphere_bind_group_layout, &self.sphere_buffer, "Sphere",
+                device,
+                &self.sphere_bind_group_layout,
+                &self.sphere_buffer,
+                "Sphere",
             );
         }
         self.sphere_count = sphere_count;
 
         // Update bond buffer
-        let bond_data = if capsule_bytes.is_empty() { bytemuck::bytes_of(&capsule_zero) } else { capsule_bytes };
+        let bond_data = if capsule_bytes.is_empty() {
+            bytemuck::bytes_of(&capsule_zero)
+        } else {
+            capsule_bytes
+        };
         let bond_reallocated = self.bond_buffer.write_bytes(device, queue, bond_data);
         if bond_reallocated {
             self.bond_bind_group = Self::create_storage_bind_group(
-                device, &self.bond_bind_group_layout, &self.bond_buffer, "Bond",
+                device,
+                &self.bond_bind_group_layout,
+                &self.bond_buffer,
+                "Bond",
             );
         }
         self.bond_count = capsule_count;
 
         // Update picking buffer
-        let picking_data = if picking_bytes.is_empty() { bytemuck::bytes_of(&capsule_zero) } else { picking_bytes };
+        let picking_data = if picking_bytes.is_empty() {
+            bytemuck::bytes_of(&capsule_zero)
+        } else {
+            picking_bytes
+        };
         let picking_reallocated = self.picking_buffer.write_bytes(device, queue, picking_data);
         if picking_reallocated {
             self.picking_bind_group = Self::create_storage_bind_group(
-                device, &self.picking_bind_group_layout, &self.picking_buffer, "BnS Picking",
+                device,
+                &self.picking_bind_group_layout,
+                &self.picking_buffer,
+                "BnS Picking",
             );
         }
         self.picking_count = picking_count;
@@ -934,10 +983,7 @@ impl BallAndStickRenderer {
     }
 
     /// Get all non-protein atom positions for camera fitting.
-    pub fn collect_positions(
-        entities: &[MoleculeEntity],
-        display: &DisplayOptions,
-    ) -> Vec<Vec3> {
+    pub fn collect_positions(entities: &[MoleculeEntity], display: &DisplayOptions) -> Vec<Vec3> {
         let mut positions = Vec::new();
         for entity in entities {
             match entity.molecule_type {
@@ -972,9 +1018,7 @@ impl BallAndStickRenderer {
     /// For single-residue entities (typical ligands), this is identical to `infer_bonds`.
     /// For multi-residue entities (e.g. all lipids lumped together), this is
     /// O(sum of k²) where k = atoms per residue (~130), vs O(n²) where n = total (~95K).
-    fn infer_bonds_per_residue(
-        coords: &foldit_conv::coords::Coords,
-    ) -> Vec<InferredBond> {
+    fn infer_bonds_per_residue(coords: &foldit_conv::coords::Coords) -> Vec<InferredBond> {
         use std::collections::BTreeMap;
 
         let n = coords.num_atoms;

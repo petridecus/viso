@@ -183,7 +183,7 @@ impl std::fmt::Debug for AnimationController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::behaviors::{Snap, shared};
+    use crate::animation::behaviors::{shared, Snap};
     use glam::Vec3;
 
     fn make_backbone(y: f32, num_residues: usize) -> Vec<Vec<Vec3>> {
@@ -258,10 +258,9 @@ mod tests {
     #[test]
     fn test_controller_respects_snap_behavior() {
         let mut controller = AnimationController::new();
-        controller.preferences_mut().set(
-            AnimationAction::Load,
-            shared(Snap),
-        );
+        controller
+            .preferences_mut()
+            .set(AnimationAction::Load, shared(Snap));
 
         let mut state = StructureState::from_backbone(&make_backbone(0.0, 2));
         let new_target = StructureState::from_backbone(&make_backbone(10.0, 2));

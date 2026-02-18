@@ -39,20 +39,21 @@ impl Default for Options {
 impl Options {
     /// Load options from a TOML file. Missing fields use defaults.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         toml::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
 
     /// Save options to a TOML file (pretty-printed).
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let content =
-            toml::to_string_pretty(self).map_err(|e| format!("Failed to serialize options: {}", e))?;
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize options: {}", e))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
         }
-        std::fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+        std::fs::write(path, content)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
     }
 
     /// List available preset names (TOML file stems) in a directory.

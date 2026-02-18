@@ -38,46 +38,52 @@ impl FxaaPass {
         });
 
         let screen_size: [f32; 2] = [width as f32, height as f32];
-        let screen_size_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("FXAA Screen Size Buffer"),
-            contents: bytemuck::cast_slice(&screen_size),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let screen_size_buffer =
+            context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("FXAA Screen Size Buffer"),
+                    contents: bytemuck::cast_slice(&screen_size),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
-        let bind_group_layout = context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("FXAA Bind Group Layout"),
-            entries: &[
-                // binding 0: input color texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 1: sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 2: screen_size uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("FXAA Bind Group Layout"),
+                    entries: &[
+                        // binding 0: input color texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        // binding 1: sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // binding 2: screen_size uniform
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
         let bind_group = Self::create_bind_group(
             context,
@@ -87,15 +93,21 @@ impl FxaaPass {
             &screen_size_buffer,
         );
 
-        let shader = shader_composer.compose(&context.device, "FXAA Shader", include_str!("../../../assets/shaders/screen/fxaa.wgsl"), "fxaa.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "FXAA Shader",
+            include_str!("../../../assets/shaders/screen/fxaa.wgsl"),
+            "fxaa.wgsl",
+        );
 
-        let pipeline_layout = context
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("FXAA Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                immediate_size: 0,
-            });
+        let pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("FXAA Pipeline Layout"),
+                    bind_group_layouts: &[&bind_group_layout],
+                    immediate_size: 0,
+                });
 
         let pipeline = context
             .device
@@ -168,24 +180,26 @@ impl FxaaPass {
         sampler: &wgpu::Sampler,
         screen_size_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FXAA Bind Group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: screen_size_buffer.as_entire_binding(),
-                },
-            ],
-        })
+        context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("FXAA Bind Group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: screen_size_buffer.as_entire_binding(),
+                    },
+                ],
+            })
     }
 
     /// Render FXAA pass: read from input_view, write to output_view (swapchain).
@@ -231,7 +245,11 @@ impl FxaaPass {
         self.input_view = input_view;
 
         let screen_size: [f32; 2] = [width as f32, height as f32];
-        context.queue.write_buffer(&self.screen_size_buffer, 0, bytemuck::cast_slice(&screen_size));
+        context.queue.write_buffer(
+            &self.screen_size_buffer,
+            0,
+            bytemuck::cast_slice(&screen_size),
+        );
 
         self.bind_group = Self::create_bind_group(
             context,

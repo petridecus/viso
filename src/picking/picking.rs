@@ -149,7 +149,8 @@ impl Picking {
         let height = context.config.height;
 
         let (texture, texture_view) = Self::create_picking_texture(&context.device, width, height);
-        let (depth_texture, depth_view) = Self::create_depth_texture(&context.device, width, height);
+        let (depth_texture, depth_view) =
+            Self::create_depth_texture(&context.device, width, height);
 
         // Staging buffer for single pixel readback (256 bytes minimum, we only need 4)
         let staging_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
@@ -160,7 +161,12 @@ impl Picking {
         });
 
         // Load picking shader for tubes
-        let tube_shader = shader_composer.compose(&context.device, "Picking Tube Shader", include_str!("../../assets/shaders/utility/picking_mesh.wgsl"), "picking.wgsl");
+        let tube_shader = shader_composer.compose(
+            &context.device,
+            "Picking Tube Shader",
+            include_str!("../../assets/shaders/utility/picking_mesh.wgsl"),
+            "picking.wgsl",
+        );
 
         // Tube picking pipeline
         let tube_pipeline_layout =
@@ -212,7 +218,12 @@ impl Picking {
                 });
 
         // Capsule picking pipeline
-        let capsule_shader = shader_composer.compose(&context.device, "Picking Capsule Shader", include_str!("../../assets/shaders/utility/picking_capsule.wgsl"), "picking_capsule.wgsl");
+        let capsule_shader = shader_composer.compose(
+            &context.device,
+            "Picking Capsule Shader",
+            include_str!("../../assets/shaders/utility/picking_capsule.wgsl"),
+            "picking_capsule.wgsl",
+        );
 
         let capsule_bind_group_layout =
             context
@@ -428,13 +439,15 @@ impl Picking {
                 render_pass.set_pipeline(&self.tube_pipeline);
                 render_pass.set_bind_group(0, camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, tube_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(tube_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass
+                    .set_index_buffer(tube_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..tube_index_count, 0, 0..1);
             }
 
             // Draw ribbons (helices/sheets in ribbon mode)
             // Uses the same pipeline as tubes - same vertex layout and picking shader
-            if let (Some(ribbon_vb), Some(ribbon_ib)) = (ribbon_vertex_buffer, ribbon_index_buffer) {
+            if let (Some(ribbon_vb), Some(ribbon_ib)) = (ribbon_vertex_buffer, ribbon_index_buffer)
+            {
                 if ribbon_index_count > 0 {
                     render_pass.set_pipeline(&self.tube_pipeline);
                     render_pass.set_bind_group(0, camera_bind_group, &[]);

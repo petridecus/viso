@@ -11,7 +11,7 @@ use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
 use crate::renderer::pipeline_util;
 use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
-use foldit_conv::secondary_structure::{SSType, merge_short_segments};
+use foldit_conv::secondary_structure::{merge_short_segments, SSType};
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
@@ -143,7 +143,14 @@ impl TubeRenderer {
             )
         };
 
-        let pipeline = Self::create_pipeline(context, camera_layout, lighting_layout, selection_layout, color_layout, shader_composer);
+        let pipeline = Self::create_pipeline(
+            context,
+            camera_layout,
+            lighting_layout,
+            selection_layout,
+            color_layout,
+            shader_composer,
+        );
         let last_chain_hash = Self::compute_chain_hash(backbone_chains);
 
         Self {
@@ -172,7 +179,11 @@ impl TubeRenderer {
 
     /// Regenerate mesh with current filter settings
     pub fn regenerate(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let (vertices, indices) = Self::generate_tube_mesh(&self.cached_chains, &self.ss_filter, self.ss_override.as_deref());
+        let (vertices, indices) = Self::generate_tube_mesh(
+            &self.cached_chains,
+            &self.ss_filter,
+            self.ss_override.as_deref(),
+        );
         if !vertices.is_empty() {
             self.vertex_buffer.write(device, queue, &vertices);
             self.index_buffer.write(device, queue, &indices);
@@ -228,7 +239,11 @@ impl TubeRenderer {
             self.ss_override = Some(ss.to_vec());
         }
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter, self.ss_override.as_deref());
+        let (vertices, indices) = Self::generate_tube_mesh(
+            backbone_chains,
+            &self.ss_filter,
+            self.ss_override.as_deref(),
+        );
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -250,7 +265,11 @@ impl TubeRenderer {
         self.last_chain_hash = new_hash;
         self.cached_chains = backbone_chains.to_vec();
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &self.ss_filter, self.ss_override.as_deref());
+        let (vertices, indices) = Self::generate_tube_mesh(
+            backbone_chains,
+            &self.ss_filter,
+            self.ss_override.as_deref(),
+        );
 
         if vertices.is_empty() {
             self.index_count = 0;
@@ -283,14 +302,24 @@ impl TubeRenderer {
         color_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(&context.device, "Backbone Tube Shader", include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"), "backbone_tube.wgsl");
+        let shader = shader_composer.compose(
+            &context.device,
+            "Backbone Tube Shader",
+            include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"),
+            "backbone_tube.wgsl",
+        );
 
         let pipeline_layout =
             context
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Backbone Pipeline Layout"),
-                    bind_group_layouts: &[camera_layout, lighting_layout, selection_layout, color_layout],
+                    bind_group_layouts: &[
+                        camera_layout,
+                        lighting_layout,
+                        selection_layout,
+                        color_layout,
+                    ],
                     immediate_size: 0,
                 });
 
@@ -520,7 +549,11 @@ impl TubeRenderer {
     }
 
     /// Interpolate residue indices to match spline point count
-    fn interpolate_residue_indices(n_residues: usize, num_spline_points: usize, base_residue: u32) -> Vec<u32> {
+    fn interpolate_residue_indices(
+        n_residues: usize,
+        num_spline_points: usize,
+        base_residue: u32,
+    ) -> Vec<u32> {
         if n_residues == 0 {
             return vec![base_residue; num_spline_points];
         }
@@ -686,7 +719,10 @@ impl TubeRenderer {
         render_pass.set_bind_group(2, bind_groups.selection, &[]);
         render_pass.set_bind_group(3, color_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
-        render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.set_index_buffer(
+            self.index_buffer.buffer().slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
@@ -812,11 +848,7 @@ fn compute_rmf(points: &mut [SplinePoint]) {
 
     // Initialize first frame
     let t0 = points[0].tangent;
-    let arbitrary = if t0.x.abs() < 0.9 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
+    let arbitrary = if t0.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
     let n0 = t0.cross(arbitrary).normalize();
     let b0 = t0.cross(n0).normalize();
 

@@ -11,8 +11,8 @@ use wgpu::util::DeviceExt;
 /// Never shrinks (GPU buffers cannot be resized in place).
 pub struct DynamicBuffer {
     buffer: wgpu::Buffer,
-    capacity: usize,        // Capacity in bytes
-    len: usize,             // Current data length in bytes
+    capacity: usize, // Capacity in bytes
+    len: usize,      // Current data length in bytes
     usage: wgpu::BufferUsages,
     label: String,
 }
@@ -108,12 +108,7 @@ impl DynamicBuffer {
     /// Write raw bytes to buffer, growing if necessary.
     ///
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
-    pub fn write_bytes(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-    ) -> bool {
+    pub fn write_bytes(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
         let needed = data.len();
 
         let reallocated = if needed > self.capacity {
@@ -218,12 +213,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     ///
     /// Infers item count from byte length / type size.
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
-    pub fn write_bytes(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-    ) -> bool {
+    pub fn write_bytes(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
         self.count = data.len() / std::mem::size_of::<T>();
         self.inner.write_bytes(device, queue, data)
     }

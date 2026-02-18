@@ -50,7 +50,8 @@ impl FrameTiming {
         if frame_time > 0.0 {
             let instant_fps = 1.0 / frame_time;
             // Exponential moving average for smooth display
-            self.smoothed_fps = self.smoothed_fps * (1.0 - self.smoothing) + instant_fps * self.smoothing;
+            self.smoothed_fps =
+                self.smoothed_fps * (1.0 - self.smoothing) + instant_fps * self.smoothing;
         }
     }
 

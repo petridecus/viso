@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use foldit_render::animation::{AnimationTimeline, ResidueAnimationState};
 use foldit_render::easing::EasingFunction;
-use foldit_render::animation::{ResidueAnimationState, AnimationTimeline};
 use glam::Vec3;
 use std::time::Duration;
 
@@ -31,24 +31,21 @@ fn timeline_update_benchmark(c: &mut Criterion) {
     for count in [10, 50, 100, 500].iter() {
         let mut timeline = AnimationTimeline::new(*count);
         let states: Vec<ResidueAnimationState> = (0..*count)
-            .map(|i| ResidueAnimationState::new(
-                i,
-                [Vec3::ZERO; 3],
-                [Vec3::ONE; 3],
-                &[],
-                &[],
-            ))
+            .map(|i| ResidueAnimationState::new(i, [Vec3::ZERO; 3], [Vec3::ONE; 3], &[], &[]))
             .collect();
         timeline.add(states, Some(Duration::from_millis(300)), None);
 
         group.bench_function(format!("{}_residues", count), |b| {
-            b.iter(|| {
-                black_box(timeline.update(std::time::Instant::now()))
-            })
+            b.iter(|| black_box(timeline.update(std::time::Instant::now())))
         });
     }
     group.finish();
 }
 
-criterion_group!(benches, easing_benchmark, residue_interpolation_benchmark, timeline_update_benchmark);
+criterion_group!(
+    benches,
+    easing_benchmark,
+    residue_interpolation_benchmark,
+    timeline_update_benchmark
+);
 criterion_main!(benches);

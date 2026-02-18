@@ -1,5 +1,5 @@
-use viso::engine::ProteinRenderEngine;
 use std::sync::Arc;
+use viso::engine::ProteinRenderEngine;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -26,7 +26,9 @@ impl RenderApp {
 impl ApplicationHandler for RenderApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let monitor = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next());
+            let monitor = event_loop
+                .primary_monitor()
+                .or_else(|| event_loop.available_monitors().next());
             let attrs = if let Some(mon) = &monitor {
                 let mon_size = mon.size();
                 let scale = mon.scale_factor();
@@ -36,8 +38,7 @@ impl ApplicationHandler for RenderApp {
                     .with_title("Viso")
                     .with_inner_size(winit::dpi::LogicalSize::new(logical_w, logical_h))
             } else {
-                Window::default_attributes()
-                    .with_title("Viso")
+                Window::default_attributes().with_title("Viso")
             };
             let window = Arc::new(event_loop.create_window(attrs).unwrap());
 
@@ -45,7 +46,12 @@ impl ApplicationHandler for RenderApp {
             let scale = window.scale_factor();
             let (width, height) = (size.width, size.height);
 
-            let mut engine = pollster::block_on(ProteinRenderEngine::new_with_path(window.clone(), (width, height), scale, &self.cif_path));
+            let mut engine = pollster::block_on(ProteinRenderEngine::new_with_path(
+                window.clone(),
+                (width, height),
+                scale,
+                &self.cif_path,
+            ));
 
             // Kick off background scene processing so colors and geometry are ready
             engine.sync_scene_to_renderers(None);
@@ -198,7 +204,10 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
         return Ok(local_path.to_string_lossy().to_string());
     }
 
-    Err(format!("File not found and not a valid PDB code: {}", input))
+    Err(format!(
+        "File not found and not a valid PDB code: {}",
+        input
+    ))
 }
 
 fn main() {

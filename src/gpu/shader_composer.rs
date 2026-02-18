@@ -60,7 +60,10 @@ impl ShaderComposer {
                     ..Default::default()
                 })
                 .unwrap_or_else(|e| {
-                    panic!("Failed to register shader module '{}': {:?}", m.file_path, e)
+                    panic!(
+                        "Failed to register shader module '{}': {:?}",
+                        m.file_path, e
+                    )
                 });
         }
 
@@ -84,9 +87,7 @@ impl ShaderComposer {
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()
             })
-            .unwrap_or_else(|e| {
-                panic!("Failed to compose shader '{}': {}", file_path, e)
-            });
+            .unwrap_or_else(|e| panic!("Failed to compose shader '{}': {}", file_path, e));
 
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),

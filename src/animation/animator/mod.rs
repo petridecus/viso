@@ -263,9 +263,7 @@ impl StructureAnimator {
             // If the pending action allows size-change animation, initialize
             // sidechain starts at their CA (collapsed) so CollapseExpand can
             // animate them expanding outward. Otherwise snap to target.
-            let allows_resize = action
-                .map(|a| a.allows_size_change())
-                .unwrap_or(false);
+            let allows_resize = action.map(|a| a.allows_size_change()).unwrap_or(false);
             if allows_resize {
                 // Start each sidechain atom at its residue's CA position
                 self.start_sidechain_positions = residue_indices
@@ -301,7 +299,11 @@ impl StructureAnimator {
 
         // Compare positions with small epsilon
         const EPSILON: f32 = 0.001;
-        for (old, new) in self.target_sidechain_positions.iter().zip(new_positions.iter()) {
+        for (old, new) in self
+            .target_sidechain_positions
+            .iter()
+            .zip(new_positions.iter())
+        {
             if (*old - *new).length_squared() > EPSILON * EPSILON {
                 return true;
             }
@@ -337,13 +339,25 @@ impl StructureAnimator {
                 // Skip interpolation for snapped (non-targeted) entities —
                 // CollapseExpand's 3-point path (start→CA→end) produces visible
                 // motion even when start==end, so we must bypass it entirely.
-                if self.snapped_residue_ranges.iter().any(|&(s, e)| res_idx >= s && res_idx < e) {
+                if self
+                    .snapped_residue_ranges
+                    .iter()
+                    .any(|&(s, e)| res_idx >= s && res_idx < e)
+                {
                     return *end;
                 }
 
                 // Get the collapse point (CA position) for this atom's residue
-                let start_ca = self.start_ca_positions.get(res_idx).copied().unwrap_or(*start);
-                let end_ca = self.target_ca_positions.get(res_idx).copied().unwrap_or(*end);
+                let start_ca = self
+                    .start_ca_positions
+                    .get(res_idx)
+                    .copied()
+                    .unwrap_or(*start);
+                let end_ca = self
+                    .target_ca_positions
+                    .get(res_idx)
+                    .copied()
+                    .unwrap_or(*end);
 
                 let collapse_point = start_ca + (end_ca - start_ca) * ctx.eased_t;
 
@@ -590,7 +604,10 @@ mod tests {
 
         // Set same backbone - should animate because sidechains changed
         animator.set_target(&make_backbone(5.0), AnimationAction::Load);
-        assert!(animator.is_animating(), "Sidechain-only change should trigger animation");
+        assert!(
+            animator.is_animating(),
+            "Sidechain-only change should trigger animation"
+        );
     }
 
     #[test]

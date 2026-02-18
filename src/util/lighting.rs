@@ -139,8 +139,7 @@ impl Lighting {
             generate_prefiltered_cubemap(&context.device, &context.queue);
 
         // Generate BRDF integration LUT for split-sum approximation
-        let (_brdf_lut_texture, brdf_lut_view) =
-            generate_brdf_lut(&context.device, &context.queue);
+        let (_brdf_lut_texture, brdf_lut_view) = generate_brdf_lut(&context.device, &context.queue);
 
         let irradiance_sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Irradiance Sampler"),
@@ -283,9 +282,8 @@ impl Lighting {
 
         // Rim back-light: below-behind relative to camera
         let rim_camera = glam::Vec3::new(0.0, -0.7, 0.5).normalize();
-        let rim_world = camera_right * rim_camera.x
-            + camera_up * rim_camera.y
-            + camera_forward * rim_camera.z;
+        let rim_world =
+            camera_right * rim_camera.x + camera_up * rim_camera.y + camera_forward * rim_camera.z;
 
         self.uniform.rim_dir = rim_world.normalize().to_array();
     }
@@ -484,7 +482,11 @@ fn generate_prefiltered_cubemap(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: mip,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: face },
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: face,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
                 &data,

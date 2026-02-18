@@ -140,10 +140,7 @@ mod tests {
 
     #[test]
     fn test_cascade_residue_t_first_residue() {
-        let cascade = Cascade::new(
-            Duration::from_millis(100),
-            Duration::from_millis(50),
-        );
+        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
 
         // First residue starts immediately
         let t = cascade.residue_t(0.0, 0, 10);
@@ -152,10 +149,7 @@ mod tests {
 
     #[test]
     fn test_cascade_residue_t_later_residue() {
-        let cascade = Cascade::new(
-            Duration::from_millis(100),
-            Duration::from_millis(50),
-        );
+        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
 
         // Total duration for 10 residues: 50*9 + 100 = 550ms
         // Residue 2 starts at 100ms (2 * 50ms)
@@ -170,10 +164,7 @@ mod tests {
 
     #[test]
     fn test_cascade_total_duration() {
-        let cascade = Cascade::new(
-            Duration::from_millis(100),
-            Duration::from_millis(10),
-        );
+        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(10));
 
         // 5 residues: delay for residues 0-4 is 0, 10, 20, 30, 40ms
         // Last residue finishes at 40 + 100 = 140ms
@@ -183,10 +174,7 @@ mod tests {
 
     #[test]
     fn test_cascade_total_duration_single_residue() {
-        let cascade = Cascade::new(
-            Duration::from_millis(200),
-            Duration::from_millis(50),
-        );
+        let cascade = Cascade::new(Duration::from_millis(200), Duration::from_millis(50));
 
         // Single residue: just base duration
         let total = cascade.total_duration_for(1);

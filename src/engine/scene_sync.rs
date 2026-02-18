@@ -2,9 +2,9 @@
 
 use super::ProteinRenderEngine;
 use crate::animation::AnimationAction;
-use crate::scene::{CombinedCoordsResult, GroupId};
-use crate::scene::processor::{AnimationSidechainData, PreparedScene, SceneRequest};
 use crate::renderer::molecular::capsule_sidechain::SidechainData;
+use crate::scene::processor::{AnimationSidechainData, PreparedScene, SceneRequest};
+use crate::scene::{CombinedCoordsResult, GroupId};
 use crate::util::score_color;
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
@@ -28,7 +28,8 @@ impl ProteinRenderEngine {
         let total_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
 
         // Ensure selection buffer has capacity for all residues (including new structures)
-        self.selection_buffer.ensure_capacity(&self.context.device, total_residues);
+        self.selection_buffer
+            .ensure_capacity(&self.context.device, total_residues);
 
         // Update backbone tubes
         self.tube_renderer.update(
@@ -49,10 +50,14 @@ impl ProteinRenderEngine {
         // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            sidechain.positions, sidechain.residue_indices, &offset_map,
+            sidechain.positions,
+            sidechain.residue_indices,
+            &offset_map,
         );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            sidechain.backbone_bonds, sidechain.residue_indices, &offset_map,
+            sidechain.backbone_bonds,
+            sidechain.residue_indices,
+            &offset_map,
         );
 
         self.sidechain_renderer.update(
@@ -68,7 +73,11 @@ impl ProteinRenderEngine {
         );
 
         // Update capsule picking bind group (buffer may have been reallocated)
-        self.picking_groups.rebuild_capsule(&self.picking, &self.context.device, &self.sidechain_renderer);
+        self.picking_groups.rebuild_capsule(
+            &self.picking,
+            &self.context.device,
+            &self.sidechain_renderer,
+        );
 
         // Cache secondary structure types for double-click segment selection
         self.sc.cached_ss_types = if let Some(ss) = ss_types {
@@ -157,17 +166,13 @@ impl ProteinRenderEngine {
 
             // Snap residues for entities NOT in entity_actions
             let active: HashSet<GroupId> = prepared.entity_actions.keys().copied().collect();
-            self.animator.snap_entities_without_action(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
+            self.animator
+                .snap_entities_without_action(&prepared.entity_residue_ranges, &active);
 
             // Remove non-targeted entity residues from the AnimationRunner
             // so apply_to_state doesn't overwrite their snapped backbone state
-            self.animator.remove_non_targeted_from_runner(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
+            self.animator
+                .remove_non_targeted_from_runner(&prepared.entity_residue_ranges, &active);
 
             // Also snap engine-level sidechain start positions for non-targeted entities
             for &(eid, start_residue, residue_count) in &prepared.entity_residue_ranges {
@@ -182,12 +187,16 @@ impl ProteinRenderEngine {
                         if i < self.sc.start_sidechain_positions.len()
                             && i < self.sc.target_sidechain_positions.len()
                         {
-                            self.sc.start_sidechain_positions[i] = self.sc.target_sidechain_positions[i];
+                            self.sc.start_sidechain_positions[i] =
+                                self.sc.target_sidechain_positions[i];
                         }
                     }
                 }
-                for (j, &(_, cb_idx)) in self.sc.target_backbone_sidechain_bonds.iter().enumerate() {
-                    let res_idx = self.sc.cached_sidechain_residue_indices
+                for (j, &(_, cb_idx)) in self.sc.target_backbone_sidechain_bonds.iter().enumerate()
+                {
+                    let res_idx = self
+                        .sc
+                        .cached_sidechain_residue_indices
                         .get(cb_idx as usize)
                         .copied()
                         .unwrap_or(u32::MAX) as usize;
@@ -218,14 +227,10 @@ impl ProteinRenderEngine {
         // generate correct topology.
         let animating = !prepared.entity_actions.is_empty();
         if animating {
-            self.tube_renderer.update_metadata(
-                prepared.backbone_chains.clone(),
-                prepared.ss_types.clone(),
-            );
-            self.ribbon_renderer.update_metadata(
-                prepared.backbone_chains.clone(),
-                prepared.ss_types.clone(),
-            );
+            self.tube_renderer
+                .update_metadata(prepared.backbone_chains.clone(), prepared.ss_types.clone());
+            self.ribbon_renderer
+                .update_metadata(prepared.backbone_chains.clone(), prepared.ss_types.clone());
         } else {
             self.tube_renderer.apply_prepared(
                 &self.context.device,
@@ -246,8 +251,7 @@ impl ProteinRenderEngine {
                 prepared.backbone_chains.clone(),
                 prepared.ss_types.clone(),
             );
-            let suppress_sidechains =
-                dominant_action == Some(AnimationAction::DiffusionFinalize);
+            let suppress_sidechains = dominant_action == Some(AnimationAction::DiffusionFinalize);
             if !suppress_sidechains {
                 self.sidechain_renderer.apply_prepared(
                     &self.context.device,
@@ -278,7 +282,12 @@ impl ProteinRenderEngine {
         );
 
         // Recreate picking bind groups (buffers may have been reallocated)
-        self.picking_groups.rebuild_all(&self.picking, &self.context.device, &self.sidechain_renderer, &self.ball_and_stick_renderer);
+        self.picking_groups.rebuild_all(
+            &self.picking,
+            &self.context.device,
+            &self.sidechain_renderer,
+            &self.ball_and_stick_renderer,
+        );
     }
 
     /// Set up animation targets from prepared scene data.
@@ -300,7 +309,8 @@ impl ProteinRenderEngine {
             if self.animator.is_animating() && self.animator.has_sidechain_data() {
                 self.sc.start_sidechain_positions = self.animator.get_sidechain_positions();
                 let ctx = self.animator.interpolation_context();
-                self.sc.start_backbone_sidechain_bonds = self.sc
+                self.sc.start_backbone_sidechain_bonds = self
+                    .sc
                     .start_backbone_sidechain_bonds
                     .iter()
                     .zip(self.sc.target_backbone_sidechain_bonds.iter())
@@ -400,7 +410,8 @@ impl ProteinRenderEngine {
             .ensure_capacity(&self.context.device, total_residues);
 
         let colors = self.compute_per_residue_colors(&prepared.backbone_chains);
-        self.residue_color_buffer.set_colors_immediate(&self.context.queue, &colors);
+        self.residue_color_buffer
+            .set_colors_immediate(&self.context.queue, &colors);
         self.sc.cached_per_residue_colors = Some(colors);
     }
 
@@ -410,17 +421,20 @@ impl ProteinRenderEngine {
         let sector = hue / 60.0;
         let frac = sector - sector.floor();
         let (r, g, b) = match sector as u32 {
-            0 => (1.0, frac, 0.0),        // red → yellow
-            1 => (1.0 - frac, 1.0, 0.0),  // yellow → green
-            2 => (0.0, 1.0, frac),         // green → cyan
-            3 => (0.0, 1.0 - frac, 1.0),  // cyan → blue
-            _ => (0.0, 0.0, 1.0),          // blue
+            0 => (1.0, frac, 0.0),       // red → yellow
+            1 => (1.0 - frac, 1.0, 0.0), // yellow → green
+            2 => (0.0, 1.0, frac),       // green → cyan
+            3 => (0.0, 1.0 - frac, 1.0), // cyan → blue
+            _ => (0.0, 0.0, 1.0),        // blue
         };
         [r, g, b]
     }
 
     /// Compute per-residue colors based on the current backbone_color_mode.
-    pub(crate) fn compute_per_residue_colors(&self, backbone_chains: &[Vec<Vec3>]) -> Vec<[f32; 3]> {
+    pub(crate) fn compute_per_residue_colors(
+        &self,
+        backbone_chains: &[Vec<Vec3>],
+    ) -> Vec<[f32; 3]> {
         use crate::util::options::BackboneColorMode;
         let residue_count = self.sc.cached_ss_types.len().max(1);
         match self.options.display.backbone_color_mode {
@@ -445,7 +459,11 @@ impl ProteinRenderEngine {
                 if self.sc.cached_ss_types.is_empty() {
                     vec![[0.5, 0.5, 0.5]; residue_count]
                 } else {
-                    self.sc.cached_ss_types.iter().map(|ss| ss.color()).collect()
+                    self.sc
+                        .cached_ss_types
+                        .iter()
+                        .map(|ss| ss.color())
+                        .collect()
                 }
             }
             BackboneColorMode::Chain => {
@@ -488,11 +506,13 @@ impl ProteinRenderEngine {
         let sidechains = if include_sidechains {
             let interpolated_positions = self.animator.get_sidechain_positions();
 
-            let interpolated_bs_bonds: Vec<(Vec3, u32)> = self.sc
+            let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
+                .sc
                 .target_backbone_sidechain_bonds
                 .iter()
                 .map(|(target_ca_pos, cb_idx)| {
-                    let res_idx = self.sc
+                    let res_idx = self
+                        .sc
                         .cached_sidechain_residue_indices
                         .get(*cb_idx as usize)
                         .copied()
@@ -562,7 +582,11 @@ impl ProteinRenderEngine {
                 prepared.sidechain_instance_count,
             );
             if reallocated {
-                self.picking_groups.rebuild_capsule(&self.picking, &self.context.device, &self.sidechain_renderer);
+                self.picking_groups.rebuild_capsule(
+                    &self.picking,
+                    &self.context.device,
+                    &self.sidechain_renderer,
+                );
             }
         }
     }

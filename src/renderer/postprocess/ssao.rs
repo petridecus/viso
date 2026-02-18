@@ -59,7 +59,12 @@ const KERNEL_SIZE: usize = 32;
 const NOISE_SIZE: u32 = 4;
 
 impl SsaoRenderer {
-    pub fn new(context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView, shader_composer: &mut ShaderComposer) -> Self {
+    pub fn new(
+        context: &RenderContext,
+        depth_view: &wgpu::TextureView,
+        normal_view: &wgpu::TextureView,
+        shader_composer: &mut ShaderComposer,
+    ) -> Self {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -71,11 +76,13 @@ impl SsaoRenderer {
 
         // Generate hemisphere kernel
         let kernel = Self::generate_kernel();
-        let kernel_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SSAO Kernel"),
-            contents: bytemuck::cast_slice(&kernel),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let kernel_buffer = context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("SSAO Kernel"),
+                contents: bytemuck::cast_slice(&kernel),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Create params buffer with default values
         let radius = 0.5;
@@ -93,11 +100,13 @@ impl SsaoRenderer {
             power,
             _pad: 0.0,
         };
-        let params_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SSAO Params"),
-            contents: bytemuck::cast_slice(&[params]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let params_buffer = context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("SSAO Params"),
+                contents: bytemuck::cast_slice(&[params]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         // Create noise texture
         let (noise_texture, noise_view) = Self::create_noise_texture(context);
@@ -201,7 +210,12 @@ impl SsaoRenderer {
                 });
 
         // SSAO pipeline
-        let ssao_shader = shader_composer.compose(&context.device, "SSAO Shader", include_str!("../../../assets/shaders/screen/ssao.wgsl"), "ssao.wgsl");
+        let ssao_shader = shader_composer.compose(
+            &context.device,
+            "SSAO Shader",
+            include_str!("../../../assets/shaders/screen/ssao.wgsl"),
+            "ssao.wgsl",
+        );
 
         let ssao_pipeline_layout =
             context
@@ -303,7 +317,12 @@ impl SsaoRenderer {
                 });
 
         // Blur pipeline
-        let blur_shader = shader_composer.compose(&context.device, "SSAO Blur Shader", include_str!("../../../assets/shaders/screen/ssao_blur.wgsl"), "ssao_blur.wgsl");
+        let blur_shader = shader_composer.compose(
+            &context.device,
+            "SSAO Blur Shader",
+            include_str!("../../../assets/shaders/screen/ssao_blur.wgsl"),
+            "ssao_blur.wgsl",
+        );
 
         let blur_pipeline_layout =
             context
@@ -422,7 +441,8 @@ impl SsaoRenderer {
             ];
 
             // Normalize
-            let len = (sample[0] * sample[0] + sample[1] * sample[1] + sample[2] * sample[2]).sqrt();
+            let len =
+                (sample[0] * sample[0] + sample[1] * sample[1] + sample[2] * sample[2]).sqrt();
             if len > 0.0 {
                 sample[0] /= len;
                 sample[1] /= len;
@@ -450,7 +470,11 @@ impl SsaoRenderer {
             let x = rng.random::<f32>() * 2.0 - 1.0;
             let y = rng.random::<f32>() * 2.0 - 1.0;
             let len = (x * x + y * y).sqrt();
-            let (nx, ny) = if len > 0.0 { (x / len, y / len) } else { (1.0, 0.0) };
+            let (nx, ny) = if len > 0.0 {
+                (x / len, y / len)
+            } else {
+                (1.0, 0.0)
+            };
 
             noise_data[i * 4] = ((nx * 0.5 + 0.5) * 255.0) as u8;
             noise_data[i * 4 + 1] = ((ny * 0.5 + 0.5) * 255.0) as u8;
@@ -508,40 +532,42 @@ impl SsaoRenderer {
         params_buffer: &wgpu::Buffer,
         normal_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SSAO Bind Group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(noise_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(noise_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: kernel_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
-                },
-            ],
-        })
+        context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SSAO Bind Group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(depth_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(noise_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(noise_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: kernel_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                ],
+            })
     }
 
     fn create_blur_bind_group(
@@ -553,36 +579,45 @@ impl SsaoRenderer {
         normal_view: &wgpu::TextureView,
         params_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SSAO Blur Bind Group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(ssao_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: params_buffer.as_entire_binding(),
-                },
-            ],
-        })
+        context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SSAO Blur Bind Group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(ssao_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(depth_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                ],
+            })
     }
 
     /// Update projection and view matrices (call before render_ssao)
-    pub fn update_matrices(&self, queue: &wgpu::Queue, proj: Mat4, view: Mat4, near: f32, far: f32) {
+    pub fn update_matrices(
+        &self,
+        queue: &wgpu::Queue,
+        proj: Mat4,
+        view: Mat4,
+        near: f32,
+        far: f32,
+    ) {
         let inv_proj = proj.inverse();
         let params = SsaoParams {
             inv_proj: inv_proj.to_cols_array_2d(),
@@ -599,7 +634,12 @@ impl SsaoRenderer {
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
     }
 
-    pub fn resize(&mut self, context: &RenderContext, depth_view: &wgpu::TextureView, normal_view: &wgpu::TextureView) {
+    pub fn resize(
+        &mut self,
+        context: &RenderContext,
+        depth_view: &wgpu::TextureView,
+        normal_view: &wgpu::TextureView,
+    ) {
         if context.render_width() == self.width && context.render_height() == self.height {
             return;
         }

@@ -14,7 +14,7 @@ pub struct CameraController {
     orientation: Quat,
     distance: f32,
     focus_point: Vec3,
-    bounding_radius: f32,  // Protein bounding sphere radius for fog computation
+    bounding_radius: f32, // Protein bounding sphere radius for fog computation
 
     // Animation targets (None = no animation in progress)
     target_focus_point: Option<Vec3>,
