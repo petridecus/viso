@@ -4,8 +4,8 @@
 //! Gaussian blur at each level → upsample + accumulate → final bloom texture.
 //! The composite pass adds the bloom texture to the scene before tone mapping.
 
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Blur direction params — must match WGSL struct

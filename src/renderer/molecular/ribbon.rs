@@ -6,10 +6,10 @@
 //! - High subdivision (16 segments per residue) for smooth curves
 //! - B-spline interpolation for C2 continuity
 
-use crate::engine::dynamic_buffer::DynamicBuffer;
+use crate::gpu::dynamic_buffer::DynamicBuffer;
 use foldit_conv::coords::RenderBackboneResidue;
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use crate::renderer::pipeline_util;
 use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 use foldit_conv::secondary_structure::{SSType, merge_short_segments};
@@ -560,6 +560,16 @@ impl RibbonRenderer {
         if let Some(ss) = ss_override {
             self.ss_override = Some(ss);
         }
+    }
+}
+
+impl super::MolecularRenderer for RibbonRenderer {
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+    ) {
+        self.draw(render_pass, bind_groups);
     }
 }
 

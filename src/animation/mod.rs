@@ -27,6 +27,7 @@ pub mod animator;
 pub mod behaviors;
 pub mod interpolation;
 pub mod preferences;
+pub(crate) mod sidechain_state;
 
 // Re-export commonly used types
 pub use animator::{AnimationController, AnimationRunner, StructureAnimator, StructureState};

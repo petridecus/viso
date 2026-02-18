@@ -4,8 +4,8 @@
 //! combining them to produce the final image with ambient occlusion and
 //! silhouette outlines applied.
 
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)

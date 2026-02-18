@@ -12,10 +12,10 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
-use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::gpu::dynamic_buffer::TypedBuffer;
 use crate::util::options::ColorOptions;
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
@@ -383,5 +383,15 @@ impl BandRenderer {
     /// Get band count for debugging
     pub fn band_count(&self) -> u32 {
         self.instance_count
+    }
+}
+
+impl super::MolecularRenderer for BandRenderer {
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+    ) {
+        self.draw(render_pass, bind_groups);
     }
 }

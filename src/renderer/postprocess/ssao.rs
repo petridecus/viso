@@ -1,5 +1,5 @@
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;

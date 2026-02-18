@@ -1,4 +1,4 @@
-use viso::engine::core::ProteinRenderEngine;
+use viso::engine::ProteinRenderEngine;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};

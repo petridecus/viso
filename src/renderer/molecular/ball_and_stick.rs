@@ -10,10 +10,10 @@ use foldit_conv::coords::{
 };
 use glam::Vec3;
 
-use crate::engine::dynamic_buffer::TypedBuffer;
+use crate::gpu::dynamic_buffer::TypedBuffer;
 use crate::util::options::{ColorOptions, DisplayOptions};
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 
 use super::capsule_instance::CapsuleInstance;
 use crate::renderer::pipeline_util;
@@ -1040,6 +1040,16 @@ impl BallAndStickRenderer {
 }
 
 /// Find any vector perpendicular to the given vector.
+impl super::MolecularRenderer for BallAndStickRenderer {
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+    ) {
+        self.draw(render_pass, bind_groups);
+    }
+}
+
 fn find_perpendicular(v: Vec3) -> Vec3 {
     if v.length_squared() < 1e-8 {
         return Vec3::X;

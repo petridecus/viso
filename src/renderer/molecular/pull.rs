@@ -10,9 +10,9 @@
 //!
 //! Only one pull can be active at a time.
 
-use crate::engine::dynamic_buffer::TypedBuffer;
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::dynamic_buffer::TypedBuffer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
@@ -378,5 +378,15 @@ impl PullRenderer {
 
     pub fn is_active(&self) -> bool {
         self.capsule_count > 0 || self.cone_count > 0
+    }
+}
+
+impl super::MolecularRenderer for PullRenderer {
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+    ) {
+        self.draw(render_pass, bind_groups);
     }
 }

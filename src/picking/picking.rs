@@ -4,8 +4,8 @@
 //! the pixel at the mouse position to determine which residue is under the cursor.
 //! This is exact - it matches exactly what's rendered on screen.
 
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use crate::renderer::molecular::tube::tube_vertex_buffer_layout;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

@@ -4,8 +4,8 @@
 //! swapchain. Smooths jagged silhouette edges on mesh-based geometry (ribbons,
 //! tubes) that supersampling alone doesn't fully resolve.
 
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
 
 pub struct FxaaPass {

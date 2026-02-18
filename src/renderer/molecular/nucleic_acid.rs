@@ -3,9 +3,9 @@
 //! Renders DNA/RNA backbones as narrow flat ribbons tracing phosphorus (P) atoms,
 //! smoothed with B-splines and oriented with rotation-minimizing frames.
 
-use crate::engine::dynamic_buffer::DynamicBuffer;
-use crate::engine::render_context::RenderContext;
-use crate::engine::shader_composer::ShaderComposer;
+use crate::gpu::dynamic_buffer::DynamicBuffer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 use crate::renderer::pipeline_util;
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
@@ -354,6 +354,16 @@ impl NucleicAcidRenderer {
             }
         }
         hasher.finish()
+    }
+}
+
+impl super::MolecularRenderer for NucleicAcidRenderer {
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+    ) {
+        self.draw(render_pass, bind_groups);
     }
 }
 

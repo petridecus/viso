@@ -1,4 +1,4 @@
-use crate::engine::render_context::RenderContext;
+use crate::gpu::render_context::RenderContext;
 use wgpu::util::DeviceExt;
 
 /// Lighting configuration shared across all shaders

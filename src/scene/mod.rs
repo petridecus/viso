@@ -3,6 +3,8 @@
 //! Everything is a `MoleculeEntity`. They're organized into **groups**
 //! (entities loaded/created together from one file or operation).
 
+pub mod processor;
+
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 use foldit_conv::coords::entity::{MoleculeEntity, MoleculeType, NucleotideRing, merge_entities};
 use foldit_conv::coords::render::extract_sequences;

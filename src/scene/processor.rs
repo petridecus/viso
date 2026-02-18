@@ -13,7 +13,7 @@ use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
 use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::util::options::{ColorOptions, DisplayOptions};
 use crate::renderer::molecular::ribbon::{RibbonParams, RibbonRenderer};
-use crate::engine::scene::{AggregatedRenderData, GroupId, PerGroupData};
+use super::{AggregatedRenderData, GroupId, PerGroupData};
 use crate::util::score_color;
 use crate::renderer::molecular::tube::TubeRenderer;
 use foldit_conv::coords::entity::NucleotideRing;
