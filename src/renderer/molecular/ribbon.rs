@@ -55,7 +55,6 @@ pub(crate) struct RibbonVertex {
 
 struct RibbonFrame {
     position: Vec3,
-    tangent: Vec3,
     normal: Vec3,    // Points "up" from ribbon surface
     binormal: Vec3,  // Points along ribbon width
     color: [f32; 3],
@@ -632,9 +631,9 @@ fn generate_helix_from_ca(ca_positions: &[Vec3], ss_types: &[SSType], params: &R
         let color = ss_types.get(local_residue_idx).map(|s| s.color()).unwrap_or(SSType::Helix.color());
         let residue_idx = global_residue_base + local_residue_idx as u32;
         
-        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color, residue_idx });
+        frames.push(RibbonFrame { position: pos, normal, binormal, color, residue_idx });
     }
-    
+
     let widths = compute_taper_widths(frames.len(), params.helix_width, params.segments_per_residue, taper_start, taper_end);
     let (v, i) = build_ribbon_mesh(&frames, &widths, params.helix_thickness, base, true);
     (v, i, Vec::new())
@@ -754,7 +753,7 @@ fn sheet_from_normals(
         let color = ss_types.get(local_residue_idx).map(|s| s.color()).unwrap_or(SSType::Sheet.color());
         let residue_idx = global_residue_base + local_residue_idx as u32;
 
-        frames.push(RibbonFrame { position: pos, tangent, normal, binormal, color, residue_idx });
+        frames.push(RibbonFrame { position: pos, normal, binormal, color, residue_idx });
     }
 
     let widths = compute_taper_widths(frames.len(), params.sheet_width, params.segments_per_residue, taper_start, taper_end);

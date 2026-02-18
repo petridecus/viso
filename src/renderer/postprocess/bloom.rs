@@ -43,7 +43,7 @@ pub struct BloomPass {
     blur_params_buffers: Vec<[wgpu::Buffer; 2]>,
 
     // Upsample + accumulate
-    upsample_pipeline: wgpu::RenderPipeline,
+    _upsample_pipeline: wgpu::RenderPipeline,
     upsample_bind_group_layout: wgpu::BindGroupLayout,
     upsample_bind_groups: Vec<wgpu::BindGroup>,
 
@@ -350,7 +350,7 @@ impl BloomPass {
             ping_views,
             blur_bind_groups,
             blur_params_buffers,
-            upsample_pipeline,
+            _upsample_pipeline: upsample_pipeline,
             upsample_bind_group_layout,
             upsample_bind_groups,
             output_texture,
@@ -587,7 +587,7 @@ impl BloomPass {
         self.blur_level(encoder, 0);
 
         // Downsample + blur remaining levels
-        for i in 1..MIP_LEVELS {
+        for _i in 1..MIP_LEVELS {
             // Downsample: copy from mip[i-1] to mip[i] using the horizontal blur pass
             // The bilinear sampler in the blur shader naturally downsamples when reading
             // from a larger texture into a smaller render target

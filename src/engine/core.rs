@@ -53,7 +53,7 @@ pub struct ProteinRenderEngine {
     pub(crate) tube_renderer: TubeRenderer,
     pub(crate) ribbon_renderer: RibbonRenderer,
     pub(crate) frame_timing: FrameTiming,
-    pub(crate) input_handler: InputHandler,
+    pub(crate) _input_handler: InputHandler,
     pub(crate) depth_texture: wgpu::Texture,
     pub(crate) depth_view: wgpu::TextureView,
     pub(crate) normal_texture: wgpu::Texture,
@@ -92,7 +92,7 @@ pub struct ProteinRenderEngine {
     bns_picking_bind_group: Option<wgpu::BindGroup>,
     trajectory_player: Option<TrajectoryPlayer>,
     scene_processor: SceneProcessor,
-    pub(crate) shader_composer: ShaderComposer,
+    pub(crate) _shader_composer: ShaderComposer,
 }
 
 impl ProteinRenderEngine {
@@ -385,7 +385,7 @@ impl ProteinRenderEngine {
             band_renderer,
             pull_renderer,
             frame_timing,
-            input_handler,
+            _input_handler: input_handler,
             depth_texture,
             depth_view,
             normal_texture,
@@ -424,7 +424,7 @@ impl ProteinRenderEngine {
             bns_picking_bind_group,
             trajectory_player: None,
             scene_processor,
-            shader_composer,
+            _shader_composer: shader_composer,
         }
     }
 
