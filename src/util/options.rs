@@ -103,14 +103,24 @@ pub enum NaColorMode {
     Uniform,
 }
 
+/// Lipid display style.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LipidMode {
+    /// Coarse-grained spheres.
+    #[default]
+    Coarse,
+    /// Full ball-and-stick representation.
+    BallAndStick,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DisplayOptions {
-    pub view_mode: String,
     pub show_waters: bool,
     pub show_ions: bool,
     pub show_solvent: bool,
-    pub lipid_mode: String,
+    pub lipid_mode: LipidMode,
     pub show_sidechains: bool,
     pub show_hydrogens: bool,
     /// Backbone coloring mode.
@@ -124,11 +134,10 @@ pub struct DisplayOptions {
 impl Default for DisplayOptions {
     fn default() -> Self {
         Self {
-            view_mode: "ribbon".to_string(),
             show_waters: false,
             show_ions: false,
             show_solvent: false,
-            lipid_mode: "coarse".to_string(),
+            lipid_mode: LipidMode::default(),
             show_sidechains: true,
             show_hydrogens: false,
             backbone_color_mode: BackboneColorMode::default(),
@@ -139,9 +148,9 @@ impl Default for DisplayOptions {
 }
 
 impl DisplayOptions {
-    /// Whether lipid mode is "ball_and_stick" (vs default coarse-grained).
+    /// Whether lipid mode uses full ball-and-stick representation.
     pub fn lipid_ball_and_stick(&self) -> bool {
-        self.lipid_mode == "ball_and_stick"
+        matches!(self.lipid_mode, LipidMode::BallAndStick)
     }
 }
 
@@ -418,7 +427,7 @@ shininess = 80.0
         assert_eq!(opts.lighting.shininess, 80.0);
         // Everything else should be default
         assert_eq!(opts.lighting.ambient, 0.45);
-        assert_eq!(opts.display.view_mode, "ribbon");
+        assert_eq!(opts.display.lipid_mode, LipidMode::Coarse);
     }
 
     #[test]

@@ -33,9 +33,11 @@ impl ApplicationHandler for RenderApp {
                 let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
                 let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
                 Window::default_attributes()
+                    .with_title("Viso")
                     .with_inner_size(winit::dpi::LogicalSize::new(logical_w, logical_h))
             } else {
                 Window::default_attributes()
+                    .with_title("Viso")
             };
             let window = Arc::new(event_loop.create_window(attrs).unwrap());
 
@@ -143,7 +145,7 @@ impl ApplicationHandler for RenderApp {
                                 engine.toggle_waters();
                             }
                             Key::Named(NamedKey::Escape) => {
-                                engine.picking.clear_selection();
+                                engine.clear_selection();
                             }
                             _ => {}
                         }

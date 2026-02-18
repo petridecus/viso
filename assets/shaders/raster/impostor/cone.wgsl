@@ -250,8 +250,10 @@ fn fs_main(in: VertexOutput) -> FragOut {
     }
 
     // Selection highlight
+    var outline_factor = 0.0;
     if (is_selected(in.residue_idx)) {
         base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
+        outline_factor = 1.0;
     }
 
     let NdotV = max(dot(normal, view_dir), 0.0);
@@ -322,7 +324,13 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let ambient_contribution = base_color * ambient_light + specular_ibl;
     let direct_contribution = Lo + rim;
     let lit_color = ambient_contribution + direct_contribution;
-    let final_color = lit_color;
+
+    // Edge darkening for selected residues
+    var final_color = lit_color;
+    if (outline_factor > 0.0) {
+        let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
+        final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
+    }
 
     // Compute ambient ratio for ambient-only AO in composite pass
     let total_lum = max(dot(final_color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
@@ -334,7 +342,18 @@ fn fs_main(in: VertexOutput) -> FragOut {
 
     var out: FragOut;
     out.depth = ndc_depth;
-    out.color = vec4<f32>(final_color, 1.0);
+    // SDF edge AA: smooth alpha at cone boundary for alpha-to-coverage MSAA
+    let axis = in.tip - in.base;
+    let height = length(axis);
+    let axis_dir = axis / height;
+    let hit_along = dot(world_hit - in.base, axis_dir);
+    let radius_at_hit = in.base_radius * (1.0 - hit_along / height);
+    let radial_dist = length(world_hit - in.base - axis_dir * hit_along);
+    let sdf = radial_dist - radius_at_hit;
+    let aa_edge = fwidth(sdf);
+    let alpha = smoothstep(aa_edge, -aa_edge, sdf);
+
+    out.color = vec4<f32>(final_color, alpha);
     out.normal = vec4<f32>(normal, ambient_ratio);
     return out;
 }

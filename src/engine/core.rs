@@ -44,82 +44,55 @@ use winit::keyboard::ModifiersState;
 const TARGET_FPS: u32 = 300;
 
 pub struct ProteinRenderEngine {
-    pub context: RenderContext,
-    pub camera_controller: CameraController,
-    pub lighting: Lighting,
-    pub sidechain_renderer: CapsuleSidechainRenderer,
-    pub band_renderer: BandRenderer,
-    pub pull_renderer: PullRenderer,
-    pub tube_renderer: TubeRenderer,
-    pub ribbon_renderer: RibbonRenderer,
-    pub frame_timing: FrameTiming,
-    pub input_handler: InputHandler,
-    pub depth_texture: wgpu::Texture,
-    pub depth_view: wgpu::TextureView,
-    pub normal_texture: wgpu::Texture,
-    pub normal_view: wgpu::TextureView,
-    pub ssao_renderer: SsaoRenderer,
-    pub bloom_pass: BloomPass,
-    pub composite_pass: CompositePass,
-    pub fxaa_pass: FxaaPass,
-    pub picking: Picking,
-    pub selection_buffer: SelectionBuffer,
-    /// Per-residue color buffer for GPU-driven color transitions
-    pub residue_color_buffer: ResidueColorBuffer,
-    /// Bind group for capsule picking (needs to be recreated when capsule buffer changes)
+    pub(crate) context: RenderContext,
+    pub(crate) camera_controller: CameraController,
+    pub(crate) lighting: Lighting,
+    pub(crate) sidechain_renderer: CapsuleSidechainRenderer,
+    pub(crate) band_renderer: BandRenderer,
+    pub(crate) pull_renderer: PullRenderer,
+    pub(crate) tube_renderer: TubeRenderer,
+    pub(crate) ribbon_renderer: RibbonRenderer,
+    pub(crate) frame_timing: FrameTiming,
+    pub(crate) input_handler: InputHandler,
+    pub(crate) depth_texture: wgpu::Texture,
+    pub(crate) depth_view: wgpu::TextureView,
+    pub(crate) normal_texture: wgpu::Texture,
+    pub(crate) normal_view: wgpu::TextureView,
+    pub(crate) ssao_renderer: SsaoRenderer,
+    pub(crate) bloom_pass: BloomPass,
+    pub(crate) composite_pass: CompositePass,
+    pub(crate) fxaa_pass: FxaaPass,
+    pub(crate) picking: Picking,
+    pub(crate) selection_buffer: SelectionBuffer,
+    pub(crate) residue_color_buffer: ResidueColorBuffer,
     capsule_picking_bind_group: Option<wgpu::BindGroup>,
-    /// Current mouse position for picking
     mouse_pos: (f32, f32),
-    /// Residue that was under cursor at mouse down (-1 = background, used for drag vs click logic)
     mouse_down_residue: i32,
-    /// Whether we're in a drag operation (mouse moved significantly after mouse down)
     is_dragging: bool,
-    /// Last click time for multi-click detection
     last_click_time: Instant,
-    /// Last clicked residue for multi-click detection
     last_click_residue: i32,
-    /// Consecutive click count (1=single, 2=double, 3=triple)
     click_count: u32,
-    /// Cached secondary structure types per residue (for double-click segment selection)
     cached_ss_types: Vec<SSType>,
-    /// Cached per-residue colors (derived from scores by scene processor, reused for animation)
     cached_per_residue_colors: Option<Vec<[f32; 3]>>,
-    /// Structure animator for smooth transitions
-    pub animator: StructureAnimator,
-    /// Start sidechain positions (for animation interpolation)
+    pub(crate) animator: StructureAnimator,
     start_sidechain_positions: Vec<Vec3>,
-    /// Target sidechain positions (animation end state)
     target_sidechain_positions: Vec<Vec3>,
-    /// Start backbone-sidechain CA positions (for animation interpolation)
     start_backbone_sidechain_bonds: Vec<(Vec3, u32)>,
-    /// Target backbone-sidechain bonds (animation end state)
     target_backbone_sidechain_bonds: Vec<(Vec3, u32)>,
-    /// Sidechain bond topology (doesn't change during animation)
     cached_sidechain_bonds: Vec<(u32, u32)>,
     cached_sidechain_hydrophobicity: Vec<bool>,
     cached_sidechain_residue_indices: Vec<u32>,
-    /// Sidechain atom names (for looking up atoms by name during animation)
     cached_sidechain_atom_names: Vec<String>,
-    /// Last camera eye position for frustum culling change detection
     last_cull_camera_eye: Vec3,
-    /// Authoritative scene (all entity groups).
-    pub scene: Scene,
-    /// Ball-and-stick renderer for ligands, ions, and waters
-    pub ball_and_stick_renderer: BallAndStickRenderer,
-    /// Nucleic acid backbone ribbon renderer
-    pub nucleic_acid_renderer: NucleicAcidRenderer,
-    /// Centralized rendering/display options (replaces show_waters, show_ions, etc.)
-    pub options: Options,
-    /// Currently loaded view preset name (if any)
-    pub active_preset: Option<String>,
-    /// Bind group for ball-and-stick picking (degenerate capsules)
+    pub(crate) scene: Scene,
+    pub(crate) ball_and_stick_renderer: BallAndStickRenderer,
+    pub(crate) nucleic_acid_renderer: NucleicAcidRenderer,
+    pub(crate) options: Options,
+    pub(crate) active_preset: Option<String>,
     bns_picking_bind_group: Option<wgpu::BindGroup>,
-    /// Trajectory playback (DCD file)
     trajectory_player: Option<TrajectoryPlayer>,
-    /// Background scene processor for non-blocking geometry generation
     scene_processor: SceneProcessor,
-    /// Shader composer for naga_oil-based shader composition
-    pub shader_composer: ShaderComposer,
+    pub(crate) shader_composer: ShaderComposer,
 }
 
 impl ProteinRenderEngine {
@@ -1037,10 +1010,10 @@ impl ProteinRenderEngine {
         // Translate entire sidechains onto sheet surface
         let offset_map = self.sheet_offset_map();
         let res_indices = self.cached_sidechain_residue_indices.clone();
-        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
             &positions, &res_indices, &offset_map,
         );
-        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
             &bs_bonds, &res_indices, &offset_map,
         );
 
@@ -1345,6 +1318,11 @@ impl ProteinRenderEngine {
         }
     }
 
+    /// Clear residue selection.
+    pub fn clear_selection(&mut self) {
+        self.picking.clear_selection();
+    }
+
     /// Toggle water visibility
     pub fn toggle_waters(&mut self) {
         self.options.display.show_waters = !self.options.display.show_waters;
@@ -1366,9 +1344,9 @@ impl ProteinRenderEngine {
     /// Cycle lipid display mode (coarse → ball_and_stick → coarse)
     pub fn toggle_lipids(&mut self) {
         self.options.display.lipid_mode = if self.options.display.lipid_ball_and_stick() {
-            "coarse".to_string()
+            crate::util::options::LipidMode::Coarse
         } else {
-            "ball_and_stick".to_string()
+            crate::util::options::LipidMode::BallAndStick
         };
         self.refresh_ball_and_stick();
     }
@@ -1538,10 +1516,10 @@ impl ProteinRenderEngine {
 
         // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
         let offset_map = self.sheet_offset_map();
-        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
             sidechain_positions, sidechain_residue_indices, &offset_map,
         );
-        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
             backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
         );
 
@@ -1612,47 +1590,6 @@ impl ProteinRenderEngine {
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
         self.ribbon_renderer.sheet_offsets().iter().copied().collect()
-    }
-
-    /// Adjust backbone-sidechain bond CA positions by sheet flattening offsets.
-    fn adjust_bonds_for_sheet(
-        bonds: &[(Vec3, u32)],
-        sidechain_residue_indices: &[u32],
-        offset_map: &HashMap<u32, Vec3>,
-    ) -> Vec<(Vec3, u32)> {
-        if offset_map.is_empty() { return bonds.to_vec(); }
-        bonds.iter().map(|(ca_pos, cb_idx)| {
-            let res_idx = sidechain_residue_indices
-                .get(*cb_idx as usize)
-                .copied()
-                .unwrap_or(u32::MAX);
-            if let Some(&offset) = offset_map.get(&res_idx) {
-                (*ca_pos + offset, *cb_idx)
-            } else {
-                (*ca_pos, *cb_idx)
-            }
-        }).collect()
-    }
-
-    /// Translate all sidechain atom positions by sheet flattening offsets.
-    /// Moves entire sidechains onto the sheet surface, not just the CA-CB bond.
-    fn adjust_sidechains_for_sheet(
-        positions: &[Vec3],
-        sidechain_residue_indices: &[u32],
-        offset_map: &HashMap<u32, Vec3>,
-    ) -> Vec<Vec3> {
-        if offset_map.is_empty() { return positions.to_vec(); }
-        positions.iter().enumerate().map(|(i, &pos)| {
-            let res_idx = sidechain_residue_indices
-                .get(i)
-                .copied()
-                .unwrap_or(u32::MAX);
-            if let Some(&offset) = offset_map.get(&res_idx) {
-                pos + offset
-            } else {
-                pos
-            }
-        }).collect()
     }
 
     // =========================================================================
@@ -1771,10 +1708,10 @@ impl ProteinRenderEngine {
 
         // Update sidechain renderer with start positions (adjusted for sheet surface)
         let offset_map = self.sheet_offset_map();
-        let adjusted_positions = Self::adjust_sidechains_for_sheet(
+        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
             &self.start_sidechain_positions, sidechain_residue_indices, &offset_map,
         );
-        let adjusted_bonds = Self::adjust_bonds_for_sheet(
+        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
             &self.start_backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
         );
         self.sidechain_renderer.update(

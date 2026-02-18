@@ -11,6 +11,9 @@ use wgpu::util::DeviceExt;
 /// Duration of color transitions in seconds.
 const TRANSITION_DURATION: f32 = 0.3;
 
+/// Default residue color (neutral gray) used for padding and initialization.
+const DEFAULT_RESIDUE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+
 /// GPU storage buffer for per-residue colors with eased transitions.
 ///
 /// Modeled after `SelectionBuffer` — owns a storage buffer, bind group layout,
@@ -18,8 +21,8 @@ const TRANSITION_DURATION: f32 = 0.3;
 /// time and bind the same bind group at draw time.
 pub struct ResidueColorBuffer {
     buffer: wgpu::Buffer,
-    pub layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
+    pub(crate) layout: wgpu::BindGroupLayout,
+    pub(crate) bind_group: wgpu::BindGroup,
     capacity: usize,
     /// Current displayed colors on the GPU (rgba, a=1.0).
     current_colors: Vec<[f32; 4]>,
@@ -90,7 +93,7 @@ impl ResidueColorBuffer {
             .iter()
             .map(|c| [c[0], c[1], c[2], 1.0])
             .collect();
-        padded.resize(self.capacity, [0.5, 0.5, 0.5, 1.0]);
+        padded.resize(self.capacity, DEFAULT_RESIDUE_COLOR);
 
         self.current_colors = padded.clone();
         self.start_colors = padded.clone();
@@ -113,7 +116,7 @@ impl ResidueColorBuffer {
             .map(|c| [c[0], c[1], c[2], 1.0])
             .collect();
         let mut padded = data;
-        padded.resize(self.capacity, [0.5, 0.5, 0.5, 1.0]);
+        padded.resize(self.capacity, DEFAULT_RESIDUE_COLOR);
         self.target_colors = padded;
 
         self.transition_start = Some(Instant::now());
