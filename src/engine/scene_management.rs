@@ -42,7 +42,8 @@ impl ProteinRenderEngine {
         // reflect the interpolated state (not the final target uploaded by
         // apply_pending_scene).
         const CULL_UPDATE_THRESHOLD: f32 = 5.0;
-        let animating = self.animator.is_animating() && self.animator.has_sidechain_data();
+        let animating =
+            self.animator.is_animating() && self.animator.has_sidechain_data();
         if camera_delta < CULL_UPDATE_THRESHOLD && !animating {
             return;
         }
@@ -53,7 +54,9 @@ impl ProteinRenderEngine {
         let frustum = self.camera_controller.frustum();
 
         // Get current sidechain positions (may be interpolated during animation)
-        let positions = if self.animator.is_animating() && self.animator.has_sidechain_data() {
+        let positions = if self.animator.is_animating()
+            && self.animator.has_sidechain_data()
+        {
             self.animator.get_sidechain_positions()
         } else {
             self.sc.target_sidechain_positions.clone()
@@ -66,13 +69,16 @@ impl ProteinRenderEngine {
                 .target_backbone_sidechain_bonds
                 .iter()
                 .map(|(target_ca, cb_idx)| {
-                    let res_idx = self
-                        .sc
-                        .cached_sidechain_residue_indices
-                        .get(*cb_idx as usize)
-                        .copied()
-                        .unwrap_or(0) as usize;
-                    let ca_pos = self.animator.get_ca_position(res_idx).unwrap_or(*target_ca);
+                    let res_idx =
+                        self.sc
+                            .cached_sidechain_residue_indices
+                            .get(*cb_idx as usize)
+                            .copied()
+                            .unwrap_or(0) as usize;
+                    let ca_pos = self
+                        .animator
+                        .get_ca_position(res_idx)
+                        .unwrap_or(*target_ca);
                     (ca_pos, *cb_idx)
                 })
                 .collect::<Vec<_>>()
@@ -83,13 +89,17 @@ impl ProteinRenderEngine {
         // Translate entire sidechains onto sheet surface
         let offset_map = self.sheet_offset_map();
         let res_indices = self.sc.cached_sidechain_residue_indices.clone();
-        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            &positions,
+        let adjusted_positions =
+            crate::util::sheet_adjust::adjust_sidechains_for_sheet(
+                &positions,
+                &res_indices,
+                &offset_map,
+            );
+        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
+            &bs_bonds,
             &res_indices,
             &offset_map,
         );
-        let adjusted_bonds =
-            crate::util::sheet_adjust::adjust_bonds_for_sheet(&bs_bonds, &res_indices, &offset_map);
 
         // Update sidechains with frustum culling
         self.sidechain_renderer.update_with_frustum(
@@ -123,7 +133,10 @@ impl ProteinRenderEngine {
             .flat_map(|g| g.entities().iter())
             .filter(|e| {
                 e.molecule_type != MoleculeType::Protein
-                    && !matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA)
+                    && !matches!(
+                        e.molecule_type,
+                        MoleculeType::DNA | MoleculeType::RNA
+                    )
             })
             .cloned()
             .collect();
@@ -156,7 +169,10 @@ impl ProteinRenderEngine {
     }
 
     /// Compute secondary structure types for all residues across all chains
-    pub(crate) fn compute_ss_types(&self, backbone_chains: &[Vec<Vec3>]) -> Vec<SSType> {
+    pub(crate) fn compute_ss_types(
+        &self,
+        backbone_chains: &[Vec<Vec3>],
+    ) -> Vec<SSType> {
         use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
 
         let mut all_ss_types = Vec::new();
@@ -205,8 +221,11 @@ impl ProteinRenderEngine {
     /// Update the pull visualization (only one pull at a time).
     /// Pass None to clear the pull visualization.
     pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
-        self.pull_renderer
-            .update(&self.context.device, &self.context.queue, pull);
+        self.pull_renderer.update(
+            &self.context.device,
+            &self.context.queue,
+            pull,
+        );
     }
 
     /// Clear the pull visualization.

@@ -74,7 +74,10 @@ pub fn per_residue_score_colors(scores: &[f64]) -> Vec<[f32; 3]> {
 }
 
 /// Absolute per-residue score colors using a custom color ramp.
-pub fn per_residue_score_colors_with_ramp(scores: &[f64], ramp: &ColorRamp) -> Vec<[f32; 3]> {
+pub fn per_residue_score_colors_with_ramp(
+    scores: &[f64],
+    ramp: &ColorRamp,
+) -> Vec<[f32; 3]> {
     scores
         .iter()
         .map(|&s| ramp.sample(score_to_t_absolute(s)))
@@ -97,7 +100,8 @@ pub fn per_residue_score_colors_relative_with_ramp(
     }
 
     let mut sorted: Vec<f64> = scores.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted
+        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let lo_idx = (sorted.len() as f64 * 0.05) as usize;
     let hi_idx = ((sorted.len() as f64 * 0.95) as usize).min(sorted.len() - 1);

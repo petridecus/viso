@@ -36,7 +36,9 @@ impl ApplicationHandler for RenderApp {
                 let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
                 Window::default_attributes()
                     .with_title("Viso")
-                    .with_inner_size(winit::dpi::LogicalSize::new(logical_w, logical_h))
+                    .with_inner_size(winit::dpi::LogicalSize::new(
+                        logical_w, logical_h,
+                    ))
             } else {
                 Window::default_attributes().with_title("Viso")
             };
@@ -46,12 +48,13 @@ impl ApplicationHandler for RenderApp {
             let scale = window.scale_factor();
             let (width, height) = (size.width, size.height);
 
-            let mut engine = pollster::block_on(ProteinRenderEngine::new_with_path(
-                window.clone(),
-                (width, height),
-                scale,
-                &self.cif_path,
-            ));
+            let mut engine =
+                pollster::block_on(ProteinRenderEngine::new_with_path(
+                    window.clone(),
+                    (width, height),
+                    scale,
+                    &self.cif_path,
+                ));
 
             // Kick off background scene processing so colors and geometry are ready
             engine.sync_scene_to_renderers(None);
@@ -62,7 +65,12 @@ impl ApplicationHandler for RenderApp {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -75,7 +83,9 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
+                if let (Some(window), Some(engine)) =
+                    (&self.window, &mut self.engine)
+                {
                     engine.set_scale_factor(scale_factor);
                     let inner = window.inner_size();
                     engine.resize(inner.width, inner.height);
@@ -83,11 +93,16 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::RedrawRequested => {
-                if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
+                if let (Some(window), Some(engine)) =
+                    (&self.window, &mut self.engine)
+                {
                     engine.apply_pending_scene();
                     match engine.render() {
                         Ok(()) => {}
-                        Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                        Err(
+                            wgpu::SurfaceError::Outdated
+                            | wgpu::SurfaceError::Lost,
+                        ) => {
                             let inner = window.inner_size();
                             engine.resize(inner.width, inner.height);
                         }
@@ -115,7 +130,10 @@ impl ApplicationHandler for RenderApp {
 
                 if let Some(engine) = &mut self.engine {
                     engine.handle_mouse_move(delta_x, delta_y);
-                    engine.handle_mouse_position(position.x as f32, position.y as f32);
+                    engine.handle_mouse_position(
+                        position.x as f32,
+                        position.y as f32,
+                    );
                 }
 
                 self.last_mouse_pos = (position.x as f32, position.y as f32);
@@ -128,7 +146,9 @@ impl ApplicationHandler for RenderApp {
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(engine) = &mut self.engine {
                     match delta {
-                        MouseScrollDelta::LineDelta(_, y) => engine.handle_mouse_wheel(y),
+                        MouseScrollDelta::LineDelta(_, y) => {
+                            engine.handle_mouse_wheel(y)
+                        }
                         MouseScrollDelta::PixelDelta(pos) => {
                             engine.handle_mouse_wheel(pos.y as f32 * 0.01)
                         }
@@ -151,7 +171,9 @@ impl ApplicationHandler for RenderApp {
                     if let Some(engine) = &mut self.engine {
                         use winit::keyboard::{Key, NamedKey};
                         match &event.logical_key {
-                            Key::Character(c) if c.as_str() == "w" || c.as_str() == "W" => {
+                            Key::Character(c)
+                                if c.as_str() == "w" || c.as_str() == "W" =>
+                            {
                                 engine.toggle_waters();
                             }
                             Key::Named(NamedKey::Escape) => {
@@ -183,8 +205,9 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
         }
 
         if !models_dir.exists() {
-            std::fs::create_dir_all(models_dir)
-                .map_err(|e| format!("Failed to create models directory: {}", e))?;
+            std::fs::create_dir_all(models_dir).map_err(|e| {
+                format!("Failed to create models directory: {}", e)
+            })?;
         }
 
         let url = format!("https://files.rcsb.org/download/{}.cif", pdb_id);

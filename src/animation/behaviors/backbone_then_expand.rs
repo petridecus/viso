@@ -85,7 +85,12 @@ impl AnimationBehavior for BackboneThenExpand {
             // eased_t goes 0→1 during this phase (backbone fully completes)
             let eased_t = phase_eased;
 
-            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+            InterpolationContext::with_phase(
+                raw_t,
+                eased_t,
+                phase_t,
+                phase_eased,
+            )
         } else {
             // Phase 2: Sidechain expand — backbone is done
             let phase_t = if bb_frac < 1.0 {
@@ -98,7 +103,12 @@ impl AnimationBehavior for BackboneThenExpand {
             // eased_t stays at 1.0 — backbone is fully at end position
             let eased_t = 1.0;
 
-            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+            InterpolationContext::with_phase(
+                raw_t,
+                eased_t,
+                phase_t,
+                phase_eased,
+            )
         }
     }
 
@@ -114,9 +124,12 @@ impl AnimationBehavior for BackboneThenExpand {
         // Backbone uses eased_t: goes 0→1 during phase 1, stays 1.0 during phase 2
         let backbone_t = ctx.eased_t;
         let backbone = [
-            start.backbone[0] + (end.backbone[0] - start.backbone[0]) * backbone_t,
-            start.backbone[1] + (end.backbone[1] - start.backbone[1]) * backbone_t,
-            start.backbone[2] + (end.backbone[2] - start.backbone[2]) * backbone_t,
+            start.backbone[0]
+                + (end.backbone[0] - start.backbone[0]) * backbone_t,
+            start.backbone[1]
+                + (end.backbone[1] - start.backbone[1]) * backbone_t,
+            start.backbone[2]
+                + (end.backbone[2] - start.backbone[2]) * backbone_t,
         ];
 
         let phase_eased = ctx.phase_eased_t.unwrap_or(1.0);
@@ -232,8 +245,10 @@ mod tests {
 
     #[test]
     fn test_backbone_completes_before_expand() {
-        let behavior =
-            BackboneThenExpand::new(Duration::from_millis(200), Duration::from_millis(300));
+        let behavior = BackboneThenExpand::new(
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+        );
         let a = test_state_a();
         let b = test_state_b();
 
@@ -259,7 +274,8 @@ mod tests {
         );
 
         // During expand phase: backbone stays at end
-        let mid_expand = behavior.compute_state(bb_frac + (1.0 - bb_frac) * 0.5, &a, &b);
+        let mid_expand =
+            behavior.compute_state(bb_frac + (1.0 - bb_frac) * 0.5, &a, &b);
         assert!(
             (mid_expand.backbone[0] - b.backbone[0]).length() < 0.001,
             "Backbone should stay at end during expand phase"
@@ -274,8 +290,10 @@ mod tests {
 
     #[test]
     fn test_sidechain_pinned_to_ca_during_backbone() {
-        let behavior =
-            BackboneThenExpand::new(Duration::from_millis(200), Duration::from_millis(300));
+        let behavior = BackboneThenExpand::new(
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+        );
         let start = Vec3::new(1.0, 0.0, 0.0);
         let end = Vec3::new(1.0, 5.0, 0.0);
         let collapse = Vec3::new(1.0, 2.0, 0.0);
@@ -290,8 +308,10 @@ mod tests {
 
     #[test]
     fn test_sidechain_expands_after_backbone() {
-        let behavior =
-            BackboneThenExpand::new(Duration::from_millis(200), Duration::from_millis(300));
+        let behavior = BackboneThenExpand::new(
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+        );
         let start = Vec3::new(1.0, 0.0, 0.0);
         let end = Vec3::new(1.0, 5.0, 0.0);
         let collapse = Vec3::new(1.0, 2.0, 0.0);
@@ -315,8 +335,10 @@ mod tests {
 
     #[test]
     fn test_duration() {
-        let behavior =
-            BackboneThenExpand::new(Duration::from_millis(200), Duration::from_millis(300));
+        let behavior = BackboneThenExpand::new(
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+        );
         assert_eq!(behavior.duration(), Duration::from_millis(500));
     }
 }

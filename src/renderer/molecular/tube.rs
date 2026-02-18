@@ -118,7 +118,8 @@ impl TubeRenderer {
     ) -> Self {
         let ss_filter = None; // Render all SS types by default
 
-        let (vertices, indices) = Self::generate_tube_mesh(backbone_chains, &ss_filter, None);
+        let (vertices, indices) =
+            Self::generate_tube_mesh(backbone_chains, &ss_filter, None);
 
         let vertex_buffer = if vertices.is_empty() {
             DynamicBuffer::new(
@@ -265,7 +266,11 @@ impl TubeRenderer {
     }
 
     /// Legacy method for compatibility - calls update()
-    pub fn update_chains(&mut self, device: &wgpu::Device, backbone_chains: &[Vec<Vec3>]) {
+    pub fn update_chains(
+        &mut self,
+        device: &wgpu::Device,
+        backbone_chains: &[Vec<Vec3>],
+    ) {
         // Create a temporary queue-less update by regenerating buffers
         let new_hash = Self::compute_chain_hash(backbone_chains);
         if new_hash == self.last_chain_hash {
@@ -314,23 +319,24 @@ impl TubeRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Backbone Tube Shader",
-            include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"),
+            include_str!(
+                "../../../assets/shaders/raster/mesh/backbone_tube.wgsl"
+            ),
             "backbone_tube.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Backbone Pipeline Layout"),
-                    bind_group_layouts: &[
-                        camera_layout,
-                        lighting_layout,
-                        selection_layout,
-                        color_layout,
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Backbone Pipeline Layout"),
+                bind_group_layouts: &[
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                    color_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         let vertex_layout = tube_vertex_buffer_layout();
 
@@ -431,7 +437,8 @@ impl TubeRenderer {
                 );
             } else {
                 // Render everything
-                let spline_colors = Self::interpolate_ss_colors(&ss_types, spline_points.len());
+                let spline_colors =
+                    Self::interpolate_ss_colors(&ss_types, spline_points.len());
                 let residue_indices = Self::interpolate_residue_indices(
                     ca_positions.len(),
                     spline_points.len(),
@@ -506,7 +513,8 @@ impl TubeRenderer {
 
             // Convert residue range to spline point range
             let start_point = start_residue * points_per_residue;
-            let end_point = ((end_residue - 1) * points_per_residue + 1).min(spline_points.len());
+            let end_point = ((end_residue - 1) * points_per_residue + 1)
+                .min(spline_points.len());
 
             if start_point >= end_point || start_point >= spline_points.len() {
                 continue;
@@ -514,7 +522,8 @@ impl TubeRenderer {
 
             let segment_points = &spline_points[start_point..end_point];
             let segment_ss = &ss_types[start_residue..end_residue];
-            let segment_colors = Self::interpolate_ss_colors(segment_ss, segment_points.len());
+            let segment_colors =
+                Self::interpolate_ss_colors(segment_ss, segment_points.len());
             let segment_residue_indices = Self::interpolate_residue_indices(
                 end_residue - start_residue,
                 segment_points.len(),
@@ -535,7 +544,10 @@ impl TubeRenderer {
     }
 
     /// Interpolate SS colors to match spline point count
-    fn interpolate_ss_colors(ss_types: &[SSType], num_spline_points: usize) -> Vec<[f32; 3]> {
+    fn interpolate_ss_colors(
+        ss_types: &[SSType],
+        num_spline_points: usize,
+    ) -> Vec<[f32; 3]> {
         if ss_types.is_empty() {
             return vec![[0.6, 0.85, 0.6]; num_spline_points];
         }
@@ -546,7 +558,8 @@ impl TubeRenderer {
         for i in 0..num_spline_points {
             // Map spline point index to residue index
             let residue_idx = if n_residues > 1 {
-                ((i as f32 / (num_spline_points - 1) as f32) * (n_residues - 1) as f32) as usize
+                ((i as f32 / (num_spline_points - 1) as f32)
+                    * (n_residues - 1) as f32) as usize
             } else {
                 0
             };
@@ -572,7 +585,8 @@ impl TubeRenderer {
         for i in 0..num_spline_points {
             // Map spline point index to residue index
             let residue_idx = if n_residues > 1 {
-                ((i as f32 / (num_spline_points - 1) as f32) * (n_residues - 1) as f32) as usize
+                ((i as f32 / (num_spline_points - 1) as f32)
+                    * (n_residues - 1) as f32) as usize
             } else {
                 0
             };
@@ -621,7 +635,7 @@ impl TubeRenderer {
                 points.push(SplinePoint {
                     pos,
                     tangent,
-                    normal: Vec3::ZERO,   // Will be computed by RMF
+                    normal: Vec3::ZERO, // Will be computed by RMF
                     binormal: Vec3::ZERO, // Will be computed by RMF
                 });
             }
@@ -665,7 +679,8 @@ impl TubeRenderer {
             let residue_idx = residue_indices.get(i).copied().unwrap_or(0);
 
             for k in 0..RADIAL_SEGMENTS {
-                let angle = (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;
+                let angle =
+                    (k as f32 / RADIAL_SEGMENTS as f32) * std::f32::consts::TAU;
                 let cos_a = angle.cos();
                 let sin_a = angle.sin();
 

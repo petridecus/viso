@@ -21,7 +21,8 @@ pub enum EasingFunction {
 
 impl EasingFunction {
     /// Default easing function: CubicHermite with c1=0.33, c2=1.0 for natural ease-out feel.
-    pub const DEFAULT: EasingFunction = EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
+    pub const DEFAULT: EasingFunction =
+        EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
 
     /// Evaluate the easing function at time t.
     ///

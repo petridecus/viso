@@ -27,7 +27,8 @@ impl Options {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-        toml::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+        toml::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
 
     /// Save options to a TOML file (pretty-printed).
@@ -35,8 +36,13 @@ impl Options {
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize options: {}", e))?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                )
+            })?;
         }
         std::fs::write(path, content)
             .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
@@ -49,7 +55,9 @@ impl Options {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "toml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(stem) =
+                        path.file_stem().and_then(|s| s.to_str())
+                    {
                         names.push(stem.to_string());
                     }
                 }

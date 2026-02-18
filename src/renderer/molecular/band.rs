@@ -135,8 +135,11 @@ impl BandRenderer {
         );
 
         let bind_group_layout = Self::create_bind_group_layout(&context.device);
-        let bind_group =
-            Self::create_bind_group(&context.device, &bind_group_layout, &instance_buffer);
+        let bind_group = Self::create_bind_group(
+            &context.device,
+            &bind_group_layout,
+            &instance_buffer,
+        );
         let pipeline = Self::create_pipeline(
             context,
             &bind_group_layout,
@@ -155,12 +158,15 @@ impl BandRenderer {
         }
     }
 
-    fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    fn create_bind_group_layout(
+        device: &wgpu::Device,
+    ) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Band Renderer Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -198,23 +204,24 @@ impl BandRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Band Renderer Shader",
-            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            include_str!(
+                "../../../assets/shaders/raster/impostor/capsule.wgsl"
+            ),
             "capsule_impostor.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Band Renderer Pipeline Layout"),
-                    bind_group_layouts: &[
-                        bind_group_layout,
-                        camera_layout,
-                        lighting_layout,
-                        selection_layout,
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Band Renderer Pipeline Layout"),
+                bind_group_layouts: &[
+                    bind_group_layout,
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         context
             .device
@@ -245,12 +252,14 @@ impl BandRenderer {
     fn compute_radius(strength: f32) -> f32 {
         if strength < BAND_MID_STRENGTH {
             // Lerp from MIN to MID
-            let t = (strength - BAND_MIN_STRENGTH) / (BAND_MID_STRENGTH - BAND_MIN_STRENGTH);
+            let t = (strength - BAND_MIN_STRENGTH)
+                / (BAND_MID_STRENGTH - BAND_MIN_STRENGTH);
             let t = t.clamp(0.0, 1.0);
             BAND_MIN_RADIUS + t * (BAND_MID_RADIUS - BAND_MIN_RADIUS)
         } else {
             // Lerp from MID to MAX
-            let t = (strength - BAND_MID_STRENGTH) / (BAND_MAX_STRENGTH - BAND_MID_STRENGTH);
+            let t = (strength - BAND_MID_STRENGTH)
+                / (BAND_MAX_STRENGTH - BAND_MID_STRENGTH);
             let t = t.clamp(0.0, 1.0);
             BAND_MID_RADIUS + t * (BAND_MAX_RADIUS - BAND_MID_RADIUS)
         }
@@ -287,9 +296,15 @@ impl BandRenderer {
         // Base color from band type (use ColorOptions if provided, else fallback to constants)
         let mut color = match band_type {
             BandType::Default => colors.map_or(BAND_COLOR, |c| c.band_default),
-            BandType::Backbone => colors.map_or(BAND_BB_COLOR, |c| c.band_backbone),
-            BandType::Disulfide => colors.map_or(BAND_DISULF_COLOR, |c| c.band_disulfide),
-            BandType::HBond => colors.map_or(BAND_HBOND_COLOR, |c| c.band_hbond),
+            BandType::Backbone => {
+                colors.map_or(BAND_BB_COLOR, |c| c.band_backbone)
+            }
+            BandType::Disulfide => {
+                colors.map_or(BAND_DISULF_COLOR, |c| c.band_disulfide)
+            }
+            BandType::HBond => {
+                colors.map_or(BAND_HBOND_COLOR, |c| c.band_hbond)
+            }
         };
 
         // Compute current distance
@@ -405,8 +420,11 @@ impl BandRenderer {
         let reallocated = self.instance_buffer.write(device, queue, &instances);
 
         if reallocated {
-            self.bind_group =
-                Self::create_bind_group(device, &self.bind_group_layout, &self.instance_buffer);
+            self.bind_group = Self::create_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.instance_buffer,
+            );
         }
 
         self.instance_count = instances.len() as u32;

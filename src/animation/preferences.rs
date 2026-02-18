@@ -3,7 +3,8 @@
 //! Users can customize which animation behavior is used for each action type.
 
 use super::behaviors::{
-    shared, BackboneThenExpand, Cascade, CollapseExpand, SharedBehavior, SmoothInterpolation, Snap,
+    shared, BackboneThenExpand, Cascade, CollapseExpand, SharedBehavior,
+    SmoothInterpolation, Snap,
 };
 
 /// Actions that can trigger animations.
@@ -84,7 +85,9 @@ impl AnimationPreferences {
             AnimationAction::Shake => self.shake = behavior,
             AnimationAction::Mutation => self.mutation = behavior,
             AnimationAction::Diffusion => self.diffusion = behavior,
-            AnimationAction::DiffusionFinalize => self.diffusion_finalize = behavior,
+            AnimationAction::DiffusionFinalize => {
+                self.diffusion_finalize = behavior
+            }
             AnimationAction::Reveal => self.reveal = behavior,
             AnimationAction::Load => self.load = behavior,
         }
@@ -118,7 +121,9 @@ impl Default for AnimationPreferences {
             mutation: shared(CollapseExpand::default()),
 
             // Diffusion uses linear interpolation to not distort ML intermediates
-            diffusion: shared(SmoothInterpolation::linear(Duration::from_millis(100))),
+            diffusion: shared(SmoothInterpolation::linear(
+                Duration::from_millis(100),
+            )),
 
             // Final diffusion result: backbone lerps to end FIRST, then sidechains expand
             diffusion_finalize: shared(BackboneThenExpand::new(

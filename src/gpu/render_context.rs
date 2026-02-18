@@ -72,7 +72,9 @@ impl RenderContext {
 
     pub fn set_surface_scale(&self, _scale: f64) {}
 
-    pub fn get_next_frame(&self) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
+    pub fn get_next_frame(
+        &self,
+    ) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
         self.surface.get_current_texture()
     }
 

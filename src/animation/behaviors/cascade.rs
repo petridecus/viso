@@ -49,7 +49,12 @@ impl Cascade {
 
     /// Maps global animation progress to per-residue progress,
     /// accounting for staggered start times.
-    pub fn residue_t(&self, global_t: f32, residue_idx: usize, total_residues: usize) -> f32 {
+    pub fn residue_t(
+        &self,
+        global_t: f32,
+        residue_idx: usize,
+        total_residues: usize,
+    ) -> f32 {
         if total_residues == 0 {
             return global_t;
         }
@@ -65,7 +70,8 @@ impl Cascade {
         let global_time = global_t * total_secs;
 
         // Start and end time for this residue
-        let start_time = residue_idx as f32 * self.delay_per_residue.as_secs_f32();
+        let start_time =
+            residue_idx as f32 * self.delay_per_residue.as_secs_f32();
         let base_secs = self.base_duration.as_secs_f32();
 
         if base_secs == 0.0 {
@@ -140,7 +146,8 @@ mod tests {
 
     #[test]
     fn test_cascade_residue_t_first_residue() {
-        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
+        let cascade =
+            Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
 
         // First residue starts immediately
         let t = cascade.residue_t(0.0, 0, 10);
@@ -149,7 +156,8 @@ mod tests {
 
     #[test]
     fn test_cascade_residue_t_later_residue() {
-        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
+        let cascade =
+            Cascade::new(Duration::from_millis(100), Duration::from_millis(50));
 
         // Total duration for 10 residues: 50*9 + 100 = 550ms
         // Residue 2 starts at 100ms (2 * 50ms)
@@ -164,7 +172,8 @@ mod tests {
 
     #[test]
     fn test_cascade_total_duration() {
-        let cascade = Cascade::new(Duration::from_millis(100), Duration::from_millis(10));
+        let cascade =
+            Cascade::new(Duration::from_millis(100), Duration::from_millis(10));
 
         // 5 residues: delay for residues 0-4 is 0, 10, 20, 30, 40ms
         // Last residue finishes at 40 + 100 = 140ms
@@ -174,7 +183,8 @@ mod tests {
 
     #[test]
     fn test_cascade_total_duration_single_residue() {
-        let cascade = Cascade::new(Duration::from_millis(200), Duration::from_millis(50));
+        let cascade =
+            Cascade::new(Duration::from_millis(200), Duration::from_millis(50));
 
         // Single residue: just base duration
         let total = cascade.total_duration_for(1);

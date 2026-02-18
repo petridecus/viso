@@ -55,21 +55,22 @@ impl CameraController {
         let mut uniform = CameraUniform::new();
         uniform.update_view_proj(&camera);
 
-        let buffer = context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = context.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
                 contents: bytemuck::cast_slice(&[uniform]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_DST,
+            },
+        );
 
-        let layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = context.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Camera Bind Group Layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX
+                        | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -77,18 +78,20 @@ impl CameraController {
                     },
                     count: None,
                 }],
-            });
+            },
+        );
 
-        let bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
-                label: Some("Camera Bind Group"),
-            });
+        let bind_group =
+            context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                    label: Some("Camera Bind Group"),
+                });
 
         Self {
             orientation,
@@ -149,7 +152,8 @@ impl CameraController {
                 self.bounding_radius = target;
                 self.target_bounding_radius = None;
             } else {
-                self.bounding_radius = self.bounding_radius + (target - self.bounding_radius) * t;
+                self.bounding_radius =
+                    self.bounding_radius + (target - self.bounding_radius) * t;
                 animating = true;
             }
         }
@@ -183,7 +187,8 @@ impl CameraController {
             self.auto_rotate_axis = None;
             false
         } else {
-            self.auto_rotate_axis = Some((self.orientation * Vec3::Y).normalize());
+            self.auto_rotate_axis =
+                Some((self.orientation * Vec3::Y).normalize());
             true
         }
     }
@@ -237,7 +242,11 @@ impl CameraController {
 
     pub fn update_gpu(&mut self, queue: &wgpu::Queue) {
         self.uniform.update_view_proj(&self.camera);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+        queue.write_buffer(
+            &self.buffer,
+            0,
+            bytemuck::cast_slice(&[self.uniform]),
+        );
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -247,14 +256,16 @@ impl CameraController {
     pub fn rotate(&mut self, delta: Vec2) {
         // Horizontal rotation around camera's up vector
         let up = self.orientation * Vec3::Y;
-        let horizontal_rotation = Quat::from_axis_angle(up, -delta.x * self.rotate_speed);
+        let horizontal_rotation =
+            Quat::from_axis_angle(up, -delta.x * self.rotate_speed);
 
         // Apply horizontal rotation
         self.orientation = horizontal_rotation * self.orientation;
 
         // Vertical rotation around camera's right vector (after horizontal rotation)
         let right = self.orientation * Vec3::X;
-        let vertical_rotation = Quat::from_axis_angle(right, -delta.y * self.rotate_speed);
+        let vertical_rotation =
+            Quat::from_axis_angle(right, -delta.y * self.rotate_speed);
 
         // Apply vertical rotation
         self.orientation = vertical_rotation * self.orientation;
@@ -269,7 +280,8 @@ impl CameraController {
         let right = self.orientation * Vec3::X;
         let up = self.orientation * Vec3::Y;
 
-        let translation = right * (-delta.x * self.pan_speed) + up * (delta.y * self.pan_speed);
+        let translation = right * (-delta.x * self.pan_speed)
+            + up * (delta.y * self.pan_speed);
 
         self.focus_point += translation;
         self.update_camera_pos();
@@ -285,13 +297,17 @@ impl CameraController {
 
     /// Calculate fit parameters for the given positions.
     /// Returns (centroid, radius, fit_distance).
-    fn calculate_fit_params(&self, positions: &[Vec3]) -> Option<(Vec3, f32, f32)> {
+    fn calculate_fit_params(
+        &self,
+        positions: &[Vec3],
+    ) -> Option<(Vec3, f32, f32)> {
         if positions.is_empty() {
             return None;
         }
 
         // Calculate centroid
-        let centroid: Vec3 = positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
+        let centroid: Vec3 =
+            positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
 
         // Calculate bounding sphere radius from centroid
         let radius = positions
@@ -321,7 +337,9 @@ impl CameraController {
     /// Adjust camera to fit the given positions instantly (no animation).
     /// Used for initial load.
     pub fn fit_to_positions(&mut self, positions: &[Vec3]) {
-        if let Some((centroid, radius, fit_distance)) = self.calculate_fit_params(positions) {
+        if let Some((centroid, radius, fit_distance)) =
+            self.calculate_fit_params(positions)
+        {
             self.focus_point = centroid;
             self.bounding_radius = radius;
             self.distance = fit_distance;
@@ -338,7 +356,9 @@ impl CameraController {
     /// Adjust camera to fit the given positions with smooth animation.
     /// Used when new designs are added to the scene.
     pub fn fit_to_positions_animated(&mut self, positions: &[Vec3]) {
-        if let Some((centroid, radius, fit_distance)) = self.calculate_fit_params(positions) {
+        if let Some((centroid, radius, fit_distance)) =
+            self.calculate_fit_params(positions)
+        {
             self.target_focus_point = Some(centroid);
             self.target_bounding_radius = Some(radius);
             self.target_distance = Some(fit_distance);

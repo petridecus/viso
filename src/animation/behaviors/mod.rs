@@ -18,4 +18,6 @@ pub use collapse_expand::CollapseExpand;
 pub use smooth::SmoothInterpolation;
 pub use snap::Snap;
 pub use state::ResidueVisualState;
-pub use traits::{shared, AnimationBehavior, PreemptionStrategy, SharedBehavior};
+pub use traits::{
+    shared, AnimationBehavior, PreemptionStrategy, SharedBehavior,
+};

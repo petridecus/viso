@@ -1,5 +1,6 @@
 use naga_oil::compose::{
-    ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage, ShaderType,
+    ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage,
+    ShaderType,
 };
 use std::borrow::Cow;
 
@@ -32,15 +33,21 @@ impl ShaderComposer {
         // Modules with no dependencies first, then modules that depend on earlier ones.
         let modules: &[ModuleDef] = &[
             ModuleDef {
-                source: include_str!("../../assets/shaders/modules/fullscreen.wgsl"),
+                source: include_str!(
+                    "../../assets/shaders/modules/fullscreen.wgsl"
+                ),
                 file_path: "modules/fullscreen.wgsl",
             },
             ModuleDef {
-                source: include_str!("../../assets/shaders/modules/camera.wgsl"),
+                source: include_str!(
+                    "../../assets/shaders/modules/camera.wgsl"
+                ),
                 file_path: "modules/camera.wgsl",
             },
             ModuleDef {
-                source: include_str!("../../assets/shaders/modules/lighting.wgsl"),
+                source: include_str!(
+                    "../../assets/shaders/modules/lighting.wgsl"
+                ),
                 file_path: "modules/lighting.wgsl",
             },
             ModuleDef {
@@ -48,11 +55,15 @@ impl ShaderComposer {
                 file_path: "modules/sdf.wgsl",
             },
             ModuleDef {
-                source: include_str!("../../assets/shaders/modules/raymarch.wgsl"),
+                source: include_str!(
+                    "../../assets/shaders/modules/raymarch.wgsl"
+                ),
                 file_path: "modules/raymarch.wgsl",
             },
             ModuleDef {
-                source: include_str!("../../assets/shaders/modules/volume.wgsl"),
+                source: include_str!(
+                    "../../assets/shaders/modules/volume.wgsl"
+                ),
                 file_path: "modules/volume.wgsl",
             },
         ];
@@ -93,7 +104,9 @@ impl ShaderComposer {
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()
             })
-            .unwrap_or_else(|e| panic!("Failed to compose shader '{}': {}", file_path, e));
+            .unwrap_or_else(|e| {
+                panic!("Failed to compose shader '{}': {}", file_path, e)
+            });
 
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
@@ -128,7 +141,9 @@ mod tests {
     fn all_shader_sources() -> Vec<(&'static str, &'static str)> {
         vec![
             (
-                include_str!("../../assets/shaders/screen/bloom_threshold.wgsl"),
+                include_str!(
+                    "../../assets/shaders/screen/bloom_threshold.wgsl"
+                ),
                 "bloom_threshold.wgsl",
             ),
             (
@@ -156,15 +171,21 @@ mod tests {
                 "ssao_blur.wgsl",
             ),
             (
-                include_str!("../../assets/shaders/raster/mesh/backbone_tube.wgsl"),
+                include_str!(
+                    "../../assets/shaders/raster/mesh/backbone_tube.wgsl"
+                ),
                 "backbone_tube.wgsl",
             ),
             (
-                include_str!("../../assets/shaders/raster/impostor/capsule.wgsl"),
+                include_str!(
+                    "../../assets/shaders/raster/impostor/capsule.wgsl"
+                ),
                 "capsule_impostor.wgsl",
             ),
             (
-                include_str!("../../assets/shaders/raster/impostor/sphere.wgsl"),
+                include_str!(
+                    "../../assets/shaders/raster/impostor/sphere.wgsl"
+                ),
                 "sphere_impostor.wgsl",
             ),
             (
@@ -176,7 +197,9 @@ mod tests {
                 "picking.wgsl",
             ),
             (
-                include_str!("../../assets/shaders/utility/picking_capsule.wgsl"),
+                include_str!(
+                    "../../assets/shaders/utility/picking_capsule.wgsl"
+                ),
                 "picking_capsule.wgsl",
             ),
         ]
@@ -188,7 +211,9 @@ mod tests {
         for (source, file_path) in all_shader_sources() {
             composer
                 .compose_naga(source, file_path)
-                .unwrap_or_else(|e| panic!("Shader '{}' failed to compose: {}", file_path, e));
+                .unwrap_or_else(|e| {
+                    panic!("Shader '{}' failed to compose: {}", file_path, e)
+                });
         }
     }
 }

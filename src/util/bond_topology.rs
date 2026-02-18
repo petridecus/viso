@@ -3,7 +3,9 @@
 /// Bonds are represented as pairs of atom names.
 /// Get the bond pairs for a residue type (sidechain internal bonds only).
 /// Returns None for unknown residue types.
-pub fn get_residue_bonds(residue_name: &str) -> Option<&'static [(&'static str, &'static str)]> {
+pub fn get_residue_bonds(
+    residue_name: &str,
+) -> Option<&'static [(&'static str, &'static str)]> {
     match residue_name.to_uppercase().as_str() {
         "ALA" => Some(ALANINE_BONDS),
         "ARG" => Some(ARGININE_BONDS),
@@ -47,10 +49,12 @@ const ALANINE_BONDS: &[(&str, &str)] = &[];
 const VALINE_BONDS: &[(&str, &str)] = &[("CB", "CG1"), ("CB", "CG2")];
 
 // Leucine: CA-CB-CG-CD1, CG-CD2
-const LEUCINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD1"), ("CG", "CD2")];
+const LEUCINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "CD1"), ("CG", "CD2")];
 
 // Isoleucine: CA-CB-CG1-CD1, CB-CG2
-const ISOLEUCINE_BONDS: &[(&str, &str)] = &[("CB", "CG1"), ("CG1", "CD1"), ("CB", "CG2")];
+const ISOLEUCINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG1"), ("CG1", "CD1"), ("CB", "CG2")];
 
 // Proline: CA-CB-CG-CD-N (ring)
 const PROLINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD")];
@@ -65,13 +69,16 @@ const THREONINE_BONDS: &[(&str, &str)] = &[("CB", "OG1"), ("CB", "CG2")];
 const CYSTEINE_BONDS: &[(&str, &str)] = &[("CB", "SG")];
 
 // Methionine: CA-CB-CG-SD-CE
-const METHIONINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "SD"), ("SD", "CE")];
+const METHIONINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "SD"), ("SD", "CE")];
 
 // Asparagine: CA-CB-CG-OD1, CG-ND2
-const ASPARAGINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "OD1"), ("CG", "ND2")];
+const ASPARAGINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "OD1"), ("CG", "ND2")];
 
 // Aspartate: CA-CB-CG-OD1, CG-OD2
-const ASPARTATE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "OD1"), ("CG", "OD2")];
+const ASPARTATE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "OD1"), ("CG", "OD2")];
 
 // Glutamine: CA-CB-CG-CD-OE1, CD-NE2
 const GLUTAMINE_BONDS: &[(&str, &str)] =
@@ -82,7 +89,8 @@ const GLUTAMATE_BONDS: &[(&str, &str)] =
     &[("CB", "CG"), ("CG", "CD"), ("CD", "OE1"), ("CD", "OE2")];
 
 // Lysine: CA-CB-CG-CD-CE-NZ
-const LYSINE_BONDS: &[(&str, &str)] = &[("CB", "CG"), ("CG", "CD"), ("CD", "CE"), ("CE", "NZ")];
+const LYSINE_BONDS: &[(&str, &str)] =
+    &[("CB", "CG"), ("CG", "CD"), ("CD", "CE"), ("CE", "NZ")];
 
 // Arginine: CA-CB-CG-CD-NE-CZ-NH1, CZ-NH2
 const ARGININE_BONDS: &[(&str, &str)] = &[

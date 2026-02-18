@@ -121,7 +121,8 @@ impl AnimationController {
         // Check if backbone target actually changed (compare against previous target).
         // If we just resized, the backbone definitely changed — skip the target_differs
         // check since resize_to_match already set self.target = new_target.target.
-        let backbone_changed = did_resize || current_state.target_differs(new_target);
+        let backbone_changed =
+            did_resize || current_state.target_differs(new_target);
 
         // If neither backbone nor sidechains changed (and not forced), skip animation
         if !backbone_changed && !force {
@@ -332,9 +333,13 @@ mod tests {
         // State should be resized to match new target
         assert_eq!(state.residue_count(), 5);
         // The first 3 residues should still have their old positions (y=0)
-        assert!((state.get_current(0).unwrap().backbone[0].y - 0.0).abs() < 0.001);
+        assert!(
+            (state.get_current(0).unwrap().backbone[0].y - 0.0).abs() < 0.001
+        );
         // The extra residues (4th, 5th) should start at their target positions (y=5)
-        assert!((state.get_current(3).unwrap().backbone[0].y - 5.0).abs() < 0.001);
+        assert!(
+            (state.get_current(3).unwrap().backbone[0].y - 5.0).abs() < 0.001
+        );
     }
 
     #[test]

@@ -3,7 +3,9 @@
 use super::ProteinRenderEngine;
 use crate::animation::AnimationAction;
 use crate::renderer::molecular::capsule_sidechain::SidechainData;
-use crate::scene::processor::{AnimationSidechainData, PreparedScene, SceneRequest};
+use crate::scene::processor::{
+    AnimationSidechainData, PreparedScene, SceneRequest,
+};
 use crate::scene::{CombinedCoordsResult, GroupId};
 use crate::util::score_color;
 use foldit_conv::secondary_structure::SSType;
@@ -25,7 +27,8 @@ impl ProteinRenderEngine {
         ss_types: Option<&[SSType]>,
     ) {
         // Calculate total residues from backbone chains (3 atoms per residue: N, CA, C)
-        let total_residues: usize = backbone_chains.iter().map(|c| c.len() / 3).sum();
+        let total_residues: usize =
+            backbone_chains.iter().map(|c| c.len() / 3).sum();
 
         // Ensure selection buffer has capacity for all residues (including new structures)
         self.selection_buffer
@@ -49,11 +52,12 @@ impl ProteinRenderEngine {
 
         // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
         let offset_map = self.sheet_offset_map();
-        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            sidechain.positions,
-            sidechain.residue_indices,
-            &offset_map,
-        );
+        let adjusted_positions =
+            crate::util::sheet_adjust::adjust_sidechains_for_sheet(
+                sidechain.positions,
+                sidechain.residue_indices,
+                &offset_map,
+            );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
             sidechain.backbone_bonds,
             sidechain.residue_indices,
@@ -165,23 +169,32 @@ impl ProteinRenderEngine {
             self.setup_animation_targets_from_prepared(&prepared, action);
 
             // Snap residues for entities NOT in entity_actions
-            let active: HashSet<GroupId> = prepared.entity_actions.keys().copied().collect();
-            self.animator
-                .snap_entities_without_action(&prepared.entity_residue_ranges, &active);
+            let active: HashSet<GroupId> =
+                prepared.entity_actions.keys().copied().collect();
+            self.animator.snap_entities_without_action(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
 
             // Remove non-targeted entity residues from the AnimationRunner
             // so apply_to_state doesn't overwrite their snapped backbone state
-            self.animator
-                .remove_non_targeted_from_runner(&prepared.entity_residue_ranges, &active);
+            self.animator.remove_non_targeted_from_runner(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
 
             // Also snap engine-level sidechain start positions for non-targeted entities
-            for &(eid, start_residue, residue_count) in &prepared.entity_residue_ranges {
+            for &(eid, start_residue, residue_count) in
+                &prepared.entity_residue_ranges
+            {
                 if active.contains(&eid) {
                     continue;
                 }
                 let res_start = start_residue as usize;
                 let res_end = (start_residue + residue_count) as usize;
-                for (i, &res_idx) in self.sc.cached_sidechain_residue_indices.iter().enumerate() {
+                for (i, &res_idx) in
+                    self.sc.cached_sidechain_residue_indices.iter().enumerate()
+                {
                     let r = res_idx as usize;
                     if r >= res_start
                         && r < res_end
@@ -192,14 +205,16 @@ impl ProteinRenderEngine {
                             self.sc.target_sidechain_positions[i];
                     }
                 }
-                for (j, &(_, cb_idx)) in self.sc.target_backbone_sidechain_bonds.iter().enumerate()
+                for (j, &(_, cb_idx)) in
+                    self.sc.target_backbone_sidechain_bonds.iter().enumerate()
                 {
                     let res_idx = self
                         .sc
                         .cached_sidechain_residue_indices
                         .get(cb_idx as usize)
                         .copied()
-                        .unwrap_or(u32::MAX) as usize;
+                        .unwrap_or(u32::MAX)
+                        as usize;
                     if res_idx >= res_start
                         && res_idx < res_end
                         && j < self.sc.start_backbone_sidechain_bonds.len()
@@ -228,10 +243,14 @@ impl ProteinRenderEngine {
         // generate correct topology.
         let animating = !prepared.entity_actions.is_empty();
         if animating {
-            self.tube_renderer
-                .update_metadata(prepared.backbone_chains.clone(), prepared.ss_types.clone());
-            self.ribbon_renderer
-                .update_metadata(prepared.backbone_chains.clone(), prepared.ss_types.clone());
+            self.tube_renderer.update_metadata(
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
+            self.ribbon_renderer.update_metadata(
+                prepared.backbone_chains.clone(),
+                prepared.ss_types.clone(),
+            );
         } else {
             self.tube_renderer.apply_prepared(
                 &self.context.device,
@@ -256,7 +275,8 @@ impl ProteinRenderEngine {
                     ss_override: prepared.ss_types.clone(),
                 },
             );
-            let suppress_sidechains = dominant_action == Some(AnimationAction::DiffusionFinalize);
+            let suppress_sidechains =
+                dominant_action == Some(AnimationAction::DiffusionFinalize);
             if !suppress_sidechains {
                 self.sidechain_renderer.apply_prepared(
                     &self.context.device,
@@ -312,9 +332,13 @@ impl ProteinRenderEngine {
         let backbone_sidechain_bonds = &prepared.backbone_sidechain_bonds;
 
         // Capture current VISUAL positions as start (for smooth preemption)
-        if self.sc.target_sidechain_positions.len() == sidechain_positions.len() {
-            if self.animator.is_animating() && self.animator.has_sidechain_data() {
-                self.sc.start_sidechain_positions = self.animator.get_sidechain_positions();
+        if self.sc.target_sidechain_positions.len() == sidechain_positions.len()
+        {
+            if self.animator.is_animating()
+                && self.animator.has_sidechain_data()
+            {
+                self.sc.start_sidechain_positions =
+                    self.animator.get_sidechain_positions();
                 let ctx = self.animator.interpolation_context();
                 self.sc.start_backbone_sidechain_bonds = self
                     .sc
@@ -322,33 +346,43 @@ impl ProteinRenderEngine {
                     .iter()
                     .zip(self.sc.target_backbone_sidechain_bonds.iter())
                     .map(|((start_pos, idx), (target_pos, _))| {
-                        let pos = *start_pos + (*target_pos - *start_pos) * ctx.eased_t;
+                        let pos = *start_pos
+                            + (*target_pos - *start_pos) * ctx.eased_t;
                         (pos, *idx)
                     })
                     .collect();
             } else {
-                self.sc.start_sidechain_positions = self.sc.target_sidechain_positions.clone();
+                self.sc.start_sidechain_positions =
+                    self.sc.target_sidechain_positions.clone();
                 self.sc.start_backbone_sidechain_bonds =
                     self.sc.target_backbone_sidechain_bonds.clone();
             }
         } else {
             let ca_positions: Vec<Vec3> = new_backbone
                 .iter()
-                .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+                .flat_map(|chain| {
+                    chain.chunks(3).filter_map(|chunk| chunk.get(1).copied())
+                })
                 .collect();
             self.sc.start_sidechain_positions = sidechain_residue_indices
                 .iter()
-                .map(|&ri| ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO))
+                .map(|&ri| {
+                    ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO)
+                })
                 .collect();
-            self.sc.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+            self.sc.start_backbone_sidechain_bonds =
+                backbone_sidechain_bonds.to_vec();
         }
 
         // Set new targets and cached data
         self.sc.target_sidechain_positions = sidechain_positions.to_vec();
-        self.sc.target_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+        self.sc.target_backbone_sidechain_bonds =
+            backbone_sidechain_bonds.to_vec();
         self.sc.cached_sidechain_bonds = sidechain_bonds.to_vec();
-        self.sc.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
-        self.sc.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
+        self.sc.cached_sidechain_hydrophobicity =
+            sidechain_hydrophobicity.to_vec();
+        self.sc.cached_sidechain_residue_indices =
+            sidechain_residue_indices.to_vec();
         self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Cache secondary structure types
@@ -364,7 +398,9 @@ impl ProteinRenderEngine {
         // Extract CA positions for sidechain collapse animation
         let ca_positions: Vec<Vec3> = new_backbone
             .iter()
-            .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+            .flat_map(|chain| {
+                chain.chunks(3).filter_map(|chunk| chunk.get(1).copied())
+            })
             .collect();
 
         // Pass sidechain data to animator FIRST (before set_target)
@@ -379,7 +415,8 @@ impl ProteinRenderEngine {
         self.animator.set_target(new_backbone, action);
 
         // Ensure selection/color buffers have capacity and update colors
-        let total_residues: usize = new_backbone.iter().map(|c| c.len() / 3).sum();
+        let total_residues: usize =
+            new_backbone.iter().map(|c| c.len() / 3).sum();
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
         self.residue_color_buffer
@@ -393,24 +430,33 @@ impl ProteinRenderEngine {
 
     /// Snap update from prepared scene data (no animation).
     fn snap_from_prepared(&mut self, prepared: &PreparedScene) {
-        self.sc.target_sidechain_positions = prepared.sidechain_positions.clone();
-        self.sc.start_sidechain_positions = prepared.sidechain_positions.clone();
-        self.sc.target_backbone_sidechain_bonds = prepared.backbone_sidechain_bonds.clone();
-        self.sc.start_backbone_sidechain_bonds = prepared.backbone_sidechain_bonds.clone();
+        self.sc.target_sidechain_positions =
+            prepared.sidechain_positions.clone();
+        self.sc.start_sidechain_positions =
+            prepared.sidechain_positions.clone();
+        self.sc.target_backbone_sidechain_bonds =
+            prepared.backbone_sidechain_bonds.clone();
+        self.sc.start_backbone_sidechain_bonds =
+            prepared.backbone_sidechain_bonds.clone();
         self.sc.cached_sidechain_bonds = prepared.sidechain_bonds.clone();
-        self.sc.cached_sidechain_hydrophobicity = prepared.sidechain_hydrophobicity.clone();
-        self.sc.cached_sidechain_residue_indices = prepared.sidechain_residue_indices.clone();
-        self.sc.cached_sidechain_atom_names = prepared.sidechain_atom_names.clone();
+        self.sc.cached_sidechain_hydrophobicity =
+            prepared.sidechain_hydrophobicity.clone();
+        self.sc.cached_sidechain_residue_indices =
+            prepared.sidechain_residue_indices.clone();
+        self.sc.cached_sidechain_atom_names =
+            prepared.sidechain_atom_names.clone();
 
         if let Some(ref ss) = prepared.ss_types {
             self.sc.cached_ss_types = ss.clone();
         } else {
-            self.sc.cached_ss_types = self.compute_ss_types(&prepared.backbone_chains);
+            self.sc.cached_ss_types =
+                self.compute_ss_types(&prepared.backbone_chains);
         }
 
         self.sc.cached_per_residue_colors = prepared.per_residue_colors.clone();
 
-        let total_residues: usize = prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
+        let total_residues: usize =
+            prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
         self.residue_color_buffer
@@ -458,8 +504,12 @@ impl ProteinRenderEngine {
                     return vec![[0.5, 0.5, 0.5]; residue_count];
                 }
                 match self.options.display.backbone_color_mode {
-                    BackboneColorMode::Score => score_color::per_residue_score_colors(&all_scores),
-                    _ => score_color::per_residue_score_colors_relative(&all_scores),
+                    BackboneColorMode::Score => {
+                        score_color::per_residue_score_colors(&all_scores)
+                    }
+                    _ => score_color::per_residue_score_colors_relative(
+                        &all_scores,
+                    ),
                 }
             }
             BackboneColorMode::SecondaryStructure => {
@@ -499,9 +549,12 @@ impl ProteinRenderEngine {
     /// Submit an animation frame to the background thread for mesh generation.
     pub(crate) fn submit_animation_frame(&mut self) {
         let visual_backbone = self.animator.get_backbone();
-        let has_sidechains =
-            self.animator.has_sidechain_data() && self.animator.should_include_sidechains();
-        self.submit_animation_frame_with_backbone(visual_backbone, has_sidechains);
+        let has_sidechains = self.animator.has_sidechain_data()
+            && self.animator.should_include_sidechains();
+        self.submit_animation_frame_with_backbone(
+            visual_backbone,
+            has_sidechains,
+        );
     }
 
     /// Submit an animation frame with explicit backbone chains.
@@ -511,19 +564,20 @@ impl ProteinRenderEngine {
         include_sidechains: bool,
     ) {
         let sidechains = if include_sidechains {
-            let interpolated_positions = self.animator.get_sidechain_positions();
+            let interpolated_positions =
+                self.animator.get_sidechain_positions();
 
             let interpolated_bs_bonds: Vec<(Vec3, u32)> = self
                 .sc
                 .target_backbone_sidechain_bonds
                 .iter()
                 .map(|(target_ca_pos, cb_idx)| {
-                    let res_idx = self
-                        .sc
-                        .cached_sidechain_residue_indices
-                        .get(*cb_idx as usize)
-                        .copied()
-                        .unwrap_or(0) as usize;
+                    let res_idx =
+                        self.sc
+                            .cached_sidechain_residue_indices
+                            .get(*cb_idx as usize)
+                            .copied()
+                            .unwrap_or(0) as usize;
                     let ca_pos = self
                         .animator
                         .get_ca_position(res_idx)
@@ -536,8 +590,14 @@ impl ProteinRenderEngine {
                 sidechain_positions: interpolated_positions,
                 sidechain_bonds: self.sc.cached_sidechain_bonds.clone(),
                 backbone_sidechain_bonds: interpolated_bs_bonds,
-                sidechain_hydrophobicity: self.sc.cached_sidechain_hydrophobicity.clone(),
-                sidechain_residue_indices: self.sc.cached_sidechain_residue_indices.clone(),
+                sidechain_hydrophobicity: self
+                    .sc
+                    .cached_sidechain_hydrophobicity
+                    .clone(),
+                sidechain_residue_indices: self
+                    .sc
+                    .cached_sidechain_residue_indices
+                    .clone(),
             })
         } else {
             None

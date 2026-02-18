@@ -27,7 +27,7 @@ impl FrameTiming {
             min_frame_duration,
             last_frame: Instant::now(),
             smoothed_fps: 60.0, // Start with reasonable default
-            smoothing: 0.05,    // 5% new value, 95% old value for smooth display
+            smoothing: 0.05, // 5% new value, 95% old value for smooth display
         }
     }
 
@@ -50,8 +50,8 @@ impl FrameTiming {
         if frame_time > 0.0 {
             let instant_fps = 1.0 / frame_time;
             // Exponential moving average for smooth display
-            self.smoothed_fps =
-                self.smoothed_fps * (1.0 - self.smoothing) + instant_fps * self.smoothing;
+            self.smoothed_fps = self.smoothed_fps * (1.0 - self.smoothing)
+                + instant_fps * self.smoothing;
         }
     }
 

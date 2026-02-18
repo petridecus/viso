@@ -15,7 +15,9 @@ use crate::picking::picking_state::PickingState;
 use crate::picking::{Picking, SelectionBuffer};
 use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
 use crate::renderer::molecular::band::BandRenderer;
-use crate::renderer::molecular::capsule_sidechain::{CapsuleSidechainRenderer, SidechainData};
+use crate::renderer::molecular::capsule_sidechain::{
+    CapsuleSidechainRenderer, SidechainData,
+};
 use crate::renderer::molecular::draw_context::DrawBindGroups;
 use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::renderer::molecular::pull::PullRenderer;
@@ -35,7 +37,8 @@ use foldit_conv::secondary_structure::SSType;
 use crate::scene::{Focus, Scene};
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 use foldit_conv::coords::{
-    split_into_entities, structure_file_to_coords, MoleculeEntity, MoleculeType, RenderCoords,
+    split_into_entities, structure_file_to_coords, MoleculeEntity,
+    MoleculeType, RenderCoords,
 };
 use glam::{Mat4, Vec3};
 use std::collections::HashSet;
@@ -93,7 +96,13 @@ impl ProteinRenderEngine {
         size: (u32, u32),
         scale_factor: f64,
     ) -> Self {
-        Self::new_with_path(window, size, scale_factor, "assets/models/4pnk.cif").await
+        Self::new_with_path(
+            window,
+            size,
+            scale_factor,
+            "assets/models/4pnk.cif",
+        )
+        .await
     }
 
     /// Engine with a specified molecule path.
@@ -144,12 +153,17 @@ impl ProteinRenderEngine {
             scene.group(group_id).and_then(|g| g.protein_coords())
         {
             log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
-            let protein_coords = foldit_conv::coords::protein_only(&protein_coords);
-            log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
-            let rc =
-                RenderCoords::from_coords_with_topology(&protein_coords, is_hydrophobic, |name| {
-                    get_residue_bonds(name).map(|b| b.to_vec())
-                });
+            let protein_coords =
+                foldit_conv::coords::protein_only(&protein_coords);
+            log::debug!(
+                "after protein_only: {} atoms",
+                protein_coords.num_atoms
+            );
+            let rc = RenderCoords::from_coords_with_topology(
+                &protein_coords,
+                is_hydrophobic,
+                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+            );
             log::debug!(
                 "render_coords: {} backbone chains, {} residues",
                 rc.backbone_chains.len(),
@@ -170,16 +184,19 @@ impl ProteinRenderEngine {
                 atom_names: Vec::new(),
                 elements: Vec::new(),
             };
-            RenderCoords::from_coords_with_topology(&empty, is_hydrophobic, |name| {
-                get_residue_bonds(name).map(|b| b.to_vec())
-            })
+            RenderCoords::from_coords_with_topology(
+                &empty,
+                is_hydrophobic,
+                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+            )
         };
 
         // Count total residues for selection buffer sizing
         let total_residues = render_coords.residue_count();
 
         // Create selection buffer (shared by all renderers)
-        let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
+        let selection_buffer =
+            SelectionBuffer::new(&context.device, total_residues.max(1));
 
         // Create per-residue color buffer (shared by all renderers)
         let mut residue_color_buffer =
@@ -197,33 +214,35 @@ impl ProteinRenderEngine {
 
         // Create ribbon renderer for secondary structure visualization
         // Use the Foldit-style renderer if we have full backbone residue data (N, CA, C, O)
-        let ribbon_renderer = if !render_coords.backbone_residue_chains.is_empty() {
-            RibbonRenderer::new_from_residues(
-                &context,
-                &camera_controller.layout,
-                &lighting.layout,
-                &selection_buffer.layout,
-                &residue_color_buffer.layout,
-                &render_coords.backbone_residue_chains,
-                &mut shader_composer,
-            )
-        } else {
-            // Fallback to legacy renderer if only backbone_chains available
-            RibbonRenderer::new(
-                &context,
-                &camera_controller.layout,
-                &lighting.layout,
-                &selection_buffer.layout,
-                &residue_color_buffer.layout,
-                &render_coords.backbone_chains,
-                &mut shader_composer,
-            )
-        };
+        let ribbon_renderer =
+            if !render_coords.backbone_residue_chains.is_empty() {
+                RibbonRenderer::new_from_residues(
+                    &context,
+                    &camera_controller.layout,
+                    &lighting.layout,
+                    &selection_buffer.layout,
+                    &residue_color_buffer.layout,
+                    &render_coords.backbone_residue_chains,
+                    &mut shader_composer,
+                )
+            } else {
+                // Fallback to legacy renderer if only backbone_chains available
+                RibbonRenderer::new(
+                    &context,
+                    &camera_controller.layout,
+                    &lighting.layout,
+                    &selection_buffer.layout,
+                    &residue_color_buffer.layout,
+                    &render_coords.backbone_chains,
+                    &mut shader_composer,
+                )
+            };
 
         // Get sidechain data from RenderCoords
         let sidechain_positions = render_coords.sidechain_positions();
         let sidechain_hydrophobicity = render_coords.sidechain_hydrophobicity();
-        let sidechain_residue_indices = render_coords.sidechain_residue_indices();
+        let sidechain_residue_indices =
+            render_coords.sidechain_residue_indices();
 
         let sidechain_renderer = CapsuleSidechainRenderer::new(
             &context,
@@ -259,17 +278,26 @@ impl ProteinRenderEngine {
         );
 
         // Create the full post-processing stack (depth/normal textures, SSAO, bloom, composite, FXAA)
-        let post_process = PostProcessStack::new(&context, &mut shader_composer);
+        let post_process =
+            PostProcessStack::new(&context, &mut shader_composer);
 
         // Create frame timing with 300 FPS limit
         let frame_timing = FrameTiming::new(TARGET_FPS);
 
         // Create GPU-based picking
-        let picking = Picking::new(&context, &camera_controller.layout, &mut shader_composer);
+        let picking = Picking::new(
+            &context,
+            &camera_controller.layout,
+            &mut shader_composer,
+        );
 
         // Create initial picking bind groups
         let mut picking_groups = PickingState::new();
-        picking_groups.rebuild_capsule(&picking, &context.device, &sidechain_renderer);
+        picking_groups.rebuild_capsule(
+            &picking,
+            &context.device,
+            &sidechain_renderer,
+        );
 
         // Create ball-and-stick renderer for non-protein entities
         let mut ball_and_stick_renderer = BallAndStickRenderer::new(
@@ -303,7 +331,8 @@ impl ProteinRenderEngine {
                 }
                 colors
             };
-            residue_color_buffer.set_colors_immediate(&context.queue, &initial_colors);
+            residue_color_buffer
+                .set_colors_immediate(&context.queue, &initial_colors);
         }
 
         // Collect non-protein entities from the group for ball-and-stick
@@ -327,7 +356,11 @@ impl ProteinRenderEngine {
         );
 
         // Create picking bind group for ball-and-stick
-        picking_groups.rebuild_bns(&picking, &context.device, &ball_and_stick_renderer);
+        picking_groups.rebuild_bns(
+            &picking,
+            &context.device,
+            &ball_and_stick_renderer,
+        );
 
         // Create nucleic acid renderer for DNA/RNA backbone ribbons + base rings
         let na_entities: Vec<&MoleculeEntity> = scene
@@ -335,7 +368,12 @@ impl ProteinRenderEngine {
             .map(|g| {
                 g.entities()
                     .iter()
-                    .filter(|e| matches!(e.molecule_type, MoleculeType::DNA | MoleculeType::RNA))
+                    .filter(|e| {
+                        matches!(
+                            e.molecule_type,
+                            MoleculeType::DNA | MoleculeType::RNA
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -343,10 +381,11 @@ impl ProteinRenderEngine {
             .iter()
             .flat_map(|e| e.extract_p_atom_chains())
             .collect();
-        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = na_entities
-            .iter()
-            .flat_map(|e| e.extract_base_rings())
-            .collect();
+        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> =
+            na_entities
+                .iter()
+                .flat_map(|e| e.extract_base_rings())
+                .collect();
         let nucleic_acid_renderer = NucleicAcidRenderer::new(
             &context,
             &camera_controller.layout,
@@ -424,7 +463,10 @@ impl ProteinRenderEngine {
         // Trajectory playback — submit frames to background thread (non-blocking)
         if let Some(ref mut player) = self.trajectory_player {
             if let Some(backbone_chains) = player.tick(Instant::now()) {
-                self.submit_animation_frame_with_backbone(backbone_chains, false);
+                self.submit_animation_frame_with_backbone(
+                    backbone_chains,
+                    false,
+                );
             }
         } else {
             // Standard animator path
@@ -437,7 +479,8 @@ impl ProteinRenderEngine {
         }
 
         // Update hover state in camera uniform (from GPU picking)
-        self.camera_controller.uniform.hovered_residue = self.picking.hovered_residue;
+        self.camera_controller.uniform.hovered_residue =
+            self.picking.hovered_residue;
         self.camera_controller.update_gpu(&self.context.queue);
 
         // Compute fog params from camera state each frame (depth-buffer fog, always in sync)
@@ -447,15 +490,19 @@ impl ProteinRenderEngine {
         let bounding_radius = self.camera_controller.bounding_radius();
         let fog_start = distance;
         let fog_density = 2.0 / bounding_radius.max(10.0);
-        self.post_process
-            .update_fog(&self.context.queue, fog_start, fog_density);
+        self.post_process.update_fog(
+            &self.context.queue,
+            fog_start,
+            fog_density,
+        );
 
         // Update selection buffer (from GPU picking)
         self.selection_buffer
             .update(&self.context.queue, &self.picking.selected_residues);
 
         // Update per-residue color buffer (transition interpolation)
-        let _color_transitioning = self.residue_color_buffer.update(&self.context.queue);
+        let _color_transitioning =
+            self.residue_color_buffer.update(&self.context.queue);
 
         // Update lighting to follow camera (headlamp mode)
         // Use camera.up (set by quaternion) for consistent basis vectors
@@ -477,48 +524,51 @@ impl ProteinRenderEngine {
 
         // Geometry pass — render to intermediate color/normal textures at render_scale resolution.
         {
-            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("main render pass"),
-                color_attachments: &[
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: self.post_process.color_view(),
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
+            let mut rp =
+                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("main render pass"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: self.post_process.color_view(),
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        }),
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.post_process.normal_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        }),
+                    ],
+                    depth_stencil_attachment: Some(
+                        wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.post_process.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
                             }),
-                            store: wgpu::StoreOp::Store,
+                            stencil_ops: None,
                         },
-                        depth_slice: None,
-                    }),
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: &self.post_process.normal_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    }),
-                ],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.post_process.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
+                    ),
+                    ..Default::default()
+                });
 
             // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
             let bind_groups = DrawBindGroups {
@@ -578,13 +628,19 @@ impl ProteinRenderEngine {
                 ribbon_vertex_buffer: ribbon_vb,
                 ribbon_index_buffer: ribbon_ib,
                 ribbon_index_count: ribbon_count,
-                capsule_bind_group: self.picking_groups.capsule_picking_bind_group.as_ref(),
+                capsule_bind_group: self
+                    .picking_groups
+                    .capsule_picking_bind_group
+                    .as_ref(),
                 capsule_count: if self.options.display.show_sidechains {
                     self.sidechain_renderer.instance_count
                 } else {
                     0
                 },
-                bns_capsule_bind_group: self.picking_groups.bns_picking_bind_group.as_ref(),
+                bns_capsule_bind_group: self
+                    .picking_groups
+                    .bns_picking_bind_group
+                    .as_ref(),
                 bns_capsule_count: self.ball_and_stick_renderer.picking_count(),
             },
             self.input.mouse_pos.0 as u32,
@@ -682,7 +738,8 @@ impl ProteinRenderEngine {
             Focus::Session => {
                 let positions = self.scene.all_positions();
                 if !positions.is_empty() {
-                    self.camera_controller.fit_to_positions_animated(&positions);
+                    self.camera_controller
+                        .fit_to_positions_animated(&positions);
                 }
             }
             Focus::Group(id) => {
@@ -693,7 +750,8 @@ impl ProteinRenderEngine {
                         .flat_map(|e: &MoleculeEntity| e.positions())
                         .collect();
                     if !positions.is_empty() {
-                        self.camera_controller.fit_to_positions_animated(&positions);
+                        self.camera_controller
+                            .fit_to_positions_animated(&positions);
                     }
                 }
             }
@@ -703,7 +761,8 @@ impl ProteinRenderEngine {
                         if e.entity_id == eid {
                             let positions = e.positions();
                             if !positions.is_empty() {
-                                self.camera_controller.fit_to_positions_animated(&positions);
+                                self.camera_controller
+                                    .fit_to_positions_animated(&positions);
                             }
                             return;
                         }

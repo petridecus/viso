@@ -40,7 +40,10 @@ impl ProteinRenderEngine {
         }
 
         // Fall back to tube_renderer's cached backbone chains
-        get_ca_position_from_chains(self.tube_renderer.cached_chains(), residue_idx)
+        get_ca_position_from_chains(
+            self.tube_renderer.cached_chains(),
+            residue_idx,
+        )
     }
 
     /// Get current screen dimensions.
@@ -77,7 +80,10 @@ impl ProteinRenderEngine {
         if let Some(pos) = self.animator.get_ca_position(residue_idx) {
             return Some(pos);
         }
-        get_ca_position_from_chains(self.tube_renderer.cached_chains(), residue_idx)
+        get_ca_position_from_chains(
+            self.tube_renderer.cached_chains(),
+            residue_idx,
+        )
     }
 
     /// Check if structure animation is currently in progress.
@@ -110,7 +116,11 @@ impl ProteinRenderEngine {
     }
 
     /// Get the interpolated position of a specific atom by residue index and atom name.
-    pub fn get_atom_position_by_name(&self, residue_idx: usize, atom_name: &str) -> Option<Vec3> {
+    pub fn get_atom_position_by_name(
+        &self,
+        residue_idx: usize,
+        atom_name: &str,
+    ) -> Option<Vec3> {
         // Check backbone atoms first (N, CA, C)
         if atom_name == "N" || atom_name == "CA" || atom_name == "C" {
             let backbone_chains = self.get_current_backbone_chains();

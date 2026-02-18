@@ -114,7 +114,11 @@ impl StructureAnimator {
     }
 
     /// Set a new target state, potentially triggering an animation.
-    pub fn set_target(&mut self, backbone_chains: &[Vec<Vec3>], action: AnimationAction) {
+    pub fn set_target(
+        &mut self,
+        backbone_chains: &[Vec<Vec3>],
+        action: AnimationAction,
+    ) {
         let new_target = StructureState::from_backbone(backbone_chains);
 
         // Check if we have pending sidechain changes that should force animation
@@ -203,7 +207,9 @@ impl StructureAnimator {
     pub fn interpolation_context(&self) -> InterpolationContext {
         let raw_t = self.progress();
         match self.runner.as_ref() {
-            Some(runner) if raw_t < 1.0 => runner.behavior().compute_context(raw_t),
+            Some(runner) if raw_t < 1.0 => {
+                runner.behavior().compute_context(raw_t)
+            }
             _ => InterpolationContext::identity(),
         }
     }
@@ -219,7 +225,12 @@ impl StructureAnimator {
         residue_indices: &[u32],
         ca_positions: &[Vec3],
     ) {
-        self.set_sidechain_target_with_action(positions, residue_indices, ca_positions, None);
+        self.set_sidechain_target_with_action(
+            positions,
+            residue_indices,
+            ca_positions,
+            None,
+        );
     }
 
     /// Set sidechain target positions with an explicit action for sidechain-only animations.
@@ -241,7 +252,9 @@ impl StructureAnimator {
 
         // If sizes match, capture current VISUAL state as new start (for smooth preemption)
         if self.target_sidechain_positions.len() == positions.len() {
-            if self.is_animating() && !self.target_sidechain_positions.is_empty() {
+            if self.is_animating()
+                && !self.target_sidechain_positions.is_empty()
+            {
                 // Animation in progress - sync to current interpolated positions
                 // This prevents sidechains from jumping during rapid updates (like pulls)
                 self.start_sidechain_positions = self.get_sidechain_positions();
@@ -251,11 +264,14 @@ impl StructureAnimator {
                     .start_ca_positions
                     .iter()
                     .zip(self.target_ca_positions.iter())
-                    .map(|(start, target)| *start + (*target - *start) * ctx.eased_t)
+                    .map(|(start, target)| {
+                        *start + (*target - *start) * ctx.eased_t
+                    })
                     .collect();
             } else {
                 // No animation - use previous target as new start
-                self.start_sidechain_positions = self.target_sidechain_positions.clone();
+                self.start_sidechain_positions =
+                    self.target_sidechain_positions.clone();
                 self.start_ca_positions = self.target_ca_positions.clone();
             }
         } else {
@@ -263,12 +279,18 @@ impl StructureAnimator {
             // If the pending action allows size-change animation, initialize
             // sidechain starts at their CA (collapsed) so CollapseExpand can
             // animate them expanding outward. Otherwise snap to target.
-            let allows_resize = action.map(|a| a.allows_size_change()).unwrap_or(false);
+            let allows_resize =
+                action.map(|a| a.allows_size_change()).unwrap_or(false);
             if allows_resize {
                 // Start each sidechain atom at its residue's CA position
                 self.start_sidechain_positions = residue_indices
                     .iter()
-                    .map(|&ri| ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO))
+                    .map(|&ri| {
+                        ca_positions
+                            .get(ri as usize)
+                            .copied()
+                            .unwrap_or(Vec3::ZERO)
+                    })
                     .collect();
             } else {
                 self.start_sidechain_positions = positions.to_vec();
@@ -334,7 +356,9 @@ impl StructureAnimator {
             .zip(self.target_sidechain_positions.iter())
             .enumerate()
             .map(|(i, (start, end))| {
-                let res_idx = self.sidechain_residue_indices.get(i).copied().unwrap_or(0) as usize;
+                let res_idx =
+                    self.sidechain_residue_indices.get(i).copied().unwrap_or(0)
+                        as usize;
 
                 // Skip interpolation for snapped (non-targeted) entities —
                 // CollapseExpand's 3-point path (start→CA→end) produces visible
@@ -359,9 +383,15 @@ impl StructureAnimator {
                     .copied()
                     .unwrap_or(*end);
 
-                let collapse_point = start_ca + (end_ca - start_ca) * ctx.eased_t;
+                let collapse_point =
+                    start_ca + (end_ca - start_ca) * ctx.eased_t;
 
-                behavior.interpolate_position(raw_t, *start, *end, collapse_point)
+                behavior.interpolate_position(
+                    raw_t,
+                    *start,
+                    *end,
+                    collapse_point,
+                )
             })
             .collect()
     }
@@ -379,7 +409,9 @@ impl StructureAnimator {
         entity_residue_ranges: &[(K, u32, u32)],
         active_entities: &std::collections::HashSet<K>,
     ) {
-        for &(ref entity_id, start_residue, residue_count) in entity_residue_ranges {
+        for &(ref entity_id, start_residue, residue_count) in
+            entity_residue_ranges
+        {
             if active_entities.contains(entity_id) {
                 continue; // This entity has an action, let it animate
             }
@@ -395,10 +427,13 @@ impl StructureAnimator {
             }
 
             // Snap sidechain positions for atoms belonging to this group's residues
-            for (i, &res_idx) in self.sidechain_residue_indices.iter().enumerate() {
+            for (i, &res_idx) in
+                self.sidechain_residue_indices.iter().enumerate()
+            {
                 let r = res_idx as usize;
                 if r >= res_start && r < res_end {
-                    if let Some(target) = self.target_sidechain_positions.get(i) {
+                    if let Some(target) = self.target_sidechain_positions.get(i)
+                    {
                         if i < self.start_sidechain_positions.len() {
                             self.start_sidechain_positions[i] = *target;
                         }
@@ -425,7 +460,9 @@ impl StructureAnimator {
         let snap_ranges: Vec<(usize, usize)> = entity_residue_ranges
             .iter()
             .filter(|(id, _, _)| !active_entities.contains(id))
-            .map(|(_, start, count)| (*start as usize, (*start + *count) as usize))
+            .map(|(_, start, count)| {
+                (*start as usize, (*start + *count) as usize)
+            })
             .collect();
 
         if snap_ranges.is_empty() {
@@ -461,7 +498,9 @@ impl StructureAnimator {
     /// the backbone-lerp phase so new atoms don't flash at their final positions.
     pub fn should_include_sidechains(&self) -> bool {
         match self.runner.as_ref() {
-            Some(runner) => runner.behavior().should_include_sidechains(self.progress()),
+            Some(runner) => {
+                runner.behavior().should_include_sidechains(self.progress())
+            }
             None => true,
         }
     }
@@ -580,9 +619,11 @@ mod tests {
         assert!(!animator.is_animating(), "Initial backbone should snap");
 
         // Set initial sidechains
-        let sidechain_pos = vec![Vec3::new(1.0, 5.0, 1.0), Vec3::new(2.0, 5.0, 1.0)];
+        let sidechain_pos =
+            vec![Vec3::new(1.0, 5.0, 1.0), Vec3::new(2.0, 5.0, 1.0)];
         let residue_indices = vec![0, 1];
-        let ca_positions = vec![Vec3::new(1.0, 5.0, 0.0), Vec3::new(4.0, 5.0, 0.0)];
+        let ca_positions =
+            vec![Vec3::new(1.0, 5.0, 0.0), Vec3::new(4.0, 5.0, 0.0)];
         animator.set_sidechain_target_with_action(
             &sidechain_pos,
             &residue_indices,
@@ -594,7 +635,8 @@ mod tests {
         animator.set_target(&make_backbone(5.0), AnimationAction::Load);
 
         // Now change sidechains with same backbone
-        let new_sidechain_pos = vec![Vec3::new(1.0, 5.0, 2.0), Vec3::new(2.0, 5.0, 2.0)];
+        let new_sidechain_pos =
+            vec![Vec3::new(1.0, 5.0, 2.0), Vec3::new(2.0, 5.0, 2.0)];
         animator.set_sidechain_target_with_action(
             &new_sidechain_pos,
             &residue_indices,
@@ -618,7 +660,11 @@ mod tests {
         let sidechain_pos = vec![Vec3::new(1.0, 2.0, 3.0)];
         let residue_indices = vec![0];
         let ca_positions = vec![Vec3::ZERO];
-        animator.set_sidechain_target(&sidechain_pos, &residue_indices, &ca_positions);
+        animator.set_sidechain_target(
+            &sidechain_pos,
+            &residue_indices,
+            &ca_positions,
+        );
 
         // Same positions should not differ
         assert!(!animator.sidechains_differ(&sidechain_pos));

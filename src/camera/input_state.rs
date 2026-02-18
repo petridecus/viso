@@ -58,7 +58,11 @@ impl InputState {
     ///
     /// `hovered_residue` is the residue under cursor at release time.
     /// `shift_held` is the current shift key state.
-    pub fn process_mouse_up(&mut self, hovered_residue: i32, shift_held: bool) -> ClickResult {
+    pub fn process_mouse_up(
+        &mut self,
+        hovered_residue: i32,
+        shift_held: bool,
+    ) -> ClickResult {
         let mouse_up_residue = hovered_residue;
         let mouse_down_residue = self.mouse_down_residue;
         let now = Instant::now();

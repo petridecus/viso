@@ -52,7 +52,11 @@ impl ProteinRenderEngine {
 
     /// Apply a single view option by key/value from the frontend.
     /// Returns true if the option was recognized and applied.
-    pub fn apply_view_option(&mut self, key: &str, value: &serde_json::Value) -> bool {
+    pub fn apply_view_option(
+        &mut self,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> bool {
         match key {
             "show_sidechains" => {
                 if let Some(v) = value.as_bool() {
@@ -95,7 +99,9 @@ impl ProteinRenderEngine {
                     let mode = match mode_str {
                         "score" => BackboneColorMode::Score,
                         "score_relative" => BackboneColorMode::ScoreRelative,
-                        "secondary_structure" => BackboneColorMode::SecondaryStructure,
+                        "secondary_structure" => {
+                            BackboneColorMode::SecondaryStructure
+                        }
                         "chain" => BackboneColorMode::Chain,
                         _ => return false,
                     };
@@ -111,22 +117,28 @@ impl ProteinRenderEngine {
                 }
             }
             // --- Lighting ---
-            "lighting.light1_intensity" => self.set_f32_option(value, |s, v| {
-                s.options.lighting.light1_intensity = v;
-                s.apply_options();
-            }),
-            "lighting.light2_intensity" => self.set_f32_option(value, |s, v| {
-                s.options.lighting.light2_intensity = v;
-                s.apply_options();
-            }),
+            "lighting.light1_intensity" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.lighting.light1_intensity = v;
+                    s.apply_options();
+                })
+            }
+            "lighting.light2_intensity" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.lighting.light2_intensity = v;
+                    s.apply_options();
+                })
+            }
             "lighting.ambient" => self.set_f32_option(value, |s, v| {
                 s.options.lighting.ambient = v;
                 s.apply_options();
             }),
-            "lighting.specular_intensity" => self.set_f32_option(value, |s, v| {
-                s.options.lighting.specular_intensity = v;
-                s.apply_options();
-            }),
+            "lighting.specular_intensity" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.lighting.specular_intensity = v;
+                    s.apply_options();
+                })
+            }
             "lighting.shininess" => self.set_f32_option(value, |s, v| {
                 s.options.lighting.shininess = v;
                 s.apply_options();
@@ -144,30 +156,42 @@ impl ProteinRenderEngine {
                 s.apply_options();
             }),
             // --- Post-processing ---
-            "post_processing.outline_thickness" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.outline_thickness = v;
-                s.apply_options();
-            }),
-            "post_processing.outline_strength" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.outline_strength = v;
-                s.apply_options();
-            }),
-            "post_processing.ao_strength" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.ao_strength = v;
-                s.apply_options();
-            }),
-            "post_processing.fog_start" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.fog_start = v;
-                s.apply_options();
-            }),
-            "post_processing.fog_density" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.fog_density = v;
-                s.apply_options();
-            }),
-            "post_processing.ao_radius" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.ao_radius = v;
-                s.apply_options();
-            }),
+            "post_processing.outline_thickness" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.outline_thickness = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.outline_strength" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.outline_strength = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.ao_strength" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.ao_strength = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.fog_start" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.fog_start = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.fog_density" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.fog_density = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.ao_radius" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.ao_radius = v;
+                    s.apply_options();
+                })
+            }
             "post_processing.ao_bias" => self.set_f32_option(value, |s, v| {
                 s.options.post_processing.ao_bias = v;
                 s.apply_options();
@@ -180,18 +204,24 @@ impl ProteinRenderEngine {
                 s.options.post_processing.exposure = v;
                 s.apply_options();
             }),
-            "post_processing.normal_outline_strength" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.normal_outline_strength = v;
-                s.apply_options();
-            }),
-            "post_processing.bloom_intensity" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.bloom_intensity = v;
-                s.apply_options();
-            }),
-            "post_processing.bloom_threshold" => self.set_f32_option(value, |s, v| {
-                s.options.post_processing.bloom_threshold = v;
-                s.apply_options();
-            }),
+            "post_processing.normal_outline_strength" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.normal_outline_strength = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.bloom_intensity" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.bloom_intensity = v;
+                    s.apply_options();
+                })
+            }
+            "post_processing.bloom_threshold" => {
+                self.set_f32_option(value, |s, v| {
+                    s.options.post_processing.bloom_threshold = v;
+                    s.apply_options();
+                })
+            }
             "lighting.roughness" => self.set_f32_option(value, |s, v| {
                 s.options.lighting.roughness = v;
                 s.apply_options();
@@ -240,7 +270,11 @@ impl ProteinRenderEngine {
 
     /// Load a named view preset from the presets directory.
     /// Returns true on success.
-    pub fn load_preset(&mut self, name: &str, presets_dir: &std::path::Path) -> bool {
+    pub fn load_preset(
+        &mut self,
+        name: &str,
+        presets_dir: &std::path::Path,
+    ) -> bool {
         let path = presets_dir.join(format!("{}.toml", name));
         match Options::load(&path) {
             Ok(opts) => {
@@ -258,7 +292,11 @@ impl ProteinRenderEngine {
 
     /// Save the current options as a named view preset.
     /// Returns true on success.
-    pub fn save_preset(&self, name: &str, presets_dir: &std::path::Path) -> bool {
+    pub fn save_preset(
+        &self,
+        name: &str,
+        presets_dir: &std::path::Path,
+    ) -> bool {
         let path = presets_dir.join(format!("{}.toml", name));
         match self.options.save(&path) {
             Ok(()) => {
@@ -292,11 +330,12 @@ impl ProteinRenderEngine {
 
     /// Cycle lipid display mode (coarse → ball_and_stick → coarse)
     pub fn toggle_lipids(&mut self) {
-        self.options.display.lipid_mode = if self.options.display.lipid_ball_and_stick() {
-            crate::util::options::LipidMode::Coarse
-        } else {
-            crate::util::options::LipidMode::BallAndStick
-        };
+        self.options.display.lipid_mode =
+            if self.options.display.lipid_ball_and_stick() {
+                crate::util::options::LipidMode::Coarse
+            } else {
+                crate::util::options::LipidMode::BallAndStick
+            };
         self.refresh_ball_and_stick();
     }
 }

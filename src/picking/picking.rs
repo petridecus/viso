@@ -26,25 +26,31 @@ impl SelectionBuffer {
         let num_words = max_residues.div_ceil(32);
         let data = vec![0u32; num_words.max(1)];
 
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Selection Buffer"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        let buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Selection Buffer"),
+                contents: bytemuck::cast_slice(&data),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
+            });
 
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Selection Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Selection Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX
+                        | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: true,
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Selection Bind Group"),
@@ -91,20 +97,23 @@ impl SelectionBuffer {
         let num_words = new_capacity.div_ceil(32);
         let data = vec![0u32; num_words.max(1)];
 
-        self.buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Selection Buffer"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        self.buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Selection Buffer"),
+                contents: bytemuck::cast_slice(&data),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
+            });
 
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Selection Bind Group"),
-            layout: &self.layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.buffer.as_entire_binding(),
-            }],
-        });
+        self.bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Selection Bind Group"),
+                layout: &self.layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                }],
+            });
 
         self.capacity = new_capacity;
     }
@@ -162,17 +171,20 @@ impl Picking {
         let width = context.config.width;
         let height = context.config.height;
 
-        let (texture, texture_view) = Self::create_picking_texture(&context.device, width, height);
+        let (texture, texture_view) =
+            Self::create_picking_texture(&context.device, width, height);
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&context.device, width, height);
 
         // Staging buffer for single pixel readback (256 bytes minimum, we only need 4)
-        let staging_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Picking Staging Buffer"),
-            size: 256,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let staging_buffer =
+            context.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Picking Staging Buffer"),
+                size: 256,
+                usage: wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
 
         // Load picking shader for tubes
         let tube_shader = shader_composer.compose(
@@ -183,53 +195,51 @@ impl Picking {
         );
 
         // Tube picking pipeline
-        let tube_pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Picking Tube Pipeline Layout"),
-                    bind_group_layouts: &[camera_bind_group_layout],
-                    immediate_size: 0,
-                });
+        let tube_pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Picking Tube Pipeline Layout"),
+                bind_group_layouts: &[camera_bind_group_layout],
+                immediate_size: 0,
+            },
+        );
 
-        let tube_pipeline =
-            context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Picking Tube Pipeline"),
-                    layout: Some(&tube_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &tube_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[tube_vertex_buffer_layout()],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &tube_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::R32Uint,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: Some(wgpu::Face::Back),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                });
+        let tube_pipeline = context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Picking Tube Pipeline"),
+                layout: Some(&tube_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &tube_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[tube_vertex_buffer_layout()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &tube_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        );
 
         // Capsule picking pipeline
         let capsule_shader = shader_composer.compose(
@@ -239,70 +249,73 @@ impl Picking {
             "picking_capsule.wgsl",
         );
 
-        let capsule_bind_group_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Picking Capsule Bind Group Layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+        let capsule_bind_group_layout = context
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Picking Capsule Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX
+                        | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: true,
                         },
-                        count: None,
-                    }],
-                });
-
-        let capsule_pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Picking Capsule Pipeline Layout"),
-                    bind_group_layouts: &[&capsule_bind_group_layout, camera_bind_group_layout],
-                    immediate_size: 0,
-                });
-
-        let capsule_pipeline =
-            context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Picking Capsule Pipeline"),
-                    layout: Some(&capsule_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &capsule_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &capsule_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::R32Uint,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                });
+                    count: None,
+                }],
+            });
+
+        let capsule_pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Picking Capsule Pipeline Layout"),
+                bind_group_layouts: &[
+                    &capsule_bind_group_layout,
+                    camera_bind_group_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
+
+        let capsule_pipeline = context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Picking Capsule Pipeline"),
+                layout: Some(&capsule_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &capsule_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &capsule_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        );
 
         Self {
             texture,
@@ -338,7 +351,8 @@ impl Picking {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R32Uint,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -374,10 +388,12 @@ impl Picking {
         }
         self.width = width;
         self.height = height;
-        let (texture, texture_view) = Self::create_picking_texture(device, width, height);
+        let (texture, texture_view) =
+            Self::create_picking_texture(device, width, height);
         self.texture = texture;
         self.texture_view = texture_view;
-        let (depth_texture, depth_view) = Self::create_depth_texture(device, width, height);
+        let (depth_texture, depth_view) =
+            Self::create_depth_texture(device, width, height);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
@@ -424,52 +440,63 @@ impl Picking {
         } = *geometry;
         // Render picking pass
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Picking Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
+            let mut render_pass =
+                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Picking Render Pass"),
+                    color_attachments: &[Some(
+                        wgpu::RenderPassColorAttachment {
+                            view: &self.texture_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        },
+                    )],
+                    depth_stencil_attachment: Some(
+                        wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        },
+                    ),
+                    ..Default::default()
+                });
 
             // Draw tubes (coils in ribbon mode, everything in tube mode)
             if tube_index_count > 0 {
                 render_pass.set_pipeline(&self.tube_pipeline);
                 render_pass.set_bind_group(0, camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, tube_vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(tube_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.set_index_buffer(
+                    tube_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
                 render_pass.draw_indexed(0..tube_index_count, 0, 0..1);
             }
 
             // Draw ribbons (helices/sheets in ribbon mode)
             // Uses the same pipeline as tubes - same vertex layout and picking shader
-            if let (Some(ribbon_vb), Some(ribbon_ib)) = (ribbon_vertex_buffer, ribbon_index_buffer)
+            if let (Some(ribbon_vb), Some(ribbon_ib)) =
+                (ribbon_vertex_buffer, ribbon_index_buffer)
             {
                 if ribbon_index_count > 0 {
                     render_pass.set_pipeline(&self.tube_pipeline);
                     render_pass.set_bind_group(0, camera_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, ribbon_vb.slice(..));
-                    render_pass.set_index_buffer(ribbon_ib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(
+                        ribbon_ib.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
                     render_pass.draw_indexed(0..ribbon_index_count, 0, 0..1);
                 }
             }
@@ -496,7 +523,10 @@ impl Picking {
         }
 
         // Copy pixel at mouse position to staging buffer (only if not already in flight)
-        if mouse_x < self.width && mouse_y < self.height && !self.readback_in_flight {
+        if mouse_x < self.width
+            && mouse_y < self.height
+            && !self.readback_in_flight
+        {
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -562,7 +592,8 @@ impl Picking {
         // Buffer is mapped - read the data
         let buffer_slice = self.staging_buffer.slice(..4);
         let data = buffer_slice.get_mapped_range();
-        let residue_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let residue_id =
+            u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         drop(data);
         self.staging_buffer.unmap();
         self.readback_in_flight = false;
@@ -589,7 +620,9 @@ impl Picking {
         }
 
         if shift_held {
-            if let Some(pos) = self.selected_residues.iter().position(|&r| r == hit) {
+            if let Some(pos) =
+                self.selected_residues.iter().position(|&r| r == hit)
+            {
                 self.selected_residues.remove(pos);
             } else {
                 self.selected_residues.push(hit);

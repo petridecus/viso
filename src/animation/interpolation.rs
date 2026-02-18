@@ -29,7 +29,12 @@ impl InterpolationContext {
     }
 
     /// Context with phase information (for CollapseExpand, etc).
-    pub fn with_phase(raw_t: f32, eased_t: f32, phase_t: f32, phase_eased_t: f32) -> Self {
+    pub fn with_phase(
+        raw_t: f32,
+        eased_t: f32,
+        phase_t: f32,
+        phase_eased_t: f32,
+    ) -> Self {
         Self {
             raw_t,
             eased_t,
@@ -68,7 +73,11 @@ impl Default for InterpolationContext {
 
 /// Lerp two positions using the context's unified progress.
 #[inline]
-pub fn lerp_position(ctx: &InterpolationContext, start: Vec3, end: Vec3) -> Vec3 {
+pub fn lerp_position(
+    ctx: &InterpolationContext,
+    start: Vec3,
+    end: Vec3,
+) -> Vec3 {
     let t = ctx.unified_t();
     start + (end - start) * t
 }

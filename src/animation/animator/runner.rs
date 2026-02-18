@@ -34,7 +34,10 @@ pub struct AnimationRunner {
 
 impl AnimationRunner {
     /// Start a new animation with the given behavior and residue data.
-    pub fn new(behavior: SharedBehavior, residues: Vec<ResidueAnimationData>) -> Self {
+    pub fn new(
+        behavior: SharedBehavior,
+        residues: Vec<ResidueAnimationData>,
+    ) -> Self {
         Self {
             start_time: Instant::now(),
             behavior,
@@ -80,7 +83,11 @@ impl AnimationRunner {
     }
 
     /// Compute visual state for a specific residue at given progress.
-    pub fn compute_residue_state(&self, data: &ResidueAnimationData, t: f32) -> ResidueVisualState {
+    pub fn compute_residue_state(
+        &self,
+        data: &ResidueAnimationData,
+        t: f32,
+    ) -> ResidueVisualState {
         self.behavior.compute_state(t, &data.start, &data.target)
     }
 
@@ -104,9 +111,9 @@ impl AnimationRunner {
     /// Used to exclude non-targeted entity residues from animation.
     pub fn remove_residue_ranges(&mut self, ranges: &[(usize, usize)]) {
         self.residues.retain(|data| {
-            !ranges
-                .iter()
-                .any(|&(start, end)| data.residue_idx >= start && data.residue_idx < end)
+            !ranges.iter().any(|&(start, end)| {
+                data.residue_idx >= start && data.residue_idx < end
+            })
         });
     }
 }
@@ -127,7 +134,11 @@ mod tests {
     use crate::animation::behaviors::{shared, SmoothInterpolation, Snap};
     use glam::Vec3;
 
-    fn make_residue_data(idx: usize, start_y: f32, end_y: f32) -> ResidueAnimationData {
+    fn make_residue_data(
+        idx: usize,
+        start_y: f32,
+        end_y: f32,
+    ) -> ResidueAnimationData {
         ResidueAnimationData {
             residue_idx: idx,
             start: ResidueVisualState::backbone_only([
@@ -145,10 +156,12 @@ mod tests {
 
     #[test]
     fn test_runner_progress() {
-        let behavior = shared(SmoothInterpolation::linear(Duration::from_millis(100)));
+        let behavior =
+            shared(SmoothInterpolation::linear(Duration::from_millis(100)));
         let residues = vec![make_residue_data(0, 0.0, 10.0)];
         let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(start, behavior, residues);
+        let runner =
+            AnimationRunner::with_start_time(start, behavior, residues);
 
         // At start
         assert!((runner.progress(start) - 0.0).abs() < 0.01);
@@ -168,10 +181,12 @@ mod tests {
 
     #[test]
     fn test_runner_compute_state() {
-        let behavior = shared(SmoothInterpolation::linear(Duration::from_millis(100)));
+        let behavior =
+            shared(SmoothInterpolation::linear(Duration::from_millis(100)));
         let residues = vec![make_residue_data(0, 0.0, 10.0)];
         let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(start, behavior, residues);
+        let runner =
+            AnimationRunner::with_start_time(start, behavior, residues);
 
         // At t=0.5 (50ms of 100ms total), should be at midpoint
         let state = runner.compute_residue_state(&runner.residues[0], 0.5);
@@ -193,10 +208,12 @@ mod tests {
 
     #[test]
     fn test_runner_is_complete() {
-        let behavior = shared(SmoothInterpolation::linear(Duration::from_millis(100)));
+        let behavior =
+            shared(SmoothInterpolation::linear(Duration::from_millis(100)));
         let residues = vec![make_residue_data(0, 0.0, 10.0)];
         let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(start, behavior, residues);
+        let runner =
+            AnimationRunner::with_start_time(start, behavior, residues);
 
         assert!(!runner.is_complete(start));
         assert!(!runner.is_complete(start + Duration::from_millis(50)));

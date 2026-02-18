@@ -205,18 +205,23 @@ impl NucleicAcidRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Nucleic Acid Shader",
-            include_str!("../../../assets/shaders/raster/mesh/backbone_na.wgsl"),
+            include_str!(
+                "../../../assets/shaders/raster/mesh/backbone_na.wgsl"
+            ),
             "backbone_na.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("NA Pipeline Layout"),
-                    bind_group_layouts: &[camera_layout, lighting_layout, selection_layout],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("NA Pipeline Layout"),
+                bind_group_layouts: &[
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         let vertex_layout = super::tube::tube_vertex_buffer_layout();
 
@@ -322,8 +327,13 @@ impl NucleicAcidRenderer {
             let widths = vec![NA_RIBBON_WIDTH; frames.len()];
 
             let base_vertex = all_vertices.len() as u32;
-            let (verts, inds) =
-                build_ribbon_mesh(&frames, &widths, NA_RIBBON_THICKNESS, base_vertex, false);
+            let (verts, inds) = build_ribbon_mesh(
+                &frames,
+                &widths,
+                NA_RIBBON_THICKNESS,
+                base_vertex,
+                false,
+            );
             all_vertices.extend(verts);
             all_indices.extend(inds);
         }
@@ -333,8 +343,8 @@ impl NucleicAcidRenderer {
             // Stem: closest spline point to C1' → ring centroid
             if let Some(c1p) = ring.c1_prime {
                 if let Some(&anchor) = closest_point(&all_spline_points, c1p) {
-                    let centroid =
-                        ring.hex_ring.iter().copied().sum::<Vec3>() / ring.hex_ring.len() as f32;
+                    let centroid = ring.hex_ring.iter().copied().sum::<Vec3>()
+                        / ring.hex_ring.len() as f32;
                     append_stem_tube(
                         anchor,
                         centroid,
@@ -363,7 +373,10 @@ impl NucleicAcidRenderer {
         (all_vertices, all_indices)
     }
 
-    fn compute_combined_hash(chains: &[Vec<Vec3>], rings: &[NucleotideRing]) -> u64 {
+    fn compute_combined_hash(
+        chains: &[Vec<Vec3>],
+        rings: &[NucleotideRing],
+    ) -> u64 {
         let mut hasher = DefaultHasher::new();
         chains.len().hash(&mut hasher);
         for chain in chains {
@@ -608,7 +621,8 @@ fn append_ring_triangles(
 
     // --- Top face (triangle fan) ---
     let top_base = vertices.len() as u32;
-    let top_centroid: Vec3 = ring_positions.iter().copied().sum::<Vec3>() / n as f32 + offset;
+    let top_centroid: Vec3 =
+        ring_positions.iter().copied().sum::<Vec3>() / n as f32 + offset;
     vertices.push(NaVertex {
         position: top_centroid.into(),
         normal: normal.into(),
@@ -706,7 +720,14 @@ fn append_ring_triangles(
             residue_idx: 0,
             center_pos: (b1 - side_normal).into(),
         });
-        indices.extend_from_slice(&[si, si + 1, si + 2, si + 2, si + 1, si + 3]);
+        indices.extend_from_slice(&[
+            si,
+            si + 1,
+            si + 2,
+            si + 2,
+            si + 1,
+            si + 3,
+        ]);
     }
 }
 
@@ -734,14 +755,18 @@ fn build_ribbon_mesh(
         let (n_tl, n_tr, n_br, n_bl) = if smooth_normals {
             let inv_hw2 = 1.0 / (hw * hw).max(1e-6);
             let inv_ht2 = 1.0 / (ht * ht).max(1e-6);
-            let n_tl =
-                (frame.binormal * (-hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
-            let n_tr =
-                (frame.binormal * (hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
-            let n_br =
-                (frame.binormal * (hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
-            let n_bl =
-                (frame.binormal * (-hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
+            let n_tl = (frame.binormal * (-hw * inv_hw2)
+                + frame.normal * (ht * inv_ht2))
+                .normalize();
+            let n_tr = (frame.binormal * (hw * inv_hw2)
+                + frame.normal * (ht * inv_ht2))
+                .normalize();
+            let n_br = (frame.binormal * (hw * inv_hw2)
+                + frame.normal * (-ht * inv_ht2))
+                .normalize();
+            let n_bl = (frame.binormal * (-hw * inv_hw2)
+                + frame.normal * (-ht * inv_ht2))
+                .normalize();
             (n_tl, n_tr, n_br, n_bl)
         } else {
             let up = frame.normal;

@@ -111,7 +111,8 @@ mod tests {
 
     #[test]
     fn test_backbone_only() {
-        let state = ResidueVisualState::backbone_only([Vec3::ZERO, Vec3::X, Vec3::Y]);
+        let state =
+            ResidueVisualState::backbone_only([Vec3::ZERO, Vec3::X, Vec3::Y]);
         assert_eq!(state.num_chis, 0);
         assert_eq!(state.chis, [0.0; 4]);
     }

@@ -38,7 +38,8 @@ impl TrajectoryPlayer {
         backbone_chains: &[Vec<Vec3>],
         backbone_atom_indices: Vec<usize>,
     ) -> Self {
-        let chain_lengths: Vec<usize> = backbone_chains.iter().map(|c| c.len()).collect();
+        let chain_lengths: Vec<usize> =
+            backbone_chains.iter().map(|c| c.len()).collect();
         Self {
             frames,
             num_atoms,
@@ -93,7 +94,11 @@ impl TrajectoryPlayer {
             for _ in 0..chain_len {
                 let dcd_idx = self.backbone_map[flat_idx];
                 let pos = if dcd_idx < self.num_atoms {
-                    Vec3::new(frame.x[dcd_idx], frame.y[dcd_idx], frame.z[dcd_idx])
+                    Vec3::new(
+                        frame.x[dcd_idx],
+                        frame.y[dcd_idx],
+                        frame.z[dcd_idx],
+                    )
                 } else {
                     Vec3::ZERO
                 };
@@ -114,7 +119,8 @@ impl TrajectoryPlayer {
     }
 
     pub fn set_fps(&mut self, fps: f32) {
-        self.frame_duration = Duration::from_secs_f64(1.0 / fps.max(0.1) as f64);
+        self.frame_duration =
+            Duration::from_secs_f64(1.0 / fps.max(0.1) as f64);
     }
 
     pub fn set_looping(&mut self, looping: bool) {
@@ -142,7 +148,9 @@ impl TrajectoryPlayer {
 ///
 /// This mirrors the logic in `extract_backbone_chains` from foldit-conv so
 /// the mapping is consistent with the chain topology the renderer uses.
-pub fn build_backbone_atom_indices(coords: &foldit_conv::coords::Coords) -> Vec<usize> {
+pub fn build_backbone_atom_indices(
+    coords: &foldit_conv::coords::Coords,
+) -> Vec<usize> {
     let mut indices = Vec::new();
     let mut last_chain_id: Option<u8> = None;
     let mut last_res_num: Option<i32> = None;
@@ -161,9 +169,12 @@ pub fn build_backbone_atom_indices(coords: &foldit_conv::coords::Coords) -> Vec<
         let res_num = coords.res_nums[i];
 
         let is_chain_break = last_chain_id.is_some_and(|c| c != chain_id);
-        let is_sequence_gap = last_res_num.is_some_and(|r| (res_num - r).abs() > 1);
+        let is_sequence_gap =
+            last_res_num.is_some_and(|r| (res_num - r).abs() > 1);
 
-        if (is_chain_break || is_sequence_gap) && !current_chain_indices.is_empty() {
+        if (is_chain_break || is_sequence_gap)
+            && !current_chain_indices.is_empty()
+        {
             indices.append(&mut current_chain_indices);
         }
 

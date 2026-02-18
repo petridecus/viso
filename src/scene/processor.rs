@@ -242,7 +242,8 @@ impl SceneProcessor {
         mut scene_input: triple_buffer::Input<Option<PreparedScene>>,
         mut anim_input: triple_buffer::Input<Option<PreparedAnimationFrame>>,
     ) {
-        let mut mesh_cache: HashMap<GroupId, (u64, CachedGroupMesh)> = HashMap::new();
+        let mut mesh_cache: HashMap<GroupId, (u64, CachedGroupMesh)> =
+            HashMap::new();
         let mut last_display: Option<DisplayOptions> = None;
         let mut last_colors: Option<ColorOptions> = None;
 
@@ -251,7 +252,10 @@ impl SceneProcessor {
             let mut latest = request;
             while let Ok(newer) = request_rx.try_recv() {
                 match (&latest, &newer) {
-                    (SceneRequest::FullRebuild { .. }, SceneRequest::AnimationFrame { .. }) => {}
+                    (
+                        SceneRequest::FullRebuild { .. },
+                        SceneRequest::AnimationFrame { .. },
+                    ) => {}
                     _ => {
                         latest = newer;
                     }
@@ -268,7 +272,8 @@ impl SceneProcessor {
                     colors,
                 } => {
                     // Clear cache if global settings changed
-                    let settings_changed = last_display.as_ref() != Some(&display)
+                    let settings_changed = last_display.as_ref()
+                        != Some(&display)
                         || last_colors.as_ref() != Some(&colors);
 
                     if settings_changed {
@@ -280,28 +285,35 @@ impl SceneProcessor {
                     // Generate or reuse per-group meshes
                     for g in &groups {
                         let needs_regen = match mesh_cache.get(&g.id) {
-                            Some((cached_version, _)) => *cached_version != g.mesh_version,
+                            Some((cached_version, _)) => {
+                                *cached_version != g.mesh_version
+                            }
                             None => true,
                         };
 
                         if needs_regen {
-                            let mesh = Self::generate_group_mesh(g, &display, &colors);
+                            let mesh =
+                                Self::generate_group_mesh(g, &display, &colors);
                             mesh_cache.insert(g.id, (g.mesh_version, mesh));
                         }
                     }
 
                     // Evict removed groups
-                    let active_ids: HashSet<GroupId> = groups.iter().map(|g| g.id).collect();
+                    let active_ids: HashSet<GroupId> =
+                        groups.iter().map(|g| g.id).collect();
                     mesh_cache.retain(|id, _| active_ids.contains(id));
 
                     // Collect references in group order
                     let group_meshes: Vec<(GroupId, &CachedGroupMesh)> = groups
                         .iter()
-                        .filter_map(|g| mesh_cache.get(&g.id).map(|(_, mesh)| (g.id, mesh)))
+                        .filter_map(|g| {
+                            mesh_cache.get(&g.id).map(|(_, mesh)| (g.id, mesh))
+                        })
                         .collect();
 
                     // Concatenate into PreparedScene
-                    let prepared = Self::concatenate_meshes(&group_meshes, entity_actions);
+                    let prepared =
+                        Self::concatenate_meshes(&group_meshes, entity_actions);
                     scene_input.write(Some(prepared));
                 }
                 SceneRequest::AnimationFrame {
@@ -339,7 +351,8 @@ impl SceneProcessor {
                 .per_residue_scores
                 .as_ref()
                 .map(|s| score_color::per_residue_score_colors_relative(s)),
-            BackboneColorMode::SecondaryStructure | BackboneColorMode::Chain => None,
+            BackboneColorMode::SecondaryStructure
+            | BackboneColorMode::Chain => None,
         };
 
         // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
@@ -348,12 +361,13 @@ impl SceneProcessor {
             coil_only.insert(SSType::Coil);
             Some(coil_only)
         };
-        let (tube_verts_typed, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
-            &g.backbone_chains,
-            &tube_filter,
-            g.ss_override.as_deref(),
-            per_residue_colors.as_deref(),
-        );
+        let (tube_verts_typed, tube_inds) =
+            TubeRenderer::generate_tube_mesh_colored(
+                &g.backbone_chains,
+                &tube_filter,
+                g.ss_override.as_deref(),
+                per_residue_colors.as_deref(),
+            );
         let tube_vert_count = tube_verts_typed.len() as u32;
         let tube_verts = bytemuck::cast_slice(&tube_verts_typed).to_vec();
 
@@ -370,13 +384,15 @@ impl SceneProcessor {
         let ribbon_verts = bytemuck::cast_slice(&ribbon_verts_typed).to_vec();
 
         // --- Sidechain capsules ---
-        let sidechain_positions: Vec<Vec3> = g.sidechain_atoms.iter().map(|a| a.position).collect();
+        let sidechain_positions: Vec<Vec3> =
+            g.sidechain_atoms.iter().map(|a| a.position).collect();
         let sidechain_hydrophobicity: Vec<bool> =
             g.sidechain_atoms.iter().map(|a| a.is_hydrophobic).collect();
         let sidechain_residue_indices: Vec<u32> =
             g.sidechain_atoms.iter().map(|a| a.residue_idx).collect();
 
-        let offset_map: HashMap<u32, Vec3> = sheet_offsets.iter().copied().collect();
+        let offset_map: HashMap<u32, Vec3> =
+            sheet_offsets.iter().copied().collect();
         let adjusted_positions = adjust_sidechains_for_sheet(
             &sidechain_positions,
             &sidechain_residue_indices,
@@ -397,19 +413,22 @@ impl SceneProcessor {
             Some((colors.hydrophobic_sidechain, colors.hydrophilic_sidechain)),
         );
         let sidechain_instance_count = sidechain_insts.len() as u32;
-        let sidechain_instances = bytemuck::cast_slice(&sidechain_insts).to_vec();
+        let sidechain_instances =
+            bytemuck::cast_slice(&sidechain_insts).to_vec();
 
         // --- Ball-and-stick instances ---
-        let (bns_spheres, bns_capsules, bns_picking) = BallAndStickRenderer::generate_all_instances(
-            &g.non_protein_entities,
-            display,
-            Some(colors),
-        );
+        let (bns_spheres, bns_capsules, bns_picking) =
+            BallAndStickRenderer::generate_all_instances(
+                &g.non_protein_entities,
+                display,
+                Some(colors),
+            );
         let bns_sphere_count = bns_spheres.len() as u32;
         let bns_capsule_count = bns_capsules.len() as u32;
         let bns_picking_count = bns_picking.len() as u32;
         let bns_sphere_instances = bytemuck::cast_slice(&bns_spheres).to_vec();
-        let bns_capsule_instances = bytemuck::cast_slice(&bns_capsules).to_vec();
+        let bns_capsule_instances =
+            bytemuck::cast_slice(&bns_capsules).to_vec();
         let bns_picking_capsules = bytemuck::cast_slice(&bns_picking).to_vec();
 
         // --- Nucleic acid mesh ---
@@ -538,7 +557,8 @@ impl SceneProcessor {
             }
             // Sheet offsets: offset residue indices
             for &(res_idx, offset) in &mesh.sheet_offsets {
-                all_sheet_offsets.push((res_idx + global_residue_offset, offset));
+                all_sheet_offsets
+                    .push((res_idx + global_residue_offset, offset));
             }
             ribbon_vert_offset += mesh.ribbon_vert_count;
 
@@ -568,15 +588,18 @@ impl SceneProcessor {
             }
             all_sidechain_positions.extend(&mesh.sidechain_positions);
             for &(a, b) in &mesh.sidechain_bonds {
-                all_sidechain_bonds.push((a + sc_atom_offset, b + sc_atom_offset));
+                all_sidechain_bonds
+                    .push((a + sc_atom_offset, b + sc_atom_offset));
             }
             all_sidechain_hydrophobicity.extend(&mesh.sidechain_hydrophobicity);
             for &ri in &mesh.sidechain_residue_indices {
                 all_sidechain_residue_indices.push(ri + global_residue_offset);
             }
-            all_sidechain_atom_names.extend(mesh.sidechain_atom_names.iter().cloned());
+            all_sidechain_atom_names
+                .extend(mesh.sidechain_atom_names.iter().cloned());
             for &(ca_pos, cb_idx) in &mesh.backbone_sidechain_bonds {
-                all_backbone_sidechain_bonds.push((ca_pos, cb_idx + sc_atom_offset));
+                all_backbone_sidechain_bonds
+                    .push((ca_pos, cb_idx + sc_atom_offset));
             }
             all_positions.extend(&mesh.sidechain_positions);
             all_non_protein.extend(mesh.non_protein_entities.iter().cloned());
@@ -602,12 +625,18 @@ impl SceneProcessor {
                 all_per_residue_colors.extend_from_slice(colors);
             } else {
                 // Pad with default so indices stay aligned
-                all_per_residue_colors
-                    .extend(std::iter::repeat_n(FALLBACK_RESIDUE_COLOR, mesh.residue_count as usize));
+                all_per_residue_colors.extend(std::iter::repeat_n(
+                    FALLBACK_RESIDUE_COLOR,
+                    mesh.residue_count as usize,
+                ));
             }
 
             // Track entity residue range
-            entity_residue_ranges.push((*group_id, global_residue_offset, mesh.residue_count));
+            entity_residue_ranges.push((
+                *group_id,
+                global_residue_offset,
+                mesh.residue_count,
+            ));
 
             global_residue_offset += mesh.residue_count;
         }
@@ -710,32 +739,34 @@ impl SceneProcessor {
         let ribbon_indices = bytemuck::cast_slice(&ribbon_inds).to_vec();
 
         // --- Optional sidechain capsules ---
-        let (sidechain_instances, sidechain_instance_count) = if let Some(sc) = sidechains {
-            let offset_map: HashMap<u32, Vec3> = sheet_offsets.iter().copied().collect();
-            let adjusted_positions = adjust_sidechains_for_sheet(
-                &sc.sidechain_positions,
-                &sc.sidechain_residue_indices,
-                &offset_map,
-            );
-            let adjusted_bonds = adjust_bonds_for_sheet(
-                &sc.backbone_sidechain_bonds,
-                &sc.sidechain_residue_indices,
-                &offset_map,
-            );
-            let insts = CapsuleSidechainRenderer::generate_instances(
-                &adjusted_positions,
-                &sc.sidechain_bonds,
-                &adjusted_bonds,
-                &sc.sidechain_hydrophobicity,
-                &sc.sidechain_residue_indices,
-                None,
-                None,
-            );
-            let count = insts.len() as u32;
-            (Some(bytemuck::cast_slice(&insts).to_vec()), count)
-        } else {
-            (None, 0)
-        };
+        let (sidechain_instances, sidechain_instance_count) =
+            if let Some(sc) = sidechains {
+                let offset_map: HashMap<u32, Vec3> =
+                    sheet_offsets.iter().copied().collect();
+                let adjusted_positions = adjust_sidechains_for_sheet(
+                    &sc.sidechain_positions,
+                    &sc.sidechain_residue_indices,
+                    &offset_map,
+                );
+                let adjusted_bonds = adjust_bonds_for_sheet(
+                    &sc.backbone_sidechain_bonds,
+                    &sc.sidechain_residue_indices,
+                    &offset_map,
+                );
+                let insts = CapsuleSidechainRenderer::generate_instances(
+                    &adjusted_positions,
+                    &sc.sidechain_bonds,
+                    &adjusted_bonds,
+                    &sc.sidechain_hydrophobicity,
+                    &sc.sidechain_residue_indices,
+                    None,
+                    None,
+                );
+                let count = insts.len() as u32;
+                (Some(bytemuck::cast_slice(&insts).to_vec()), count)
+            } else {
+                (None, 0)
+            };
 
         PreparedAnimationFrame {
             tube_vertices,
@@ -757,4 +788,6 @@ impl Drop for SceneProcessor {
     }
 }
 
-use crate::util::sheet_adjust::{adjust_bonds_for_sheet, adjust_sidechains_for_sheet};
+use crate::util::sheet_adjust::{
+    adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
+};

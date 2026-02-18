@@ -95,7 +95,12 @@ impl AnimationBehavior for CollapseExpand {
             // using the collapse easing curve
             let eased_t = phase_eased * collapse_frac;
 
-            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+            InterpolationContext::with_phase(
+                raw_t,
+                eased_t,
+                phase_t,
+                phase_eased,
+            )
         } else {
             // Expand phase
             let phase_t = if collapse_frac < 1.0 {
@@ -109,7 +114,12 @@ impl AnimationBehavior for CollapseExpand {
             // using the expand easing curve
             let eased_t = collapse_frac + phase_eased * (1.0 - collapse_frac);
 
-            InterpolationContext::with_phase(raw_t, eased_t, phase_t, phase_eased)
+            InterpolationContext::with_phase(
+                raw_t,
+                eased_t,
+                phase_t,
+                phase_eased,
+            )
         }
     }
 
@@ -124,9 +134,12 @@ impl AnimationBehavior for CollapseExpand {
 
         let backbone_t = ctx.eased_t;
         let backbone = [
-            start.backbone[0] + (end.backbone[0] - start.backbone[0]) * backbone_t,
-            start.backbone[1] + (end.backbone[1] - start.backbone[1]) * backbone_t,
-            start.backbone[2] + (end.backbone[2] - start.backbone[2]) * backbone_t,
+            start.backbone[0]
+                + (end.backbone[0] - start.backbone[0]) * backbone_t,
+            start.backbone[1]
+                + (end.backbone[1] - start.backbone[1]) * backbone_t,
+            start.backbone[2]
+                + (end.backbone[2] - start.backbone[2]) * backbone_t,
         ];
 
         // Get phase-eased progress for chi interpolation
@@ -238,7 +251,10 @@ mod tests {
 
     #[test]
     fn test_collapse_expand_midpoint() {
-        let behavior = CollapseExpand::new(Duration::from_millis(100), Duration::from_millis(100));
+        let behavior = CollapseExpand::new(
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        );
         let a = test_state_a();
         let b = test_state_b();
 
@@ -257,7 +273,10 @@ mod tests {
 
     #[test]
     fn test_collapse_expand_duration() {
-        let behavior = CollapseExpand::new(Duration::from_millis(100), Duration::from_millis(200));
+        let behavior = CollapseExpand::new(
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+        );
         assert_eq!(behavior.duration(), Duration::from_millis(300));
     }
 }

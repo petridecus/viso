@@ -20,7 +20,11 @@ impl InputHandler {
     }
 
     /// Returns true if the event was consumed by the camera
-    pub fn handle_event(&mut self, controller: &mut CameraController, event: &WindowEvent) -> bool {
+    pub fn handle_event(
+        &mut self,
+        controller: &mut CameraController,
+        event: &WindowEvent,
+    ) -> bool {
         match event {
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
@@ -35,7 +39,8 @@ impl InputHandler {
                 true
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let current_pos = Vec2::new(position.x as f32, position.y as f32);
+                let current_pos =
+                    Vec2::new(position.x as f32, position.y as f32);
                 let delta = current_pos - self.last_mouse_pos;
                 self.last_mouse_pos = current_pos;
 

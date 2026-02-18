@@ -6,15 +6,17 @@
 pub mod processor;
 
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::entity::{merge_entities, MoleculeEntity, MoleculeType, NucleotideRing};
+use foldit_conv::coords::entity::{
+    merge_entities, MoleculeEntity, MoleculeType, NucleotideRing,
+};
 use foldit_conv::coords::render::extract_sequences;
 use foldit_conv::coords::types::Coords;
 use foldit_conv::coords::{protein_only, RenderBackboneResidue, RenderCoords};
 use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::assembly::{
     prepare_combined_assembly, protein_coords as assembly_protein_coords,
-    residue_count as assembly_residue_count, split_combined_result, update_entities_from_backend,
-    update_protein_entities,
+    residue_count as assembly_residue_count, split_combined_result,
+    update_entities_from_backend, update_protein_entities,
 };
 use glam::Vec3;
 use std::collections::HashMap;
@@ -218,7 +220,10 @@ impl EntityGroup {
             if entity.molecule_type != MoleculeType::Protein {
                 non_protein_entities.push(entity.clone());
             }
-            if matches!(entity.molecule_type, MoleculeType::DNA | MoleculeType::RNA) {
+            if matches!(
+                entity.molecule_type,
+                MoleculeType::DNA | MoleculeType::RNA
+            ) {
                 nucleic_acid_chains.extend(entity.extract_p_atom_chains());
                 nucleic_acid_rings.extend(entity.extract_base_rings());
             }
@@ -301,10 +306,11 @@ impl EntityGroup {
             return None;
         }
 
-        let render_coords =
-            RenderCoords::from_coords_with_topology(&coords, is_hydrophobic, |name| {
-                get_residue_bonds(name).map(|b| b.to_vec())
-            });
+        let render_coords = RenderCoords::from_coords_with_topology(
+            &coords,
+            is_hydrophobic,
+            |name| get_residue_bonds(name).map(|b| b.to_vec()),
+        );
 
         let (sequence, chain_sequences) = extract_sequences(&coords);
 
@@ -520,12 +526,16 @@ impl Scene {
             Focus::Session => group_ids
                 .first()
                 .map(|&id| Focus::Group(id))
-                .or_else(|| focusable_entities.first().map(|&id| Focus::Entity(id)))
+                .or_else(|| {
+                    focusable_entities.first().map(|&id| Focus::Entity(id))
+                })
                 .unwrap_or(Focus::Session),
             Focus::Group(current_id) => {
                 let idx = group_ids.iter().position(|&id| id == current_id);
                 match idx {
-                    Some(i) if i + 1 < group_ids.len() => Focus::Group(group_ids[i + 1]),
+                    Some(i) if i + 1 < group_ids.len() => {
+                        Focus::Group(group_ids[i + 1])
+                    }
                     _ => focusable_entities
                         .first()
                         .map(|&id| Focus::Entity(id))
@@ -533,7 +543,8 @@ impl Scene {
                 }
             }
             Focus::Entity(current_id) => {
-                let idx = focusable_entities.iter().position(|&id| id == current_id);
+                let idx =
+                    focusable_entities.iter().position(|&id| id == current_id);
                 match idx {
                     Some(i) if i + 1 < focusable_entities.len() => {
                         Focus::Entity(focusable_entities[i + 1])
@@ -572,7 +583,9 @@ impl Scene {
         match self.focus {
             Focus::Session => "Session (all structures)".to_string(),
             Focus::Group(id) => {
-                let idx = self.groups.iter().position(|g| g.id == id).unwrap_or(0) + 1;
+                let idx =
+                    self.groups.iter().position(|g| g.id == id).unwrap_or(0)
+                        + 1;
                 let name = self
                     .group(id)
                     .map(|g| g.name().to_string())
@@ -609,7 +622,9 @@ impl Scene {
             .iter()
             .filter(|g| g.visible)
             .flat_map(|g| g.entities().iter())
-            .flat_map(|e| e.coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z)))
+            .flat_map(|e| {
+                e.coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z))
+            })
             .collect()
     }
 
@@ -639,7 +654,10 @@ impl Scene {
                 if entity.molecule_type != MoleculeType::Protein {
                     data.non_protein_entities.push(entity.clone());
                 }
-                if matches!(entity.molecule_type, MoleculeType::DNA | MoleculeType::RNA) {
+                if matches!(
+                    entity.molecule_type,
+                    MoleculeType::DNA | MoleculeType::RNA
+                ) {
                     let p_chains = entity.extract_p_atom_chains();
                     for chain in &p_chains {
                         data.all_positions.extend(chain);
@@ -669,7 +687,10 @@ impl Scene {
                     rd
                 }
                 None => {
-                    log::debug!("group '{}': no protein render data", group_name);
+                    log::debug!(
+                        "group '{}': no protein render data",
+                        group_name
+                    );
                     continue;
                 }
             };
@@ -688,7 +709,11 @@ impl Scene {
             if ss_override.is_some() {
                 has_any_ss_override = true;
             }
-            ss_parts.push((global_residue_offset, ss_override, structure_residue_count));
+            ss_parts.push((
+                global_residue_offset,
+                ss_override,
+                structure_residue_count,
+            ));
 
             // Aggregate backbone
             for chain in &render_data.render_coords.backbone_chains {
@@ -698,7 +723,9 @@ impl Scene {
             for chain_id in &render_data.render_coords.backbone_chain_ids {
                 data.backbone_chain_ids.push(*chain_id);
             }
-            for residue_chain in &render_data.render_coords.backbone_residue_chains {
+            for residue_chain in
+                &render_data.render_coords.backbone_residue_chains
+            {
                 data.backbone_residue_chains.push(residue_chain.clone());
             }
 
@@ -719,7 +746,9 @@ impl Scene {
             }
 
             // Aggregate backbone-sidechain bonds
-            for &(ca_pos, cb_idx) in &render_data.render_coords.backbone_sidechain_bonds {
+            for &(ca_pos, cb_idx) in
+                &render_data.render_coords.backbone_sidechain_bonds
+            {
                 data.backbone_sidechain_bonds
                     .push((ca_pos, cb_idx + atom_offset));
             }
@@ -764,7 +793,8 @@ impl Scene {
 
         let entity_slices: Vec<&[MoleculeEntity]> =
             visible_groups.iter().map(|g| g.entities()).collect();
-        let group_ids: Vec<GroupId> = visible_groups.iter().map(|g| g.id).collect();
+        let group_ids: Vec<GroupId> =
+            visible_groups.iter().map(|g| g.id).collect();
 
         let combined = prepare_combined_assembly(&entity_slices)?;
 
@@ -798,7 +828,8 @@ impl Scene {
             .map(|(_, chains)| chains.clone())
             .collect();
 
-        let split_coords = split_combined_result(coords_bytes, &chain_ids_list)?;
+        let split_coords =
+            split_combined_result(coords_bytes, &chain_ids_list)?;
 
         for (i, (group_id, _)) in chain_ids_per_group.iter().enumerate() {
             let structure_coords = &split_coords[i];
@@ -807,8 +838,13 @@ impl Scene {
                 continue;
             }
 
-            if let Some(group) = self.groups.iter_mut().find(|g| g.id == *group_id) {
-                update_entities_from_backend(group.entities_mut(), structure_coords.clone());
+            if let Some(group) =
+                self.groups.iter_mut().find(|g| g.id == *group_id)
+            {
+                update_entities_from_backend(
+                    group.entities_mut(),
+                    structure_coords.clone(),
+                );
                 group.invalidate_render_cache();
                 log::info!(
                     "Updated group {:?} from backend ({} atoms)",

@@ -122,13 +122,14 @@ impl Lighting {
     pub fn new(context: &RenderContext) -> Self {
         let uniform = LightingUniform::default();
 
-        let buffer = context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = context.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
                 label: Some("Lighting Buffer"),
                 contents: bytemuck::cast_slice(&[uniform]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_DST,
+            },
+        );
 
         // Generate procedural irradiance cubemap
         let (_irradiance_texture, irradiance_view) =
@@ -139,22 +140,23 @@ impl Lighting {
             generate_prefiltered_cubemap(&context.device, &context.queue);
 
         // Generate BRDF integration LUT for split-sum approximation
-        let (_brdf_lut_texture, brdf_lut_view) = generate_brdf_lut(&context.device, &context.queue);
+        let (_brdf_lut_texture, brdf_lut_view) =
+            generate_brdf_lut(&context.device, &context.queue);
 
-        let irradiance_sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Irradiance Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
+        let irradiance_sampler =
+            context.device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Irradiance Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..Default::default()
+            });
 
-        let layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = context.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Lighting Bind Group Layout"),
                 entries: &[
                     // Binding 0: Lighting uniform buffer
@@ -173,7 +175,9 @@ impl Lighting {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
                             view_dimension: wgpu::TextureViewDimension::Cube,
                             multisampled: false,
                         },
@@ -183,7 +187,9 @@ impl Lighting {
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(
+                            wgpu::SamplerBindingType::Filtering,
+                        ),
                         count: None,
                     },
                     // Binding 3: Prefiltered environment cubemap (specular IBL)
@@ -191,7 +197,9 @@ impl Lighting {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
                             view_dimension: wgpu::TextureViewDimension::Cube,
                             multisampled: false,
                         },
@@ -202,43 +210,55 @@ impl Lighting {
                         binding: 4,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
                         count: None,
                     },
                 ],
-            });
+            },
+        );
 
-        let bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&irradiance_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&irradiance_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&prefiltered_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(&brdf_lut_view),
-                    },
-                ],
-                label: Some("Lighting Bind Group"),
-            });
+        let bind_group =
+            context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(
+                                &irradiance_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(
+                                &irradiance_sampler,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(
+                                &prefiltered_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(
+                                &brdf_lut_view,
+                            ),
+                        },
+                    ],
+                    label: Some("Lighting Bind Group"),
+                });
 
         Self {
             uniform,
@@ -249,7 +269,11 @@ impl Lighting {
     }
 
     pub fn update_gpu(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+        queue.write_buffer(
+            &self.buffer,
+            0,
+            bytemuck::cast_slice(&[self.uniform]),
+        );
     }
 
     /// Update light directions to follow camera (headlamp mode)
@@ -282,8 +306,9 @@ impl Lighting {
 
         // Rim back-light: below-behind relative to camera
         let rim_camera = glam::Vec3::new(0.0, -0.7, 0.5).normalize();
-        let rim_world =
-            camera_right * rim_camera.x + camera_up * rim_camera.y + camera_forward * rim_camera.z;
+        let rim_world = camera_right * rim_camera.x
+            + camera_up * rim_camera.y
+            + camera_forward * rim_camera.z;
 
         self.uniform.rim_dir = rim_world.normalize().to_array();
     }
@@ -315,7 +340,8 @@ fn generate_irradiance_cubemap(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
@@ -332,7 +358,8 @@ fn generate_irradiance_cubemap(
 
                 // Convert face + UV to world direction
                 let dir = cubemap_face_direction(face, u, v);
-                let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+                let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
+                    .sqrt();
                 let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
 
                 // Evaluate irradiance based on direction
@@ -341,8 +368,10 @@ fn generate_irradiance_cubemap(
                 // Write as Rgba8Unorm (values are in [0, 1])
                 let offset = ((y * size + x) * 4) as usize;
                 data[offset] = (irradiance[0].clamp(0.0, 1.0) * 255.0) as u8;
-                data[offset + 1] = (irradiance[1].clamp(0.0, 1.0) * 255.0) as u8;
-                data[offset + 2] = (irradiance[2].clamp(0.0, 1.0) * 255.0) as u8;
+                data[offset + 1] =
+                    (irradiance[1].clamp(0.0, 1.0) * 255.0) as u8;
+                data[offset + 2] =
+                    (irradiance[2].clamp(0.0, 1.0) * 255.0) as u8;
                 data[offset + 3] = 255;
             }
         }
@@ -446,7 +475,8 @@ fn generate_prefiltered_cubemap(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
@@ -463,7 +493,9 @@ fn generate_prefiltered_cubemap(
                     let v = (y as f32 + 0.5) / mip_size as f32 * 2.0 - 1.0;
 
                     let dir = cubemap_face_direction(face, u, v);
-                    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+                    let len =
+                        (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
+                            .sqrt();
                     let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
 
                     // Evaluate blurred irradiance based on roughness
@@ -525,7 +557,9 @@ fn evaluate_prefiltered(dir: [f32; 3], roughness: f32) -> [f32; 3] {
     // Add a specular highlight at low roughness: a bright spot in the upper region
     // This simulates a key light reflection in the environment
     let highlight_dir = [0.0f32, 0.7, -0.7]; // Approximate key light direction
-    let dot = dir[0] * highlight_dir[0] + dir[1] * highlight_dir[1] + dir[2] * highlight_dir[2];
+    let dot = dir[0] * highlight_dir[0]
+        + dir[1] * highlight_dir[1]
+        + dir[2] * highlight_dir[2];
     let dot = dot.max(0.0);
 
     // Sharper highlight at low roughness, wider at high
@@ -561,7 +595,8 @@ fn generate_brdf_lut(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rg16Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
@@ -582,7 +617,8 @@ fn generate_brdf_lut(
             let scale_f16 = half::f16::from_f32(scale);
             let bias_f16 = half::f16::from_f32(bias);
             data[offset..offset + 2].copy_from_slice(&scale_f16.to_le_bytes());
-            data[offset + 2..offset + 4].copy_from_slice(&bias_f16.to_le_bytes());
+            data[offset + 2..offset + 4]
+                .copy_from_slice(&bias_f16.to_le_bytes());
         }
     }
 
@@ -612,7 +648,11 @@ fn generate_brdf_lut(
 
 /// Integrate the BRDF for given NdotV and roughness using importance sampling.
 /// Returns (scale, bias) for the split-sum approximation.
-fn integrate_brdf(ndot_v: f32, roughness: f32, sample_count: u32) -> (f32, f32) {
+fn integrate_brdf(
+    ndot_v: f32,
+    roughness: f32,
+    sample_count: u32,
+) -> (f32, f32) {
     use std::f32::consts::PI;
 
     let v = [
@@ -632,7 +672,8 @@ fn integrate_brdf(ndot_v: f32, roughness: f32, sample_count: u32) -> (f32, f32) 
 
         // Importance sample the GGX distribution
         let phi = 2.0 * PI * xi[0];
-        let cos_theta = ((1.0 - xi[1]) / (1.0 + (alpha * alpha - 1.0) * xi[1])).sqrt();
+        let cos_theta =
+            ((1.0 - xi[1]) / (1.0 + (alpha * alpha - 1.0) * xi[1])).sqrt();
         let sin_theta = (1.0 - cos_theta * cos_theta).sqrt().max(0.0);
 
         // Halfway vector in tangent space

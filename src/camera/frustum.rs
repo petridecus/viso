@@ -57,10 +57,14 @@ impl Frustum {
     /// Planes point inward (positive half-space is inside the frustum).
     pub fn from_view_projection(vp: Mat4) -> Self {
         // Get matrix rows (glam stores column-major, so we transpose conceptually)
-        let row0 = Vec4::new(vp.x_axis.x, vp.y_axis.x, vp.z_axis.x, vp.w_axis.x);
-        let row1 = Vec4::new(vp.x_axis.y, vp.y_axis.y, vp.z_axis.y, vp.w_axis.y);
-        let row2 = Vec4::new(vp.x_axis.z, vp.y_axis.z, vp.z_axis.z, vp.w_axis.z);
-        let row3 = Vec4::new(vp.x_axis.w, vp.y_axis.w, vp.z_axis.w, vp.w_axis.w);
+        let row0 =
+            Vec4::new(vp.x_axis.x, vp.y_axis.x, vp.z_axis.x, vp.w_axis.x);
+        let row1 =
+            Vec4::new(vp.x_axis.y, vp.y_axis.y, vp.z_axis.y, vp.w_axis.y);
+        let row2 =
+            Vec4::new(vp.x_axis.z, vp.y_axis.z, vp.z_axis.z, vp.w_axis.z);
+        let row3 =
+            Vec4::new(vp.x_axis.w, vp.y_axis.w, vp.z_axis.w, vp.w_axis.w);
 
         // Extract planes (Gribb/Hartmann method)
         // For right-handed system with [0,1] depth range (wgpu/Vulkan)
@@ -75,7 +79,9 @@ impl Frustum {
             planes: [
                 Plane::from_coefficients(left.x, left.y, left.z, left.w),
                 Plane::from_coefficients(right.x, right.y, right.z, right.w),
-                Plane::from_coefficients(bottom.x, bottom.y, bottom.z, bottom.w),
+                Plane::from_coefficients(
+                    bottom.x, bottom.y, bottom.z, bottom.w,
+                ),
                 Plane::from_coefficients(top.x, top.y, top.z, top.w),
                 Plane::from_coefficients(near.x, near.y, near.z, near.w),
                 Plane::from_coefficients(far.x, far.y, far.z, far.w),
@@ -126,7 +132,8 @@ mod tests {
     fn test_frustum_contains_origin() {
         // Simple orthographic-like frustum centered at origin
         let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let view =
+            Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
         let vp = proj * view;
         let frustum = Frustum::from_view_projection(vp);
 
@@ -140,7 +147,8 @@ mod tests {
     #[test]
     fn test_sphere_intersection() {
         let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let view =
+            Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
         let vp = proj * view;
         let frustum = Frustum::from_view_projection(vp);
 

@@ -25,7 +25,10 @@ impl PickingState {
         sidechain_renderer: &CapsuleSidechainRenderer,
     ) {
         self.capsule_picking_bind_group =
-            Some(picking.create_capsule_bind_group(device, sidechain_renderer.capsule_buffer()));
+            Some(picking.create_capsule_bind_group(
+                device,
+                sidechain_renderer.capsule_buffer(),
+            ));
     }
 
     /// Rebuild the ball-and-stick picking bind group from current buffer.
@@ -36,7 +39,10 @@ impl PickingState {
         bns_renderer: &BallAndStickRenderer,
     ) {
         self.bns_picking_bind_group = if bns_renderer.picking_count() > 0 {
-            Some(picking.create_capsule_bind_group(device, bns_renderer.picking_buffer()))
+            Some(picking.create_capsule_bind_group(
+                device,
+                bns_renderer.picking_buffer(),
+            ))
         } else {
             None
         };

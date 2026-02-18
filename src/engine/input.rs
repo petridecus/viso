@@ -9,7 +9,9 @@ use winit::keyboard::ModifiersState;
 impl ProteinRenderEngine {
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
         // Only allow rotation/pan if mouse down was on background (not on a residue)
-        if self.camera_controller.mouse_pressed && self.input.mouse_down_residue < 0 {
+        if self.camera_controller.mouse_pressed
+            && self.input.mouse_down_residue < 0
+        {
             let delta = Vec2::new(delta_x, delta_y);
             // Mark that we're dragging (moved after mouse down)
             if delta.length_squared() > 1.0 {
@@ -48,7 +50,9 @@ impl ProteinRenderEngine {
 
         match self.input.process_mouse_up(hovered, shift_held) {
             ClickResult::NoAction => false,
-            ClickResult::SingleClick { shift_held } => self.picking.handle_click(shift_held),
+            ClickResult::SingleClick { shift_held } => {
+                self.picking.handle_click(shift_held)
+            }
             ClickResult::DoubleClick {
                 residue,
                 shift_held,
@@ -70,8 +74,14 @@ impl ProteinRenderEngine {
 
     /// Select all residues in the same secondary structure segment as the given residue
     /// If shift_held is true, adds to existing selection; otherwise replaces selection
-    fn select_ss_segment(&mut self, residue_idx: i32, shift_held: bool) -> bool {
-        if residue_idx < 0 || (residue_idx as usize) >= self.sc.cached_ss_types.len() {
+    fn select_ss_segment(
+        &mut self,
+        residue_idx: i32,
+        shift_held: bool,
+    ) -> bool {
+        if residue_idx < 0
+            || (residue_idx as usize) >= self.sc.cached_ss_types.len()
+        {
             return false;
         }
 

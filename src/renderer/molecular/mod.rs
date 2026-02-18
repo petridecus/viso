@@ -17,5 +17,9 @@ use draw_context::DrawBindGroups;
 /// serves as documentation and enables future refactoring (e.g. iterating
 /// a renderer list). No dynamic dispatch is used today.
 pub trait MolecularRenderer {
-    fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, bind_groups: &DrawBindGroups<'a>);
+    fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_groups: &DrawBindGroups<'a>,
+    );
 }

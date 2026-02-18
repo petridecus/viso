@@ -99,9 +99,13 @@ impl PullRenderer {
             1,
             wgpu::BufferUsages::STORAGE,
         );
-        let cone_bind_group_layout = Self::create_bind_group_layout(&context.device, "Pull Cone");
-        let cone_bind_group =
-            Self::create_cone_bind_group(&context.device, &cone_bind_group_layout, &cone_buffer);
+        let cone_bind_group_layout =
+            Self::create_bind_group_layout(&context.device, "Pull Cone");
+        let cone_bind_group = Self::create_cone_bind_group(
+            &context.device,
+            &cone_bind_group_layout,
+            &cone_buffer,
+        );
         let cone_pipeline = Self::create_cone_pipeline(
             context,
             &cone_bind_group_layout,
@@ -125,12 +129,16 @@ impl PullRenderer {
         }
     }
 
-    fn create_bind_group_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    fn create_bind_group_layout(
+        device: &wgpu::Device,
+        label: &str,
+    ) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some(&format!("{} Layout", label)),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -182,23 +190,24 @@ impl PullRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Pull Capsule Shader",
-            include_str!("../../../assets/shaders/raster/impostor/capsule.wgsl"),
+            include_str!(
+                "../../../assets/shaders/raster/impostor/capsule.wgsl"
+            ),
             "capsule_impostor.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Pull Capsule Pipeline Layout"),
-                    bind_group_layouts: &[
-                        bind_group_layout,
-                        camera_layout,
-                        lighting_layout,
-                        selection_layout,
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Pull Capsule Pipeline Layout"),
+                bind_group_layouts: &[
+                    bind_group_layout,
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         context
             .device
@@ -240,19 +249,18 @@ impl PullRenderer {
             "cone_impostor.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Pull Cone Pipeline Layout"),
-                    bind_group_layouts: &[
-                        bind_group_layout,
-                        camera_layout,
-                        lighting_layout,
-                        selection_layout,
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Pull Cone Pipeline Layout"),
+                bind_group_layouts: &[
+                    bind_group_layout,
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         context
             .device
@@ -290,7 +298,8 @@ impl PullRenderer {
             Some(p) => {
                 let (capsules, cones) = Self::generate_instances(p);
 
-                let capsule_reallocated = self.capsule_buffer.write(device, queue, &capsules);
+                let capsule_reallocated =
+                    self.capsule_buffer.write(device, queue, &capsules);
                 if capsule_reallocated {
                     self.capsule_bind_group = Self::create_capsule_bind_group(
                         device,
@@ -300,7 +309,8 @@ impl PullRenderer {
                 }
                 self.capsule_count = capsules.len() as u32;
 
-                let cone_reallocated = self.cone_buffer.write(device, queue, &cones);
+                let cone_reallocated =
+                    self.cone_buffer.write(device, queue, &cones);
                 if cone_reallocated {
                     self.cone_bind_group = Self::create_cone_bind_group(
                         device,
@@ -323,7 +333,9 @@ impl PullRenderer {
         self.cone_count = 0;
     }
 
-    fn generate_instances(pull: &PullRenderInfo) -> (Vec<CapsuleInstance>, Vec<ConeInstance>) {
+    fn generate_instances(
+        pull: &PullRenderInfo,
+    ) -> (Vec<CapsuleInstance>, Vec<ConeInstance>) {
         let mut capsules = Vec::with_capacity(1);
         let mut cones = Vec::with_capacity(1);
 
@@ -348,7 +360,12 @@ impl PullRenderer {
         // Cylinder from atom to cone base
         if atom_pos.distance_squared(cone_base) > 0.001 {
             capsules.push(CapsuleInstance {
-                endpoint_a: [atom_pos.x, atom_pos.y, atom_pos.z, PULL_CYLINDER_RADIUS],
+                endpoint_a: [
+                    atom_pos.x,
+                    atom_pos.y,
+                    atom_pos.z,
+                    PULL_CYLINDER_RADIUS,
+                ],
                 endpoint_b: [
                     cone_base.x,
                     cone_base.y,

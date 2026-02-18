@@ -31,7 +31,9 @@ impl ProteinRenderEngine {
         let protein_coords = match protein_coords {
             Some(c) => protein_only(&c),
             None => {
-                log::error!("No protein structure loaded — cannot play trajectory");
+                log::error!(
+                    "No protein structure loaded — cannot play trajectory"
+                );
                 return;
             }
         };
@@ -50,13 +52,19 @@ impl ProteinRenderEngine {
         let backbone_indices = build_backbone_atom_indices(&protein_coords);
 
         // Get current backbone chains for topology
-        let backbone_chains = foldit_conv::coords::extract_backbone_chains(&protein_coords);
+        let backbone_chains =
+            foldit_conv::coords::extract_backbone_chains(&protein_coords);
 
         let num_atoms = header.num_atoms as usize;
         let num_frames = frames.len();
         let duration_secs = num_frames as f64 / 30.0;
 
-        let player = TrajectoryPlayer::new(frames, num_atoms, &backbone_chains, backbone_indices);
+        let player = TrajectoryPlayer::new(
+            frames,
+            num_atoms,
+            &backbone_chains,
+            backbone_indices,
+        );
         self.trajectory_player = Some(player);
 
         log::info!(
@@ -85,7 +93,11 @@ impl ProteinRenderEngine {
     }
 
     /// Animate backbone to new pose with specified action.
-    pub fn animate_to_pose(&mut self, new_backbone: &[Vec<Vec3>], action: AnimationAction) {
+    pub fn animate_to_pose(
+        &mut self,
+        new_backbone: &[Vec<Vec3>],
+        action: AnimationAction,
+    ) {
         self.animator.set_target(new_backbone, action);
 
         // If animator has visual state, update renderers
@@ -122,10 +134,14 @@ impl ProteinRenderEngine {
     ) {
         // Capture current VISUAL positions as start (for smooth preemption)
         // If animation is in progress, use interpolated positions, not old targets
-        if self.sc.target_sidechain_positions.len() == sidechain.positions.len() {
-            if self.animator.is_animating() && self.animator.has_sidechain_data() {
+        if self.sc.target_sidechain_positions.len() == sidechain.positions.len()
+        {
+            if self.animator.is_animating()
+                && self.animator.has_sidechain_data()
+            {
                 // Animation in progress - sync to current visual state (like backbone does)
-                self.sc.start_sidechain_positions = self.animator.get_sidechain_positions();
+                self.sc.start_sidechain_positions =
+                    self.animator.get_sidechain_positions();
                 // Also interpolate backbone-sidechain bonds
                 let ctx = self.animator.interpolation_context();
                 self.sc.start_backbone_sidechain_bonds = self
@@ -134,35 +150,43 @@ impl ProteinRenderEngine {
                     .iter()
                     .zip(self.sc.target_backbone_sidechain_bonds.iter())
                     .map(|((start_pos, idx), (target_pos, _))| {
-                        let pos = *start_pos + (*target_pos - *start_pos) * ctx.eased_t;
+                        let pos = *start_pos
+                            + (*target_pos - *start_pos) * ctx.eased_t;
                         (pos, *idx)
                     })
                     .collect();
             } else {
                 // No animation - use previous target as new start
-                self.sc.start_sidechain_positions = self.sc.target_sidechain_positions.clone();
+                self.sc.start_sidechain_positions =
+                    self.sc.target_sidechain_positions.clone();
                 self.sc.start_backbone_sidechain_bonds =
                     self.sc.target_backbone_sidechain_bonds.clone();
             }
         } else {
             // Size changed - snap to new positions
             self.sc.start_sidechain_positions = sidechain.positions.to_vec();
-            self.sc.start_backbone_sidechain_bonds = sidechain.backbone_bonds.to_vec();
+            self.sc.start_backbone_sidechain_bonds =
+                sidechain.backbone_bonds.to_vec();
         }
 
         // Set new targets and cached data
         self.sc.target_sidechain_positions = sidechain.positions.to_vec();
-        self.sc.target_backbone_sidechain_bonds = sidechain.backbone_bonds.to_vec();
+        self.sc.target_backbone_sidechain_bonds =
+            sidechain.backbone_bonds.to_vec();
         self.sc.cached_sidechain_bonds = sidechain.bonds.to_vec();
-        self.sc.cached_sidechain_hydrophobicity = sidechain.hydrophobicity.to_vec();
-        self.sc.cached_sidechain_residue_indices = sidechain.residue_indices.to_vec();
+        self.sc.cached_sidechain_hydrophobicity =
+            sidechain.hydrophobicity.to_vec();
+        self.sc.cached_sidechain_residue_indices =
+            sidechain.residue_indices.to_vec();
         self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
         // CA is the second atom (index 1) in each group of 3 (N, CA, C) per residue
         let ca_positions: Vec<Vec3> = new_backbone
             .iter()
-            .flat_map(|chain| chain.chunks(3).filter_map(|chunk| chunk.get(1).copied()))
+            .flat_map(|chain| {
+                chain.chunks(3).filter_map(|chunk| chunk.get(1).copied())
+            })
             .collect();
 
         // Pass sidechain data to animator FIRST (before set_target)
@@ -186,11 +210,12 @@ impl ProteinRenderEngine {
 
         // Update sidechain renderer with start positions (adjusted for sheet surface)
         let offset_map = self.sheet_offset_map();
-        let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            &self.sc.start_sidechain_positions,
-            sidechain.residue_indices,
-            &offset_map,
-        );
+        let adjusted_positions =
+            crate::util::sheet_adjust::adjust_sidechains_for_sheet(
+                &self.sc.start_sidechain_positions,
+                sidechain.residue_indices,
+                &offset_map,
+            );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
             &self.sc.start_backbone_sidechain_bonds,
             sidechain.residue_indices,

@@ -54,7 +54,10 @@ impl StructureState {
     }
 
     /// Get mutable current visual state for a residue.
-    pub fn get_current_mut(&mut self, idx: usize) -> Option<&mut ResidueVisualState> {
+    pub fn get_current_mut(
+        &mut self,
+        idx: usize,
+    ) -> Option<&mut ResidueVisualState> {
         self.current.get_mut(idx)
     }
 
@@ -118,7 +121,10 @@ impl StructureState {
     /// Find residues that differ between current and a new target.
     ///
     /// Returns indices of residues that need animation.
-    pub fn differing_residues(&self, new_target: &StructureState) -> Vec<usize> {
+    pub fn differing_residues(
+        &self,
+        new_target: &StructureState,
+    ) -> Vec<usize> {
         self.current
             .iter()
             .zip(new_target.target.iter())
@@ -170,7 +176,10 @@ impl StructureState {
     }
 
     /// Whether two states differ above a small epsilon threshold.
-    pub fn states_differ(a: &ResidueVisualState, b: &ResidueVisualState) -> bool {
+    pub fn states_differ(
+        a: &ResidueVisualState,
+        b: &ResidueVisualState,
+    ) -> bool {
         const EPSILON: f32 = 0.0001;
 
         // Check backbone positions
@@ -219,7 +228,9 @@ impl StructureState {
     }
 
     /// Convert backbone chains to per-residue visual states.
-    fn backbone_to_states(backbone_chains: &[Vec<Vec3>]) -> Vec<ResidueVisualState> {
+    fn backbone_to_states(
+        backbone_chains: &[Vec<Vec3>],
+    ) -> Vec<ResidueVisualState> {
         let mut states = Vec::new();
 
         for chain in backbone_chains {

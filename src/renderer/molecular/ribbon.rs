@@ -274,8 +274,11 @@ impl RibbonRenderer {
             self.ss_override = Some(ss.to_vec());
         }
 
-        let (vertices, indices, offsets) =
-            Self::generate_from_ca_only(backbone_chains, &self.params, self.ss_override.as_deref());
+        let (vertices, indices, offsets) = Self::generate_from_ca_only(
+            backbone_chains,
+            &self.params,
+            self.ss_override.as_deref(),
+        );
         if !vertices.is_empty() {
             self.vertex_buffer.write(device, queue, &vertices);
             self.index_buffer.write(device, queue, &indices);
@@ -316,8 +319,11 @@ impl RibbonRenderer {
         }
         self.last_chain_hash = new_hash;
 
-        let (vertices, indices, offsets) =
-            Self::generate_from_residues(chains, &self.params, self.ss_override.as_deref());
+        let (vertices, indices, offsets) = Self::generate_from_residues(
+            chains,
+            &self.params,
+            self.ss_override.as_deref(),
+        );
         if !vertices.is_empty() {
             self.vertex_buffer.write(device, queue, &vertices);
             self.index_buffer.write(device, queue, &indices);
@@ -349,23 +355,24 @@ impl RibbonRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Ribbon Shader",
-            include_str!("../../../assets/shaders/raster/mesh/backbone_tube.wgsl"),
+            include_str!(
+                "../../../assets/shaders/raster/mesh/backbone_tube.wgsl"
+            ),
             "backbone_tube.wgsl",
         );
 
-        let pipeline_layout =
-            context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Ribbon Pipeline Layout"),
-                    bind_group_layouts: &[
-                        camera_layout,
-                        lighting_layout,
-                        selection_layout,
-                        color_layout,
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Ribbon Pipeline Layout"),
+                bind_group_layouts: &[
+                    camera_layout,
+                    lighting_layout,
+                    selection_layout,
+                    color_layout,
+                ],
+                immediate_size: 0,
+            },
+        );
 
         let vertex_layout = super::tube::tube_vertex_buffer_layout();
 
@@ -416,7 +423,8 @@ impl RibbonRenderer {
                 continue;
             }
 
-            let ca_positions: Vec<Vec3> = chain.iter().map(|r| r.ca_pos).collect();
+            let ca_positions: Vec<Vec3> =
+                chain.iter().map(|r| r.ca_pos).collect();
             let n_residues = ca_positions.len();
             let ss_types = if let Some(overrides) = ss_override {
                 let start = global_residue_idx as usize;
@@ -444,23 +452,27 @@ impl RibbonRenderer {
                 } // Need at least 2 real residues
 
                 // Extend segment into coil regions at boundaries for smooth taper
-                let taper_start = if start > 0 && ss_types[start - 1] == SSType::Coil {
-                    1
-                } else {
-                    0
-                };
-                let taper_end =
-                    if end < chain.len() && end < ss_types.len() && ss_types[end] == SSType::Coil {
+                let taper_start =
+                    if start > 0 && ss_types[start - 1] == SSType::Coil {
                         1
                     } else {
                         0
                     };
+                let taper_end = if end < chain.len()
+                    && end < ss_types.len()
+                    && ss_types[end] == SSType::Coil
+                {
+                    1
+                } else {
+                    0
+                };
                 let ext_start = start - taper_start;
                 let ext_end = (end + taper_end).min(chain.len());
 
                 let residues = &chain[ext_start..ext_end];
                 // Override taper residues to segment SS type so they get the right color
-                let mut ss: Vec<SSType> = ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
+                let mut ss: Vec<SSType> =
+                    ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
                 if taper_start > 0 {
                     ss[0] = seg.ss_type;
                 }
@@ -470,7 +482,8 @@ impl RibbonRenderer {
                     }
                 }
                 let base = all_verts.len() as u32;
-                let segment_residue_base = global_residue_idx + ext_start as u32;
+                let segment_residue_base =
+                    global_residue_idx + ext_start as u32;
 
                 let (v, i, sp) = match seg.ss_type {
                     SSType::Helix => generate_helix(
@@ -483,9 +496,12 @@ impl RibbonRenderer {
                         taper_end,
                     ),
                     SSType::Sheet => {
-                        let n_pos: Vec<Vec3> = residues.iter().map(|r| r.n_pos).collect();
-                        let ca_pos: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
-                        let c_pos: Vec<Vec3> = residues.iter().map(|r| r.c_pos).collect();
+                        let n_pos: Vec<Vec3> =
+                            residues.iter().map(|r| r.n_pos).collect();
+                        let ca_pos: Vec<Vec3> =
+                            residues.iter().map(|r| r.ca_pos).collect();
+                        let c_pos: Vec<Vec3> =
+                            residues.iter().map(|r| r.c_pos).collect();
                         let ctx = SheetContext {
                             base,
                             global_residue_base: segment_residue_base,
@@ -493,12 +509,7 @@ impl RibbonRenderer {
                             taper_end,
                         };
                         peptide_plane_sheet(
-                            &n_pos,
-                            &ca_pos,
-                            &c_pos,
-                            &ss,
-                            params,
-                            &ctx,
+                            &n_pos, &ca_pos, &c_pos, &ss, params, &ctx,
                         )
                     }
                     SSType::Coil => continue,
@@ -576,22 +587,25 @@ impl RibbonRenderer {
                 } // Need at least 2 real residues
 
                 // Extend segment into coil regions at boundaries for smooth taper
-                let taper_start = if start > 0 && ss_types[start - 1] == SSType::Coil {
-                    1
-                } else {
-                    0
-                };
-                let taper_end = if end < ss_types.len() && ss_types[end] == SSType::Coil {
-                    1
-                } else {
-                    0
-                };
+                let taper_start =
+                    if start > 0 && ss_types[start - 1] == SSType::Coil {
+                        1
+                    } else {
+                        0
+                    };
+                let taper_end =
+                    if end < ss_types.len() && ss_types[end] == SSType::Coil {
+                        1
+                    } else {
+                        0
+                    };
                 let ext_start = start - taper_start;
                 let ext_end = (end + taper_end).min(ca_positions.len());
 
                 let positions = &ca_positions[ext_start..ext_end];
                 // Override taper residues to segment SS type so they get the right color
-                let mut ss: Vec<SSType> = ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
+                let mut ss: Vec<SSType> =
+                    ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
                 if taper_start > 0 {
                     ss[0] = seg.ss_type;
                 }
@@ -601,7 +615,8 @@ impl RibbonRenderer {
                     }
                 }
                 let base = all_verts.len() as u32;
-                let segment_residue_base = global_residue_idx + ext_start as u32;
+                let segment_residue_base =
+                    global_residue_idx + ext_start as u32;
 
                 let (v, i, sp) = match seg.ss_type {
                     SSType::Helix => generate_helix_from_ca(
@@ -617,16 +632,20 @@ impl RibbonRenderer {
                         // Extract N-CA-C triplets for peptide plane normals
                         let backbone_start = ext_start * 3;
                         let backbone_end = (ext_end * 3).min(chain.len());
-                        let backbone_slice = &chain[backbone_start..backbone_end];
+                        let backbone_slice =
+                            &chain[backbone_start..backbone_end];
                         let n_res = backbone_slice.len() / 3;
                         if n_res < 2 {
                             continue;
                         }
-                        let n_pos: Vec<Vec3> = (0..n_res).map(|i| backbone_slice[i * 3]).collect();
-                        let ca_pos: Vec<Vec3> =
-                            (0..n_res).map(|i| backbone_slice[i * 3 + 1]).collect();
-                        let c_pos: Vec<Vec3> =
-                            (0..n_res).map(|i| backbone_slice[i * 3 + 2]).collect();
+                        let n_pos: Vec<Vec3> =
+                            (0..n_res).map(|i| backbone_slice[i * 3]).collect();
+                        let ca_pos: Vec<Vec3> = (0..n_res)
+                            .map(|i| backbone_slice[i * 3 + 1])
+                            .collect();
+                        let c_pos: Vec<Vec3> = (0..n_res)
+                            .map(|i| backbone_slice[i * 3 + 2])
+                            .collect();
                         let ctx = SheetContext {
                             base,
                             global_residue_base: segment_residue_base,
@@ -634,12 +653,7 @@ impl RibbonRenderer {
                             taper_end,
                         };
                         peptide_plane_sheet(
-                            &n_pos,
-                            &ca_pos,
-                            &c_pos,
-                            &ss,
-                            params,
-                            &ctx,
+                            &n_pos, &ca_pos, &c_pos, &ss, params, &ctx,
                         )
                     }
                     SSType::Coil => continue,
@@ -817,7 +831,8 @@ fn generate_helix_from_ca(
     // Step 2: Catmull-Rom for positions (passes through each CA exactly)
     //         B-spline for axis centers (smooth approximation)
     let spline_points = catmull_rom(ca_positions, params.segments_per_residue);
-    let spline_centers = cubic_bspline(&helix_centers, params.segments_per_residue);
+    let spline_centers =
+        cubic_bspline(&helix_centers, params.segments_per_residue);
 
     // Step 3: For each spline point, compute frame with radial outward normal
     let mut frames = Vec::with_capacity(spline_points.len());
@@ -836,7 +851,8 @@ fn generate_helix_from_ca(
 
         // Normal points radially outward from helix axis
         let to_surface = pos - center;
-        let radial = (to_surface - tangent * tangent.dot(to_surface)).normalize();
+        let radial =
+            (to_surface - tangent * tangent.dot(to_surface)).normalize();
 
         // Handle degenerate case
         let normal = if radial.length_squared() > 0.01 {
@@ -876,7 +892,8 @@ fn generate_helix_from_ca(
         taper_start,
         taper_end,
     );
-    let (v, i) = build_ribbon_mesh(&frames, &widths, params.helix_thickness, base, true);
+    let (v, i) =
+        build_ribbon_mesh(&frames, &widths, params.helix_thickness, base, true);
     (v, i, Vec::new())
 }
 
@@ -950,17 +967,14 @@ fn peptide_plane_sheet(
     let offsets: Vec<(u32, Vec3)> = positions
         .iter()
         .enumerate()
-        .filter(|(i, _)| *i >= ctx.taper_start && *i < n.saturating_sub(ctx.taper_end))
+        .filter(|(i, _)| {
+            *i >= ctx.taper_start && *i < n.saturating_sub(ctx.taper_end)
+        })
         .map(|(i, &pos)| (ctx.global_residue_base + i as u32, pos - ca_pos[i]))
         .collect();
 
-    let (v, i) = sheet_from_normals(
-        &positions,
-        &normals,
-        ss_types,
-        params,
-        ctx,
-    );
+    let (v, i) =
+        sheet_from_normals(&positions, &normals, ss_types, params, ctx);
     (v, i, offsets)
 }
 
@@ -1063,7 +1077,9 @@ fn flatten_sheet(positions: &mut [Vec3], normals: &mut [Vec3], cycles: usize) {
         // Average positions with neighbors (skip endpoints)
         let mut new_pos = positions.to_vec();
         for i in 1..n - 1 {
-            new_pos[i] = (positions[i - 1] + positions[i] * 2.0 + positions[i + 1]) * 0.25;
+            new_pos[i] =
+                (positions[i - 1] + positions[i] * 2.0 + positions[i + 1])
+                    * 0.25;
         }
         positions.copy_from_slice(&new_pos);
 
@@ -1081,7 +1097,8 @@ fn flatten_sheet(positions: &mut [Vec3], normals: &mut [Vec3], cycles: usize) {
 
         // Re-orthogonalize normals against backbone tangent
         for i in 1..n - 1 {
-            let tangent = (positions[i + 1] - positions[i - 1]).normalize_or_zero();
+            let tangent =
+                (positions[i + 1] - positions[i - 1]).normalize_or_zero();
             let proj = normals[i] - tangent * normals[i].dot(tangent);
             normals[i] = if proj.length_squared() > 1e-6 {
                 proj.normalize()
@@ -1146,13 +1163,7 @@ fn generate_sheet_from_ca(
         taper_start: 0,
         taper_end: 0,
     };
-    sheet_from_normals(
-        &positions,
-        &normals,
-        ss_types,
-        params,
-        &ctx,
-    )
+    sheet_from_normals(&positions, &normals, ss_types, params, &ctx)
 }
 
 // ==================== MESH BUILDING ====================
@@ -1173,7 +1184,9 @@ fn compute_taper_widths(
             if taper_start_frames > 0 && i < taper_start_frames {
                 let t = i as f32 / taper_start_frames as f32;
                 TUBE_DIAMETER + (full_width - TUBE_DIAMETER) * t
-            } else if taper_end_frames > 0 && i >= n_frames.saturating_sub(taper_end_frames) {
+            } else if taper_end_frames > 0
+                && i >= n_frames.saturating_sub(taper_end_frames)
+            {
                 let frames_from_end = n_frames - 1 - i;
                 let t = frames_from_end as f32 / taper_end_frames.max(1) as f32;
                 TUBE_DIAMETER + (full_width - TUBE_DIAMETER) * t
@@ -1212,17 +1225,21 @@ fn build_ribbon_mesh(
             let inv_hw2 = 1.0 / (hw * hw).max(1e-6);
             let inv_ht2 = 1.0 / (ht * ht).max(1e-6);
             // TL: binormal_offset = -hw, normal_offset = +ht
-            let n_tl =
-                (frame.binormal * (-hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
+            let n_tl = (frame.binormal * (-hw * inv_hw2)
+                + frame.normal * (ht * inv_ht2))
+                .normalize();
             // TR: binormal_offset = +hw, normal_offset = +ht
-            let n_tr =
-                (frame.binormal * (hw * inv_hw2) + frame.normal * (ht * inv_ht2)).normalize();
+            let n_tr = (frame.binormal * (hw * inv_hw2)
+                + frame.normal * (ht * inv_ht2))
+                .normalize();
             // BR: binormal_offset = +hw, normal_offset = -ht
-            let n_br =
-                (frame.binormal * (hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
+            let n_br = (frame.binormal * (hw * inv_hw2)
+                + frame.normal * (-ht * inv_ht2))
+                .normalize();
             // BL: binormal_offset = -hw, normal_offset = -ht
-            let n_bl =
-                (frame.binormal * (-hw * inv_hw2) + frame.normal * (-ht * inv_ht2)).normalize();
+            let n_bl = (frame.binormal * (-hw * inv_hw2)
+                + frame.normal * (-ht * inv_ht2))
+                .normalize();
             (n_tl, n_tr, n_br, n_bl)
         } else {
             // Flat normals: top face up, bottom face down (for sheets)

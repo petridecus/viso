@@ -30,13 +30,23 @@ pub(crate) struct PostProcessStack {
 
 impl PostProcessStack {
     /// Build the full post-processing stack (depth/normal textures + all passes).
-    pub fn new(context: &RenderContext, shader_composer: &mut ShaderComposer) -> Self {
+    pub fn new(
+        context: &RenderContext,
+        shader_composer: &mut ShaderComposer,
+    ) -> Self {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
-        let (normal_texture, normal_view) = Self::create_normal_texture(context);
+        let (normal_texture, normal_view) =
+            Self::create_normal_texture(context);
 
-        let ssao_renderer = SsaoRenderer::new(context, &depth_view, &normal_view, shader_composer);
+        let ssao_renderer = SsaoRenderer::new(
+            context,
+            &depth_view,
+            &normal_view,
+            shader_composer,
+        );
 
-        let mut bloom_pass = BloomPass::new(context, &normal_view, shader_composer);
+        let mut bloom_pass =
+            BloomPass::new(context, &normal_view, shader_composer);
 
         let mut composite_pass = CompositePass::new(
             context,
@@ -76,7 +86,8 @@ impl PostProcessStack {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
-        let (normal_texture, normal_view) = Self::create_normal_texture(context);
+        let (normal_texture, normal_view) =
+            Self::create_normal_texture(context);
         self.normal_texture = normal_texture;
         self.normal_view = normal_view;
         self.ssao_renderer
@@ -103,8 +114,13 @@ impl PostProcessStack {
         final_view: &wgpu::TextureView,
     ) {
         // SSAO pass
-        self.ssao_renderer
-            .update_matrices(queue, camera.proj, camera.view_matrix, camera.znear, camera.zfar);
+        self.ssao_renderer.update_matrices(
+            queue,
+            camera.proj,
+            camera.view_matrix,
+            camera.znear,
+            camera.zfar,
+        );
         self.ssao_renderer.render_ssao(encoder);
 
         // Bloom pass
@@ -119,7 +135,12 @@ impl PostProcessStack {
     }
 
     /// Update fog uniforms.
-    pub fn update_fog(&mut self, queue: &wgpu::Queue, fog_start: f32, fog_density: f32) {
+    pub fn update_fog(
+        &mut self,
+        queue: &wgpu::Queue,
+        fog_start: f32,
+        fog_density: f32,
+    ) {
         self.composite_pass
             .update_fog(queue, fog_start, fog_density);
     }
@@ -130,7 +151,8 @@ impl PostProcessStack {
         self.composite_pass.params.outline_thickness = pp.outline_thickness;
         self.composite_pass.params.outline_strength = pp.outline_strength;
         self.composite_pass.params.ao_strength = pp.ao_strength;
-        self.composite_pass.params.normal_outline_strength = pp.normal_outline_strength;
+        self.composite_pass.params.normal_outline_strength =
+            pp.normal_outline_strength;
         self.composite_pass.params.exposure = pp.exposure;
         self.composite_pass.params.bloom_intensity = pp.bloom_intensity;
         self.composite_pass.flush_params(queue);
@@ -149,7 +171,9 @@ impl PostProcessStack {
         &self.composite_pass.color_view
     }
 
-    fn create_depth_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_depth_texture(
+        context: &RenderContext,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
             width: context.render_width(),
             height: context.render_height(),
@@ -163,7 +187,8 @@ impl PostProcessStack {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
@@ -171,7 +196,9 @@ impl PostProcessStack {
         (texture, view)
     }
 
-    fn create_normal_texture(context: &RenderContext) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_normal_texture(
+        context: &RenderContext,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
             width: context.render_width(),
             height: context.render_height(),
@@ -185,7 +212,8 @@ impl PostProcessStack {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
