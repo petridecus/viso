@@ -185,7 +185,7 @@ impl ProteinRenderEngine {
         let selection_buffer = SelectionBuffer::new(&context.device, total_residues.max(1));
 
         // Create per-residue color buffer (shared by all renderers)
-        let residue_color_buffer = ResidueColorBuffer::new(&context.device, total_residues.max(1));
+        let mut residue_color_buffer = ResidueColorBuffer::new(&context.device, total_residues.max(1));
 
         let mut tube_renderer = TubeRenderer::new(
             &context,
@@ -306,6 +306,32 @@ impl ProteinRenderEngine {
             &mut shader_composer,
         );
         let options = Options::default();
+
+        // Compute initial per-residue colors so the first frame isn't gray
+        {
+            let backbone_chains = &render_coords.backbone_chains;
+            let num_chains = backbone_chains.len();
+            let initial_colors: Vec<[f32; 3]> = if num_chains == 0 {
+                vec![[0.5, 0.5, 0.5]; total_residues.max(1)]
+            } else {
+                let mut colors = Vec::with_capacity(total_residues);
+                for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+                    let t = if num_chains > 1 {
+                        chain_idx as f32 / (num_chains - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    let color = Self::chain_color(t);
+                    let n_residues = chain.len() / 3;
+                    for _ in 0..n_residues {
+                        colors.push(color);
+                    }
+                }
+                colors
+            };
+            residue_color_buffer.set_colors_immediate(&context.queue, &initial_colors);
+        }
+
         // Collect non-protein entities from the group for ball-and-stick
         let non_protein_entities: Vec<&MoleculeEntity> = scene.group(group_id)
             .map(|g| g.entities().iter()
@@ -360,9 +386,6 @@ impl ProteinRenderEngine {
             all_fit_positions.extend(chain);
         }
         camera_controller.fit_to_positions(&all_fit_positions);
-
-        // Mark scene as rendered (initial state is synced)
-        scene.mark_rendered();
 
         // Create structure animator
         let animator = StructureAnimator::new();
@@ -1116,11 +1139,13 @@ impl ProteinRenderEngine {
                         "score" => BackboneColorMode::Score,
                         "score_relative" => BackboneColorMode::ScoreRelative,
                         "secondary_structure" => BackboneColorMode::SecondaryStructure,
+                        "chain" => BackboneColorMode::Chain,
                         _ => return false,
                     };
                     self.options.display.backbone_color_mode = mode;
                     // Compute new colors and transition smoothly via GPU buffer
-                    let new_colors = self.compute_per_residue_colors();
+                    let chains = self.tube_renderer.cached_chains().to_vec();
+                    let new_colors = self.compute_per_residue_colors(&chains);
                     self.residue_color_buffer.set_target_colors(&new_colors);
                     self.cached_per_residue_colors = Some(new_colors);
                     true
@@ -2343,7 +2368,7 @@ impl ProteinRenderEngine {
             .ensure_capacity(&self.context.device, total_residues);
 
         // Animate colors to new target
-        let colors = self.compute_per_residue_colors();
+        let colors = self.compute_per_residue_colors(new_backbone);
         self.residue_color_buffer.set_target_colors(&colors);
         self.cached_per_residue_colors = Some(colors);
     }
@@ -2378,15 +2403,38 @@ impl ProteinRenderEngine {
             .ensure_capacity(&self.context.device, total_residues);
 
         // Snap colors immediately (no transition for snap updates)
-        let colors = self.compute_per_residue_colors();
+        let colors = self.compute_per_residue_colors(&prepared.backbone_chains);
         self.residue_color_buffer.set_colors_immediate(&self.context.queue, &colors);
         self.cached_per_residue_colors = Some(colors);
+    }
+
+    /// Compute a rainbow chain color for parameter `t` in [0, 1].
+    ///
+    /// Maps t=0 → blue (hue 240°) through cyan, green, yellow, orange to t=1 → red (hue 0°)
+    /// using HSV→RGB with S=1, V=1.
+    fn chain_color(t: f32) -> [f32; 3] {
+        // Hue: 240° (blue) → 0° (red), mapped to [0,6) sector range
+        let hue = (1.0 - t) * 240.0;
+        let sector = hue / 60.0;
+        let frac = sector - sector.floor();
+        let (r, g, b) = match sector as u32 {
+            0 => (1.0, frac, 0.0),        // red → yellow
+            1 => (1.0 - frac, 1.0, 0.0),  // yellow → green
+            2 => (0.0, 1.0, frac),         // green → cyan
+            3 => (0.0, 1.0 - frac, 1.0),  // cyan → blue
+            _ => (0.0, 0.0, 1.0),          // blue
+        };
+        [r, g, b]
     }
 
     /// Compute per-residue colors based on the current backbone_color_mode.
     ///
     /// Uses cached scores and SS types to derive colors without mesh rebuild.
-    fn compute_per_residue_colors(&self) -> Vec<[f32; 3]> {
+    /// `backbone_chains` provides the chain data for Chain color mode — callers
+    /// should pass the authoritative chains (e.g. from `PreparedScene`) rather
+    /// than relying on `tube_renderer.cached_chains()` which may not yet be
+    /// updated.
+    fn compute_per_residue_colors(&self, backbone_chains: &[Vec<Vec3>]) -> Vec<[f32; 3]> {
         use crate::util::options::BackboneColorMode;
         let residue_count = self.cached_ss_types.len().max(1);
         match self.options.display.backbone_color_mode {
@@ -2414,6 +2462,26 @@ impl ProteinRenderEngine {
                 } else {
                     self.cached_ss_types.iter().map(|ss| ss.color()).collect()
                 }
+            }
+            BackboneColorMode::Chain => {
+                let num_chains = backbone_chains.len();
+                if num_chains == 0 {
+                    return vec![[0.5, 0.5, 0.5]; residue_count];
+                }
+                let mut colors = Vec::with_capacity(residue_count);
+                for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+                    let t = if num_chains > 1 {
+                        chain_idx as f32 / (num_chains - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    let color = Self::chain_color(t);
+                    let n_residues = chain.len() / 3;
+                    for _ in 0..n_residues {
+                        colors.push(color);
+                    }
+                }
+                colors
             }
         }
     }

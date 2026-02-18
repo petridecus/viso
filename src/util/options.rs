@@ -81,10 +81,12 @@ impl Options {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BackboneColorMode {
-    #[default]
     Score,
     ScoreRelative,
     SecondaryStructure,
+    /// Each chain gets a distinct color, interpolated blue→red.
+    #[default]
+    Chain,
 }
 
 /// How sidechains are colored.
@@ -138,7 +140,7 @@ impl Default for DisplayOptions {
             show_ions: false,
             show_solvent: false,
             lipid_mode: LipidMode::default(),
-            show_sidechains: true,
+            show_sidechains: false,
             show_hydrogens: false,
             backbone_color_mode: BackboneColorMode::default(),
             sidechain_color_mode: SidechainColorMode::default(),

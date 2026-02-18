@@ -45,7 +45,10 @@ impl ApplicationHandler for RenderApp {
             let scale = window.scale_factor();
             let (width, height) = (size.width, size.height);
 
-            let engine = pollster::block_on(ProteinRenderEngine::new_with_path(window.clone(), (width, height), scale, &self.cif_path));
+            let mut engine = pollster::block_on(ProteinRenderEngine::new_with_path(window.clone(), (width, height), scale, &self.cif_path));
+
+            // Kick off background scene processing so colors and geometry are ready
+            engine.sync_scene_to_renderers(None);
 
             window.request_redraw();
             self.window = Some(window);
@@ -75,6 +78,7 @@ impl ApplicationHandler for RenderApp {
 
             WindowEvent::RedrawRequested => {
                 if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
+                    engine.apply_pending_scene();
                     match engine.render() {
                         Ok(()) => {}
                         Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -200,9 +204,13 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
 fn main() {
     env_logger::init();
 
-    let input = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "4pnk".to_string());
+    let input = match std::env::args().nth(1) {
+        Some(arg) => arg,
+        None => {
+            log::error!("Usage: viso <PDB_ID or path>");
+            std::process::exit(1);
+        }
+    };
 
     let cif_path = match resolve_structure_path(&input) {
         Ok(path) => path,
