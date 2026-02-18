@@ -15,6 +15,9 @@ use crate::util::options::{ColorOptions, DisplayOptions};
 use crate::engine::render_context::RenderContext;
 use crate::engine::shader_composer::ShaderComposer;
 
+use super::capsule_instance::CapsuleInstance;
+use crate::renderer::pipeline_util;
+
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;
 
@@ -61,21 +64,6 @@ pub(crate) struct SphereInstance {
     pub(crate) center: [f32; 4],
     /// xyz = RGB color, w = entity_id (packed as float)
     pub(crate) color: [f32; 4],
-}
-
-/// Per-instance data for capsule impostor (bonds).
-/// Must match the WGSL CapsuleInstance struct layout.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct CapsuleInstance {
-    /// Endpoint A position (xyz), radius (w)
-    pub(crate) endpoint_a: [f32; 4],
-    /// Endpoint B position (xyz), residue_idx (w) - packed as float
-    pub(crate) endpoint_b: [f32; 4],
-    /// Color at endpoint A (RGB), w unused
-    pub(crate) color_a: [f32; 4],
-    /// Color at endpoint B (RGB), w unused
-    pub(crate) color_b: [f32; 4],
 }
 
 pub struct BallAndStickRenderer {
@@ -261,28 +249,11 @@ impl BallAndStickRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ],
+                    targets: &pipeline_util::hdr_fragment_targets(),
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -328,28 +299,11 @@ impl BallAndStickRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ],
+                    targets: &pipeline_util::hdr_fragment_targets(),
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -946,17 +900,15 @@ impl BallAndStickRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        lighting_bind_group: &'a wgpu::BindGroup,
-        selection_bind_group: &'a wgpu::BindGroup,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
         // Draw atom spheres
         if self.sphere_count > 0 {
             render_pass.set_pipeline(&self.sphere_pipeline);
             render_pass.set_bind_group(0, &self.sphere_bind_group, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
-            render_pass.set_bind_group(2, lighting_bind_group, &[]);
-            render_pass.set_bind_group(3, selection_bind_group, &[]);
+            render_pass.set_bind_group(1, bind_groups.camera, &[]);
+            render_pass.set_bind_group(2, bind_groups.lighting, &[]);
+            render_pass.set_bind_group(3, bind_groups.selection, &[]);
             render_pass.draw(0..6, 0..self.sphere_count);
         }
 
@@ -964,9 +916,9 @@ impl BallAndStickRenderer {
         if self.bond_count > 0 {
             render_pass.set_pipeline(&self.bond_pipeline);
             render_pass.set_bind_group(0, &self.bond_bind_group, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
-            render_pass.set_bind_group(2, lighting_bind_group, &[]);
-            render_pass.set_bind_group(3, selection_bind_group, &[]);
+            render_pass.set_bind_group(1, bind_groups.camera, &[]);
+            render_pass.set_bind_group(2, bind_groups.lighting, &[]);
+            render_pass.set_bind_group(3, bind_groups.selection, &[]);
             render_pass.draw(0..6, 0..self.bond_count);
         }
     }

@@ -6,6 +6,7 @@
 use crate::engine::dynamic_buffer::DynamicBuffer;
 use crate::engine::render_context::RenderContext;
 use crate::engine::shader_composer::ShaderComposer;
+use crate::renderer::pipeline_util;
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
 use std::collections::hash_map::DefaultHasher;
@@ -143,18 +144,16 @@ impl NucleicAcidRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        lighting_bind_group: &'a wgpu::BindGroup,
-        selection_bind_group: &'a wgpu::BindGroup,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
         if self.index_count == 0 {
             return;
         }
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, camera_bind_group, &[]);
-        render_pass.set_bind_group(1, lighting_bind_group, &[]);
-        render_pass.set_bind_group(2, selection_bind_group, &[]);
+        render_pass.set_bind_group(0, bind_groups.camera, &[]);
+        render_pass.set_bind_group(1, bind_groups.lighting, &[]);
+        render_pass.set_bind_group(2, bind_groups.selection, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(self.index_buffer.buffer().slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -216,18 +215,7 @@ impl NucleicAcidRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ],
+                targets: &pipeline_util::hdr_fragment_targets(),
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -235,13 +223,7 @@ impl NucleicAcidRenderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            depth_stencil: Some(pipeline_util::depth_stencil_state()),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,

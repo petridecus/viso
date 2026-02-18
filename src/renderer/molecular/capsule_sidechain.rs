@@ -15,28 +15,25 @@ use crate::engine::render_context::RenderContext;
 use crate::engine::shader_composer::ShaderComposer;
 use glam::Vec3;
 
+use super::capsule_instance::CapsuleInstance;
+use crate::renderer::pipeline_util;
+
 /// Radius used for frustum culling (capsule bounding sphere)
 const CULL_RADIUS: f32 = 5.0;
-
-/// Per-instance data for capsule impostor
-/// Must match the WGSL CapsuleInstance struct layout exactly
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct CapsuleInstance {
-    /// Endpoint A position (xyz), radius (w)
-    pub(crate) endpoint_a: [f32; 4],
-    /// Endpoint B position (xyz), residue_idx (w) - packed as float
-    pub(crate) endpoint_b: [f32; 4],
-    /// Color at endpoint A (RGB), w unused
-    pub(crate) color_a: [f32; 4],
-    /// Color at endpoint B (RGB), w unused
-    pub(crate) color_b: [f32; 4],
-}
 
 // Color constants
 const HYDROPHOBIC_COLOR: [f32; 3] = [0.3, 0.5, 0.9]; // Blue
 const HYDROPHILIC_COLOR: [f32; 3] = [0.95, 0.6, 0.2]; // Orange
 const CAPSULE_RADIUS: f32 = 0.3;
+
+/// Sidechain geometry data that always travels together.
+pub struct SidechainData<'a> {
+    pub positions: &'a [Vec3],
+    pub bonds: &'a [(u32, u32)],
+    pub backbone_bonds: &'a [(Vec3, u32)],
+    pub hydrophobicity: &'a [bool],
+    pub residue_indices: &'a [u32],
+}
 
 pub struct CapsuleSidechainRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -47,26 +44,22 @@ pub struct CapsuleSidechainRenderer {
 }
 
 impl CapsuleSidechainRenderer {
-    /// `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples.
+    /// `sidechain.backbone_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         lighting_layout: &wgpu::BindGroupLayout,
         selection_layout: &wgpu::BindGroupLayout,
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
+        sidechain: &SidechainData,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
         // No frustum culling on initial creation
         let instances = Self::generate_instances(
-            sidechain_positions,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            hydrophobicity,
-            residue_indices,
+            sidechain.positions,
+            sidechain.bonds,
+            sidechain.backbone_bonds,
+            sidechain.hydrophobicity,
+            sidechain.residue_indices,
             None,
             None,
         );
@@ -168,28 +161,11 @@ impl CapsuleSidechainRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ],
+                    targets: &pipeline_util::hdr_fragment_targets(),
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -299,49 +275,29 @@ impl CapsuleSidechainRenderer {
     }
 
     /// Update sidechain geometry (no frustum culling).
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
+        sidechain: &SidechainData,
     ) {
-        self.update_with_frustum(
-            device,
-            queue,
-            sidechain_positions,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            hydrophobicity,
-            residue_indices,
-            None,
-        );
+        self.update_with_frustum(device, queue, sidechain, None);
     }
 
     /// Update sidechain geometry with frustum culling.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
-    /// - `frustum`: Optional frustum for culling invisible sidechains
     pub fn update_with_frustum(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
+        sidechain: &SidechainData,
         frustum: Option<&Frustum>,
     ) {
         let instances = Self::generate_instances(
-            sidechain_positions,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            hydrophobicity,
-            residue_indices,
+            sidechain.positions,
+            sidechain.bonds,
+            sidechain.backbone_bonds,
+            sidechain.hydrophobicity,
+            sidechain.residue_indices,
             frustum,
             None,
         );
@@ -358,9 +314,7 @@ impl CapsuleSidechainRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        lighting_bind_group: &'a wgpu::BindGroup,
-        selection_bind_group: &'a wgpu::BindGroup,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
         if self.instance_count == 0 {
             return;
@@ -368,9 +322,9 @@ impl CapsuleSidechainRenderer {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_bind_group(1, camera_bind_group, &[]);
-        render_pass.set_bind_group(2, lighting_bind_group, &[]);
-        render_pass.set_bind_group(3, selection_bind_group, &[]);
+        render_pass.set_bind_group(1, bind_groups.camera, &[]);
+        render_pass.set_bind_group(2, bind_groups.lighting, &[]);
+        render_pass.set_bind_group(3, bind_groups.selection, &[]);
 
         // 6 vertices per quad, one quad per capsule
         render_pass.draw(0..6, 0..self.instance_count);

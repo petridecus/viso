@@ -5,7 +5,8 @@ use crate::renderer::postprocess::bloom::BloomPass;
 use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
 use crate::camera::controller::CameraController;
 use crate::camera::input::InputHandler;
-use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
+use crate::renderer::molecular::capsule_sidechain::{CapsuleSidechainRenderer, SidechainData};
+use crate::renderer::molecular::draw_context::DrawBindGroups;
 use crate::renderer::postprocess::composite::CompositePass;
 use crate::renderer::postprocess::fxaa::FxaaPass;
 use crate::engine::frame_timing::FrameTiming;
@@ -231,11 +232,13 @@ impl ProteinRenderEngine {
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
-            &sidechain_positions,
-            &render_coords.sidechain_bonds,
-            &render_coords.backbone_sidechain_bonds,
-            &sidechain_hydrophobicity,
-            &sidechain_residue_indices,
+            &SidechainData {
+                positions: &sidechain_positions,
+                bonds: &render_coords.sidechain_bonds,
+                backbone_bonds: &render_coords.backbone_sidechain_bonds,
+                hydrophobicity: &sidechain_hydrophobicity,
+                residue_indices: &sidechain_residue_indices,
+            },
             &mut shader_composer,
         );
 
@@ -580,58 +583,25 @@ impl ProteinRenderEngine {
             });
 
             // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
+            let bind_groups = DrawBindGroups {
+                camera: &self.camera_controller.bind_group,
+                lighting: &self.lighting.bind_group,
+                selection: &self.selection_buffer.bind_group,
+                color: Some(&self.residue_color_buffer.bind_group),
+            };
+
             // Backbone: tubes for coils, ribbons for helices/sheets
-            self.tube_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-                &self.residue_color_buffer.bind_group,
-            );
-            self.ribbon_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-                &self.residue_color_buffer.bind_group,
-            );
+            self.tube_renderer.draw(&mut rp, &bind_groups);
+            self.ribbon_renderer.draw(&mut rp, &bind_groups);
 
             if self.options.display.show_sidechains {
-                self.sidechain_renderer.draw(
-                    &mut rp,
-                    &self.camera_controller.bind_group,
-                    &self.lighting.bind_group,
-                    &self.selection_buffer.bind_group,
-                );
+                self.sidechain_renderer.draw(&mut rp, &bind_groups);
             }
 
-            self.ball_and_stick_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-            );
-
-            self.nucleic_acid_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-            );
-
-            self.band_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-            );
-
-            self.pull_renderer.draw(
-                &mut rp,
-                &self.camera_controller.bind_group,
-                &self.lighting.bind_group,
-                &self.selection_buffer.bind_group,
-            );
+            self.ball_and_stick_renderer.draw(&mut rp, &bind_groups);
+            self.nucleic_acid_renderer.draw(&mut rp, &bind_groups);
+            self.band_renderer.draw(&mut rp, &bind_groups);
+            self.pull_renderer.draw(&mut rp, &bind_groups);
         }
 
         // SSAO pass (compute ambient occlusion from depth buffer)
@@ -1021,11 +991,13 @@ impl ProteinRenderEngine {
         self.sidechain_renderer.update_with_frustum(
             &self.context.device,
             &self.context.queue,
-            &adjusted_positions,
-            &self.cached_sidechain_bonds,
-            &adjusted_bonds,
-            &self.cached_sidechain_hydrophobicity,
-            &self.cached_sidechain_residue_indices,
+            &SidechainData {
+                positions: &adjusted_positions,
+                bonds: &self.cached_sidechain_bonds,
+                backbone_bonds: &adjusted_bonds,
+                hydrophobicity: &self.cached_sidechain_hydrophobicity,
+                residue_indices: &self.cached_sidechain_residue_indices,
+            },
             Some(&frustum),
         );
 
@@ -1482,12 +1454,8 @@ impl ProteinRenderEngine {
     pub fn update_from_aggregated(
         &mut self,
         backbone_chains: &[Vec<Vec3>],
-        sidechain_positions: &[Vec3],
-        sidechain_hydrophobicity: &[bool],
-        sidechain_residue_indices: &[u32],
+        sidechain: &SidechainData,
         sidechain_atom_names: &[String],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)], // (CA position, CB index)
         all_positions: &[Vec3],
         fit_camera: bool,
         ss_types: Option<&[SSType]>,
@@ -1517,20 +1485,22 @@ impl ProteinRenderEngine {
         // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            sidechain_positions, sidechain_residue_indices, &offset_map,
+            sidechain.positions, sidechain.residue_indices, &offset_map,
         );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
+            sidechain.backbone_bonds, sidechain.residue_indices, &offset_map,
         );
 
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            &adjusted_positions,
-            sidechain_bonds,
-            &adjusted_bonds,
-            sidechain_hydrophobicity,
-            sidechain_residue_indices,
+            &SidechainData {
+                positions: &adjusted_positions,
+                bonds: sidechain.bonds,
+                backbone_bonds: &adjusted_bonds,
+                hydrophobicity: sidechain.hydrophobicity,
+                residue_indices: sidechain.residue_indices,
+            },
         );
 
         // Update capsule picking bind group (buffer may have been reallocated)
@@ -1613,21 +1583,13 @@ impl ProteinRenderEngine {
     pub fn animate_to_full_pose(
         &mut self,
         new_backbone: &[Vec<Vec3>],
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        sidechain_hydrophobicity: &[bool],
-        sidechain_residue_indices: &[u32],
+        sidechain: &SidechainData,
         sidechain_atom_names: &[String],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
     ) {
         self.animate_to_full_pose_with_action(
             new_backbone,
-            sidechain_positions,
-            sidechain_bonds,
-            sidechain_hydrophobicity,
-            sidechain_residue_indices,
+            sidechain,
             sidechain_atom_names,
-            backbone_sidechain_bonds,
             AnimationAction::Wiggle,
         );
     }
@@ -1636,17 +1598,13 @@ impl ProteinRenderEngine {
     pub fn animate_to_full_pose_with_action(
         &mut self,
         new_backbone: &[Vec<Vec3>],
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        sidechain_hydrophobicity: &[bool],
-        sidechain_residue_indices: &[u32],
+        sidechain: &SidechainData,
         sidechain_atom_names: &[String],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
         action: AnimationAction,
     ) {
         // Capture current VISUAL positions as start (for smooth preemption)
         // If animation is in progress, use interpolated positions, not old targets
-        if self.target_sidechain_positions.len() == sidechain_positions.len() {
+        if self.target_sidechain_positions.len() == sidechain.positions.len() {
             if self.animator.is_animating() && self.animator.has_sidechain_data() {
                 // Animation in progress - sync to current visual state (like backbone does)
                 self.start_sidechain_positions = self.animator.get_sidechain_positions();
@@ -1668,16 +1626,16 @@ impl ProteinRenderEngine {
             }
         } else {
             // Size changed - snap to new positions
-            self.start_sidechain_positions = sidechain_positions.to_vec();
-            self.start_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
+            self.start_sidechain_positions = sidechain.positions.to_vec();
+            self.start_backbone_sidechain_bonds = sidechain.backbone_bonds.to_vec();
         }
 
         // Set new targets and cached data
-        self.target_sidechain_positions = sidechain_positions.to_vec();
-        self.target_backbone_sidechain_bonds = backbone_sidechain_bonds.to_vec();
-        self.cached_sidechain_bonds = sidechain_bonds.to_vec();
-        self.cached_sidechain_hydrophobicity = sidechain_hydrophobicity.to_vec();
-        self.cached_sidechain_residue_indices = sidechain_residue_indices.to_vec();
+        self.target_sidechain_positions = sidechain.positions.to_vec();
+        self.target_backbone_sidechain_bonds = sidechain.backbone_bonds.to_vec();
+        self.cached_sidechain_bonds = sidechain.bonds.to_vec();
+        self.cached_sidechain_hydrophobicity = sidechain.hydrophobicity.to_vec();
+        self.cached_sidechain_residue_indices = sidechain.residue_indices.to_vec();
         self.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
@@ -1691,8 +1649,8 @@ impl ProteinRenderEngine {
         // This allows set_target to detect sidechain changes and force animation
         // even when backbone is unchanged (for Shake/MPNN animations)
         self.animator.set_sidechain_target_with_action(
-            sidechain_positions,
-            sidechain_residue_indices,
+            sidechain.positions,
+            sidechain.residue_indices,
             &ca_positions,
             Some(action),
         );
@@ -1709,19 +1667,21 @@ impl ProteinRenderEngine {
         // Update sidechain renderer with start positions (adjusted for sheet surface)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions = crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-            &self.start_sidechain_positions, sidechain_residue_indices, &offset_map,
+            &self.start_sidechain_positions, sidechain.residue_indices, &offset_map,
         );
         let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            &self.start_backbone_sidechain_bonds, sidechain_residue_indices, &offset_map,
+            &self.start_backbone_sidechain_bonds, sidechain.residue_indices, &offset_map,
         );
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            &adjusted_positions,
-            sidechain_bonds,
-            &adjusted_bonds,
-            sidechain_hydrophobicity,
-            sidechain_residue_indices,
+            &SidechainData {
+                positions: &adjusted_positions,
+                bonds: sidechain.bonds,
+                backbone_bonds: &adjusted_bonds,
+                hydrophobicity: sidechain.hydrophobicity,
+                residue_indices: sidechain.residue_indices,
+            },
         );
     }
 

@@ -18,20 +18,8 @@ use crate::engine::render_context::RenderContext;
 use crate::engine::shader_composer::ShaderComposer;
 use glam::Vec3;
 
-/// Per-instance data for capsule impostor
-/// Must match the WGSL CapsuleInstance struct layout exactly
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CapsuleInstance {
-    /// Endpoint A position (xyz), radius (w)
-    endpoint_a: [f32; 4],
-    /// Endpoint B position (xyz), residue_idx (w) - packed as float
-    endpoint_b: [f32; 4],
-    /// Color at endpoint A (RGB), w unused
-    color_a: [f32; 4],
-    /// Color at endpoint B (RGB), w unused
-    color_b: [f32; 4],
-}
+use super::capsule_instance::CapsuleInstance;
+use crate::renderer::pipeline_util;
 
 // Foldit color constants for bands
 const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5];        // Purple - default band
@@ -224,28 +212,11 @@ impl BandRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ],
+                    targets: &pipeline_util::hdr_fragment_targets(),
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
@@ -393,9 +364,7 @@ impl BandRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        lighting_bind_group: &'a wgpu::BindGroup,
-        selection_bind_group: &'a wgpu::BindGroup,
+        bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
         if self.instance_count == 0 {
             return;
@@ -403,9 +372,9 @@ impl BandRenderer {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_bind_group(1, camera_bind_group, &[]);
-        render_pass.set_bind_group(2, lighting_bind_group, &[]);
-        render_pass.set_bind_group(3, selection_bind_group, &[]);
+        render_pass.set_bind_group(1, bind_groups.camera, &[]);
+        render_pass.set_bind_group(2, bind_groups.lighting, &[]);
+        render_pass.set_bind_group(3, bind_groups.selection, &[]);
 
         // 6 vertices per quad, one quad per capsule
         render_pass.draw(0..6, 0..self.instance_count);

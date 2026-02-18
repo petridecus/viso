@@ -82,7 +82,7 @@ impl ApplicationHandler for RenderApp {
                             engine.resize(inner.width, inner.height);
                         }
                         Err(e) => {
-                            eprintln!("render error: {:?}", e);
+                            log::error!("render error: {:?}", e);
                         }
                     }
                     window.request_redraw();
@@ -178,7 +178,7 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
         }
 
         let url = format!("https://files.rcsb.org/download/{}.cif", pdb_id);
-        eprintln!("Downloading {} from RCSB...", pdb_id.to_uppercase());
+        log::info!("Downloading {} from RCSB...", pdb_id.to_uppercase());
 
         let content = ureq::get(&url)
             .call()
@@ -190,7 +190,7 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
         std::fs::write(&local_path, &content)
             .map_err(|e| format!("Failed to save CIF file: {}", e))?;
 
-        eprintln!("Downloaded to {}", local_path.display());
+        log::info!("Downloaded to {}", local_path.display());
         return Ok(local_path.to_string_lossy().to_string());
     }
 
@@ -198,6 +198,8 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
 }
 
 fn main() {
+    env_logger::init();
+
     let input = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "4pnk".to_string());
@@ -205,7 +207,7 @@ fn main() {
     let cif_path = match resolve_structure_path(&input) {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("{}", e);
+            log::error!("{}", e);
             std::process::exit(1);
         }
     };
