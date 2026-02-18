@@ -4,6 +4,14 @@ Viso is a GPU-accelerated 3D protein visualization engine written in Rust. It re
 
 Viso supports multiple representation styles — backbone ribbons, tubes, ball-and-stick, sidechains, and nucleic acids — combined with a full post-processing pipeline (bloom, SSAO, FXAA, tone mapping) and an animation system for smooth structural transitions.
 
+<p align="center">
+  <img src="gallery/spike-protein.png" width="19%" />
+  <img src="gallery/fatty-acid-synthase.png" width="19%" />
+  <img src="gallery/hemolysin.png" width="19%" />
+  <img src="gallery/mitochondrial-complex.png" width="19%" />
+  <img src="gallery/tetranucleosome.png" width="19%" />
+</p>
+
 ## Features
 
 - **Multiple representations**: secondary structure ribbons (helices/sheets), backbone tubes, ray-marched sidechain impostors, ball-and-stick ligands, nucleic acid backbones
