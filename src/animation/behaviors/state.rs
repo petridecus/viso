@@ -42,8 +42,8 @@ impl ResidueVisualState {
 
         let num_chis = self.num_chis.max(other.num_chis);
         let mut chis = [0.0f32; 4];
-        for i in 0..num_chis {
-            chis[i] = lerp_angle(t, self.chis[i], other.chis[i]);
+        for (i, chi) in chis.iter_mut().enumerate().take(num_chis) {
+            *chi = lerp_angle(t, self.chis[i], other.chis[i]);
         }
 
         Self {

@@ -69,6 +69,24 @@ struct SSSegment {
     end_residue: usize,
 }
 
+/// Pre-computed ribbon mesh data for GPU upload.
+pub struct PreparedRibbonData<'a> {
+    pub vertices: &'a [u8],
+    pub indices: &'a [u8],
+    pub index_count: u32,
+    pub sheet_offsets: Vec<(u32, Vec3)>,
+    pub cached_chains: Vec<Vec<Vec3>>,
+    pub ss_override: Option<Vec<SSType>>,
+}
+
+/// Shared context for sheet generation functions.
+struct SheetContext {
+    pub base: u32,
+    pub global_residue_base: u32,
+    pub taper_start: usize,
+    pub taper_end: usize,
+}
+
 pub struct RibbonRenderer {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
@@ -468,16 +486,19 @@ impl RibbonRenderer {
                         let n_pos: Vec<Vec3> = residues.iter().map(|r| r.n_pos).collect();
                         let ca_pos: Vec<Vec3> = residues.iter().map(|r| r.ca_pos).collect();
                         let c_pos: Vec<Vec3> = residues.iter().map(|r| r.c_pos).collect();
+                        let ctx = SheetContext {
+                            base,
+                            global_residue_base: segment_residue_base,
+                            taper_start,
+                            taper_end,
+                        };
                         peptide_plane_sheet(
                             &n_pos,
                             &ca_pos,
                             &c_pos,
                             &ss,
                             params,
-                            base,
-                            segment_residue_base,
-                            taper_start,
-                            taper_end,
+                            &ctx,
                         )
                     }
                     SSType::Coil => continue,
@@ -606,16 +627,19 @@ impl RibbonRenderer {
                             (0..n_res).map(|i| backbone_slice[i * 3 + 1]).collect();
                         let c_pos: Vec<Vec3> =
                             (0..n_res).map(|i| backbone_slice[i * 3 + 2]).collect();
+                        let ctx = SheetContext {
+                            base,
+                            global_residue_base: segment_residue_base,
+                            taper_start,
+                            taper_end,
+                        };
                         peptide_plane_sheet(
                             &n_pos,
                             &ca_pos,
                             &c_pos,
                             &ss,
                             params,
-                            base,
-                            segment_residue_base,
-                            taper_start,
-                            taper_end,
+                            &ctx,
                         )
                     }
                     SSType::Coil => continue,
@@ -723,22 +747,17 @@ impl RibbonRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        vertices: &[u8],
-        indices: &[u8],
-        index_count: u32,
-        sheet_offsets: Vec<(u32, Vec3)>,
-        cached_chains: Vec<Vec<Vec3>>,
-        ss_override: Option<Vec<SSType>>,
+        data: PreparedRibbonData,
     ) {
-        if !vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, vertices);
-            self.index_buffer.write_bytes(device, queue, indices);
+        if !data.vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, data.vertices);
+            self.index_buffer.write_bytes(device, queue, data.indices);
         }
-        self.index_count = index_count;
-        self.sheet_offsets = sheet_offsets;
-        self.cached_chains = cached_chains;
+        self.index_count = data.index_count;
+        self.sheet_offsets = data.sheet_offsets;
+        self.cached_chains = data.cached_chains;
         self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
-        if let Some(ss) = ss_override {
+        if let Some(ss) = data.ss_override {
             self.ss_override = Some(ss);
         }
     }
@@ -873,8 +892,8 @@ fn compute_helix_axis_points(ca_positions: &[Vec3]) -> Vec<Vec3> {
         let end = (i + window / 2 + 1).min(n);
 
         let mut sum = Vec3::ZERO;
-        for j in start..end {
-            sum += ca_positions[j];
+        for pos in &ca_positions[start..end] {
+            sum += *pos;
         }
         centers.push(sum / (end - start) as f32);
     }
@@ -894,10 +913,7 @@ fn peptide_plane_sheet(
     c_pos: &[Vec3],
     ss_types: &[SSType],
     params: &RibbonParams,
-    base: u32,
-    global_residue_base: u32,
-    taper_start: usize,
-    taper_end: usize,
+    ctx: &SheetContext,
 ) -> (Vec<RibbonVertex>, Vec<u32>, Vec<(u32, Vec3)>) {
     let n = ca_pos.len();
     if n < 2 {
@@ -934,8 +950,8 @@ fn peptide_plane_sheet(
     let offsets: Vec<(u32, Vec3)> = positions
         .iter()
         .enumerate()
-        .filter(|(i, _)| *i >= taper_start && *i < n.saturating_sub(taper_end))
-        .map(|(i, &pos)| (global_residue_base + i as u32, pos - ca_pos[i]))
+        .filter(|(i, _)| *i >= ctx.taper_start && *i < n.saturating_sub(ctx.taper_end))
+        .map(|(i, &pos)| (ctx.global_residue_base + i as u32, pos - ca_pos[i]))
         .collect();
 
     let (v, i) = sheet_from_normals(
@@ -943,10 +959,7 @@ fn peptide_plane_sheet(
         &normals,
         ss_types,
         params,
-        base,
-        global_residue_base,
-        taper_start,
-        taper_end,
+        ctx,
     );
     (v, i, offsets)
 }
@@ -961,10 +974,7 @@ fn sheet_from_normals(
     normals: &[Vec3],
     ss_types: &[SSType],
     params: &RibbonParams,
-    base: u32,
-    global_residue_base: u32,
-    taper_start: usize,
-    taper_end: usize,
+    ctx: &SheetContext,
 ) -> (Vec<RibbonVertex>, Vec<u32>) {
     let n = ca_positions.len();
     if n < 2 {
@@ -1018,7 +1028,7 @@ fn sheet_from_normals(
             .get(local_residue_idx)
             .map(|s| s.color())
             .unwrap_or(SSType::Sheet.color());
-        let residue_idx = global_residue_base + local_residue_idx as u32;
+        let residue_idx = ctx.global_residue_base + local_residue_idx as u32;
 
         frames.push(RibbonFrame {
             position: pos,
@@ -1033,10 +1043,10 @@ fn sheet_from_normals(
         frames.len(),
         params.sheet_width,
         params.segments_per_residue,
-        taper_start,
-        taper_end,
+        ctx.taper_start,
+        ctx.taper_end,
     );
-    build_ribbon_mesh(&frames, &widths, params.sheet_thickness, base, false)
+    build_ribbon_mesh(&frames, &widths, params.sheet_thickness, ctx.base, false)
 }
 
 /// Iterative flattening of sheet positions and normals (PyMOL-style).
@@ -1130,15 +1140,18 @@ fn generate_sheet_from_ca(
     let mut positions = ca_positions.to_vec();
     flatten_sheet(&mut positions, &mut normals, 4);
 
+    let ctx = SheetContext {
+        base,
+        global_residue_base,
+        taper_start: 0,
+        taper_end: 0,
+    };
     sheet_from_normals(
         &positions,
         &normals,
         ss_types,
         params,
-        base,
-        global_residue_base,
-        0,
-        0,
+        &ctx,
     )
 }
 

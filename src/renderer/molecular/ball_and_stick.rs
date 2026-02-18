@@ -66,6 +66,16 @@ pub(crate) struct SphereInstance {
     pub(crate) color: [f32; 4],
 }
 
+/// Pre-computed instance data for GPU upload.
+pub struct PreparedBallAndStickData<'a> {
+    pub sphere_bytes: &'a [u8],
+    pub sphere_count: u32,
+    pub capsule_bytes: &'a [u8],
+    pub capsule_count: u32,
+    pub picking_bytes: &'a [u8],
+    pub picking_count: u32,
+}
+
 pub struct BallAndStickRenderer {
     // Atom spheres
     sphere_pipeline: wgpu::RenderPipeline,
@@ -882,13 +892,16 @@ impl BallAndStickRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sphere_bytes: &[u8],
-        sphere_count: u32,
-        capsule_bytes: &[u8],
-        capsule_count: u32,
-        picking_bytes: &[u8],
-        picking_count: u32,
+        data: &PreparedBallAndStickData,
     ) {
+        let PreparedBallAndStickData {
+            sphere_bytes,
+            sphere_count,
+            capsule_bytes,
+            capsule_count,
+            picking_bytes,
+            picking_count,
+        } = *data;
         // Zeroed fallbacks for empty buffers (wgpu requires non-zero bind group buffers)
         let sphere_zero = SphereInstance::zeroed();
         let capsule_zero = CapsuleInstance::zeroed();

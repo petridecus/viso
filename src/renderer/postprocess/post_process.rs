@@ -7,6 +7,14 @@ use crate::renderer::postprocess::ssao::SsaoRenderer;
 use crate::util::options::Options;
 use glam::Mat4;
 
+/// Camera parameters needed for post-processing passes.
+pub struct PostProcessCamera {
+    pub proj: Mat4,
+    pub view_matrix: Mat4,
+    pub znear: f32,
+    pub zfar: f32,
+}
+
 /// Owns the full post-processing pipeline: depth/normal G-buffers,
 /// SSAO, bloom, composite, and FXAA passes.
 pub(crate) struct PostProcessStack {
@@ -91,15 +99,12 @@ impl PostProcessStack {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
-        proj: Mat4,
-        view_matrix: Mat4,
-        znear: f32,
-        zfar: f32,
+        camera: &PostProcessCamera,
         final_view: &wgpu::TextureView,
     ) {
         // SSAO pass
         self.ssao_renderer
-            .update_matrices(queue, proj, view_matrix, znear, zfar);
+            .update_matrices(queue, camera.proj, camera.view_matrix, camera.znear, camera.zfar);
         self.ssao_renderer.render_ssao(encoder);
 
         // Bloom pass

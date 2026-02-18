@@ -160,8 +160,8 @@ pub fn build_backbone_atom_indices(coords: &foldit_conv::coords::Coords) -> Vec<
         let chain_id = coords.chain_ids[i];
         let res_num = coords.res_nums[i];
 
-        let is_chain_break = last_chain_id.map_or(false, |c| c != chain_id);
-        let is_sequence_gap = last_res_num.map_or(false, |r| (res_num - r).abs() > 1);
+        let is_chain_break = last_chain_id.is_some_and(|c| c != chain_id);
+        let is_sequence_gap = last_res_num.is_some_and(|r| (res_num - r).abs() > 1);
 
         if (is_chain_break || is_sequence_gap) && !current_chain_indices.is_empty() {
             indices.append(&mut current_chain_indices);

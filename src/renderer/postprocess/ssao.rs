@@ -21,6 +21,16 @@ pub struct SsaoParams {
 }
 
 /// SSAO (Screen Space Ambient Occlusion) renderer
+struct SsaoViews<'a> {
+    pub depth: &'a wgpu::TextureView,
+    pub noise: &'a wgpu::TextureView,
+    pub normal: &'a wgpu::TextureView,
+    pub sampler: &'a wgpu::Sampler,
+    pub noise_sampler: &'a wgpu::Sampler,
+    pub kernel_buffer: &'a wgpu::Buffer,
+    pub params_buffer: &'a wgpu::Buffer,
+}
+
 pub struct SsaoRenderer {
     // SSAO output textures
     pub ssao_texture: wgpu::Texture,
@@ -366,13 +376,15 @@ impl SsaoRenderer {
         let ssao_bind_group = Self::create_ssao_bind_group(
             context,
             &ssao_bind_group_layout,
-            depth_view,
-            &noise_view,
-            &ssao_sampler,
-            &noise_sampler,
-            &kernel_buffer,
-            &params_buffer,
-            normal_view,
+            &SsaoViews {
+                depth: depth_view,
+                noise: &noise_view,
+                normal: normal_view,
+                sampler: &ssao_sampler,
+                noise_sampler: &noise_sampler,
+                kernel_buffer: &kernel_buffer,
+                params_buffer: &params_buffer,
+            },
         );
 
         let blur_bind_group = Self::create_blur_bind_group(
@@ -431,7 +443,7 @@ impl SsaoRenderer {
         let mut rng = rand::rng();
         let mut kernel = [[0.0f32; 4]; KERNEL_SIZE];
 
-        for i in 0..KERNEL_SIZE {
+        for (i, kernel_sample) in kernel.iter_mut().enumerate() {
             // Random point in hemisphere (positive Z)
             let mut sample = [
                 rng.random::<f32>() * 2.0 - 1.0,
@@ -456,7 +468,7 @@ impl SsaoRenderer {
             sample[1] *= scale;
             sample[2] *= scale;
 
-            kernel[i] = sample;
+            *kernel_sample = sample;
         }
 
         kernel
@@ -524,13 +536,7 @@ impl SsaoRenderer {
     fn create_ssao_bind_group(
         context: &RenderContext,
         layout: &wgpu::BindGroupLayout,
-        depth_view: &wgpu::TextureView,
-        noise_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-        noise_sampler: &wgpu::Sampler,
-        kernel_buffer: &wgpu::Buffer,
-        params_buffer: &wgpu::Buffer,
-        normal_view: &wgpu::TextureView,
+        views: &SsaoViews,
     ) -> wgpu::BindGroup {
         context
             .device
@@ -540,31 +546,31 @@ impl SsaoRenderer {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
+                        resource: wgpu::BindingResource::TextureView(views.depth),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(noise_view),
+                        resource: wgpu::BindingResource::TextureView(views.noise),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: wgpu::BindingResource::Sampler(views.sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::Sampler(noise_sampler),
+                        resource: wgpu::BindingResource::Sampler(views.noise_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: kernel_buffer.as_entire_binding(),
+                        resource: views.kernel_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: params_buffer.as_entire_binding(),
+                        resource: views.params_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
+                        resource: wgpu::BindingResource::TextureView(views.normal),
                     },
                 ],
             })
@@ -655,13 +661,15 @@ impl SsaoRenderer {
         self.ssao_bind_group = Self::create_ssao_bind_group(
             context,
             &self.ssao_bind_group_layout,
-            depth_view,
-            &self.noise_view,
-            &self.ssao_sampler,
-            &self.noise_sampler,
-            &self.kernel_buffer,
-            &self.params_buffer,
-            normal_view,
+            &SsaoViews {
+                depth: depth_view,
+                noise: &self.noise_view,
+                normal: normal_view,
+                sampler: &self.ssao_sampler,
+                noise_sampler: &self.noise_sampler,
+                kernel_buffer: &self.kernel_buffer,
+                params_buffer: &self.params_buffer,
+            },
         );
 
         self.blur_bind_group = Self::create_blur_bind_group(

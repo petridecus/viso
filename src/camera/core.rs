@@ -37,6 +37,12 @@ impl Camera {
     }
 }
 
+impl Default for CameraUniform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CameraUniform {
     pub fn new() -> Self {
         Self {

@@ -183,13 +183,13 @@ impl ProteinRenderEngine {
                 let res_end = (start_residue + residue_count) as usize;
                 for (i, &res_idx) in self.sc.cached_sidechain_residue_indices.iter().enumerate() {
                     let r = res_idx as usize;
-                    if r >= res_start && r < res_end {
-                        if i < self.sc.start_sidechain_positions.len()
-                            && i < self.sc.target_sidechain_positions.len()
-                        {
-                            self.sc.start_sidechain_positions[i] =
-                                self.sc.target_sidechain_positions[i];
-                        }
+                    if r >= res_start
+                        && r < res_end
+                        && i < self.sc.start_sidechain_positions.len()
+                        && i < self.sc.target_sidechain_positions.len()
+                    {
+                        self.sc.start_sidechain_positions[i] =
+                            self.sc.target_sidechain_positions[i];
                     }
                 }
                 for (j, &(_, cb_idx)) in self.sc.target_backbone_sidechain_bonds.iter().enumerate()
@@ -200,11 +200,12 @@ impl ProteinRenderEngine {
                         .get(cb_idx as usize)
                         .copied()
                         .unwrap_or(u32::MAX) as usize;
-                    if res_idx >= res_start && res_idx < res_end {
-                        if j < self.sc.start_backbone_sidechain_bonds.len() {
-                            self.sc.start_backbone_sidechain_bonds[j] =
-                                self.sc.target_backbone_sidechain_bonds[j];
-                        }
+                    if res_idx >= res_start
+                        && res_idx < res_end
+                        && j < self.sc.start_backbone_sidechain_bonds.len()
+                    {
+                        self.sc.start_backbone_sidechain_bonds[j] =
+                            self.sc.target_backbone_sidechain_bonds[j];
                     }
                 }
             }
@@ -235,21 +236,25 @@ impl ProteinRenderEngine {
             self.tube_renderer.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
-                &prepared.tube_vertices,
-                &prepared.tube_indices,
-                prepared.tube_index_count,
-                prepared.backbone_chains.clone(),
-                prepared.ss_types.clone(),
+                crate::renderer::molecular::tube::PreparedTubeData {
+                    vertices: &prepared.tube_vertices,
+                    indices: &prepared.tube_indices,
+                    index_count: prepared.tube_index_count,
+                    cached_chains: prepared.backbone_chains.clone(),
+                    ss_override: prepared.ss_types.clone(),
+                },
             );
             self.ribbon_renderer.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
-                &prepared.ribbon_vertices,
-                &prepared.ribbon_indices,
-                prepared.ribbon_index_count,
-                prepared.sheet_offsets.clone(),
-                prepared.backbone_chains.clone(),
-                prepared.ss_types.clone(),
+                crate::renderer::molecular::ribbon::PreparedRibbonData {
+                    vertices: &prepared.ribbon_vertices,
+                    indices: &prepared.ribbon_indices,
+                    index_count: prepared.ribbon_index_count,
+                    sheet_offsets: prepared.sheet_offsets.clone(),
+                    cached_chains: prepared.backbone_chains.clone(),
+                    ss_override: prepared.ss_types.clone(),
+                },
             );
             let suppress_sidechains = dominant_action == Some(AnimationAction::DiffusionFinalize);
             if !suppress_sidechains {
@@ -265,12 +270,14 @@ impl ProteinRenderEngine {
         self.ball_and_stick_renderer.apply_prepared(
             &self.context.device,
             &self.context.queue,
-            &prepared.bns_sphere_instances,
-            prepared.bns_sphere_count,
-            &prepared.bns_capsule_instances,
-            prepared.bns_capsule_count,
-            &prepared.bns_picking_capsules,
-            prepared.bns_picking_count,
+            &crate::renderer::molecular::ball_and_stick::PreparedBallAndStickData {
+                sphere_bytes: &prepared.bns_sphere_instances,
+                sphere_count: prepared.bns_sphere_count,
+                capsule_bytes: &prepared.bns_capsule_instances,
+                capsule_count: prepared.bns_capsule_count,
+                picking_bytes: &prepared.bns_picking_capsules,
+                picking_count: prepared.bns_picking_count,
+            },
         );
 
         self.nucleic_acid_renderer.apply_prepared(

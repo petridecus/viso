@@ -18,6 +18,12 @@ struct ModuleDef {
     file_path: &'static str,
 }
 
+impl Default for ShaderComposer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShaderComposer {
     pub fn new() -> Self {
         let mut composer = Composer::default();
@@ -101,13 +107,15 @@ impl ShaderComposer {
         &mut self,
         source: &str,
         file_path: &str,
-    ) -> Result<naga::Module, naga_oil::compose::ComposerError> {
-        self.composer.make_naga_module(NagaModuleDescriptor {
-            source,
-            file_path,
-            shader_type: ShaderType::Wgsl,
-            ..Default::default()
-        })
+    ) -> Result<naga::Module, Box<naga_oil::compose::ComposerError>> {
+        self.composer
+            .make_naga_module(NagaModuleDescriptor {
+                source,
+                file_path,
+                shader_type: ShaderType::Wgsl,
+                ..Default::default()
+            })
+            .map_err(Box::new)
     }
 }
 

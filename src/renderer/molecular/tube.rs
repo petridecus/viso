@@ -82,6 +82,15 @@ pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+/// Pre-computed tube mesh data for GPU upload.
+pub struct PreparedTubeData<'a> {
+    pub vertices: &'a [u8],
+    pub indices: &'a [u8],
+    pub index_count: u32,
+    pub cached_chains: Vec<Vec<Vec3>>,
+    pub ss_override: Option<Vec<SSType>>,
+}
+
 pub struct TubeRenderer {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
@@ -743,20 +752,16 @@ impl TubeRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        vertices: &[u8],
-        indices: &[u8],
-        index_count: u32,
-        cached_chains: Vec<Vec<Vec3>>,
-        ss_override: Option<Vec<SSType>>,
+        data: PreparedTubeData,
     ) {
-        if !vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, vertices);
-            self.index_buffer.write_bytes(device, queue, indices);
+        if !data.vertices.is_empty() {
+            self.vertex_buffer.write_bytes(device, queue, data.vertices);
+            self.index_buffer.write_bytes(device, queue, data.indices);
         }
-        self.index_count = index_count;
-        self.cached_chains = cached_chains;
+        self.index_count = data.index_count;
+        self.cached_chains = data.cached_chains;
         self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
-        if let Some(ss) = ss_override {
+        if let Some(ss) = data.ss_override {
             self.ss_override = Some(ss);
         }
     }

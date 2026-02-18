@@ -142,8 +142,8 @@ impl AnimationController {
         let residue_data: Vec<ResidueAnimationData> = differing
             .into_iter()
             .filter_map(|idx| {
-                let start = current_state.get_current(idx)?.clone();
-                let target = new_target.get_target(idx)?.clone();
+                let start = *current_state.get_current(idx)?;
+                let target = *new_target.get_target(idx)?;
                 Some(ResidueAnimationData {
                     residue_idx: idx,
                     start,

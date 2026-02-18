@@ -23,7 +23,7 @@ pub struct SelectionBuffer {
 impl SelectionBuffer {
     pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
         // Round up to multiple of 32 bits
-        let num_words = (max_residues + 31) / 32;
+        let num_words = max_residues.div_ceil(32);
         let data = vec![0u32; num_words.max(1)];
 
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -65,7 +65,7 @@ impl SelectionBuffer {
 
     /// Update selection state from a list of selected residue indices
     pub fn update(&self, queue: &wgpu::Queue, selected_residues: &[i32]) {
-        let num_words = (self.capacity + 31) / 32;
+        let num_words = self.capacity.div_ceil(32);
         let mut data = vec![0u32; num_words.max(1)];
 
         for &idx in selected_residues {
@@ -88,7 +88,7 @@ impl SelectionBuffer {
 
         // Need to grow - recreate buffer with new capacity
         let new_capacity = required;
-        let num_words = (new_capacity + 31) / 32;
+        let num_words = new_capacity.div_ceil(32);
         let data = vec![0u32; num_words.max(1)];
 
         self.buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -111,6 +111,20 @@ impl SelectionBuffer {
 }
 
 /// GPU picking buffer that stores residue indices
+/// Geometry buffers needed for the picking render pass.
+pub struct PickingGeometry<'a> {
+    pub tube_vertex_buffer: &'a wgpu::Buffer,
+    pub tube_index_buffer: &'a wgpu::Buffer,
+    pub tube_index_count: u32,
+    pub ribbon_vertex_buffer: Option<&'a wgpu::Buffer>,
+    pub ribbon_index_buffer: Option<&'a wgpu::Buffer>,
+    pub ribbon_index_count: u32,
+    pub capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    pub capsule_count: u32,
+    pub bns_capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    pub bns_capsule_count: u32,
+}
+
 pub struct Picking {
     /// Picking texture (R32Uint format for residue indices)
     texture: wgpu::Texture,
@@ -392,19 +406,22 @@ impl Picking {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         camera_bind_group: &wgpu::BindGroup,
-        tube_vertex_buffer: &wgpu::Buffer,
-        tube_index_buffer: &wgpu::Buffer,
-        tube_index_count: u32,
-        ribbon_vertex_buffer: Option<&wgpu::Buffer>,
-        ribbon_index_buffer: Option<&wgpu::Buffer>,
-        ribbon_index_count: u32,
-        capsule_bind_group: Option<&wgpu::BindGroup>,
-        capsule_count: u32,
-        bns_capsule_bind_group: Option<&wgpu::BindGroup>,
-        bns_capsule_count: u32,
+        geometry: &PickingGeometry,
         mouse_x: u32,
         mouse_y: u32,
     ) {
+        let PickingGeometry {
+            tube_vertex_buffer,
+            tube_index_buffer,
+            tube_index_count,
+            ribbon_vertex_buffer,
+            ribbon_index_buffer,
+            ribbon_index_count,
+            capsule_bind_group,
+            capsule_count,
+            bns_capsule_bind_group,
+            bns_capsule_count,
+        } = *geometry;
         // Render picking pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

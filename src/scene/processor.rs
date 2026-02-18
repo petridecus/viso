@@ -183,6 +183,12 @@ pub struct SceneProcessor {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+impl Default for SceneProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneProcessor {
     /// Spawn the background scene processing thread.
     pub fn new() -> Self {
@@ -240,13 +246,7 @@ impl SceneProcessor {
         let mut last_display: Option<DisplayOptions> = None;
         let mut last_colors: Option<ColorOptions> = None;
 
-        loop {
-            // Block waiting for the next request
-            let request = match request_rx.recv() {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-
+        while let Ok(request) = request_rx.recv() {
             // Drain any queued requests, keep only the latest.
             let mut latest = request;
             while let Ok(newer) = request_rx.try_recv() {
@@ -602,9 +602,8 @@ impl SceneProcessor {
                 all_per_residue_colors.extend_from_slice(colors);
             } else {
                 // Pad with default so indices stay aligned
-                for _ in 0..mesh.residue_count {
-                    all_per_residue_colors.push(FALLBACK_RESIDUE_COLOR);
-                }
+                all_per_residue_colors
+                    .extend(std::iter::repeat_n(FALLBACK_RESIDUE_COLOR, mesh.residue_count as usize));
             }
 
             // Track entity residue range

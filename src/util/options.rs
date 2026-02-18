@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Top-level options container. All sub-structs use `#[serde(default)]` so
 /// partial TOML files (e.g. only overriding `[lighting]`) work correctly.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct Options {
     pub display: DisplayOptions,
@@ -20,20 +20,6 @@ pub struct Options {
     pub colors: ColorOptions,
     pub geometry: GeometryOptions,
     pub keybindings: KeybindingOptions,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            display: DisplayOptions::default(),
-            lighting: LightingOptions::default(),
-            post_processing: PostProcessingOptions::default(),
-            camera: CameraOptions::default(),
-            colors: ColorOptions::default(),
-            geometry: GeometryOptions::default(),
-            keybindings: KeybindingOptions::default(),
-        }
-    }
 }
 
 impl Options {
@@ -117,7 +103,7 @@ pub enum LipidMode {
     BallAndStick,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct DisplayOptions {
     pub show_waters: bool,
@@ -132,22 +118,6 @@ pub struct DisplayOptions {
     pub sidechain_color_mode: SidechainColorMode,
     /// Nucleic acid coloring mode.
     pub na_color_mode: NaColorMode,
-}
-
-impl Default for DisplayOptions {
-    fn default() -> Self {
-        Self {
-            show_waters: false,
-            show_ions: false,
-            show_solvent: false,
-            lipid_mode: LipidMode::default(),
-            show_sidechains: false,
-            show_hydrogens: false,
-            backbone_color_mode: BackboneColorMode::default(),
-            sidechain_color_mode: SidechainColorMode::default(),
-            na_color_mode: NaColorMode::default(),
-        }
-    }
 }
 
 impl DisplayOptions {

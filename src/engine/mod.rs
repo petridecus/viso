@@ -552,10 +552,12 @@ impl ProteinRenderEngine {
         self.post_process.render(
             &mut encoder,
             &self.context.queue,
-            proj,
-            view_matrix,
-            self.camera_controller.camera.znear,
-            self.camera_controller.camera.zfar,
+            &crate::renderer::postprocess::post_process::PostProcessCamera {
+                proj,
+                view_matrix,
+                znear: self.camera_controller.camera.znear,
+                zfar: self.camera_controller.camera.zfar,
+            },
             &view,
         );
 
@@ -569,20 +571,22 @@ impl ProteinRenderEngine {
         self.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
-            self.tube_renderer.vertex_buffer(),
-            self.tube_renderer.index_buffer(),
-            self.tube_renderer.index_count,
-            ribbon_vb,
-            ribbon_ib,
-            ribbon_count,
-            self.picking_groups.capsule_picking_bind_group.as_ref(),
-            if self.options.display.show_sidechains {
-                self.sidechain_renderer.instance_count
-            } else {
-                0
+            &crate::picking::PickingGeometry {
+                tube_vertex_buffer: self.tube_renderer.vertex_buffer(),
+                tube_index_buffer: self.tube_renderer.index_buffer(),
+                tube_index_count: self.tube_renderer.index_count,
+                ribbon_vertex_buffer: ribbon_vb,
+                ribbon_index_buffer: ribbon_ib,
+                ribbon_index_count: ribbon_count,
+                capsule_bind_group: self.picking_groups.capsule_picking_bind_group.as_ref(),
+                capsule_count: if self.options.display.show_sidechains {
+                    self.sidechain_renderer.instance_count
+                } else {
+                    0
+                },
+                bns_capsule_bind_group: self.picking_groups.bns_picking_bind_group.as_ref(),
+                bns_capsule_count: self.ball_and_stick_renderer.picking_count(),
             },
-            self.picking_groups.bns_picking_bind_group.as_ref(),
-            self.ball_and_stick_renderer.picking_count(),
             self.input.mouse_pos.0 as u32,
             self.input.mouse_pos.1 as u32,
         );

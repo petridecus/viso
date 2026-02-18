@@ -364,7 +364,7 @@ impl CameraController {
     /// * `screen_x`, `screen_y` - Screen coordinates in pixels (origin top-left)
     /// * `screen_width`, `screen_height` - Screen dimensions
     /// * `world_point` - A point in world space; the result will be on a plane
-    ///                   parallel to the camera at this point's depth
+    ///   parallel to the camera at this point's depth
     pub fn screen_to_world_at_depth(
         &self,
         screen_x: f32,

@@ -1,7 +1,6 @@
 /// Bond topology tables for the 20 standard amino acids.
 /// Returns all covalent bonds within a residue (both backbone and sidechain).
 /// Bonds are represented as pairs of atom names.
-
 /// Get the bond pairs for a residue type (sidechain internal bonds only).
 /// Returns None for unknown residue types.
 pub fn get_residue_bonds(residue_name: &str) -> Option<&'static [(&'static str, &'static str)]> {

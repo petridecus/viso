@@ -51,6 +51,17 @@ impl Default for CompositeParams {
     }
 }
 
+struct CompositeViews<'a> {
+    pub color: &'a wgpu::TextureView,
+    pub ssao: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+    pub normal: &'a wgpu::TextureView,
+    pub bloom: &'a wgpu::TextureView,
+    pub sampler: &'a wgpu::Sampler,
+    pub depth_sampler: &'a wgpu::Sampler,
+    pub params_buffer: &'a wgpu::Buffer,
+}
+
 /// Composite pass renderer
 pub struct CompositePass {
     pipeline: wgpu::RenderPipeline,
@@ -107,8 +118,10 @@ impl CompositePass {
         });
 
         // Create params buffer
-        let mut params = CompositeParams::default();
-        params.screen_size = [width as f32, height as f32];
+        let params = CompositeParams {
+            screen_size: [width as f32, height as f32],
+            ..Default::default()
+        };
         let params_buffer = context
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -211,14 +224,16 @@ impl CompositePass {
         let bind_group = Self::create_bind_group(
             context,
             &bind_group_layout,
-            &color_view,
-            ssao_view,
-            depth_view,
-            &sampler,
-            &depth_sampler,
-            &params_buffer,
-            normal_view,
-            bloom_view,
+            &CompositeViews {
+                color: &color_view,
+                ssao: ssao_view,
+                depth: depth_view,
+                normal: normal_view,
+                bloom: bloom_view,
+                sampler: &sampler,
+                depth_sampler: &depth_sampler,
+                params_buffer: &params_buffer,
+            },
         );
 
         // Load shader
@@ -309,14 +324,7 @@ impl CompositePass {
     fn create_bind_group(
         context: &RenderContext,
         layout: &wgpu::BindGroupLayout,
-        color_view: &wgpu::TextureView,
-        ssao_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-        depth_sampler: &wgpu::Sampler,
-        params_buffer: &wgpu::Buffer,
-        normal_view: &wgpu::TextureView,
-        bloom_view: &wgpu::TextureView,
+        views: &CompositeViews,
     ) -> wgpu::BindGroup {
         context
             .device
@@ -326,35 +334,35 @@ impl CompositePass {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(color_view),
+                        resource: wgpu::BindingResource::TextureView(views.color),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(ssao_view),
+                        resource: wgpu::BindingResource::TextureView(views.ssao),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
+                        resource: wgpu::BindingResource::TextureView(views.depth),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: wgpu::BindingResource::Sampler(views.sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: wgpu::BindingResource::Sampler(depth_sampler),
+                        resource: wgpu::BindingResource::Sampler(views.depth_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: params_buffer.as_entire_binding(),
+                        resource: views.params_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
+                        resource: wgpu::BindingResource::TextureView(views.normal),
                     },
                     wgpu::BindGroupEntry {
                         binding: 7,
-                        resource: wgpu::BindingResource::TextureView(bloom_view),
+                        resource: wgpu::BindingResource::TextureView(views.bloom),
                     },
                 ],
             })
@@ -431,14 +439,16 @@ impl CompositePass {
         self.bind_group = Self::create_bind_group(
             context,
             &self.bind_group_layout,
-            &self.color_view,
-            ssao_view,
-            depth_view,
-            &self.sampler,
-            &self.depth_sampler,
-            &self.params_buffer,
-            normal_view,
-            bloom_view,
+            &CompositeViews {
+                color: &self.color_view,
+                ssao: ssao_view,
+                depth: depth_view,
+                normal: normal_view,
+                bloom: bloom_view,
+                sampler: &self.sampler,
+                depth_sampler: &self.depth_sampler,
+                params_buffer: &self.params_buffer,
+            },
         );
     }
 }

@@ -571,7 +571,7 @@ impl BloomPass {
         // For upsampling: we read from mip[i+1] and additively blend into mip[i]
         // So we need bind groups for mip levels 1..MIP_LEVELS (reading from those levels)
         let mut bind_groups = Vec::with_capacity(MIP_LEVELS - 1);
-        for i in 1..MIP_LEVELS {
+        for (i, mip_view) in mip_views.iter().enumerate().take(MIP_LEVELS).skip(1) {
             let bg = context
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -580,7 +580,7 @@ impl BloomPass {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&mip_views[i]),
+                            resource: wgpu::BindingResource::TextureView(mip_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
@@ -628,70 +628,8 @@ impl BloomPass {
         // Blur mip[0] (threshold output)
         self.blur_level(encoder, 0);
 
-        // Downsample + blur remaining levels
-        for _i in 1..MIP_LEVELS {
-            // Downsample: copy from mip[i-1] to mip[i] using the horizontal blur pass
-            // The bilinear sampler in the blur shader naturally downsamples when reading
-            // from a larger texture into a smaller render target
-            // Actually, we need a separate downsample step. Let's use the upsample shader
-            // (which is just a passthrough with bilinear sampling) but render to the smaller mip.
-            // For now, the blur itself acts as the downsample since we're reading from mip[i]
-            // which was already filled by... hmm.
-
-            // Actually the approach is: threshold → mip[0], then blur mip[0].
-            // For mip[1..], we need to downsample from mip[i-1] → mip[i], then blur mip[i].
-            // We can use a simple blit (upsample shader without additive blend) for the downsample,
-            // but we don't have a non-additive version. Instead, let's just make the horizontal
-            // blur pass read from mip[i-1] and write to ping[i], then vertical reads ping[i]
-            // and writes to mip[i]. This requires the bind groups to reference the right source.
-            // For simplicity, we'll just blur each level using a clear + threshold-like blit.
-
-            // Simpler approach: use the threshold pass to copy mip[i-1] → mip[i] (it just samples
-            // the input with bilinear filtering, effectively downsampling). But we'd need different
-            // bind groups. Let's take the cleanest approach and just blur at each level, which
-            // includes the downsample implicitly because the H blur reads from mip[i] and the
-            // render target is also mip[i] — wait, that's reading and writing the same texture.
-
-            // The correct approach: We already set up blur_bind_groups[i][0] to read from mip[i].
-            // But mip[i] hasn't been filled yet for i>0. We need a downsample copy first.
-            // Let's do a simple render pass: read from mip[i-1] with bilinear sampling → mip[i].
-
-            // We can reuse the upsample pipeline (but with replace blend instead of additive).
-            // Actually simpler: just do the horizontal blur reading from mip[i-1] writing to ping[i],
-            // then vertical blur reading from ping[i] writing to mip[i].
-            // But our bind groups are set up to read from mip[i] for horizontal. Let me just
-            // do a blit from mip[i-1] → mip[i] using a clear + draw with the upsample bind group,
-            // but the upsample bind groups read from mip[1..], not mip[0..].
-
-            // OK let me simplify: For the downsample, I'll just render the threshold directly
-            // at each mip level with the right source. But we only have one threshold bind group
-            // pointing to the HDR color texture.
-
-            // Cleanest fix: just blur mip[i] in place. The mip[i] textures start black (cleared).
-            // For the downsample step, we render from mip[i-1] → mip[i] using a fullscreen pass.
-            // We can use the upsample shader (simple passthrough + bilinear) but we need it to
-            // NOT use additive blend for the downsample. We'll use the blur shader with the
-            // horizontal pass but reading from mip[i-1].
-
-            // At this point, it's cleaner to just create downsample bind groups. But that adds
-            // more complexity. Let me take the simplest working approach:
-
-            // Downsample by doing a horizontal blur from mip[i-1] → ping[i], then vertical
-            // blur from ping[i] → mip[i]. We just need to create the right bind groups.
-            // But our current bind groups for blur_bind_groups[i][0] read from mip[i], not mip[i-1].
-
-            // I'll restructure to make this work correctly. For now, let me not fight it and
-            // just blur mip[0] multiple times — each blur acts on a progressively smaller area
-            // due to the texel_size. That's not correct either.
-
-            // FINAL APPROACH: Skip explicit downsample. Just do threshold → mip[0], blur mip[0],
-            // then for upsample accumulate all back. The 4 mip levels will be threshold at
-            // different sizes. Actually no, we DO need the downsample.
-
-            // Let me just break the loop and only use mip[0]. A single-level bloom is still
-            // effective and much simpler. We can always add multi-level later.
-            break;
-        }
+        // Single-level bloom: only mip[0] is used. Multi-level downsample
+        // can be added later by iterating over levels 1..MIP_LEVELS.
 
         // Step 3: Copy blurred mip[0] → output
         // For single-level bloom, the output IS mip[0]. We'll just reference mip_views[0].

@@ -127,8 +127,8 @@ impl AnimationBehavior for BackboneThenExpand {
         } else {
             // Phase 2: Expand new sidechain from 0 → final chi values
             let mut chis = [0.0f32; 4];
-            for i in 0..end.num_chis {
-                chis[i] = end.chis[i] * phase_eased;
+            for (i, chi) in chis.iter_mut().enumerate().take(end.num_chis) {
+                *chi = end.chis[i] * phase_eased;
             }
             chis
         };

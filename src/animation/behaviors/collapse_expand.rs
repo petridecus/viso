@@ -135,15 +135,15 @@ impl AnimationBehavior for CollapseExpand {
         let chis = if t < collapse_frac {
             // Phase 1: Collapse old sidechain toward backbone (chi -> 0)
             let mut chis = [0.0f32; 4];
-            for i in 0..start.num_chis {
-                chis[i] = start.chis[i] * (1.0 - phase_eased);
+            for (i, chi) in chis.iter_mut().enumerate().take(start.num_chis) {
+                *chi = start.chis[i] * (1.0 - phase_eased);
             }
             chis
         } else {
             // Phase 2: Expand new sidechain from backbone (0 -> chi)
             let mut chis = [0.0f32; 4];
-            for i in 0..end.num_chis {
-                chis[i] = end.chis[i] * phase_eased;
+            for (i, chi) in chis.iter_mut().enumerate().take(end.num_chis) {
+                *chi = end.chis[i] * phase_eased;
             }
             chis
         };

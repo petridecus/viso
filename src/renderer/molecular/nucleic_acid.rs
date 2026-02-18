@@ -512,7 +512,7 @@ fn compute_frenet_frames(points: &mut [SplinePoint]) {
 
 // ── Closest-point lookup ──
 
-fn closest_point<'a>(points: &'a [Vec3], target: Vec3) -> Option<&'a Vec3> {
+fn closest_point(points: &[Vec3], target: Vec3) -> Option<&Vec3> {
     points.iter().min_by(|a, b| {
         a.distance_squared(target)
             .partial_cmp(&b.distance_squared(target))
