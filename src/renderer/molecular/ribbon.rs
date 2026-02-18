@@ -347,8 +347,8 @@ impl RibbonRenderer {
 
     /// Get per-residue offsets for sheet residues.
     /// Returns (global_residue_idx, offset) pairs where offset = flattened_pos
-    /// - raw_CA_pos. Used by the engine to translate entire sidechains onto
-    /// the sheet surface.
+    ///   - raw_CA_pos. Used by the engine to translate entire sidechains onto
+    ///     the sheet surface.
     pub fn sheet_offsets(&self) -> &[(u32, Vec3)] {
         &self.sheet_offsets
     }
