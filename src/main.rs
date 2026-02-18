@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use viso::engine::ProteinRenderEngine;
 use winit::{
@@ -12,6 +12,7 @@ struct RenderApp {
     window: Option<Arc<Window>>,
     engine: Option<ProteinRenderEngine>,
     last_mouse_pos: (f32, f32),
+    last_frame_time: Instant,
     cif_path: String,
 }
 
@@ -21,6 +22,7 @@ impl RenderApp {
             window: None,
             engine: None,
             last_mouse_pos: (0.0, 0.0),
+            last_frame_time: Instant::now(),
             cif_path,
         }
     }
@@ -100,6 +102,12 @@ impl ApplicationHandler for RenderApp {
                 if let (Some(window), Some(engine)) =
                     (&self.window, &mut self.engine)
                 {
+                    let now = Instant::now();
+                    let dt =
+                        now.duration_since(self.last_frame_time).as_secs_f32();
+                    self.last_frame_time = now;
+                    engine.update_camera_animation(dt);
+
                     engine.apply_pending_scene();
                     match engine.render() {
                         Ok(()) => {}
@@ -173,17 +181,14 @@ impl ApplicationHandler for RenderApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     if let Some(engine) = &mut self.engine {
-                        use winit::keyboard::{Key, NamedKey};
-                        match &event.logical_key {
-                            Key::Character(c)
-                                if c.as_str() == "w" || c.as_str() == "W" =>
+                        use winit::keyboard::PhysicalKey;
+                        if let PhysicalKey::Code(code) = event.physical_key {
+                            let key_str = format!("{code:?}");
+                            if let Some(action) =
+                                engine.options().keybindings.lookup(&key_str)
                             {
-                                engine.toggle_waters();
+                                action.execute(engine);
                             }
-                            Key::Named(NamedKey::Escape) => {
-                                engine.clear_selection();
-                            }
-                            _ => {}
                         }
                     }
                 }

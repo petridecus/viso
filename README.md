@@ -62,8 +62,11 @@ When given a PDB ID, Viso downloads the corresponding mmCIF file from RCSB and c
 | Shift + drag | Pan |
 | Scroll wheel | Zoom |
 | Click | Select residue |
-| Double-click | Select chain |
+| Double-click | Select secondary structure segment |
+| Triple-click | Select chain |
 | Shift + click | Multi-select |
+| `Tab` | Cycle focus (Session → Structure → Entity) |
+| `` ` `` (backtick) | Reset focus to full session |
 | `W` | Toggle water visibility |
 | `Escape` | Clear selection |
 

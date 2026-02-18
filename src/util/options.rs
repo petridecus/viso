@@ -336,32 +336,60 @@ impl Default for GeometryOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Key actions
+// ---------------------------------------------------------------------------
+
+/// Engine-level actions that can be bound to keys.
+///
+/// Serde serializes as `snake_case` strings so TOML presets stay readable:
+/// ```toml
+/// [keybindings]
+/// cycle_focus = "Tab"
+/// toggle_waters = "KeyU"
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyAction {
+    RecenterCamera,
+    ToggleTrajectory,
+    ToggleIons,
+    ToggleWaters,
+    ToggleSolvent,
+    ToggleLipids,
+    CycleFocus,
+    ToggleAutoRotate,
+    ResetFocus,
+    Cancel,
+}
+
+// ---------------------------------------------------------------------------
 // Keybindings
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct KeybindingOptions {
-    /// Maps action name → key string (e.g. "recenter_camera" → "KeyQ").
-    pub bindings: HashMap<String, String>,
-    /// Reverse lookup cache (key string → action name). Rebuilt on load.
+    /// Maps action → key string (e.g. `CycleFocus` → `"Tab"`).
+    pub bindings: HashMap<KeyAction, String>,
+    /// Reverse lookup cache (key string → action). Rebuilt on load.
     #[serde(skip)]
-    key_to_action: HashMap<String, String>,
+    key_to_action: HashMap<String, KeyAction>,
 }
 
 impl Default for KeybindingOptions {
     fn default() -> Self {
-        let mut bindings = HashMap::new();
-        bindings.insert("recenter_camera".to_string(), "KeyQ".to_string());
-        bindings.insert("toggle_trajectory".to_string(), "KeyT".to_string());
-        bindings.insert("toggle_ions".to_string(), "KeyI".to_string());
-        bindings.insert("toggle_waters".to_string(), "KeyU".to_string());
-        bindings.insert("toggle_solvent".to_string(), "KeyO".to_string());
-        bindings.insert("toggle_lipids".to_string(), "KeyL".to_string());
-        bindings.insert("cycle_focus".to_string(), "Tab".to_string());
-        bindings.insert("toggle_auto_rotate".to_string(), "KeyR".to_string());
-        bindings.insert("reset_focus".to_string(), "Backquote".to_string());
-        bindings.insert("cancel".to_string(), "Escape".to_string());
+        let bindings = HashMap::from([
+            (KeyAction::RecenterCamera, "KeyQ".into()),
+            (KeyAction::ToggleTrajectory, "KeyT".into()),
+            (KeyAction::ToggleIons, "KeyI".into()),
+            (KeyAction::ToggleWaters, "KeyU".into()),
+            (KeyAction::ToggleSolvent, "KeyO".into()),
+            (KeyAction::ToggleLipids, "KeyL".into()),
+            (KeyAction::CycleFocus, "Tab".into()),
+            (KeyAction::ToggleAutoRotate, "KeyR".into()),
+            (KeyAction::ResetFocus, "Backquote".into()),
+            (KeyAction::Cancel, "Escape".into()),
+        ]);
 
         let mut opts = Self {
             bindings,
@@ -373,17 +401,17 @@ impl Default for KeybindingOptions {
 }
 
 impl KeybindingOptions {
-    /// Rebuild the reverse lookup map (key → action).
+    /// Rebuild the reverse lookup map (key string → action).
     pub fn rebuild_reverse_map(&mut self) {
         self.key_to_action.clear();
         for (action, key) in &self.bindings {
-            self.key_to_action.insert(key.clone(), action.clone());
+            self.key_to_action.insert(key.clone(), *action);
         }
     }
 
-    /// Look up the action name for a given key string.
-    pub fn lookup(&self, key: &str) -> Option<&str> {
-        self.key_to_action.get(key).map(|s| s.as_str())
+    /// Look up the action for a key string.
+    pub fn lookup(&self, key: &str) -> Option<KeyAction> {
+        self.key_to_action.get(key).copied()
     }
 }
 
@@ -415,8 +443,11 @@ shininess = 80.0
     #[test]
     fn keybinding_lookup() {
         let opts = Options::default();
-        assert_eq!(opts.keybindings.lookup("KeyQ"), Some("recenter_camera"));
-        assert_eq!(opts.keybindings.lookup("Tab"), Some("cycle_focus"));
+        assert_eq!(
+            opts.keybindings.lookup("KeyQ"),
+            Some(KeyAction::RecenterCamera)
+        );
+        assert_eq!(opts.keybindings.lookup("Tab"), Some(KeyAction::CycleFocus));
         assert_eq!(opts.keybindings.lookup("KeyZ"), None);
     }
 

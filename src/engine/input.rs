@@ -4,7 +4,9 @@ use glam::Vec2;
 use winit::{event::MouseButton, keyboard::ModifiersState};
 
 use super::ProteinRenderEngine;
-use crate::camera::input_state::ClickResult;
+use crate::{
+    camera::input_state::ClickResult, scene::Focus, util::options::KeyAction,
+};
 
 impl ProteinRenderEngine {
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
@@ -181,5 +183,37 @@ impl ProteinRenderEngine {
     /// Clear residue selection.
     pub fn clear_selection(&mut self) {
         self.picking.clear_selection();
+    }
+}
+
+// ── KeyAction execution ──
+
+impl KeyAction {
+    /// Execute this action on the given engine.
+    pub fn execute(self, engine: &mut ProteinRenderEngine) {
+        match self {
+            Self::RecenterCamera => engine.fit_camera_to_focus(),
+            Self::ToggleWaters => engine.toggle_waters(),
+            Self::ToggleIons => engine.toggle_ions(),
+            Self::ToggleSolvent => engine.toggle_solvent(),
+            Self::ToggleLipids => engine.toggle_lipids(),
+            Self::ToggleAutoRotate => {
+                engine.toggle_auto_rotate();
+            }
+            Self::ToggleTrajectory => {
+                if engine.has_trajectory() {
+                    engine.toggle_trajectory();
+                }
+            }
+            Self::CycleFocus => {
+                engine.cycle_focus();
+                engine.fit_camera_to_focus();
+            }
+            Self::ResetFocus => {
+                engine.set_focus(Focus::Session);
+                engine.fit_camera_to_focus();
+            }
+            Self::Cancel => engine.clear_selection(),
+        }
     }
 }
