@@ -56,7 +56,8 @@ pub struct AnimationPreferences {
     pub mutation: SharedBehavior,
     /// Animation for diffusion intermediates (RFD3, SimpleFold).
     pub diffusion: SharedBehavior,
-    /// Animation for final diffusion result (backbone lerp + sidechain expand).
+    /// Animation for final diffusion result (backbone lerp + sidechain
+    /// expand).
     pub diffusion_finalize: SharedBehavior,
     /// Animation for revealing instant prediction results.
     pub reveal: SharedBehavior,
@@ -120,12 +121,14 @@ impl Default for AnimationPreferences {
             // Mutations use collapse/expand effect
             mutation: shared(CollapseExpand::default()),
 
-            // Diffusion uses linear interpolation to not distort ML intermediates
+            // Diffusion uses linear interpolation to not distort ML
+            // intermediates
             diffusion: shared(SmoothInterpolation::linear(
                 Duration::from_millis(100),
             )),
 
-            // Final diffusion result: backbone lerps to end FIRST, then sidechains expand
+            // Final diffusion result: backbone lerps to end FIRST, then
+            // sidechains expand
             diffusion_finalize: shared(BackboneThenExpand::new(
                 Duration::from_millis(400),
                 Duration::from_millis(600),

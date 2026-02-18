@@ -1,10 +1,10 @@
 //! Core trait for animation behaviors.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use super::super::interpolation::InterpolationContext;
-use super::state::ResidueVisualState;
+use super::{
+    super::interpolation::InterpolationContext, state::ResidueVisualState,
+};
 
 /// How to handle a new target arriving while an animation is in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,16 +77,19 @@ pub trait AnimationBehavior: Send + Sync {
     }
 
     /// Interpolation context for this behavior at raw progress t.
-    /// Complex behaviors (CollapseExpand) should override with phase-aware logic.
+    /// Complex behaviors (CollapseExpand) should override with phase-aware
+    /// logic.
     fn compute_context(&self, raw_t: f32) -> InterpolationContext {
         InterpolationContext::simple(raw_t, self.eased_t(raw_t))
     }
 
-    /// Whether sidechain atoms should be included in animation frames at this progress.
+    /// Whether sidechain atoms should be included in animation frames at this
+    /// progress.
     ///
-    /// Multi-phase behaviors (like BackboneThenExpand) can return false during phases
-    /// where sidechains should be hidden, preventing visual artifacts when new sidechain
-    /// atoms appear before the backbone has finished easing.
+    /// Multi-phase behaviors (like BackboneThenExpand) can return false during
+    /// phases where sidechains should be hidden, preventing visual
+    /// artifacts when new sidechain atoms appear before the backbone has
+    /// finished easing.
     ///
     /// Default: always include sidechains.
     fn should_include_sidechains(&self, _raw_t: f32) -> bool {

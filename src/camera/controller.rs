@@ -1,8 +1,13 @@
-use crate::camera::core::{Camera, CameraUniform};
-use crate::camera::frustum::Frustum;
-use crate::gpu::render_context::RenderContext;
 use glam::{Quat, Vec2, Vec3};
 use wgpu::util::DeviceExt;
+
+use crate::{
+    camera::{
+        core::{Camera, CameraUniform},
+        frustum::Frustum,
+    },
+    gpu::render_context::RenderContext,
+};
 
 /// Speed of camera animation (higher = faster, 1.0 = instant)
 const CAMERA_ANIMATION_SPEED: f32 = 3.0;
@@ -27,7 +32,8 @@ pub struct CameraController {
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
 
-    /// When Some, the camera spins around the captured axis (camera up at toggle time).
+    /// When Some, the camera spins around the captured axis (camera up at
+    /// toggle time).
     auto_rotate_axis: Option<Vec3>,
     pub mouse_pressed: bool,
     pub shift_pressed: bool,
@@ -97,7 +103,8 @@ impl CameraController {
             orientation,
             distance,
             focus_point,
-            bounding_radius: 50.0, // Default, will be updated by fit_to_positions
+            bounding_radius: 50.0, /* Default, will be updated by
+                                    * fit_to_positions */
             target_focus_point: None,
             target_distance: None,
             target_bounding_radius: None,
@@ -262,7 +269,8 @@ impl CameraController {
         // Apply horizontal rotation
         self.orientation = horizontal_rotation * self.orientation;
 
-        // Vertical rotation around camera's right vector (after horizontal rotation)
+        // Vertical rotation around camera's right vector (after horizontal
+        // rotation)
         let right = self.orientation * Vec3::X;
         let vertical_rotation =
             Quat::from_axis_angle(right, -delta.y * self.rotate_speed);
@@ -315,11 +323,13 @@ impl CameraController {
             .map(|p| (*p - centroid).length())
             .fold(0.0f32, f32::max);
 
-        // Minimum effective radius so small molecules (ions, ligands) don't zoom in too close
+        // Minimum effective radius so small molecules (ions, ligands) don't
+        // zoom in too close
         let effective_radius = radius.max(5.0);
 
         // Set distance to fit the bounding sphere in view
-        // Account for both vertical and horizontal FOV to fill viewport maximally
+        // Account for both vertical and horizontal FOV to fill viewport
+        // maximally
         let fovy_rad = self.camera.fovy.to_radians();
         let fovx_rad = fovy_rad * self.camera.aspect;
 
@@ -327,7 +337,8 @@ impl CameraController {
         let fit_distance_y = effective_radius / (fovy_rad / 2.0).tan();
         let fit_distance_x = effective_radius / (fovx_rad / 2.0).tan();
 
-        // Use the larger distance (tighter constraint) to ensure fit on both axes
+        // Use the larger distance (tighter constraint) to ensure fit on both
+        // axes
         let fit_distance = fit_distance_y.max(fit_distance_x);
 
         // Minimal padding (1.05x) to fill viewport without clipping
@@ -378,10 +389,12 @@ impl CameraController {
         right * (delta_x * scale) + up * (-delta_y * scale)
     }
 
-    /// Unproject screen coordinates to a world-space point on a plane at the given depth.
+    /// Unproject screen coordinates to a world-space point on a plane at the
+    /// given depth.
     ///
     /// # Arguments
-    /// * `screen_x`, `screen_y` - Screen coordinates in pixels (origin top-left)
+    /// * `screen_x`, `screen_y` - Screen coordinates in pixels (origin
+    ///   top-left)
     /// * `screen_width`, `screen_height` - Screen dimensions
     /// * `world_point` - A point in world space; the result will be on a plane
     ///   parallel to the camera at this point's depth

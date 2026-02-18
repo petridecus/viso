@@ -6,18 +6,30 @@
 //! - High subdivision (16 segments per residue) for smooth curves
 //! - B-spline interpolation for C2 continuity
 
-use crate::gpu::dynamic_buffer::DynamicBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::pipeline_util;
-use foldit_conv::coords::RenderBackboneResidue;
-use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
-use foldit_conv::secondary_structure::{merge_short_segments, SSType};
-use glam::Vec3;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
-/// Tube diameter for taper at ribbon-tube junctions (must match tube_renderer TUBE_RADIUS * 2)
+use foldit_conv::{
+    coords::RenderBackboneResidue,
+    secondary_structure::{
+        auto::detect as detect_secondary_structure, merge_short_segments,
+        SSType,
+    },
+};
+use glam::Vec3;
+
+use crate::{
+    gpu::{
+        dynamic_buffer::DynamicBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+};
+
+/// Tube diameter for taper at ribbon-tube junctions (must match tube_renderer
+/// TUBE_RADIUS * 2)
 const TUBE_DIAMETER: f32 = 0.6;
 
 /// Parameters for ribbon rendering
@@ -49,8 +61,9 @@ pub(crate) struct RibbonVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
-    /// Encodes normal direction as position - normal, so the shared shader computes
-    /// normalize(position - center_pos) = normalize(normal) for flat geometry.
+    /// Encodes normal direction as position - normal, so the shared shader
+    /// computes normalize(position - center_pos) = normalize(normal) for
+    /// flat geometry.
     center_pos: [f32; 3],
 }
 
@@ -333,8 +346,9 @@ impl RibbonRenderer {
     }
 
     /// Get per-residue offsets for sheet residues.
-    /// Returns (global_residue_idx, offset) pairs where offset = flattened_pos - raw_CA_pos.
-    /// Used by the engine to translate entire sidechains onto the sheet surface.
+    /// Returns (global_residue_idx, offset) pairs where offset = flattened_pos
+    /// - raw_CA_pos. Used by the engine to translate entire sidechains onto
+    /// the sheet surface.
     pub fn sheet_offsets(&self) -> &[(u32, Vec3)] {
         &self.sheet_offsets
     }
@@ -451,7 +465,8 @@ impl RibbonRenderer {
                     continue;
                 } // Need at least 2 real residues
 
-                // Extend segment into coil regions at boundaries for smooth taper
+                // Extend segment into coil regions at boundaries for smooth
+                // taper
                 let taper_start =
                     if start > 0 && ss_types[start - 1] == SSType::Coil {
                         1
@@ -470,7 +485,8 @@ impl RibbonRenderer {
                 let ext_end = (end + taper_end).min(chain.len());
 
                 let residues = &chain[ext_start..ext_end];
-                // Override taper residues to segment SS type so they get the right color
+                // Override taper residues to segment SS type so they get the
+                // right color
                 let mut ss: Vec<SSType> =
                     ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
                 if taper_start > 0 {
@@ -586,7 +602,8 @@ impl RibbonRenderer {
                     continue;
                 } // Need at least 2 real residues
 
-                // Extend segment into coil regions at boundaries for smooth taper
+                // Extend segment into coil regions at boundaries for smooth
+                // taper
                 let taper_start =
                     if start > 0 && ss_types[start - 1] == SSType::Coil {
                         1
@@ -603,7 +620,8 @@ impl RibbonRenderer {
                 let ext_end = (end + taper_end).min(ca_positions.len());
 
                 let positions = &ca_positions[ext_start..ext_end];
-                // Override taper residues to segment SS type so they get the right color
+                // Override taper residues to segment SS type so they get the
+                // right color
                 let mut ss: Vec<SSType> =
                     ss_types[ext_start..ext_end.min(ss_types.len())].to_vec();
                 if taper_start > 0 {
@@ -963,7 +981,8 @@ fn peptide_plane_sheet(
     flatten_sheet(&mut positions, &mut normals, 4);
 
     // Compute offsets: how much each CA moved during flattening
-    // Skip taper residues (coil extensions) — their sidechains shouldn't be adjusted
+    // Skip taper residues (coil extensions) — their sidechains shouldn't be
+    // adjusted
     let offsets: Vec<(u32, Vec3)> = positions
         .iter()
         .enumerate()
@@ -1218,9 +1237,10 @@ fn build_ribbon_mesh(
         let bl = frame.position - frame.normal * ht - frame.binormal * hw;
 
         let (n_tl, n_tr, n_br, n_bl) = if smooth_normals {
-            // Smooth normals: treat cross-section as an ellipse with semi-axes (hw, ht).
-            // The outward normal at offset (b, n) is proportional to (b/hw², n/ht²).
-            // This gives top vertices normals mostly pointing up with subtle side tilt,
+            // Smooth normals: treat cross-section as an ellipse with semi-axes
+            // (hw, ht). The outward normal at offset (b, n) is
+            // proportional to (b/hw², n/ht²). This gives top
+            // vertices normals mostly pointing up with subtle side tilt,
             // creating gradual specular falloff across the surface.
             let inv_hw2 = 1.0 / (hw * hw).max(1e-6);
             let inv_ht2 = 1.0 / (ht * ht).max(1e-6);
@@ -1353,7 +1373,8 @@ fn catmull_rom(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
     result
 }
 
-// Keep B-spline available for helix axis smoothing (where we DON'T want to pass through points)
+// Keep B-spline available for helix axis smoothing (where we DON'T want to pass
+// through points)
 fn cubic_bspline(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
     let n = points.len();
     if n < 2 {

@@ -1,11 +1,13 @@
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::postprocess::bloom::BloomPass;
-use crate::renderer::postprocess::composite::CompositePass;
-use crate::renderer::postprocess::fxaa::FxaaPass;
-use crate::renderer::postprocess::ssao::SsaoRenderer;
-use crate::util::options::Options;
 use glam::Mat4;
+
+use crate::{
+    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    renderer::postprocess::{
+        bloom::BloomPass, composite::CompositePass, fxaa::FxaaPass,
+        ssao::SsaoRenderer,
+    },
+    util::options::Options,
+};
 
 /// Camera parameters needed for post-processing passes.
 pub struct PostProcessCamera {
@@ -29,7 +31,8 @@ pub(crate) struct PostProcessStack {
 }
 
 impl PostProcessStack {
-    /// Build the full post-processing stack (depth/normal textures + all passes).
+    /// Build the full post-processing stack (depth/normal textures + all
+    /// passes).
     pub fn new(
         context: &RenderContext,
         shader_composer: &mut ShaderComposer,

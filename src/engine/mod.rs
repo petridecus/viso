@@ -5,44 +5,50 @@ mod queries;
 mod scene_management;
 mod scene_sync;
 
-use crate::animation::sidechain_state::SidechainAnimationState;
-use crate::animation::StructureAnimator;
-use crate::camera::controller::CameraController;
-use crate::camera::input::InputHandler;
-use crate::camera::input_state::InputState;
-use crate::gpu::residue_color::ResidueColorBuffer;
-use crate::picking::picking_state::PickingState;
-use crate::picking::{Picking, SelectionBuffer};
-use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::molecular::band::BandRenderer;
-use crate::renderer::molecular::capsule_sidechain::{
-    CapsuleSidechainRenderer, SidechainData,
-};
-use crate::renderer::molecular::draw_context::DrawBindGroups;
-use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
-use crate::renderer::molecular::pull::PullRenderer;
-use crate::renderer::postprocess::post_process::PostProcessStack;
-use crate::util::frame_timing::FrameTiming;
-use crate::util::lighting::Lighting;
-use crate::util::options::Options;
+use std::{collections::HashSet, time::Instant};
 
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::molecular::ribbon::RibbonRenderer;
-use crate::renderer::molecular::tube::TubeRenderer;
-use crate::scene::processor::SceneProcessor;
-use crate::util::trajectory::TrajectoryPlayer;
-use foldit_conv::secondary_structure::SSType;
-
-use crate::scene::{Focus, Scene};
-use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::{
-    split_into_entities, structure_file_to_coords, MoleculeEntity,
-    MoleculeType, RenderCoords,
+use foldit_conv::{
+    coords::{
+        split_into_entities, structure_file_to_coords, MoleculeEntity,
+        MoleculeType, RenderCoords,
+    },
+    secondary_structure::SSType,
 };
 use glam::{Mat4, Vec3};
-use std::collections::HashSet;
-use std::time::Instant;
+
+use crate::{
+    animation::{sidechain_state::SidechainAnimationState, StructureAnimator},
+    camera::{
+        controller::CameraController, input::InputHandler,
+        input_state::InputState,
+    },
+    gpu::{
+        render_context::RenderContext, residue_color::ResidueColorBuffer,
+        shader_composer::ShaderComposer,
+    },
+    picking::{picking_state::PickingState, Picking, SelectionBuffer},
+    renderer::{
+        molecular::{
+            ball_and_stick::BallAndStickRenderer,
+            band::BandRenderer,
+            capsule_sidechain::{CapsuleSidechainRenderer, SidechainData},
+            draw_context::DrawBindGroups,
+            nucleic_acid::NucleicAcidRenderer,
+            pull::PullRenderer,
+            ribbon::RibbonRenderer,
+            tube::TubeRenderer,
+        },
+        postprocess::post_process::PostProcessStack,
+    },
+    scene::{processor::SceneProcessor, Focus, Scene},
+    util::{
+        bond_topology::{get_residue_bonds, is_hydrophobic},
+        frame_timing::FrameTiming,
+        lighting::Lighting,
+        options::Options,
+        trajectory::TrajectoryPlayer,
+    },
+};
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -114,7 +120,8 @@ impl ProteinRenderEngine {
     ) -> Self {
         let mut context = RenderContext::new(window, size).await;
 
-        // 2x supersampling on standard-DPI displays to compensate for low pixel density
+        // 2x supersampling on standard-DPI displays to compensate for low pixel
+        // density
         if scale_factor < 2.0 {
             context.render_scale = 2;
         }
@@ -148,7 +155,8 @@ impl ProteinRenderEngine {
         let mut scene = Scene::new();
         let group_id = scene.add_group(entities, group_name);
 
-        // Extract protein coords for rendering (may be absent for nucleic-acid-only structures)
+        // Extract protein coords for rendering (may be absent for
+        // nucleic-acid-only structures)
         let render_coords = if let Some(protein_coords) =
             scene.group(group_id).and_then(|g| g.protein_coords())
         {
@@ -213,7 +221,8 @@ impl ProteinRenderEngine {
         );
 
         // Create ribbon renderer for secondary structure visualization
-        // Use the Foldit-style renderer if we have full backbone residue data (N, CA, C, O)
+        // Use the Foldit-style renderer if we have full backbone residue data
+        // (N, CA, C, O)
         let ribbon_renderer =
             if !render_coords.backbone_residue_chains.is_empty() {
                 RibbonRenderer::new_from_residues(
@@ -277,7 +286,8 @@ impl ProteinRenderEngine {
             &mut shader_composer,
         );
 
-        // Create the full post-processing stack (depth/normal textures, SSAO, bloom, composite, FXAA)
+        // Create the full post-processing stack (depth/normal textures, SSAO,
+        // bloom, composite, FXAA)
         let post_process =
             PostProcessStack::new(&context, &mut shader_composer);
 
@@ -362,7 +372,8 @@ impl ProteinRenderEngine {
             &ball_and_stick_renderer,
         );
 
-        // Create nucleic acid renderer for DNA/RNA backbone ribbons + base rings
+        // Create nucleic acid renderer for DNA/RNA backbone ribbons + base
+        // rings
         let na_entities: Vec<&MoleculeEntity> = scene
             .group(group_id)
             .map(|g| {
@@ -396,7 +407,8 @@ impl ProteinRenderEngine {
             &mut shader_composer,
         );
 
-        // Fit camera to all atom positions (protein + non-protein + nucleic acid P-atoms)
+        // Fit camera to all atom positions (protein + non-protein + nucleic
+        // acid P-atoms)
         let mut all_fit_positions = render_coords.all_positions.clone();
         all_fit_positions.extend(BallAndStickRenderer::collect_positions(
             &non_protein_refs,
@@ -457,10 +469,12 @@ impl ProteinRenderEngine {
             return Ok(());
         }
 
-        // Apply any pending animation frame from the background thread (non-blocking)
+        // Apply any pending animation frame from the background thread
+        // (non-blocking)
         self.apply_pending_animation();
 
-        // Trajectory playback — submit frames to background thread (non-blocking)
+        // Trajectory playback — submit frames to background thread
+        // (non-blocking)
         if let Some(ref mut player) = self.trajectory_player {
             if let Some(backbone_chains) = player.tick(Instant::now()) {
                 self.submit_animation_frame_with_backbone(
@@ -472,7 +486,8 @@ impl ProteinRenderEngine {
             // Standard animator path
             let animating = self.animator.update(Instant::now());
 
-            // If animation is active, submit interpolated positions to background thread
+            // If animation is active, submit interpolated positions to
+            // background thread
             if animating {
                 self.submit_animation_frame();
             }
@@ -483,9 +498,10 @@ impl ProteinRenderEngine {
             self.picking.hovered_residue;
         self.camera_controller.update_gpu(&self.context.queue);
 
-        // Compute fog params from camera state each frame (depth-buffer fog, always in sync)
-        // fog_start = focus point distance → front half stays crisp
-        // fog_density scaled so back of protein reaches ~87% fog (exp(-2) ≈ 0.13)
+        // Compute fog params from camera state each frame (depth-buffer fog,
+        // always in sync) fog_start = focus point distance → front half
+        // stays crisp fog_density scaled so back of protein reaches
+        // ~87% fog (exp(-2) ≈ 0.13)
         let distance = self.camera_controller.distance();
         let bounding_radius = self.camera_controller.bounding_radius();
         let fog_start = distance;
@@ -513,7 +529,8 @@ impl ProteinRenderEngine {
         self.lighting.update_headlamp(right, up, forward);
         self.lighting.update_gpu(&self.context.queue);
 
-        // Frustum culling for sidechains - update when camera moves significantly
+        // Frustum culling for sidechains - update when camera moves
+        // significantly
         self.update_frustum_culling();
 
         let frame = self.context.get_next_frame()?;
@@ -522,7 +539,8 @@ impl ProteinRenderEngine {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.context.create_encoder();
 
-        // Geometry pass — render to intermediate color/normal textures at render_scale resolution.
+        // Geometry pass — render to intermediate color/normal textures at
+        // render_scale resolution.
         {
             let mut rp =
                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -570,7 +588,8 @@ impl ProteinRenderEngine {
                     ..Default::default()
                 });
 
-            // Render order: backbone (tube or ribbon) -> sidechains (all opaque)
+            // Render order: backbone (tube or ribbon) -> sidechains (all
+            // opaque)
             let bind_groups = DrawBindGroups {
                 camera: &self.camera_controller.bind_group,
                 lighting: &self.lighting.bind_group,
@@ -611,7 +630,8 @@ impl ProteinRenderEngine {
             &view,
         );
 
-        // GPU Picking pass - render residue IDs to picking buffer (includes ribbons)
+        // GPU Picking pass - render residue IDs to picking buffer (includes
+        // ribbons)
         let (ribbon_vb, ribbon_ib, ribbon_count) = (
             Some(self.ribbon_renderer.vertex_buffer()),
             Some(self.ribbon_renderer.index_buffer()),
@@ -652,7 +672,8 @@ impl ProteinRenderEngine {
         // Start async GPU picking readback (non-blocking)
         self.picking.start_readback();
 
-        // Try to complete any pending readback from previous frame (non-blocking poll)
+        // Try to complete any pending readback from previous frame
+        // (non-blocking poll)
         self.picking.complete_readback(&self.context.device);
 
         frame.present();
@@ -715,8 +736,9 @@ impl ProteinRenderEngine {
             .screen_delta_to_world(delta_x, delta_y)
     }
 
-    /// Unproject screen coordinates to a world-space point at the depth of a reference point.
-    /// Useful for pull operations where the target should be on a plane at the residue's depth.
+    /// Unproject screen coordinates to a world-space point at the depth of a
+    /// reference point. Useful for pull operations where the target should
+    /// be on a plane at the residue's depth.
     pub fn screen_to_world_at_depth(
         &self,
         screen_x: f32,

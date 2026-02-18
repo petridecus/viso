@@ -2,8 +2,10 @@
 
 use std::time::Duration;
 
-use super::state::ResidueVisualState;
-use super::traits::{AnimationBehavior, PreemptionStrategy};
+use super::{
+    state::ResidueVisualState,
+    traits::{AnimationBehavior, PreemptionStrategy},
+};
 
 /// Instant snap to target with no interpolation.
 ///
@@ -37,8 +39,9 @@ impl AnimationBehavior for Snap {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Vec3;
+
+    use super::*;
 
     #[test]
     fn test_snap_behavior() {

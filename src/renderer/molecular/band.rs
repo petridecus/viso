@@ -1,25 +1,30 @@
 //! Band renderer
 //!
-//! Renders constraint bands between atoms as capsules (cylinders with hemispherical caps).
-//! Bands are used to pull atoms toward each other during minimization.
+//! Renders constraint bands between atoms as capsules (cylinders with
+//! hemispherical caps). Bands are used to pull atoms toward each other during
+//! minimization.
 //!
 //! Visual style matches original Foldit:
 //! - Variable radius based on band strength (0.1 to 0.4)
-//! - Color based on band type (default purple, backbone yellow-orange, hbond cyan, disulfide yellow-green)
+//! - Color based on band type (default purple, backbone yellow-orange, hbond
+//!   cyan, disulfide yellow-green)
 //! - Color intensity varies with strength and distance
 //! - Anchor sphere at endpoint for pulls (bands to a point in space)
 //! - Disabled bands shown in gray
 //!
 //! Uses the same capsule_impostor.wgsl shader as the sidechain renderer.
 
-use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::util::options::ColorOptions;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
-use crate::renderer::pipeline_util;
+use crate::{
+    gpu::{
+        dynamic_buffer::TypedBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+    util::options::ColorOptions,
+};
 
 // Foldit color constants for bands
 const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - default band
@@ -77,7 +82,8 @@ pub struct BandRenderInfo {
     pub is_disabled: bool,
     /// Band strength (affects radius and color intensity, default 1.0)
     pub strength: f32,
-    /// Target length for the band (Angstroms, used for type detection if not specified)
+    /// Target length for the band (Angstroms, used for type detection if not
+    /// specified)
     pub target_length: f32,
     /// Residue index for picking (typically the first residue)
     pub residue_idx: u32,
@@ -293,7 +299,8 @@ impl BandRenderer {
             return DISABLED_COLOR;
         }
 
-        // Base color from band type (use ColorOptions if provided, else fallback to constants)
+        // Base color from band type (use ColorOptions if provided, else
+        // fallback to constants)
         let mut color = match band_type {
             BandType::Default => colors.map_or(BAND_COLOR, |c| c.band_default),
             BandType::Backbone => {
@@ -311,7 +318,8 @@ impl BandRenderer {
         let current_length = (band.endpoint_b - band.endpoint_a).length();
         let dist_sqrt = (current_length / 30.0).sqrt().max(0.1); // Avoid division by zero
 
-        // Modify color intensity based on strength and distance (Foldit formula)
+        // Modify color intensity based on strength and distance (Foldit
+        // formula)
         let strength = band.strength;
         if strength <= BAND_MAX_STRENGTH {
             let color_mult = strength * strength / dist_sqrt;

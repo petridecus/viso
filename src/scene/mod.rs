@@ -5,23 +5,34 @@
 
 pub mod processor;
 
-use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-use foldit_conv::coords::entity::{
-    merge_entities, MoleculeEntity, MoleculeType, NucleotideRing,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
-use foldit_conv::coords::render::extract_sequences;
-use foldit_conv::coords::types::Coords;
-use foldit_conv::coords::{protein_only, RenderBackboneResidue, RenderCoords};
-use foldit_conv::secondary_structure::SSType;
-use foldit_conv::types::assembly::{
-    prepare_combined_assembly, protein_coords as assembly_protein_coords,
-    residue_count as assembly_residue_count, split_combined_result,
-    update_entities_from_backend, update_protein_entities,
+
+use foldit_conv::{
+    coords::{
+        entity::{
+            merge_entities, MoleculeEntity, MoleculeType, NucleotideRing,
+        },
+        protein_only,
+        render::extract_sequences,
+        types::Coords,
+        RenderBackboneResidue, RenderCoords,
+    },
+    secondary_structure::SSType,
+    types::assembly::{
+        prepare_combined_assembly, protein_coords as assembly_protein_coords,
+        residue_count as assembly_residue_count, split_combined_result,
+        update_entities_from_backend, update_protein_entities,
+    },
 };
 use glam::Vec3;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+
+use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 
 // ---------------------------------------------------------------------------
 // IDs
@@ -122,7 +133,8 @@ pub struct PerGroupData {
 // EntityGroup
 // ---------------------------------------------------------------------------
 
-/// A group of entities loaded together (from one file or one backend operation).
+/// A group of entities loaded together (from one file or one backend
+/// operation).
 #[derive(Debug, Clone)]
 pub struct EntityGroup {
     pub id: GroupId,
@@ -326,7 +338,8 @@ impl EntityGroup {
 // Aggregated render data (kept for backward compat with animation etc.)
 // ---------------------------------------------------------------------------
 
-/// Pre-computed aggregated data for efficient rendering across all visible groups.
+/// Pre-computed aggregated data for efficient rendering across all visible
+/// groups.
 #[derive(Debug, Clone, Default)]
 pub struct AggregatedRenderData {
     pub backbone_chains: Vec<Vec<Vec3>>,
@@ -341,11 +354,14 @@ pub struct AggregatedRenderData {
     pub all_positions: Vec<Vec3>,
     pub ss_types: Option<Vec<SSType>>,
     pub residue_render_data: ResidueRenderData,
-    /// All non-protein entities across all visible groups (for ball-and-stick).
+    /// All non-protein entities across all visible groups (for
+    /// ball-and-stick).
     pub non_protein_entities: Vec<MoleculeEntity>,
-    /// P-atom chains from DNA/RNA entities (for nucleic acid ribbon rendering).
+    /// P-atom chains from DNA/RNA entities (for nucleic acid ribbon
+    /// rendering).
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
-    /// Base ring geometry from DNA/RNA entities (for filled polygon rendering).
+    /// Base ring geometry from DNA/RNA entities (for filled polygon
+    /// rendering).
     pub nucleic_acid_rings: Vec<NucleotideRing>,
 }
 
@@ -357,9 +373,11 @@ pub struct AggregatedRenderData {
 #[derive(Debug, Clone)]
 pub struct CombinedCoordsResult {
     pub bytes: Vec<u8>,
-    /// Chain IDs assigned to each group (for splitting Rosetta exports by chain).
+    /// Chain IDs assigned to each group (for splitting Rosetta exports by
+    /// chain).
     pub chain_ids_per_group: Vec<(GroupId, Vec<u8>)>,
-    /// Residue ranges per group: GroupId -> (start_residue, end_residue) - 1-indexed, inclusive.
+    /// Residue ranges per group: GroupId -> (start_residue, end_residue) -
+    /// 1-indexed, inclusive.
     pub residue_ranges: HashMap<GroupId, (usize, usize)>,
 }
 
@@ -404,7 +422,8 @@ impl Scene {
         self.generation != self.rendered_generation
     }
 
-    /// Force the scene dirty (e.g. when display options change but scene data hasn't).
+    /// Force the scene dirty (e.g. when display options change but scene data
+    /// hasn't).
     pub fn force_dirty(&mut self) {
         self.invalidate();
     }
@@ -416,7 +435,8 @@ impl Scene {
 
     // -- Group management --
 
-    /// Add a group of entities. Entity IDs are reassigned to be globally unique.
+    /// Add a group of entities. Entity IDs are reassigned to be globally
+    /// unique.
     pub fn add_group(
         &mut self,
         mut entities: Vec<MoleculeEntity>,
@@ -509,7 +529,8 @@ impl Scene {
         self.focus = focus;
     }
 
-    /// Cycle: Session -> Group1 -> ... -> GroupN -> focusable entities -> Session.
+    /// Cycle: Session -> Group1 -> ... -> GroupN -> focusable entities ->
+    /// Session.
     pub fn cycle_focus(&mut self) -> Focus {
         let focusable_entities: Vec<u32> = self
             .groups
@@ -649,7 +670,8 @@ impl Scene {
                 continue;
             }
 
-            // Collect non-protein entities for ball-and-stick, and NA chains for ribbon
+            // Collect non-protein entities for ball-and-stick, and NA chains
+            // for ribbon
             for entity in group.entities() {
                 if entity.molecule_type != MoleculeType::Protein {
                     data.non_protein_entities.push(entity.clone());
@@ -674,7 +696,8 @@ impl Scene {
             let render_data = match group.render_data() {
                 Some(rd) => {
                     log::debug!(
-                        "group '{}': {} backbone chains, {} residues, {} sidechain atoms",
+                        "group '{}': {} backbone chains, {} residues, {} \
+                         sidechain atoms",
                         group_name,
                         rd.render_coords.backbone_chains.len(),
                         rd.render_coords
@@ -779,7 +802,8 @@ impl Scene {
 
     // -- Backend support (combined coords for Rosetta) --
 
-    /// Get combined ASSEM01 bytes from all visible groups for Rosetta operations.
+    /// Get combined ASSEM01 bytes from all visible groups for Rosetta
+    /// operations.
     pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
         let visible_groups: Vec<&EntityGroup> = self
             .groups
@@ -867,7 +891,8 @@ impl Scene {
         self.invalidate();
     }
 
-    /// Get visible group IDs and their residue counts (for Rosetta topology check).
+    /// Get visible group IDs and their residue counts (for Rosetta topology
+    /// check).
     pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
         self.groups
             .iter()

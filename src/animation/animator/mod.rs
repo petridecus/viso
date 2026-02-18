@@ -8,19 +8,19 @@ mod controller;
 mod runner;
 mod state;
 
+use std::time::Instant;
+
 pub use controller::AnimationController;
+use glam::Vec3;
 pub use runner::AnimationRunner;
 pub use state::StructureState;
 
-use std::time::Instant;
+use super::{
+    interpolation::InterpolationContext, preferences::AnimationAction,
+};
 
-use glam::Vec3;
-
-use super::interpolation::InterpolationContext;
-use super::preferences::AnimationAction;
-
-/// Composes [`StructureState`], [`AnimationRunner`], and [`AnimationController`]
-/// to animate backbone/sidechain transitions.
+/// Composes [`StructureState`], [`AnimationRunner`], and
+/// [`AnimationController`] to animate backbone/sidechain transitions.
 pub struct StructureAnimator {
     state: StructureState,
     runner: Option<AnimationRunner>,
@@ -35,7 +35,8 @@ pub struct StructureAnimator {
     start_ca_positions: Vec<Vec3>,
     /// Target CA positions per residue
     target_ca_positions: Vec<Vec3>,
-    /// Flag indicating sidechains changed (for triggering animation even when backbone is static)
+    /// Flag indicating sidechains changed (for triggering animation even when
+    /// backbone is static)
     sidechains_changed: bool,
     /// Pending action for sidechain-only animation
     pending_sidechain_action: Option<AnimationAction>,
@@ -121,10 +122,12 @@ impl StructureAnimator {
     ) {
         let new_target = StructureState::from_backbone(backbone_chains);
 
-        // Check if we have pending sidechain changes that should force animation
+        // Check if we have pending sidechain changes that should force
+        // animation
         let force_animation = self.sidechains_changed;
         let effective_action = if force_animation {
-            // Use the pending sidechain action if available, otherwise use the provided action
+            // Use the pending sidechain action if available, otherwise use the
+            // provided action
             self.pending_sidechain_action.take().unwrap_or(action)
         } else {
             action
@@ -203,7 +206,8 @@ impl StructureAnimator {
         self.runner.as_ref()
     }
 
-    /// Current interpolation context (unified across backbone, sidechains, bonds).
+    /// Current interpolation context (unified across backbone, sidechains,
+    /// bonds).
     pub fn interpolation_context(&self) -> InterpolationContext {
         let raw_t = self.progress();
         match self.runner.as_ref() {
@@ -217,8 +221,9 @@ impl StructureAnimator {
     /// Set sidechain target positions for animation.
     ///
     /// Call this alongside `set_target` when sidechain data changes.
-    /// The residue_indices map each sidechain atom to its residue for collapse animation.
-    /// Pass an action to enable sidechain-only animation triggering.
+    /// The residue_indices map each sidechain atom to its residue for collapse
+    /// animation. Pass an action to enable sidechain-only animation
+    /// triggering.
     pub fn set_sidechain_target(
         &mut self,
         positions: &[Vec3],
@@ -233,10 +238,12 @@ impl StructureAnimator {
         );
     }
 
-    /// Set sidechain target positions with an explicit action for sidechain-only animations.
+    /// Set sidechain target positions with an explicit action for
+    /// sidechain-only animations.
     ///
-    /// If sidechains change but backbone doesn't, this action will be used to trigger
-    /// an animation. Call this BEFORE `set_target()` for proper animation triggering.
+    /// If sidechains change but backbone doesn't, this action will be used to
+    /// trigger an animation. Call this BEFORE `set_target()` for proper
+    /// animation triggering.
     pub fn set_sidechain_target_with_action(
         &mut self,
         positions: &[Vec3],
@@ -244,19 +251,22 @@ impl StructureAnimator {
         ca_positions: &[Vec3],
         action: Option<AnimationAction>,
     ) {
-        // Clear per-entity snap ranges (will be re-set by remove_non_targeted_from_runner if needed)
+        // Clear per-entity snap ranges (will be re-set by
+        // remove_non_targeted_from_runner if needed)
         self.snapped_residue_ranges.clear();
 
         // Check if sidechains actually changed
         let sidechains_changed = self.sidechains_differ(positions);
 
-        // If sizes match, capture current VISUAL state as new start (for smooth preemption)
+        // If sizes match, capture current VISUAL state as new start (for smooth
+        // preemption)
         if self.target_sidechain_positions.len() == positions.len() {
             if self.is_animating()
                 && !self.target_sidechain_positions.is_empty()
             {
-                // Animation in progress - sync to current interpolated positions
-                // This prevents sidechains from jumping during rapid updates (like pulls)
+                // Animation in progress - sync to current interpolated
+                // positions This prevents sidechains from
+                // jumping during rapid updates (like pulls)
                 self.start_sidechain_positions = self.get_sidechain_positions();
                 // Also sync CA positions using same progress
                 let ctx = self.interpolation_context();
@@ -334,7 +344,8 @@ impl StructureAnimator {
         false
     }
 
-    /// Get interpolated sidechain positions using the current animation behavior.
+    /// Get interpolated sidechain positions using the current animation
+    /// behavior.
     ///
     /// This applies the same interpolation logic as backbone animation,
     /// including collapse/expand for mutations.
@@ -426,7 +437,8 @@ impl StructureAnimator {
                 }
             }
 
-            // Snap sidechain positions for atoms belonging to this group's residues
+            // Snap sidechain positions for atoms belonging to this group's
+            // residues
             for (i, &res_idx) in
                 self.sidechain_residue_indices.iter().enumerate()
             {
@@ -495,7 +507,8 @@ impl StructureAnimator {
     /// Whether sidechains should be included in animation frames right now.
     ///
     /// Multi-phase behaviors (BackboneThenExpand) hide sidechains during
-    /// the backbone-lerp phase so new atoms don't flash at their final positions.
+    /// the backbone-lerp phase so new atoms don't flash at their final
+    /// positions.
     pub fn should_include_sidechains(&self) -> bool {
         match self.runner.as_ref() {
             Some(runner) => {
@@ -519,7 +532,8 @@ impl StructureAnimator {
             return Some(*target);
         }
 
-        // Use unified context for consistent interpolation with backbone/sidechains
+        // Use unified context for consistent interpolation with
+        // backbone/sidechains
         let start = self.start_ca_positions.get(residue_idx).unwrap_or(target);
         let ctx = runner.behavior().compute_context(raw_t);
         Some(*start + (*target - *start) * ctx.eased_t)
@@ -544,8 +558,9 @@ impl std::fmt::Debug for StructureAnimator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     fn make_backbone(y: f32) -> Vec<Vec<Vec3>> {
         vec![vec![
@@ -631,7 +646,8 @@ mod tests {
             Some(AnimationAction::Shake),
         );
 
-        // Set same backbone again - should trigger animation due to sidechain change
+        // Set same backbone again - should trigger animation due to sidechain
+        // change
         animator.set_target(&make_backbone(5.0), AnimationAction::Load);
 
         // Now change sidechains with same backbone

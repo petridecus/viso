@@ -1,12 +1,15 @@
-//! FXAA post-process pass — screen-space anti-aliasing applied after compositing.
+//! FXAA post-process pass — screen-space anti-aliasing applied after
+//! compositing.
 //!
 //! Reads the composited color image and outputs an anti-aliased version to the
 //! swapchain. Smooths jagged silhouette edges on mesh-based geometry (ribbons,
 //! tubes) that supersampling alone doesn't fully resolve.
 
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
+
+use crate::gpu::{
+    render_context::RenderContext, shader_composer::ShaderComposer,
+};
 
 pub struct FxaaPass {
     pipeline: wgpu::RenderPipeline,
@@ -211,7 +214,8 @@ impl FxaaPass {
             })
     }
 
-    /// Render FXAA pass: read from input_view, write to output_view (swapchain).
+    /// Render FXAA pass: read from input_view, write to output_view
+    /// (swapchain).
     pub fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,

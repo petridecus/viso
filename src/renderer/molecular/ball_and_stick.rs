@@ -1,23 +1,25 @@
 //! Ball-and-stick renderer for small molecules (ligands, ions, waters).
 //!
 //! Renders atoms as ray-cast sphere impostors and bonds as capsule impostors.
-//! Uses distance-based bond inference from `foldit_conv::coords::bond_inference`.
+//! Uses distance-based bond inference from
+//! `foldit_conv::coords::bond_inference`.
 
 use bytemuck::Zeroable;
-use foldit_conv::coords::types::Element;
 use foldit_conv::coords::{
-    infer_bonds, BondOrder, InferredBond, MoleculeEntity, MoleculeType,
-    DEFAULT_TOLERANCE,
+    infer_bonds, types::Element, BondOrder, InferredBond, MoleculeEntity,
+    MoleculeType, DEFAULT_TOLERANCE,
 };
 use glam::Vec3;
 
-use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::util::options::{ColorOptions, DisplayOptions};
-
 use super::capsule_instance::CapsuleInstance;
-use crate::renderer::pipeline_util;
+use crate::{
+    gpu::{
+        dynamic_buffer::TypedBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+    util::options::{ColorOptions, DisplayOptions},
+};
 
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;
@@ -338,7 +340,8 @@ impl BallAndStickRenderer {
             })
     }
 
-    /// Generate all instances from entity data (pure CPU, no GPU access needed).
+    /// Generate all instances from entity data (pure CPU, no GPU access
+    /// needed).
     ///
     /// Returns (sphere_instances, bond_instances, picking_instances).
     pub(crate) fn generate_all_instances(
@@ -470,7 +473,8 @@ impl BallAndStickRenderer {
         );
     }
 
-    /// Upload pre-computed instances to GPU buffers, recreating bind groups if reallocated.
+    /// Upload pre-computed instances to GPU buffers, recreating bind groups if
+    /// reallocated.
     fn apply_instances(
         &mut self,
         device: &wgpu::Device,
@@ -536,9 +540,10 @@ impl BallAndStickRenderer {
 
     /// Generate ball-and-stick instances for a small molecule entity.
     ///
-    /// When `carbon_tint` is `Some(color)`, carbon atoms and their bond endpoints
-    /// use the tint color instead of CPK gray; heteroatoms (N, O, S, P, …) keep
-    /// standard CPK coloring. Pass `None` for plain ligand rendering.
+    /// When `carbon_tint` is `Some(color)`, carbon atoms and their bond
+    /// endpoints use the tint color instead of CPK gray; heteroatoms (N, O,
+    /// S, P, …) keep standard CPK coloring. Pass `None` for plain ligand
+    /// rendering.
     fn generate_ligand_instances(
         coords: &foldit_conv::coords::Coords,
         _entity_id: u32,
@@ -559,7 +564,8 @@ impl BallAndStickRenderer {
                 coords.elements.get(i).copied().unwrap_or(Element::Unknown);
             let color = atom_color(elem, carbon_tint);
             let radius = elem.vdw_radius() * BALL_RADIUS_SCALE;
-            // Use a large residue_idx offset so picking doesn't conflict with protein
+            // Use a large residue_idx offset so picking doesn't conflict with
+            // protein
             let pick_id = 100000 + i as u32;
 
             spheres.push(SphereInstance {
@@ -576,7 +582,8 @@ impl BallAndStickRenderer {
             });
         }
 
-        // Infer bonds per-residue (avoids O(n²) on large multi-molecule entities)
+        // Infer bonds per-residue (avoids O(n²) on large multi-molecule
+        // entities)
         let inferred_bonds = Self::infer_bonds_per_residue(coords);
         for bond in &inferred_bonds {
             let pos_a = positions[bond.atom_a];
@@ -637,7 +644,8 @@ impl BallAndStickRenderer {
                     });
                 }
                 _ => {
-                    // Single bond (or triple/aromatic rendered as single for now)
+                    // Single bond (or triple/aromatic rendered as single for
+                    // now)
                     bonds.push(CapsuleInstance {
                         endpoint_a: [pos_a.x, pos_a.y, pos_a.z, BOND_RADIUS],
                         endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
@@ -872,8 +880,9 @@ impl BallAndStickRenderer {
         }
     }
 
-    /// Carbon tint color for cofactor rendering, keyed by 3-letter residue name.
-    /// Applied to carbon atoms and their bond endpoints; heteroatoms keep CPK.
+    /// Carbon tint color for cofactor rendering, keyed by 3-letter residue
+    /// name. Applied to carbon atoms and their bond endpoints; heteroatoms
+    /// keep CPK.
     fn cofactor_carbon_tint(res_name: &[u8; 3]) -> [f32; 3] {
         let name = std::str::from_utf8(res_name).unwrap_or("").trim();
         match name {
@@ -940,7 +949,8 @@ impl BallAndStickRenderer {
             picking_bytes,
             picking_count,
         } = *data;
-        // Zeroed fallbacks for empty buffers (wgpu requires non-zero bind group buffers)
+        // Zeroed fallbacks for empty buffers (wgpu requires non-zero bind group
+        // buffers)
         let sphere_zero = SphereInstance::zeroed();
         let capsule_zero = CapsuleInstance::zeroed();
 
@@ -1074,9 +1084,10 @@ impl BallAndStickRenderer {
     }
 
     /// Infer bonds per-residue to avoid O(n²) on large multi-molecule entities.
-    /// For single-residue entities (typical ligands), this is identical to `infer_bonds`.
-    /// For multi-residue entities (e.g. all lipids lumped together), this is
-    /// O(sum of k²) where k = atoms per residue (~130), vs O(n²) where n = total (~95K).
+    /// For single-residue entities (typical ligands), this is identical to
+    /// `infer_bonds`. For multi-residue entities (e.g. all lipids lumped
+    /// together), this is O(sum of k²) where k = atoms per residue (~130),
+    /// vs O(n²) where n = total (~95K).
     fn infer_bonds_per_residue(
         coords: &foldit_conv::coords::Coords,
     ) -> Vec<InferredBond> {

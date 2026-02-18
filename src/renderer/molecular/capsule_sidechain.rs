@@ -8,15 +8,18 @@
 //!
 //! Uses the same capsule_impostor.wgsl shader as the tube renderer.
 
-use crate::camera::frustum::Frustum;
-use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use bytemuck::Zeroable;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
-use crate::renderer::pipeline_util;
+use crate::{
+    camera::frustum::Frustum,
+    gpu::{
+        dynamic_buffer::TypedBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+};
 
 /// Radius used for frustum culling (capsule bounding sphere)
 const CULL_RADIUS: f32 = 5.0;
@@ -44,7 +47,8 @@ pub struct CapsuleSidechainRenderer {
 }
 
 impl CapsuleSidechainRenderer {
-    /// `sidechain.backbone_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples.
+    /// `sidechain.backbone_bonds`: CA-CB bonds as (ca_position,
+    /// cb_sidechain_index) tuples.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -66,7 +70,8 @@ impl CapsuleSidechainRenderer {
 
         let instance_count = instances.len() as u32;
 
-        // wgpu requires non-zero buffer for bind group; use a dummy element if empty
+        // wgpu requires non-zero buffer for bind group; use a dummy element if
+        // empty
         let instance_buffer = if instances.is_empty() {
             TypedBuffer::new_with_data(
                 &context.device,
@@ -198,7 +203,8 @@ impl CapsuleSidechainRenderer {
     }
 
     /// Generate capsule instances from sidechain data.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position, cb_sidechain_index) tuples
+    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position,
+    ///   cb_sidechain_index) tuples
     /// - `frustum`: Optional frustum for culling (None = no culling)
     /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
     pub(crate) fn generate_instances(
@@ -263,7 +269,8 @@ impl CapsuleSidechainRenderer {
 
             let color_a = get_color(a_idx);
             let color_b = get_color(b_idx);
-            // Use residue index from first atom (both should be same residue for internal bonds)
+            // Use residue index from first atom (both should be same residue
+            // for internal bonds)
             let res_idx = get_residue_idx(a_idx);
 
             instances.push(CapsuleInstance {
@@ -365,7 +372,8 @@ impl CapsuleSidechainRenderer {
 
     /// Apply pre-computed instance data (GPU upload only, no CPU generation).
     ///
-    /// Returns `true` if the buffer was reallocated (picking bind groups need recreation).
+    /// Returns `true` if the buffer was reallocated (picking bind groups need
+    /// recreation).
     pub fn apply_prepared(
         &mut self,
         device: &wgpu::Device,

@@ -1,12 +1,15 @@
 //! GPU per-residue color buffer with eased transitions.
 //!
 //! Stores per-residue colors in a storage buffer on the GPU, allowing color
-//! changes (score/SS/relative mode switches, score updates) without mesh rebuilds.
-//! Transitions interpolate over ~300ms with ease-out for smooth visual feedback.
+//! changes (score/SS/relative mode switches, score updates) without mesh
+//! rebuilds. Transitions interpolate over ~300ms with ease-out for smooth
+//! visual feedback.
+
+use std::time::Instant;
+
+use wgpu::util::DeviceExt;
 
 use crate::util::easing::EasingFunction;
-use std::time::Instant;
-use wgpu::util::DeviceExt;
 
 /// Duration of color transitions in seconds.
 const TRANSITION_DURATION: f32 = 0.3;

@@ -1,18 +1,26 @@
 //! Nucleic acid backbone renderer.
 //!
-//! Renders DNA/RNA backbones as narrow flat ribbons tracing phosphorus (P) atoms,
-//! smoothed with B-splines and oriented with rotation-minimizing frames.
+//! Renders DNA/RNA backbones as narrow flat ribbons tracing phosphorus (P)
+//! atoms, smoothed with B-splines and oriented with rotation-minimizing frames.
 
-use crate::gpu::dynamic_buffer::DynamicBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::pipeline_util;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
-/// Ribbon half-width for nucleic acid backbone (narrower than protein sheets/helices)
+use crate::{
+    gpu::{
+        dynamic_buffer::DynamicBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+};
+
+/// Ribbon half-width for nucleic acid backbone (narrower than protein
+/// sheets/helices)
 const NA_RIBBON_WIDTH: f32 = 1.2;
 
 /// Ribbon thickness (same as protein ribbons)
@@ -21,7 +29,8 @@ const NA_RIBBON_THICKNESS: f32 = 0.25;
 /// Spline subdivision per P-atom span
 const SEGMENTS_PER_RESIDUE: usize = 16;
 
-/// Default light blue-violet color for nucleic acid backbone (overridden by ColorOptions)
+/// Default light blue-violet color for nucleic acid backbone (overridden by
+/// ColorOptions)
 const NA_COLOR: [f32; 3] = [0.45, 0.55, 0.85];
 
 #[repr(C)]
@@ -31,8 +40,9 @@ pub(crate) struct NaVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
-    /// Encodes normal direction as position - normal, so the shared shader computes
-    /// normalize(position - center_pos) = normalize(normal) for flat geometry.
+    /// Encodes normal direction as position - normal, so the shared shader
+    /// computes normalize(position - center_pos) = normalize(normal) for
+    /// flat geometry.
     center_pos: [f32; 3],
 }
 
@@ -190,7 +200,8 @@ impl NucleicAcidRenderer {
             self.index_buffer.write_bytes(device, queue, indices);
         }
         self.index_count = index_count;
-        self.last_chain_hash = 0; // Invalidate hash so next synchronous update doesn't skip
+        self.last_chain_hash = 0; // Invalidate hash so next synchronous update
+                                  // doesn't skip
     }
 
     // ── Pipeline ──
@@ -271,7 +282,8 @@ impl NucleicAcidRenderer {
                 continue;
             }
 
-            // Smooth the P-atom chain with Catmull-Rom (interpolates through control points)
+            // Smooth the P-atom chain with Catmull-Rom (interpolates through
+            // control points)
             let spline = catmull_rom(chain, SEGMENTS_PER_RESIDUE);
             if spline.len() < 2 {
                 continue;
@@ -301,7 +313,8 @@ impl NucleicAcidRenderer {
             // (RMF would keep the ribbon flat like a sheet)
             compute_frenet_frames(&mut points);
 
-            // Convert to RibbonFrames with constant color and interpolated residue indices
+            // Convert to RibbonFrames with constant color and interpolated
+            // residue indices
             let n_residues = chain.len();
             let frames: Vec<RibbonFrame> = points
                 .iter()
@@ -431,7 +444,8 @@ fn catmull_rom(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
         return linear_interpolate(points, segments_per_span);
     }
 
-    // Pad with reflected endpoints so the curve starts/ends at the first/last point
+    // Pad with reflected endpoints so the curve starts/ends at the first/last
+    // point
     let mut padded = Vec::with_capacity(n + 2);
     padded.push(points[0] * 2.0 - points[1]);
     padded.extend_from_slice(points);
@@ -484,7 +498,8 @@ fn compute_frenet_frames(points: &mut [SplinePoint]) {
         return;
     }
 
-    // Compute curvature vector (dT/ds) at each point via finite differences of tangent
+    // Compute curvature vector (dT/ds) at each point via finite differences of
+    // tangent
     let n = points.len();
     let mut curvatures: Vec<Vec3> = Vec::with_capacity(n);
     for i in 0..n {
@@ -513,7 +528,8 @@ fn compute_frenet_frames(points: &mut [SplinePoint]) {
             points[i].normal = normal;
             points[i].binormal = binormal;
         } else {
-            // Near-zero curvature (straight segment): fall back to arbitrary frame
+            // Near-zero curvature (straight segment): fall back to arbitrary
+            // frame
             let arbitrary = if t.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
             let normal = t.cross(arbitrary).normalize();
             let binormal = t.cross(normal).normalize();

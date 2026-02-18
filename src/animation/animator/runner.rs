@@ -2,9 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-use crate::animation::behaviors::{ResidueVisualState, SharedBehavior};
-
 use super::state::StructureState;
+use crate::animation::behaviors::{ResidueVisualState, SharedBehavior};
 
 /// Data for animating a single residue.
 #[derive(Debug, Clone)]
@@ -91,7 +90,8 @@ impl AnimationRunner {
         self.behavior.compute_state(t, &data.start, &data.target)
     }
 
-    /// Apply interpolated states to a StructureState using pre-computed progress.
+    /// Apply interpolated states to a StructureState using pre-computed
+    /// progress.
     pub fn apply_to_state(&self, state: &mut StructureState, t: f32) {
         for data in &self.residues {
             let visual = self.compute_residue_state(data, t);
@@ -130,9 +130,10 @@ impl std::fmt::Debug for AnimationRunner {
 
 #[cfg(test)]
 mod tests {
+    use glam::Vec3;
+
     use super::*;
     use crate::animation::behaviors::{shared, SmoothInterpolation, Snap};
-    use glam::Vec3;
 
     fn make_residue_data(
         idx: usize,

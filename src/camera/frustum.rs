@@ -30,7 +30,8 @@ impl Plane {
         }
     }
 
-    /// Signed distance from point to plane (positive = in front, negative = behind)
+    /// Signed distance from point to plane (positive = in front, negative =
+    /// behind)
     #[inline]
     pub fn distance_to_point(&self, point: Vec3) -> f32 {
         self.normal.dot(point) + self.distance
@@ -56,7 +57,8 @@ impl Frustum {
     /// Uses the Gribb/Hartmann method for plane extraction.
     /// Planes point inward (positive half-space is inside the frustum).
     pub fn from_view_projection(vp: Mat4) -> Self {
-        // Get matrix rows (glam stores column-major, so we transpose conceptually)
+        // Get matrix rows (glam stores column-major, so we transpose
+        // conceptually)
         let row0 =
             Vec4::new(vp.x_axis.x, vp.y_axis.x, vp.z_axis.x, vp.w_axis.x);
         let row1 =
@@ -111,7 +113,8 @@ impl Frustum {
         true
     }
 
-    /// Test if a sphere is completely inside the frustum (not just intersecting)
+    /// Test if a sphere is completely inside the frustum (not just
+    /// intersecting)
     #[inline]
     pub fn contains_sphere(&self, center: Vec3, radius: f32) -> bool {
         for plane in &self.planes {
@@ -125,8 +128,9 @@ impl Frustum {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Mat4;
+
+    use super::*;
 
     #[test]
     fn test_frustum_contains_origin() {

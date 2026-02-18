@@ -1,8 +1,11 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use foldit_render::animation::{AnimationTimeline, ResidueAnimationState};
-use foldit_render::easing::EasingFunction;
-use glam::Vec3;
 use std::time::Duration;
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use foldit_render::{
+    animation::{AnimationTimeline, ResidueAnimationState},
+    easing::EasingFunction,
+};
+use glam::Vec3;
 
 fn easing_benchmark(c: &mut Criterion) {
     let f = EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
@@ -31,7 +34,15 @@ fn timeline_update_benchmark(c: &mut Criterion) {
     for count in [10, 50, 100, 500].iter() {
         let mut timeline = AnimationTimeline::new(*count);
         let states: Vec<ResidueAnimationState> = (0..*count)
-            .map(|i| ResidueAnimationState::new(i, [Vec3::ZERO; 3], [Vec3::ONE; 3], &[], &[]))
+            .map(|i| {
+                ResidueAnimationState::new(
+                    i,
+                    [Vec3::ZERO; 3],
+                    [Vec3::ONE; 3],
+                    &[],
+                    &[],
+                )
+            })
             .collect();
         timeline.add(states, Some(Duration::from_millis(300)), None);
 

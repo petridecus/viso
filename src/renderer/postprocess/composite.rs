@@ -4,9 +4,11 @@
 //! combining them to produce the final image with ambient occlusion and
 //! silhouette outlines applied.
 
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
+
+use crate::gpu::{
+    render_context::RenderContext, shader_composer::ShaderComposer,
+};
 
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)
 #[repr(C)]
@@ -108,7 +110,8 @@ impl CompositePass {
             ..Default::default()
         });
 
-        // Sampler for depth texture (comparison sampler not needed, just filtering)
+        // Sampler for depth texture (comparison sampler not needed, just
+        // filtering)
         let depth_sampler =
             context.device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("Composite Depth Sampler"),
@@ -184,7 +187,8 @@ impl CompositePass {
                         ),
                         count: None,
                     },
-                    // binding 4: depth sampler (NonFiltering — sampler uses Nearest)
+                    // binding 4: depth sampler (NonFiltering — sampler uses
+                    // Nearest)
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -204,7 +208,8 @@ impl CompositePass {
                         },
                         count: None,
                     },
-                    // binding 6: normal G-buffer texture (for ambient ratio + normal outlines)
+                    // binding 6: normal G-buffer texture (for ambient ratio +
+                    // normal outlines)
                     wgpu::BindGroupLayoutEntry {
                         binding: 6,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -217,7 +222,8 @@ impl CompositePass {
                         },
                         count: None,
                     },
-                    // binding 7: bloom texture (half-res blurred bright pixels)
+                    // binding 7: bloom texture (half-res blurred bright
+                    // pixels)
                     wgpu::BindGroupLayoutEntry {
                         binding: 7,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -474,7 +480,8 @@ impl CompositePass {
         self.color_texture = color_texture;
         self.color_view = color_view;
 
-        // Update screen_size in params (write to existing buffer, no bind group recreation)
+        // Update screen_size in params (write to existing buffer, no bind group
+        // recreation)
         self.params.screen_size = [self.width as f32, self.height as f32];
         context.queue.write_buffer(
             &self.params_buffer,

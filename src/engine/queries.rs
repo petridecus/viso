@@ -1,8 +1,9 @@
 //! Queries & Backend methods for ProteinRenderEngine
 
-use super::ProteinRenderEngine;
 use foldit_conv::coords::get_ca_position_from_chains;
 use glam::Vec3;
+
+use super::ProteinRenderEngine;
 
 impl ProteinRenderEngine {
     /// Get currently hovered residue index (-1 if none)
@@ -60,7 +61,8 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Get the current visual sidechain positions (interpolated during animation).
+    /// Get the current visual sidechain positions (interpolated during
+    /// animation).
     pub fn get_current_sidechain_positions(&self) -> Vec<Vec3> {
         if self.animator.is_animating() && self.animator.has_sidechain_data() {
             self.animator.get_sidechain_positions()
@@ -69,7 +71,8 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Get the current visual CA positions for all residues (interpolated during animation).
+    /// Get the current visual CA positions for all residues (interpolated
+    /// during animation).
     pub fn get_current_ca_positions(&self) -> Vec<Vec3> {
         let chains = self.get_current_backbone_chains();
         foldit_conv::coords::extract_ca_from_chains(&chains)
@@ -97,7 +100,8 @@ impl ProteinRenderEngine {
         self.animator.progress()
     }
 
-    /// Get the interpolated position of the closest atom to a reference point for a given residue.
+    /// Get the interpolated position of the closest atom to a reference point
+    /// for a given residue.
     pub fn get_closest_atom_for_residue(
         &self,
         residue_idx: usize,
@@ -115,7 +119,8 @@ impl ProteinRenderEngine {
         )
     }
 
-    /// Get the interpolated position of a specific atom by residue index and atom name.
+    /// Get the interpolated position of a specific atom by residue index and
+    /// atom name.
     pub fn get_atom_position_by_name(
         &self,
         residue_idx: usize,

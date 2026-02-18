@@ -6,16 +6,23 @@
 //! Can render all SS types or filter to specific ones (e.g., coils only
 //! when used alongside RibbonRenderer in ribbon view mode).
 
-use crate::gpu::dynamic_buffer::DynamicBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::pipeline_util;
-use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
-use foldit_conv::secondary_structure::{merge_short_segments, SSType};
+use std::{
+    collections::{hash_map::DefaultHasher, HashSet},
+    hash::{Hash, Hasher},
+};
+
+use foldit_conv::secondary_structure::{
+    auto::detect as detect_secondary_structure, merge_short_segments, SSType,
+};
 use glam::Vec3;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+
+use crate::{
+    gpu::{
+        dynamic_buffer::DynamicBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+};
 
 /// Parameters for backbone tube rendering
 const TUBE_RADIUS: f32 = 0.3;
@@ -43,7 +50,8 @@ pub(crate) struct TubeVertex {
     normal: [f32; 3],
     color: [f32; 3],
     residue_idx: u32,
-    /// Tube centerline position — enables per-pixel cylindrical normals in fragment shader
+    /// Tube centerline position — enables per-pixel cylindrical normals in
+    /// fragment shader
     center_pos: [f32; 3],
 }
 
@@ -390,9 +398,10 @@ impl TubeRenderer {
         let mut global_residue_idx: u32 = 0;
 
         for backbone_atoms in chains {
-            // Backbone chains contain N, CA, C atoms per residue (3 atoms per residue)
-            // Extract just CA positions for spline and SS detection
-            // CA is at index 1, 4, 7, 10, ... (every 3rd starting at 1)
+            // Backbone chains contain N, CA, C atoms per residue (3 atoms per
+            // residue) Extract just CA positions for spline and SS
+            // detection CA is at index 1, 4, 7, 10, ... (every 3rd
+            // starting at 1)
             let ca_positions: Vec<Vec3> = backbone_atoms
                 .iter()
                 .enumerate()
@@ -424,7 +433,8 @@ impl TubeRenderer {
             // Generate spline points from raw CA positions
             let spline_points = Self::generate_spline_points(&ca_positions);
 
-            // If no filter, render all. Otherwise, render only matching SS segments.
+            // If no filter, render all. Otherwise, render only matching SS
+            // segments.
             if let Some(filter) = ss_filter {
                 // Render only segments matching the filter
                 Self::generate_filtered_segments(
@@ -474,7 +484,8 @@ impl TubeRenderer {
 
     /// Generate tube segments only for residues matching the SS filter
     /// Generate tube segments only for residues matching the SS filter.
-    /// Ribbon handles the taper into coil regions, so tubes render only their exact range.
+    /// Ribbon handles the taper into coil regions, so tubes render only their
+    /// exact range.
     fn generate_filtered_segments(
         spline_points: &[SplinePoint],
         ss_types: &[SSType],
@@ -688,7 +699,8 @@ impl TubeRenderer {
                 let offset = point.normal * cos_a + point.binormal * sin_a;
                 let pos = point.pos + offset * TUBE_RADIUS;
 
-                // Normal is just the offset direction (points outward from tube center)
+                // Normal is just the offset direction (points outward from tube
+                // center)
                 let normal = offset.normalize();
 
                 vertices.push(TubeVertex {
@@ -762,7 +774,8 @@ impl TubeRenderer {
 
     /// Apply pre-computed mesh data (GPU upload only, no CPU generation).
     ///
-    /// Called from `apply_pending_scene` with data produced by the background SceneProcessor.
+    /// Called from `apply_pending_scene` with data produced by the background
+    /// SceneProcessor.
     pub fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
@@ -894,7 +907,8 @@ fn compute_rmf(points: &mut [SplinePoint]) {
             continue;
         }
 
-        // First reflection (reflect r_i and t_i across plane perpendicular to v1)
+        // First reflection (reflect r_i and t_i across plane perpendicular to
+        // v1)
         let r_i_l = r_i - (2.0 / c1) * v1.dot(r_i) * v1;
         let t_i_l = t_i - (2.0 / c1) * v1.dot(t_i) * v1;
 

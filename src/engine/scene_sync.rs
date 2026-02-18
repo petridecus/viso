@@ -1,22 +1,30 @@
 //! Scene Sync methods for ProteinRenderEngine
 
-use super::ProteinRenderEngine;
-use crate::animation::AnimationAction;
-use crate::renderer::molecular::capsule_sidechain::SidechainData;
-use crate::scene::processor::{
-    AnimationSidechainData, PreparedScene, SceneRequest,
-};
-use crate::scene::{CombinedCoordsResult, GroupId};
-use crate::util::score_color;
+use std::collections::{HashMap, HashSet};
+
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
-use std::collections::{HashMap, HashSet};
+
+use super::ProteinRenderEngine;
+use crate::{
+    animation::AnimationAction,
+    renderer::molecular::{
+        ball_and_stick::PreparedBallAndStickData,
+        capsule_sidechain::SidechainData,
+    },
+    scene::{
+        processor::{AnimationSidechainData, PreparedScene, SceneRequest},
+        CombinedCoordsResult, GroupId,
+    },
+    util::score_color,
+};
 
 impl ProteinRenderEngine {
     /// Update all renderers from aggregated scene data
     ///
     /// This is the main integration point for the Scene-based rendering model.
-    /// Call this whenever structures are added, removed, or modified in the scene.
+    /// Call this whenever structures are added, removed, or modified in the
+    /// scene.
     pub fn update_from_aggregated(
         &mut self,
         backbone_chains: &[Vec<Vec3>],
@@ -26,11 +34,13 @@ impl ProteinRenderEngine {
         fit_camera: bool,
         ss_types: Option<&[SSType]>,
     ) {
-        // Calculate total residues from backbone chains (3 atoms per residue: N, CA, C)
+        // Calculate total residues from backbone chains (3 atoms per residue:
+        // N, CA, C)
         let total_residues: usize =
             backbone_chains.iter().map(|c| c.len() / 3).sum();
 
-        // Ensure selection buffer has capacity for all residues (including new structures)
+        // Ensure selection buffer has capacity for all residues (including new
+        // structures)
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
 
@@ -50,7 +60,8 @@ impl ProteinRenderEngine {
             ss_types,
         );
 
-        // Translate sidechains onto sheet surface (whole sidechain, not just CA-CB bond)
+        // Translate sidechains onto sheet surface (whole sidechain, not just
+        // CA-CB bond)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions =
             crate::util::sheet_adjust::adjust_sidechains_for_sheet(
@@ -90,7 +101,8 @@ impl ProteinRenderEngine {
             self.compute_ss_types(backbone_chains)
         };
 
-        // Cache atom names for lookup by name (used for band tracking during animation)
+        // Cache atom names for lookup by name (used for band tracking during
+        // animation)
         self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Fit camera if requested and we have positions
@@ -151,8 +163,9 @@ impl ProteinRenderEngine {
 
     /// Apply any pending scene data from the background SceneProcessor.
     ///
-    /// Called every frame from the main loop. If the background thread has finished
-    /// generating geometry, this uploads it to the GPU (<1ms) and sets up animation.
+    /// Called every frame from the main loop. If the background thread has
+    /// finished generating geometry, this uploads it to the GPU (<1ms) and
+    /// sets up animation.
     pub fn apply_pending_scene(&mut self) {
         let prepared = match self.scene_processor.try_recv_scene() {
             Some(p) => p,
@@ -183,7 +196,8 @@ impl ProteinRenderEngine {
                 &active,
             );
 
-            // Also snap engine-level sidechain start positions for non-targeted entities
+            // Also snap engine-level sidechain start positions for non-targeted
+            // entities
             for &(eid, start_residue, residue_count) in
                 &prepared.entity_residue_ranges
             {
@@ -228,8 +242,8 @@ impl ProteinRenderEngine {
             // Immediately submit an animation frame so the background thread
             // starts generating an interpolated mesh right away.  Since we skip
             // vertex uploads from the FullRebuild during animation (to avoid a
-            // one-frame jump), this ensures the next render picks up a correctly
-            // interpolated mesh with minimal latency.
+            // one-frame jump), this ensures the next render picks up a
+            // correctly interpolated mesh with minimal latency.
             self.submit_animation_frame();
         } else {
             self.snap_from_prepared(&prepared);
@@ -290,7 +304,7 @@ impl ProteinRenderEngine {
         self.ball_and_stick_renderer.apply_prepared(
             &self.context.device,
             &self.context.queue,
-            &crate::renderer::molecular::ball_and_stick::PreparedBallAndStickData {
+            &PreparedBallAndStickData {
                 sphere_bytes: &prepared.bns_sphere_instances,
                 sphere_count: prepared.bns_sphere_count,
                 capsule_bytes: &prepared.bns_capsule_instances,

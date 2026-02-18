@@ -1,7 +1,7 @@
 //! Easing functions for animation interpolation.
 //!
-//! Provides various easing curves for smooth visual transitions in the animation system.
-//! All functions are designed for <100ns evaluation time.
+//! Provides various easing curves for smooth visual transitions in the
+//! animation system. All functions are designed for <100ns evaluation time.
 
 /// Easing function variants for animation curves.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,7 +20,8 @@ pub enum EasingFunction {
 }
 
 impl EasingFunction {
-    /// Default easing function: CubicHermite with c1=0.33, c2=1.0 for natural ease-out feel.
+    /// Default easing function: CubicHermite with c1=0.33, c2=1.0 for natural
+    /// ease-out feel.
     pub const DEFAULT: EasingFunction =
         EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
 
@@ -83,7 +84,8 @@ mod tests {
     #[test]
     fn test_cubic_hermite_ease_out_shape() {
         // With c1=0.33, c2=1.0, the curve should have ease-out characteristics:
-        // early progress (t=0.25) should yield a result > 0.25 (faster early movement)
+        // early progress (t=0.25) should yield a result > 0.25 (faster early
+        // movement)
         let hermite = EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
         let result_at_quarter = hermite.evaluate(0.25);
         assert!(

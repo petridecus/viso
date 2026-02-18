@@ -10,13 +10,16 @@
 //!
 //! Only one pull can be active at a time.
 
-use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use glam::Vec3;
 
 use super::capsule_instance::CapsuleInstance;
-use crate::renderer::pipeline_util;
+use crate::{
+    gpu::{
+        dynamic_buffer::TypedBuffer, render_context::RenderContext,
+        shader_composer::ShaderComposer,
+    },
+    renderer::pipeline_util,
+};
 
 /// Per-instance data for cone impostor (arrow tip)
 #[repr(C)]

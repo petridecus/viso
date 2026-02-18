@@ -1,5 +1,6 @@
-use glam::Vec3;
 use std::collections::HashMap;
+
+use glam::Vec3;
 
 /// Translate sidechain atom positions by sheet-flattening offsets.
 pub fn adjust_sidechains_for_sheet(

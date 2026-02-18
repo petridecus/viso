@@ -1,15 +1,20 @@
 //! GPU-based picking using a dedicated picking render pass
 //!
 //! Renders residue indices to an offscreen buffer, then reads back
-//! the pixel at the mouse position to determine which residue is under the cursor.
-//! This is exact - it matches exactly what's rendered on screen.
+//! the pixel at the mouse position to determine which residue is under the
+//! cursor. This is exact - it matches exactly what's rendered on screen.
 
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
-use crate::renderer::molecular::tube::tube_vertex_buffer_layout;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use wgpu::util::DeviceExt;
+
+use crate::{
+    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    renderer::molecular::tube::tube_vertex_buffer_layout,
+};
 
 /// Selection buffer for GPU - stores selection state as a bit array
 pub struct SelectionBuffer {
@@ -176,7 +181,8 @@ impl Picking {
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&context.device, width, height);
 
-        // Staging buffer for single pixel readback (256 bytes minimum, we only need 4)
+        // Staging buffer for single pixel readback (256 bytes minimum, we only
+        // need 4)
         let staging_buffer =
             context.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Picking Staging Buffer"),
@@ -416,8 +422,9 @@ impl Picking {
 
     /// Render the picking pass and request readback at mouse position
     ///
-    /// In Ribbon mode, pass ribbon buffers to render helices/sheets for picking.
-    /// Tubes are still rendered (for coils in ribbon mode, or everything in tube mode).
+    /// In Ribbon mode, pass ribbon buffers to render helices/sheets for
+    /// picking. Tubes are still rendered (for coils in ribbon mode, or
+    /// everything in tube mode).
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -485,7 +492,8 @@ impl Picking {
             }
 
             // Draw ribbons (helices/sheets in ribbon mode)
-            // Uses the same pipeline as tubes - same vertex layout and picking shader
+            // Uses the same pipeline as tubes - same vertex layout and picking
+            // shader
             if let (Some(ribbon_vb), Some(ribbon_ib)) =
                 (ribbon_vertex_buffer, ribbon_index_buffer)
             {
@@ -511,7 +519,8 @@ impl Picking {
                 }
             }
 
-            // Draw ball-and-stick picking (degenerate capsules for spheres + bonds)
+            // Draw ball-and-stick picking (degenerate capsules for spheres +
+            // bonds)
             if let Some(bns_bg) = bns_capsule_bind_group {
                 if bns_capsule_count > 0 {
                     render_pass.set_pipeline(&self.capsule_pipeline);
@@ -522,7 +531,8 @@ impl Picking {
             }
         }
 
-        // Copy pixel at mouse position to staging buffer (only if not already in flight)
+        // Copy pixel at mouse position to staging buffer (only if not already
+        // in flight)
         if mouse_x < self.width
             && mouse_y < self.height
             && !self.readback_in_flight

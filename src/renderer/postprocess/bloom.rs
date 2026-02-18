@@ -4,9 +4,11 @@
 //! Gaussian blur at each level → upsample + accumulate → final bloom texture.
 //! The composite pass adds the bloom texture to the scene before tone mapping.
 
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use wgpu::util::DeviceExt;
+
+use crate::gpu::{
+    render_context::RenderContext, shader_composer::ShaderComposer,
+};
 
 /// Blur direction params — must match WGSL struct
 #[repr(C)]
@@ -286,7 +288,8 @@ impl BloomPass {
                 height,
             );
 
-        // --- Upsample + accumulate pipeline (reuses blur shader with additive blend) ---
+        // --- Upsample + accumulate pipeline (reuses blur shader with additive
+        // blend) ---
         let upsample_bind_group_layout = context
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -315,7 +318,8 @@ impl BloomPass {
                 ],
             });
 
-        // Simple passthrough shader for upsample (just bilinear sample + additive blend)
+        // Simple passthrough shader for upsample (just bilinear sample +
+        // additive blend)
         let upsample_shader = shader_composer.compose(
             &context.device,
             "Bloom Upsample Shader",
@@ -592,8 +596,9 @@ impl BloomPass {
         mip_views: &[wgpu::TextureView],
         sampler: &wgpu::Sampler,
     ) -> Vec<wgpu::BindGroup> {
-        // For upsampling: we read from mip[i+1] and additively blend into mip[i]
-        // So we need bind groups for mip levels 1..MIP_LEVELS (reading from those levels)
+        // For upsampling: we read from mip[i+1] and additively blend into
+        // mip[i] So we need bind groups for mip levels 1..MIP_LEVELS
+        // (reading from those levels)
         let mut bind_groups = Vec::with_capacity(MIP_LEVELS - 1);
         for (i, mip_view) in
             mip_views.iter().enumerate().take(MIP_LEVELS).skip(1)
@@ -655,9 +660,10 @@ impl BloomPass {
         }
 
         // Step 2: Progressive downsample — copy mip[i-1] into mip[i] via blur
-        // For simplicity, the first blur pass at each level also acts as the downsample
-        // (the bilinear sampler handles the 2x reduction)
-        // We blur mip[0] in place first, then for levels 1+, we downsample from the previous level
+        // For simplicity, the first blur pass at each level also acts as the
+        // downsample (the bilinear sampler handles the 2x reduction)
+        // We blur mip[0] in place first, then for levels 1+, we downsample from
+        // the previous level
 
         // Blur mip[0] (threshold output)
         self.blur_level(encoder, 0);
@@ -666,9 +672,10 @@ impl BloomPass {
         // can be added later by iterating over levels 1..MIP_LEVELS.
 
         // Step 3: Copy blurred mip[0] → output
-        // For single-level bloom, the output IS mip[0]. We'll just reference mip_views[0].
-        // Actually we don't need the output texture at all for single-level — composite can
-        // just read from mip_views[0].
+        // For single-level bloom, the output IS mip[0]. We'll just reference
+        // mip_views[0]. Actually we don't need the output texture at
+        // all for single-level — composite can just read from
+        // mip_views[0].
     }
 
     /// Separable Gaussian blur at a given mip level (in-place via ping-pong)
@@ -728,7 +735,8 @@ impl BloomPass {
         &self.mip_views[0]
     }
 
-    /// Rebind the input color texture (called after composite creates its color texture)
+    /// Rebind the input color texture (called after composite creates its color
+    /// texture)
     pub fn rebind_input(
         &mut self,
         context: &RenderContext,

@@ -25,7 +25,8 @@ pub struct CameraUniform {
 impl Camera {
     pub fn build_matrix(&self) -> Mat4 {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
-        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan convention)
+        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan
+        // convention)
         let proj = Mat4::perspective_rh(
             self.fovy.to_radians(),
             self.aspect,
@@ -37,7 +38,8 @@ impl Camera {
 
     /// Get just the projection matrix for SSAO
     pub fn build_projection(&self) -> Mat4 {
-        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan convention)
+        // perspective_rh already uses [0,1] depth range (wgpu/Vulkan
+        // convention)
         Mat4::perspective_rh(
             self.fovy.to_radians(),
             self.aspect,

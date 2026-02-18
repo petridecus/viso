@@ -6,18 +6,20 @@
 
 use std::time::Duration;
 
+use super::{
+    super::interpolation::InterpolationContext,
+    state::ResidueVisualState,
+    traits::{AnimationBehavior, PreemptionStrategy},
+};
 use crate::util::easing::EasingFunction;
-
-use super::super::interpolation::InterpolationContext;
-use super::state::ResidueVisualState;
-use super::traits::{AnimationBehavior, PreemptionStrategy};
 
 /// Two-phase sequenced animation: backbone lerp, then sidechain expand.
 ///
 /// # Phases
 ///
-/// 1. **Backbone lerp** (0.0 to backbone_fraction): Backbone positions interpolate
-///    from start to end. Sidechains stay frozen at their collapsed (CA) positions.
+/// 1. **Backbone lerp** (0.0 to backbone_fraction): Backbone positions
+///    interpolate from start to end. Sidechains stay frozen at their collapsed
+///    (CA) positions.
 /// 2. **Sidechain expand** (backbone_fraction to 1.0): Backbone is at its final
 ///    position. Sidechain chi angles interpolate from 0 to final values, and
 ///    sidechain atom positions expand from CA toward their final positions.
@@ -121,7 +123,8 @@ impl AnimationBehavior for BackboneThenExpand {
         let ctx = self.compute_context(t);
         let bb_frac = self.backbone_fraction();
 
-        // Backbone uses eased_t: goes 0→1 during phase 1, stays 1.0 during phase 2
+        // Backbone uses eased_t: goes 0→1 during phase 1, stays 1.0 during
+        // phase 2
         let backbone_t = ctx.eased_t;
         let backbone = [
             start.backbone[0]
@@ -207,8 +210,9 @@ impl AnimationBehavior for BackboneThenExpand {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Vec3;
+
+    use super::*;
 
     fn test_state_a() -> ResidueVisualState {
         ResidueVisualState::new(
@@ -298,11 +302,13 @@ mod tests {
         let end = Vec3::new(1.0, 5.0, 0.0);
         let collapse = Vec3::new(1.0, 2.0, 0.0);
 
-        // During backbone phase: sidechain tracks the collapse point (moving CA)
+        // During backbone phase: sidechain tracks the collapse point (moving
+        // CA)
         let pos = behavior.interpolate_position(0.2, start, end, collapse);
         assert!(
             (pos - collapse).length() < 0.001,
-            "Sidechain should be pinned to collapse point (CA) during backbone phase"
+            "Sidechain should be pinned to collapse point (CA) during \
+             backbone phase"
         );
     }
 

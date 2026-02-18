@@ -1,14 +1,15 @@
 //! Input & Selection methods for ProteinRenderEngine
 
+use glam::Vec2;
+use winit::{event::MouseButton, keyboard::ModifiersState};
+
 use super::ProteinRenderEngine;
 use crate::camera::input_state::ClickResult;
-use glam::Vec2;
-use winit::event::MouseButton;
-use winit::keyboard::ModifiersState;
 
 impl ProteinRenderEngine {
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
-        // Only allow rotation/pan if mouse down was on background (not on a residue)
+        // Only allow rotation/pan if mouse down was on background (not on a
+        // residue)
         if self.camera_controller.mouse_pressed
             && self.input.mouse_down_residue < 0
         {
@@ -72,8 +73,9 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Select all residues in the same secondary structure segment as the given residue
-    /// If shift_held is true, adds to existing selection; otherwise replaces selection
+    /// Select all residues in the same secondary structure segment as the given
+    /// residue If shift_held is true, adds to existing selection; otherwise
+    /// replaces selection
     fn select_ss_segment(
         &mut self,
         residue_idx: i32,
@@ -119,7 +121,8 @@ impl ProteinRenderEngine {
     }
 
     /// Select all residues in the same chain as the given residue.
-    /// If shift_held is true, adds to existing selection; otherwise replaces selection.
+    /// If shift_held is true, adds to existing selection; otherwise replaces
+    /// selection.
     fn select_chain(&mut self, residue_idx: i32, shift_held: bool) -> bool {
         if residue_idx < 0 {
             return false;
@@ -169,7 +172,8 @@ impl ProteinRenderEngine {
         self.camera_controller.shift_pressed = modifiers.shift_key();
     }
 
-    /// Set shift state directly (from frontend IPC, no winit dependency needed).
+    /// Set shift state directly (from frontend IPC, no winit dependency
+    /// needed).
     pub fn set_shift_pressed(&mut self, shift: bool) {
         self.camera_controller.shift_pressed = shift;
     }

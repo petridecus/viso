@@ -1,17 +1,22 @@
 //! Animation methods for ProteinRenderEngine
 
-use super::ProteinRenderEngine;
-use crate::animation::AnimationAction;
-use crate::renderer::molecular::capsule_sidechain::SidechainData;
-use crate::util::trajectory::TrajectoryPlayer;
-use glam::Vec3;
 use std::path::Path;
+
+use glam::Vec3;
+
+use super::ProteinRenderEngine;
+use crate::{
+    animation::AnimationAction,
+    renderer::molecular::capsule_sidechain::SidechainData,
+    util::trajectory::TrajectoryPlayer,
+};
 
 impl ProteinRenderEngine {
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &Path) {
-        use crate::util::trajectory::build_backbone_atom_indices;
         use foldit_conv::coords::{dcd_file_to_frames, protein_only};
+
+        use crate::util::trajectory::build_backbone_atom_indices;
 
         let (header, frames) = match dcd_file_to_frames(path) {
             Ok(r) => r,
@@ -21,7 +26,8 @@ impl ProteinRenderEngine {
             }
         };
 
-        // Get protein coords from the first visible group to build backbone mapping
+        // Get protein coords from the first visible group to build backbone
+        // mapping
         let protein_coords = self
             .scene
             .iter()
@@ -133,13 +139,15 @@ impl ProteinRenderEngine {
         action: AnimationAction,
     ) {
         // Capture current VISUAL positions as start (for smooth preemption)
-        // If animation is in progress, use interpolated positions, not old targets
+        // If animation is in progress, use interpolated positions, not old
+        // targets
         if self.sc.target_sidechain_positions.len() == sidechain.positions.len()
         {
             if self.animator.is_animating()
                 && self.animator.has_sidechain_data()
             {
-                // Animation in progress - sync to current visual state (like backbone does)
+                // Animation in progress - sync to current visual state (like
+                // backbone does)
                 self.sc.start_sidechain_positions =
                     self.animator.get_sidechain_positions();
                 // Also interpolate backbone-sidechain bonds
@@ -181,7 +189,8 @@ impl ProteinRenderEngine {
         self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
-        // CA is the second atom (index 1) in each group of 3 (N, CA, C) per residue
+        // CA is the second atom (index 1) in each group of 3 (N, CA, C) per
+        // residue
         let ca_positions: Vec<Vec3> = new_backbone
             .iter()
             .flat_map(|chain| {
@@ -190,8 +199,9 @@ impl ProteinRenderEngine {
             .collect();
 
         // Pass sidechain data to animator FIRST (before set_target)
-        // This allows set_target to detect sidechain changes and force animation
-        // even when backbone is unchanged (for Shake/MPNN animations)
+        // This allows set_target to detect sidechain changes and force
+        // animation even when backbone is unchanged (for Shake/MPNN
+        // animations)
         self.animator.set_sidechain_target_with_action(
             sidechain.positions,
             sidechain.residue_indices,
@@ -199,16 +209,19 @@ impl ProteinRenderEngine {
             Some(action),
         );
 
-        // Set backbone target (this starts the animation, checking sidechain changes)
+        // Set backbone target (this starts the animation, checking sidechain
+        // changes)
         self.animator.set_target(new_backbone, action);
 
-        // Update renderers with START visual state (animation will interpolate from here)
+        // Update renderers with START visual state (animation will interpolate
+        // from here)
         if self.animator.residue_count() > 0 {
             let visual_backbone = self.animator.get_backbone();
             self.update_backbone(&visual_backbone);
         }
 
-        // Update sidechain renderer with start positions (adjusted for sheet surface)
+        // Update sidechain renderer with start positions (adjusted for sheet
+        // surface)
         let offset_map = self.sheet_offset_map();
         let adjusted_positions =
             crate::util::sheet_adjust::adjust_sidechains_for_sheet(

@@ -1,5 +1,6 @@
-use crate::gpu::render_context::RenderContext;
 use wgpu::util::DeviceExt;
+
+use crate::gpu::render_context::RenderContext;
 
 /// Lighting configuration shared across all shaders
 /// NOTE: Must match WGSL struct layout exactly (112 bytes)
@@ -39,7 +40,8 @@ pub struct LightingUniform {
     pub light1_intensity: f32,
     /// Secondary light intensity
     pub light2_intensity: f32,
-    /// Ambient light intensity (used as fallback; IBL replaces this when ibl_strength > 0)
+    /// Ambient light intensity (used as fallback; IBL replaces this when
+    /// ibl_strength > 0)
     pub ambient: f32,
     /// Specular intensity
     pub specular_intensity: f32,
@@ -49,13 +51,15 @@ pub struct LightingUniform {
     pub rim_power: f32,
     /// Rim edge brightness
     pub rim_intensity: f32,
-    /// Rim directionality: 0.0 = pure view-dependent, 1.0 = pure directional back-light
+    /// Rim directionality: 0.0 = pure view-dependent, 1.0 = pure directional
+    /// back-light
     pub rim_directionality: f32,
     /// Rim light tint color
     pub rim_color: [f32; 3],
     /// IBL diffuse strength (0.0 = use flat ambient, 1.0 = full IBL)
     pub ibl_strength: f32,
-    /// Rim back-light direction (normalized, points toward the rim light source)
+    /// Rim back-light direction (normalized, points toward the rim light
+    /// source)
     pub rim_dir: [f32; 3],
     pub _pad3: f32,
     /// Surface roughness (0.05 = mirror-like, 1.0 = completely matte)
@@ -183,7 +187,8 @@ impl Lighting {
                         },
                         count: None,
                     },
-                    // Binding 2: Irradiance sampler (shared for all IBL textures)
+                    // Binding 2: Irradiance sampler (shared for all IBL
+                    // textures)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -192,7 +197,8 @@ impl Lighting {
                         ),
                         count: None,
                     },
-                    // Binding 3: Prefiltered environment cubemap (specular IBL)
+                    // Binding 3: Prefiltered environment cubemap (specular
+                    // IBL)
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -314,7 +320,8 @@ impl Lighting {
     }
 }
 
-/// Generate a procedural gradient irradiance cubemap for studio-style ambient lighting.
+/// Generate a procedural gradient irradiance cubemap for studio-style ambient
+/// lighting.
 ///
 /// Produces a 32x32-per-face cubemap with:
 /// - Warm white from above (simulating overhead light bounce)
@@ -346,7 +353,8 @@ fn generate_irradiance_cubemap(
     });
 
     // Cubemap face order: +X, -X, +Y, -Y, +Z, -Z
-    // For each texel, compute the world-space direction and evaluate the irradiance gradient
+    // For each texel, compute the world-space direction and evaluate the
+    // irradiance gradient
     for face in 0..6u32 {
         let mut data = vec![0u8; (size * size * 4) as usize]; // 4 x u8 per texel
 
@@ -499,7 +507,8 @@ fn generate_prefiltered_cubemap(
                     let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
 
                     // Evaluate blurred irradiance based on roughness
-                    // At roughness=0, sharp environment; at roughness=1, very blurred
+                    // At roughness=0, sharp environment; at roughness=1, very
+                    // blurred
                     let color = evaluate_prefiltered(dir, roughness);
 
                     let offset = ((y * mip_size + x) * 4) as usize;
@@ -549,13 +558,14 @@ fn generate_prefiltered_cubemap(
 ///
 /// At low roughness, returns a sharper version of the environment.
 /// At high roughness, returns a heavily blurred/averaged version.
-/// Uses the same studio gradient as the irradiance map but with a specular highlight boost.
+/// Uses the same studio gradient as the irradiance map but with a specular
+/// highlight boost.
 fn evaluate_prefiltered(dir: [f32; 3], roughness: f32) -> [f32; 3] {
     // Base irradiance gradient
     let base = evaluate_irradiance(dir);
 
-    // Add a specular highlight at low roughness: a bright spot in the upper region
-    // This simulates a key light reflection in the environment
+    // Add a specular highlight at low roughness: a bright spot in the upper
+    // region This simulates a key light reflection in the environment
     let highlight_dir = [0.0f32, 0.7, -0.7]; // Approximate key light direction
     let dot = dir[0] * highlight_dir[0]
         + dir[1] * highlight_dir[1]
@@ -574,7 +584,8 @@ fn evaluate_prefiltered(dir: [f32; 3], roughness: f32) -> [f32; 3] {
     ]
 }
 
-/// Generate a BRDF integration lookup table for the split-sum IBL approximation.
+/// Generate a BRDF integration lookup table for the split-sum IBL
+/// approximation.
 ///
 /// 256x256 Rg16Float texture. X axis = NdotV, Y axis = roughness.
 /// R = scale, G = bias for the Fresnel term: `specular = F0 * scale + bias`

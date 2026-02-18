@@ -1,6 +1,10 @@
-use crate::picking::Picking;
-use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
+use crate::{
+    picking::Picking,
+    renderer::molecular::{
+        ball_and_stick::BallAndStickRenderer,
+        capsule_sidechain::CapsuleSidechainRenderer,
+    },
+};
 
 /// Owns the GPU bind groups used for picking ray-tests against capsule geometry
 /// (sidechains and ball-and-stick atoms).

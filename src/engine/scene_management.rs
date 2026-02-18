@@ -1,15 +1,22 @@
 //! Scene Management methods for ProteinRenderEngine
 
-use super::ProteinRenderEngine;
-use crate::animation::AnimationAction;
-use crate::renderer::molecular::band::BandRenderInfo;
-use crate::renderer::molecular::capsule_sidechain::SidechainData;
-use crate::renderer::molecular::pull::PullRenderInfo;
-use crate::scene::{EntityGroup, Focus, GroupId};
-use foldit_conv::coords::{MoleculeEntity, MoleculeType};
-use foldit_conv::secondary_structure::SSType;
-use glam::Vec3;
 use std::collections::HashMap;
+
+use foldit_conv::{
+    coords::{MoleculeEntity, MoleculeType},
+    secondary_structure::SSType,
+};
+use glam::Vec3;
+
+use super::ProteinRenderEngine;
+use crate::{
+    animation::AnimationAction,
+    renderer::molecular::{
+        band::BandRenderInfo, capsule_sidechain::SidechainData,
+        pull::PullRenderInfo,
+    },
+    scene::{EntityGroup, Focus, GroupId},
+};
 
 impl ProteinRenderEngine {
     /// Update backbone with new chains (regenerates the tube mesh)
@@ -25,8 +32,9 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Update sidechain instances with frustum culling when camera moves significantly.
-    /// This filters out sidechains behind the camera to reduce draw calls.
+    /// Update sidechain instances with frustum culling when camera moves
+    /// significantly. This filters out sidechains behind the camera to
+    /// reduce draw calls.
     pub(crate) fn update_frustum_culling(&mut self) {
         // Skip if no sidechain data
         if self.sc.target_sidechain_positions.is_empty() {
@@ -53,7 +61,8 @@ impl ProteinRenderEngine {
         // Get current frustum
         let frustum = self.camera_controller.frustum();
 
-        // Get current sidechain positions (may be interpolated during animation)
+        // Get current sidechain positions (may be interpolated during
+        // animation)
         let positions = if self.animator.is_animating()
             && self.animator.has_sidechain_data()
         {
@@ -173,12 +182,13 @@ impl ProteinRenderEngine {
         &self,
         backbone_chains: &[Vec<Vec3>],
     ) -> Vec<SSType> {
-        use foldit_conv::secondary_structure::auto::detect as detect_secondary_structure;
+        use foldit_conv::secondary_structure::auto::detect as detect_ss;
 
         let mut all_ss_types = Vec::new();
 
         for chain in backbone_chains {
-            // Extract CA positions (every 3rd atom starting at index 1: N, CA, C pattern)
+            // Extract CA positions (every 3rd atom starting at index 1: N, CA,
+            // C pattern)
             let ca_positions: Vec<Vec3> = chain
                 .iter()
                 .enumerate()
@@ -186,7 +196,7 @@ impl ProteinRenderEngine {
                 .map(|(_, &pos)| pos)
                 .collect();
 
-            let ss_types = detect_secondary_structure(&ca_positions);
+            let ss_types = detect_ss(&ca_positions);
             all_ss_types.extend(ss_types);
         }
 
@@ -289,7 +299,8 @@ impl ProteinRenderEngine {
 
     // ── Focus / tab cycling ──
 
-    /// Cycle focus: Session → Group1 → ... → GroupN → focusable entities → Session.
+    /// Cycle focus: Session → Group1 → ... → GroupN → focusable entities →
+    /// Session.
     pub fn cycle_focus(&mut self) -> Focus {
         self.scene.cycle_focus()
     }

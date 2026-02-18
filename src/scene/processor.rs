@@ -8,22 +8,32 @@
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
-use super::{AggregatedRenderData, GroupId, PerGroupData};
-use crate::animation::AnimationAction;
-use crate::renderer::molecular::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::molecular::capsule_sidechain::CapsuleSidechainRenderer;
-use crate::renderer::molecular::nucleic_acid::NucleicAcidRenderer;
-use crate::renderer::molecular::ribbon::{RibbonParams, RibbonRenderer};
-use crate::renderer::molecular::tube::TubeRenderer;
-use crate::util::options::{ColorOptions, DisplayOptions};
-use crate::util::score_color;
-use foldit_conv::coords::entity::NucleotideRing;
-use foldit_conv::coords::MoleculeEntity;
-use foldit_conv::secondary_structure::SSType;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{mpsc, Arc},
+};
+
+use foldit_conv::{
+    coords::{entity::NucleotideRing, MoleculeEntity},
+    secondary_structure::SSType,
+};
 use glam::Vec3;
-use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
-use std::sync::Arc;
+
+use super::{AggregatedRenderData, GroupId, PerGroupData};
+use crate::{
+    animation::AnimationAction,
+    renderer::molecular::{
+        ball_and_stick::BallAndStickRenderer,
+        capsule_sidechain::CapsuleSidechainRenderer,
+        nucleic_acid::NucleicAcidRenderer,
+        ribbon::{RibbonParams, RibbonRenderer},
+        tube::TubeRenderer,
+    },
+    util::{
+        options::{ColorOptions, DisplayOptions},
+        score_color,
+    },
+};
 
 /// Fallback color for residues without score data (neutral gray).
 const FALLBACK_RESIDUE_COLOR: [f32; 3] = [0.7, 0.7, 0.7];
@@ -43,13 +53,15 @@ pub enum SceneRequest {
     FullRebuild {
         groups: Vec<PerGroupData>,
         aggregated: Arc<AggregatedRenderData>,
-        /// Per-entity animation actions. Entities in the map animate with their
-        /// action; entities not in the map snap. Empty map = snap all.
+        /// Per-entity animation actions. Entities in the map animate with
+        /// their action; entities not in the map snap. Empty map =
+        /// snap all.
         entity_actions: HashMap<GroupId, AnimationAction>,
         display: DisplayOptions,
         colors: ColorOptions,
     },
-    /// Per-frame animation mesh generation (tube + ribbon + optional sidechains).
+    /// Per-frame animation mesh generation (tube + ribbon + optional
+    /// sidechains).
     AnimationFrame {
         backbone_chains: Vec<Vec<Vec3>>,
         sidechains: Option<AnimationSidechainData>,
@@ -100,7 +112,8 @@ pub struct PreparedScene {
     pub sidechain_atom_names: Vec<String>,
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
     pub ss_types: Option<Vec<SSType>>,
-    /// Concatenated per-residue colors (derived from scores, cached for animation).
+    /// Concatenated per-residue colors (derived from scores, cached for
+    /// animation).
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     pub all_positions: Vec<Vec3>,
     /// Per-entity animation actions. Entities in the map animate; others snap.

@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
+use super::{
+    state::ResidueVisualState,
+    traits::{AnimationBehavior, PreemptionStrategy},
+};
 use crate::util::easing::EasingFunction;
-
-use super::state::ResidueVisualState;
-use super::traits::{AnimationBehavior, PreemptionStrategy};
 
 /// Smooth interpolation with configurable easing.
 ///
@@ -99,8 +100,9 @@ impl AnimationBehavior for SmoothInterpolation {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Vec3;
+
+    use super::*;
 
     fn test_state_a() -> ResidueVisualState {
         ResidueVisualState::new(

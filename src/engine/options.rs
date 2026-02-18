@@ -15,7 +15,8 @@ impl ProteinRenderEngine {
         self.apply_options();
     }
 
-    /// Push current option values to all subsystems (lighting, camera, composite, etc.).
+    /// Push current option values to all subsystems (lighting, camera,
+    /// composite, etc.).
     pub fn apply_options(&mut self) {
         // Lighting
         let lo = &self.options.lighting;

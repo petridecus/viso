@@ -27,11 +27,13 @@ impl FrameTiming {
             min_frame_duration,
             last_frame: Instant::now(),
             smoothed_fps: 60.0, // Start with reasonable default
-            smoothing: 0.05, // 5% new value, 95% old value for smooth display
+            smoothing: 0.05,    /* 5% new value, 95% old value for smooth
+                                 * display */
         }
     }
 
-    /// Call at the start of each frame. Returns true if enough time has passed to render.
+    /// Call at the start of each frame. Returns true if enough time has passed
+    /// to render.
     pub fn should_render(&self) -> bool {
         if self.target_fps == 0 {
             return true;

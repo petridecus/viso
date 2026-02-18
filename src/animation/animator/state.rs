@@ -162,7 +162,8 @@ impl StructureState {
             }
         }
 
-        // Fallback: if chain_lengths is empty but we have residues, return as single chain
+        // Fallback: if chain_lengths is empty but we have residues, return as
+        // single chain
         if chains.is_empty() && !self.current.is_empty() {
             let positions: Vec<Vec3> = self
                 .current
@@ -203,8 +204,9 @@ impl StructureState {
     /// Resize current state to match a new target's dimensions.
     ///
     /// Preserves existing residue positions where possible:
-    /// - If new target is larger: existing residues keep their current positions,
-    ///   new residues start at their target positions (no animation for those).
+    /// - If new target is larger: existing residues keep their current
+    ///   positions, new residues start at their target positions (no animation
+    ///   for those).
     /// - If new target is smaller: truncate to the new size.
     ///
     /// After calling this, `current` and `target` will have the same length
@@ -214,7 +216,8 @@ impl StructureState {
         let new_len = new_target.target.len();
 
         if new_len > old_len {
-            // Grow: append target positions for new residues (they won't animate)
+            // Grow: append target positions for new residues (they won't
+            // animate)
             self.current
                 .extend_from_slice(&new_target.target[old_len..]);
         } else if new_len < old_len {

@@ -55,7 +55,8 @@ impl Default for ColorRamp {
     }
 }
 
-/// Absolute mode: map a per-residue energy (REU) to [0, 1] using fixed thresholds.
+/// Absolute mode: map a per-residue energy (REU) to [0, 1] using fixed
+/// thresholds.
 fn score_to_t_absolute(score: f64) -> f32 {
     if score <= GOOD_THRESHOLD {
         0.0

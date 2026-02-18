@@ -2,11 +2,14 @@
 
 use std::time::Instant;
 
-use crate::animation::behaviors::PreemptionStrategy;
-use crate::animation::preferences::{AnimationAction, AnimationPreferences};
-
-use super::runner::{AnimationRunner, ResidueAnimationData};
-use super::state::StructureState;
+use super::{
+    runner::{AnimationRunner, ResidueAnimationData},
+    state::StructureState,
+};
+use crate::animation::{
+    behaviors::PreemptionStrategy,
+    preferences::{AnimationAction, AnimationPreferences},
+};
 
 /// Controls animation lifecycle: when to start, preempt, or ignore new targets.
 #[derive(Clone)]
@@ -56,8 +59,9 @@ impl AnimationController {
     /// - Ignore the new target (if current animation has Ignore preemption)
     /// - Preempt current animation (syncing visual state first)
     ///
-    /// The `force` parameter allows forcing animation creation even when backbone
-    /// hasn't changed (e.g., for sidechain-only animations like Shake or MPNN).
+    /// The `force` parameter allows forcing animation creation even when
+    /// backbone hasn't changed (e.g., for sidechain-only animations like
+    /// Shake or MPNN).
     ///
     /// Returns `Some(AnimationRunner)` if a new animation should start,
     /// `None` if the new target should be ignored or no animation needed.
@@ -80,9 +84,10 @@ impl AnimationController {
         if current_state.size_differs(new_target) {
             if action.allows_size_change() {
                 // Resize current state to match the new target dimensions.
-                // Existing residues keep their current visual positions (and will
-                // lerp to the new target). New residues start at their target
-                // positions (no visible motion for those).
+                // Existing residues keep their current visual positions (and
+                // will lerp to the new target). New residues
+                // start at their target positions (no visible
+                // motion for those).
                 current_state.resize_to_match(new_target);
                 did_resize = true;
             } else {
@@ -111,20 +116,23 @@ impl AnimationController {
                     return None;
                 }
                 PreemptionStrategy::Restart | PreemptionStrategy::Blend => {
-                    // Sync current state to visual position before starting new animation
+                    // Sync current state to visual position before starting new
+                    // animation
                     let t = runner.progress(Instant::now());
                     runner.apply_to_state(current_state, t);
                 }
             }
         }
 
-        // Check if backbone target actually changed (compare against previous target).
-        // If we just resized, the backbone definitely changed — skip the target_differs
-        // check since resize_to_match already set self.target = new_target.target.
+        // Check if backbone target actually changed (compare against previous
+        // target). If we just resized, the backbone definitely changed
+        // — skip the target_differs check since resize_to_match already
+        // set self.target = new_target.target.
         let backbone_changed =
             did_resize || current_state.target_differs(new_target);
 
-        // If neither backbone nor sidechains changed (and not forced), skip animation
+        // If neither backbone nor sidechains changed (and not forced), skip
+        // animation
         if !backbone_changed && !force {
             return None;
         }
@@ -183,9 +191,10 @@ impl std::fmt::Debug for AnimationController {
 
 #[cfg(test)]
 mod tests {
+    use glam::Vec3;
+
     use super::*;
     use crate::animation::behaviors::{shared, Snap};
-    use glam::Vec3;
 
     fn make_backbone(y: f32, num_residues: usize) -> Vec<Vec<Vec3>> {
         let atoms: Vec<Vec3> = (0..num_residues)
@@ -336,7 +345,8 @@ mod tests {
         assert!(
             (state.get_current(0).unwrap().backbone[0].y - 0.0).abs() < 0.001
         );
-        // The extra residues (4th, 5th) should start at their target positions (y=5)
+        // The extra residues (4th, 5th) should start at their target positions
+        // (y=5)
         assert!(
             (state.get_current(3).unwrap().backbone[0].y - 5.0).abs() < 0.001
         );

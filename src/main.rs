@@ -1,9 +1,12 @@
 use std::sync::Arc;
+
 use viso::engine::ProteinRenderEngine;
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::{
+    application::ApplicationHandler,
+    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowId},
+};
 
 struct RenderApp {
     window: Option<Arc<Window>>,
@@ -56,7 +59,8 @@ impl ApplicationHandler for RenderApp {
                     &self.cif_path,
                 ));
 
-            // Kick off background scene processing so colors and geometry are ready
+            // Kick off background scene processing so colors and geometry are
+            // ready
             engine.sync_scene_to_renderers(None);
 
             window.request_redraw();

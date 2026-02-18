@@ -1,12 +1,12 @@
 //! Centralized rendering/display options with TOML preset support.
 //!
 //! All tweakable settings (lighting, post-processing, camera, colors, geometry,
-//! keybindings, display toggles) are consolidated here. Options serialize to/from
-//! TOML for view presets stored in `assets/view_presets/`.
+//! keybindings, display toggles) are consolidated here. Options serialize
+//! to/from TOML for view presets stored in `assets/view_presets/`.
+
+use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::Path;
 
 /// Top-level options container. All sub-structs use `#[serde(default)]` so
 /// partial TOML files (e.g. only overriding `[lighting]`) work correctly.
@@ -299,7 +299,8 @@ impl Default for ColorOptions {
 }
 
 impl ColorOptions {
-    /// Look up cofactor carbon tint by 3-letter residue name. Falls back to neutral gray.
+    /// Look up cofactor carbon tint by 3-letter residue name. Falls back to
+    /// neutral gray.
     pub fn cofactor_tint(&self, res_name: &str) -> [f32; 3] {
         self.cofactor_tints
             .get(res_name.trim())

@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
+use super::{
+    super::interpolation::InterpolationContext,
+    state::ResidueVisualState,
+    traits::{AnimationBehavior, PreemptionStrategy},
+};
 use crate::util::easing::EasingFunction;
-
-use super::super::interpolation::InterpolationContext;
-use super::state::ResidueVisualState;
-use super::traits::{AnimationBehavior, PreemptionStrategy};
 
 /// Cascade animation where residues animate with staggered delays.
 ///

@@ -1,8 +1,10 @@
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
 use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;
+
+use crate::gpu::{
+    render_context::RenderContext, shader_composer::ShaderComposer,
+};
 
 /// SSAO parameters uniform - must match WGSL struct
 #[repr(C)]

@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
+use super::{
+    super::interpolation::InterpolationContext,
+    state::ResidueVisualState,
+    traits::{AnimationBehavior, PreemptionStrategy},
+};
 use crate::util::easing::EasingFunction;
-
-use super::super::interpolation::InterpolationContext;
-use super::state::ResidueVisualState;
-use super::traits::{AnimationBehavior, PreemptionStrategy};
 
 /// Two-phase animation: collapse to backbone, then expand to new state.
 ///
@@ -14,8 +15,8 @@ use super::traits::{AnimationBehavior, PreemptionStrategy};
 ///
 /// # Phases
 ///
-/// 1. **Collapse** (0.0 to midpoint): Old sidechain chi angles interpolate toward 0,
-///    creating a visual "retraction" toward the backbone.
+/// 1. **Collapse** (0.0 to midpoint): Old sidechain chi angles interpolate
+///    toward 0, creating a visual "retraction" toward the backbone.
 /// 2. **Expand** (midpoint to 1.0): New sidechain chi angles interpolate from 0
 ///    to their final values, creating a visual "growth" effect.
 ///
@@ -91,8 +92,8 @@ impl AnimationBehavior for CollapseExpand {
             };
             let phase_eased = self.collapse_easing.evaluate(phase_t);
 
-            // Global eased progress: during collapse, we go from 0 to collapse_frac
-            // using the collapse easing curve
+            // Global eased progress: during collapse, we go from 0 to
+            // collapse_frac using the collapse easing curve
             let eased_t = phase_eased * collapse_frac;
 
             InterpolationContext::with_phase(
@@ -110,8 +111,8 @@ impl AnimationBehavior for CollapseExpand {
             };
             let phase_eased = self.expand_easing.evaluate(phase_t);
 
-            // Global eased progress: during expand, we go from collapse_frac to 1.0
-            // using the expand easing curve
+            // Global eased progress: during expand, we go from collapse_frac to
+            // 1.0 using the expand easing curve
             let eased_t = collapse_frac + phase_eased * (1.0 - collapse_frac);
 
             InterpolationContext::with_phase(
@@ -213,8 +214,9 @@ impl AnimationBehavior for CollapseExpand {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Vec3;
+
+    use super::*;
 
     fn test_state_a() -> ResidueVisualState {
         ResidueVisualState::new(

@@ -1,6 +1,7 @@
-use crate::camera::controller::CameraController;
 use glam::Vec2;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+
+use crate::camera::controller::CameraController;
 
 pub struct InputHandler {
     last_mouse_pos: Vec2,

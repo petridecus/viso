@@ -4,8 +4,10 @@
 //!
 //! The animation system is composed of several layers:
 //!
-//! - **Behaviors** (`behaviors/`): Define how animations look (easing, phasing, etc.)
-//! - **Preferences** (`preferences.rs`): Map actions to behaviors (user-configurable)
+//! - **Behaviors** (`behaviors/`): Define how animations look (easing, phasing,
+//!   etc.)
+//! - **Preferences** (`preferences.rs`): Map actions to behaviors
+//!   (user-configurable)
 //! - **Animator** (`animator/`): Manages state and executes animations
 //!
 //! # Usage

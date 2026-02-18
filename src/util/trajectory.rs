@@ -17,7 +17,8 @@ pub struct TrajectoryPlayer {
     frame_duration: Duration,
     playing: bool,
     looping: bool,
-    /// Maps each backbone position (flat index across all chains) to a DCD atom index.
+    /// Maps each backbone position (flat index across all chains) to a DCD
+    /// atom index.
     backbone_map: Vec<usize>,
     /// Length of each chain in the backbone_chains layout.
     chain_lengths: Vec<usize>,
@@ -28,10 +29,12 @@ impl TrajectoryPlayer {
     ///
     /// - `frames`: all DCD frames (loaded into memory)
     /// - `num_atoms`: atom count per frame (from DCD header)
-    /// - `backbone_chains`: current backbone chain layout (used for chain topology)
-    /// - `backbone_atom_indices`: for each position in the flattened backbone_chains,
-    ///   the corresponding atom index in the DCD's flat coordinate arrays.
-    ///   Built by the caller from the structure's `Coords` metadata.
+    /// - `backbone_chains`: current backbone chain layout (used for chain
+    ///   topology)
+    /// - `backbone_atom_indices`: for each position in the flattened
+    ///   backbone_chains, the corresponding atom index in the DCD's flat
+    ///   coordinate arrays. Built by the caller from the structure's `Coords`
+    ///   metadata.
     pub fn new(
         frames: Vec<DcdFrame>,
         num_atoms: usize,

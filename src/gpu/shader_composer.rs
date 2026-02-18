@@ -1,14 +1,16 @@
+use std::borrow::Cow;
+
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage,
     ShaderType,
 };
-use std::borrow::Cow;
 
-/// Wraps `naga_oil::compose::Composer` to provide shader composition with `#import` support.
+/// Wraps `naga_oil::compose::Composer` to provide shader composition with
+/// `#import` support.
 ///
-/// Pre-loads all shared WGSL modules at construction time. Consuming shaders use
-/// `#import viso::module_name` to pull in shared code. The composer produces
-/// `naga::Module` IR directly, skipping WGSL re-parse at runtime.
+/// Pre-loads all shared WGSL modules at construction time. Consuming shaders
+/// use `#import viso::module_name` to pull in shared code. The composer
+/// produces `naga::Module` IR directly, skipping WGSL re-parse at runtime.
 pub struct ShaderComposer {
     composer: Composer,
 }
@@ -30,7 +32,8 @@ impl ShaderComposer {
         let mut composer = Composer::default();
 
         // Register shared modules in dependency order.
-        // Modules with no dependencies first, then modules that depend on earlier ones.
+        // Modules with no dependencies first, then modules that depend on
+        // earlier ones.
         let modules: &[ModuleDef] = &[
             ModuleDef {
                 source: include_str!(
@@ -114,8 +117,9 @@ impl ShaderComposer {
         })
     }
 
-    /// Compose a shader source into a `naga::Module` without creating a wgpu shader module.
-    /// Useful for testing shader composition without a GPU device.
+    /// Compose a shader source into a `naga::Module` without creating a wgpu
+    /// shader module. Useful for testing shader composition without a GPU
+    /// device.
     pub fn compose_naga(
         &mut self,
         source: &str,
