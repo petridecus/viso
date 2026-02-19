@@ -17,8 +17,8 @@ use crate::{
         dynamic_buffer::TypedBuffer, render_context::RenderContext,
         shader_composer::ShaderComposer,
     },
+    options::{ColorOptions, DisplayOptions},
     renderer::pipeline_util,
-    util::options::{ColorOptions, DisplayOptions},
 };
 
 /// Radius for bond capsules (thinner than protein sidechains)
@@ -38,6 +38,11 @@ const DOUBLE_BOND_OFFSET: f32 = 0.2;
 
 /// Warm beige/tan carbon tint for lipid molecules.
 const LIPID_CARBON_TINT: [f32; 3] = [0.76, 0.70, 0.50];
+
+/// Collect atom positions as `Vec3` from a `Coords` block.
+fn atom_positions(coords: &foldit_conv::coords::Coords) -> Vec<Vec3> {
+    coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z)).collect()
+}
 
 /// Return atom color: if a carbon tint is provided, carbon atoms use it;
 /// all other elements (N, O, S, P, etc.) keep standard CPK coloring.
@@ -552,11 +557,7 @@ impl BallAndStickRenderer {
         bonds: &mut Vec<CapsuleInstance>,
         picking: &mut Vec<CapsuleInstance>,
     ) {
-        let positions: Vec<Vec3> = coords
-            .atoms
-            .iter()
-            .map(|a| Vec3::new(a.x, a.y, a.z))
-            .collect();
+        let positions = atom_positions(coords);
 
         // Generate atom spheres
         for (i, pos) in positions.iter().enumerate() {
@@ -671,11 +672,7 @@ impl BallAndStickRenderer {
         bonds: &mut Vec<CapsuleInstance>,
         picking: &mut Vec<CapsuleInstance>,
     ) {
-        let positions: Vec<Vec3> = coords
-            .atoms
-            .iter()
-            .map(|a| Vec3::new(a.x, a.y, a.z))
-            .collect();
+        let positions = atom_positions(coords);
 
         // Generate atom spheres (skip H entirely, CG radii for others)
         for (i, pos) in positions.iter().enumerate() {
@@ -814,11 +811,7 @@ impl BallAndStickRenderer {
         bonds: &mut Vec<CapsuleInstance>,
         picking: &mut Vec<CapsuleInstance>,
     ) {
-        let positions: Vec<Vec3> = coords
-            .atoms
-            .iter()
-            .map(|a| Vec3::new(a.x, a.y, a.z))
-            .collect();
+        let positions = atom_positions(coords);
 
         // Water oxygen: light blue sphere
         let water_color: [f32; 3] = [0.5, 0.7, 1.0];
@@ -1053,31 +1046,17 @@ impl BallAndStickRenderer {
     ) -> Vec<Vec3> {
         let mut positions = Vec::new();
         for entity in entities {
-            match entity.molecule_type {
-                // Ligands, cofactors, lipids: always visible
+            let visible = match entity.molecule_type {
                 MoleculeType::Ligand
                 | MoleculeType::Cofactor
-                | MoleculeType::Lipid => {
-                    for atom in &entity.coords.atoms {
-                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
-                    }
-                }
-                MoleculeType::Ion if display.show_ions => {
-                    for atom in &entity.coords.atoms {
-                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
-                    }
-                }
-                MoleculeType::Water if display.show_waters => {
-                    for atom in &entity.coords.atoms {
-                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
-                    }
-                }
-                MoleculeType::Solvent if display.show_solvent => {
-                    for atom in &entity.coords.atoms {
-                        positions.push(Vec3::new(atom.x, atom.y, atom.z));
-                    }
-                }
-                _ => {}
+                | MoleculeType::Lipid => true,
+                MoleculeType::Ion => display.show_ions,
+                MoleculeType::Water => display.show_waters,
+                MoleculeType::Solvent => display.show_solvent,
+                _ => false,
+            };
+            if visible {
+                positions.extend(atom_positions(&entity.coords));
             }
         }
         positions
@@ -1104,11 +1083,7 @@ impl BallAndStickRenderer {
             return infer_bonds(coords, DEFAULT_TOLERANCE);
         }
 
-        let positions: Vec<Vec3> = coords
-            .atoms
-            .iter()
-            .map(|a| Vec3::new(a.x, a.y, a.z))
-            .collect();
+        let positions = atom_positions(coords);
 
         // Group atom indices by residue number
         let mut residue_atoms: BTreeMap<i32, Vec<usize>> = BTreeMap::new();

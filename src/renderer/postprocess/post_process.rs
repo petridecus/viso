@@ -2,11 +2,11 @@ use glam::Mat4;
 
 use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    options::Options,
     renderer::postprocess::{
         bloom::BloomPass, composite::CompositePass, fxaa::FxaaPass,
         ssao::SsaoRenderer,
     },
-    util::options::Options,
 };
 
 /// Camera parameters needed for post-processing passes.

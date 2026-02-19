@@ -6,14 +6,9 @@
 //! Can render all SS types or filter to specific ones (e.g., coils only
 //! when used alongside RibbonRenderer in ribbon view mode).
 
-use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
-    hash::{Hash, Hasher},
-};
+use std::collections::HashSet;
 
-use foldit_conv::secondary_structure::{
-    auto::detect as detect_secondary_structure, merge_short_segments, SSType,
-};
+use foldit_conv::secondary_structure::{resolve, DetectionInput, SSType};
 use glam::Vec3;
 
 use crate::{
@@ -22,6 +17,7 @@ use crate::{
         shader_composer::ShaderComposer,
     },
     renderer::pipeline_util,
+    util::hash::hash_vec3_slices,
 };
 
 /// Parameters for backbone tube rendering
@@ -169,7 +165,7 @@ impl TubeRenderer {
             color_layout,
             shader_composer,
         );
-        let last_chain_hash = Self::compute_chain_hash(backbone_chains);
+        let last_chain_hash = hash_vec3_slices(backbone_chains);
 
         Self {
             pipeline,
@@ -209,35 +205,6 @@ impl TubeRenderer {
         self.index_count = indices.len() as u32;
     }
 
-    /// Compute a hash of the chain data for change detection
-    fn compute_chain_hash(chains: &[Vec<Vec3>]) -> u64 {
-        let mut hasher = DefaultHasher::new();
-
-        chains.len().hash(&mut hasher);
-        for chain in chains {
-            chain.len().hash(&mut hasher);
-            // Hash first, middle, and last positions for good change detection
-            // without hashing every single point
-            if let Some(first) = chain.first() {
-                first.x.to_bits().hash(&mut hasher);
-                first.y.to_bits().hash(&mut hasher);
-                first.z.to_bits().hash(&mut hasher);
-            }
-            if chain.len() > 2 {
-                let mid = &chain[chain.len() / 2];
-                mid.x.to_bits().hash(&mut hasher);
-                mid.y.to_bits().hash(&mut hasher);
-                mid.z.to_bits().hash(&mut hasher);
-            }
-            if let Some(last) = chain.last() {
-                last.x.to_bits().hash(&mut hasher);
-                last.y.to_bits().hash(&mut hasher);
-                last.z.to_bits().hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
-
     /// Update the backbone with new chains (regenerates the mesh if changed)
     pub fn update(
         &mut self,
@@ -247,7 +214,7 @@ impl TubeRenderer {
         ss_types: Option<&[SSType]>,
     ) {
         // Quick hash check to see if chains actually changed
-        let new_hash = Self::compute_chain_hash(backbone_chains);
+        let new_hash = hash_vec3_slices(backbone_chains);
         if new_hash == self.last_chain_hash && ss_types.is_none() {
             return; // No change, skip expensive mesh regeneration
         }
@@ -280,7 +247,7 @@ impl TubeRenderer {
         backbone_chains: &[Vec<Vec3>],
     ) {
         // Create a temporary queue-less update by regenerating buffers
-        let new_hash = Self::compute_chain_hash(backbone_chains);
+        let new_hash = hash_vec3_slices(backbone_chains);
         if new_hash == self.last_chain_hash {
             return;
         }
@@ -415,20 +382,16 @@ impl TubeRenderer {
                 continue;
             }
 
-            // Use SS override if available, otherwise auto-detect
             let n_residues = ca_positions.len();
-            let ss_types = if let Some(overrides) = ss_override {
+            let chain_override = ss_override.and_then(|o| {
                 let start = global_residue_idx as usize;
-                let end = (start + n_residues).min(overrides.len());
-                if start < overrides.len() {
-                    overrides[start..end].to_vec()
-                } else {
-                    detect_secondary_structure(&ca_positions)
-                }
-            } else {
-                detect_secondary_structure(&ca_positions)
-            };
-            let ss_types = merge_short_segments(&ss_types);
+                let end = (start + n_residues).min(o.len());
+                (start < o.len()).then(|| &o[start..end])
+            });
+            let ss_types = resolve(
+                chain_override,
+                DetectionInput::CaPositions(&ca_positions),
+            );
 
             // Generate spline points from raw CA positions
             let spline_points = Self::generate_spline_points(&ca_positions);
@@ -788,7 +751,7 @@ impl TubeRenderer {
         }
         self.index_count = data.index_count;
         self.cached_chains = data.cached_chains;
-        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        self.last_chain_hash = hash_vec3_slices(&self.cached_chains);
         if let Some(ss) = data.ss_override {
             self.ss_override = Some(ss);
         }
@@ -805,7 +768,7 @@ impl TubeRenderer {
         ss_override: Option<Vec<SSType>>,
     ) {
         self.cached_chains = cached_chains;
-        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        self.last_chain_hash = hash_vec3_slices(&self.cached_chains);
         if let Some(ss) = ss_override {
             self.ss_override = Some(ss);
         }

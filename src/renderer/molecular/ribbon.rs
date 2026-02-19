@@ -13,10 +13,7 @@ use std::{
 
 use foldit_conv::{
     coords::RenderBackboneResidue,
-    secondary_structure::{
-        auto::detect as detect_secondary_structure, merge_short_segments,
-        SSType,
-    },
+    secondary_structure::{resolve, DetectionInput, SSType},
 };
 use glam::Vec3;
 
@@ -26,6 +23,7 @@ use crate::{
         shader_composer::ShaderComposer,
     },
     renderer::pipeline_util,
+    util::hash::{hash_vec3, hash_vec3_slices},
 };
 
 /// Tube diameter for taper at ribbon-tube junctions (must match tube_renderer
@@ -167,7 +165,7 @@ impl RibbonRenderer {
             color_layout,
             shader_composer,
         );
-        let last_chain_hash = Self::compute_chain_hash(backbone_chains);
+        let last_chain_hash = hash_vec3_slices(backbone_chains);
 
         Self {
             pipeline,
@@ -246,25 +244,13 @@ impl RibbonRenderer {
         }
     }
 
-    fn compute_chain_hash(chains: &[Vec<Vec3>]) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        chains.len().hash(&mut hasher);
-        for chain in chains {
-            chain.len().hash(&mut hasher);
-            if let Some(f) = chain.first() {
-                f.x.to_bits().hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
-
     fn compute_residue_hash(chains: &[Vec<RenderBackboneResidue>]) -> u64 {
         let mut hasher = DefaultHasher::new();
         chains.len().hash(&mut hasher);
         for chain in chains {
             chain.len().hash(&mut hasher);
             if let Some(f) = chain.first() {
-                f.ca_pos.x.to_bits().hash(&mut hasher);
+                hash_vec3(&f.ca_pos, &mut hasher);
             }
         }
         hasher.finish()
@@ -277,7 +263,7 @@ impl RibbonRenderer {
         backbone_chains: &[Vec<Vec3>],
         ss_types: Option<&[SSType]>,
     ) {
-        let new_hash = Self::compute_chain_hash(backbone_chains);
+        let new_hash = hash_vec3_slices(backbone_chains);
         if new_hash == self.last_chain_hash && ss_types.is_none() {
             return;
         }
@@ -440,18 +426,15 @@ impl RibbonRenderer {
             let ca_positions: Vec<Vec3> =
                 chain.iter().map(|r| r.ca_pos).collect();
             let n_residues = ca_positions.len();
-            let ss_types = if let Some(overrides) = ss_override {
+            let chain_override = ss_override.and_then(|o| {
                 let start = global_residue_idx as usize;
-                let end = (start + n_residues).min(overrides.len());
-                if start < overrides.len() {
-                    overrides[start..end].to_vec()
-                } else {
-                    detect_secondary_structure(&ca_positions)
-                }
-            } else {
-                detect_secondary_structure(&ca_positions)
-            };
-            let ss_types = merge_short_segments(&ss_types);
+                let end = (start + n_residues).min(o.len());
+                (start < o.len()).then(|| &o[start..end])
+            });
+            let ss_types = resolve(
+                chain_override,
+                DetectionInput::CaPositions(&ca_positions),
+            );
             let segments = segment_by_ss(&ss_types);
 
             for seg in &segments {
@@ -575,20 +558,16 @@ impl RibbonRenderer {
                 continue;
             }
 
-            // Use SS override if available, otherwise auto-detect
             let n_residues = ca_positions.len();
-            let ss_types = if let Some(overrides) = ss_override {
+            let chain_override = ss_override.and_then(|o| {
                 let start = global_residue_idx as usize;
-                let end = (start + n_residues).min(overrides.len());
-                if start < overrides.len() {
-                    overrides[start..end].to_vec()
-                } else {
-                    detect_secondary_structure(&ca_positions)
-                }
-            } else {
-                detect_secondary_structure(&ca_positions)
-            };
-            let ss_types = merge_short_segments(&ss_types);
+                let end = (start + n_residues).min(o.len());
+                (start < o.len()).then(|| &o[start..end])
+            });
+            let ss_types = resolve(
+                chain_override,
+                DetectionInput::CaPositions(&ca_positions),
+            );
             let segments = segment_by_ss(&ss_types);
 
             for seg in &segments {
@@ -746,7 +725,7 @@ impl RibbonRenderer {
         ss_override: Option<Vec<SSType>>,
     ) {
         self.cached_chains = cached_chains;
-        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        self.last_chain_hash = hash_vec3_slices(&self.cached_chains);
         if let Some(ss) = ss_override {
             self.ss_override = Some(ss);
         }
@@ -788,7 +767,7 @@ impl RibbonRenderer {
         self.index_count = data.index_count;
         self.sheet_offsets = data.sheet_offsets;
         self.cached_chains = data.cached_chains;
-        self.last_chain_hash = Self::compute_chain_hash(&self.cached_chains);
+        self.last_chain_hash = hash_vec3_slices(&self.cached_chains);
         if let Some(ss) = data.ss_override {
             self.ss_override = Some(ss);
         }

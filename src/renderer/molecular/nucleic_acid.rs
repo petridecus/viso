@@ -17,6 +17,7 @@ use crate::{
         shader_composer::ShaderComposer,
     },
     renderer::pipeline_util,
+    util::hash::{hash_vec3, hash_vec3_slice_summary},
 };
 
 /// Ribbon half-width for nucleic acid backbone (narrower than protein
@@ -393,31 +394,12 @@ impl NucleicAcidRenderer {
         let mut hasher = DefaultHasher::new();
         chains.len().hash(&mut hasher);
         for chain in chains {
-            chain.len().hash(&mut hasher);
-            if let Some(first) = chain.first() {
-                first.x.to_bits().hash(&mut hasher);
-                first.y.to_bits().hash(&mut hasher);
-                first.z.to_bits().hash(&mut hasher);
-            }
-            if chain.len() > 2 {
-                let mid = &chain[chain.len() / 2];
-                mid.x.to_bits().hash(&mut hasher);
-                mid.y.to_bits().hash(&mut hasher);
-                mid.z.to_bits().hash(&mut hasher);
-            }
-            if let Some(last) = chain.last() {
-                last.x.to_bits().hash(&mut hasher);
-                last.y.to_bits().hash(&mut hasher);
-                last.z.to_bits().hash(&mut hasher);
-            }
+            hash_vec3_slice_summary(chain, &mut hasher);
         }
-        // Hash ring data for change detection
         rings.len().hash(&mut hasher);
         if let Some(first_ring) = rings.first() {
             if let Some(p) = first_ring.hex_ring.first() {
-                p.x.to_bits().hash(&mut hasher);
-                p.y.to_bits().hash(&mut hasher);
-                p.z.to_bits().hash(&mut hasher);
+                hash_vec3(p, &mut hasher);
             }
         }
         hasher.finish()

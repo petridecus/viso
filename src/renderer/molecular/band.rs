@@ -22,8 +22,8 @@ use crate::{
         dynamic_buffer::TypedBuffer, render_context::RenderContext,
         shader_composer::ShaderComposer,
     },
+    options::ColorOptions,
     renderer::pipeline_util,
-    util::options::ColorOptions,
 };
 
 // Foldit color constants for bands
