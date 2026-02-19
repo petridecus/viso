@@ -6,32 +6,6 @@ use glam::Vec3;
 use super::ProteinRenderEngine;
 
 impl ProteinRenderEngine {
-    /// Get currently hovered residue index (-1 if none)
-    pub fn hovered_residue(&self) -> i32 {
-        self.picking.hovered_residue
-    }
-
-    /// Get currently selected residue indices
-    pub fn selected_residues(&self) -> &[i32] {
-        &self.picking.selected_residues
-    }
-
-    /// Whether a trajectory is loaded.
-    pub fn has_trajectory(&self) -> bool {
-        self.trajectory_player.is_some()
-    }
-
-    /// Get the GPU queue for buffer updates
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.context.queue
-    }
-
-    /// Check if animations are active.
-    #[inline]
-    pub fn is_animating(&self) -> bool {
-        self.animator.is_animating()
-    }
-
     /// Get the CA position of a residue by index.
     /// Returns None if the residue index is out of bounds.
     pub fn get_residue_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
@@ -45,11 +19,6 @@ impl ProteinRenderEngine {
             self.tube_renderer.cached_chains(),
             residue_idx,
         )
-    }
-
-    /// Get current screen dimensions.
-    pub fn screen_size(&self) -> (u32, u32) {
-        (self.context.config.width, self.context.config.height)
     }
 
     /// Get the current visual backbone chains (interpolated during animation).
@@ -89,17 +58,6 @@ impl ProteinRenderEngine {
         )
     }
 
-    /// Check if structure animation is currently in progress.
-    #[inline]
-    pub fn needs_band_update(&self) -> bool {
-        self.animator.is_animating()
-    }
-
-    /// Get the current animation progress (0.0 to 1.0).
-    pub fn animation_progress(&self) -> f32 {
-        self.animator.progress()
-    }
-
     /// Get the interpolated position of the closest atom to a reference point
     /// for a given residue.
     pub fn get_closest_atom_for_residue(
@@ -137,21 +95,6 @@ impl ProteinRenderEngine {
             residue_idx,
             reference_point,
         )
-    }
-
-    /// Current frames-per-second.
-    pub fn fps(&self) -> f32 {
-        self.frame_timing.fps()
-    }
-
-    /// Human-readable description of the current focus.
-    pub fn focus_description(&self) -> String {
-        self.scene.focus_description()
-    }
-
-    /// Get the current active preset name, if any.
-    pub fn active_preset(&self) -> &Option<String> {
-        &self.active_preset
     }
 
     /// Get the interpolated position of a specific atom by residue index and

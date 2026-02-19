@@ -15,7 +15,7 @@ use crate::{
         band::BandRenderInfo, capsule_sidechain::SidechainData,
         pull::PullRenderInfo,
     },
-    scene::{EntityGroup, Focus, GroupId},
+    scene::GroupId,
 };
 
 impl ProteinRenderEngine {
@@ -223,11 +223,6 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Clear all band visualizations.
-    pub fn clear_bands(&mut self) {
-        self.band_renderer.clear();
-    }
-
     /// Update the pull visualization (only one pull at a time).
     /// Pass None to clear the pull visualization.
     pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
@@ -236,11 +231,6 @@ impl ProteinRenderEngine {
             &self.context.queue,
             pull,
         );
-    }
-
-    /// Clear the pull visualization.
-    pub fn clear_pull(&mut self) {
-        self.pull_renderer.clear();
     }
 
     /// Load entities into a new group. Optionally fits camera.
@@ -262,56 +252,4 @@ impl ProteinRenderEngine {
         id
     }
 
-    /// Remove a group by ID.
-    pub fn remove_group(&mut self, id: GroupId) -> Option<EntityGroup> {
-        self.scene.remove_group(id)
-    }
-
-    /// Set group visibility.
-    pub fn set_group_visible(&mut self, id: GroupId, visible: bool) {
-        self.scene.set_visible(id, visible);
-    }
-
-    /// Clear all groups.
-    pub fn clear_scene(&mut self) {
-        self.scene.clear();
-    }
-
-    /// Read access to a group.
-    pub fn group(&self, id: GroupId) -> Option<&EntityGroup> {
-        self.scene.group(id)
-    }
-
-    /// Write access to a group (invalidates scene cache).
-    pub fn group_mut(&mut self, id: GroupId) -> Option<&mut EntityGroup> {
-        self.scene.group_mut(id)
-    }
-
-    /// Ordered group IDs.
-    pub fn group_ids(&self) -> Vec<GroupId> {
-        self.scene.group_ids()
-    }
-
-    /// Number of groups.
-    pub fn group_count(&self) -> usize {
-        self.scene.group_count()
-    }
-
-    // ── Focus / tab cycling ──
-
-    /// Cycle focus: Session → Group1 → ... → GroupN → focusable entities →
-    /// Session.
-    pub fn cycle_focus(&mut self) -> Focus {
-        self.scene.cycle_focus()
-    }
-
-    /// Current focus.
-    pub fn focus(&self) -> &Focus {
-        self.scene.focus()
-    }
-
-    /// Set the focus explicitly.
-    pub fn set_focus(&mut self, focus: Focus) {
-        self.scene.set_focus(focus);
-    }
 }

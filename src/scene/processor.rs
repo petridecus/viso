@@ -22,6 +22,7 @@ use glam::Vec3;
 use super::{AggregatedRenderData, GroupId, PerGroupData};
 use crate::{
     animation::AnimationAction,
+    options::{ColorOptions, DisplayOptions},
     renderer::molecular::{
         ball_and_stick::BallAndStickRenderer,
         capsule_sidechain::CapsuleSidechainRenderer,
@@ -29,10 +30,7 @@ use crate::{
         ribbon::{RibbonParams, RibbonRenderer},
         tube::TubeRenderer,
     },
-    util::{
-        options::{ColorOptions, DisplayOptions},
-        score_color,
-    },
+    util::score_color,
 };
 
 /// Fallback color for residues without score data (neutral gray).
@@ -354,7 +352,7 @@ impl SceneProcessor {
         colors: &ColorOptions,
     ) -> CachedGroupMesh {
         // Derive per-residue colors from scores when in score coloring mode
-        use crate::util::options::BackboneColorMode;
+        use crate::options::BackboneColorMode;
         let per_residue_colors = match display.backbone_color_mode {
             BackboneColorMode::Score => g
                 .per_residue_scores

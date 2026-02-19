@@ -14,7 +14,7 @@ use crate::{
     },
     scene::{
         processor::{AnimationSidechainData, PreparedScene, SceneRequest},
-        CombinedCoordsResult, GroupId,
+        GroupId,
     },
     util::score_color,
 };
@@ -502,7 +502,7 @@ impl ProteinRenderEngine {
         &self,
         backbone_chains: &[Vec<Vec3>],
     ) -> Vec<[f32; 3]> {
-        use crate::util::options::BackboneColorMode;
+        use crate::options::BackboneColorMode;
         let residue_count = self.sc.cached_ss_types.len().max(1);
         match self.options.display.backbone_color_mode {
             BackboneColorMode::Score | BackboneColorMode::ScoreRelative => {
@@ -695,13 +695,4 @@ impl ProteinRenderEngine {
         self.sync_scene_to_renderers(Some(action));
     }
 
-    /// Combined coords for Rosetta.
-    pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
-        self.scene.combined_coords_for_backend()
-    }
-
-    /// Visible group IDs and their residue counts (for Rosetta topology check).
-    pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
-        self.scene.visible_residue_counts()
-    }
 }

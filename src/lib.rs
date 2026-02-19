@@ -2,6 +2,8 @@ pub mod animation;
 pub mod camera;
 pub mod engine;
 pub mod gpu;
+pub mod input;
+pub mod options;
 pub mod picking;
 pub mod renderer;
 pub mod scene;

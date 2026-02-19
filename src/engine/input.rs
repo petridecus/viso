@@ -1,11 +1,12 @@
 //! Input & Selection methods for ProteinRenderEngine
 
 use glam::Vec2;
-use winit::{event::MouseButton, keyboard::ModifiersState};
+use winit::event::MouseButton;
 
 use super::ProteinRenderEngine;
 use crate::{
-    camera::input_state::ClickResult, scene::Focus, util::options::KeyAction,
+    input::{ClickResult, KeyAction},
+    scene::Focus,
 };
 
 impl ProteinRenderEngine {
@@ -26,10 +27,6 @@ impl ProteinRenderEngine {
                 self.camera_controller.rotate(delta);
             }
         }
-    }
-
-    pub fn handle_mouse_wheel(&mut self, delta_y: f32) {
-        self.camera_controller.zoom(delta_y);
     }
 
     /// Handle mouse button press/release
@@ -158,32 +155,6 @@ impl ProteinRenderEngine {
 
         false
     }
-
-    /// Handle mouse position update for hover detection
-    /// GPU picking uses this position in the next render pass
-    pub fn handle_mouse_position(&mut self, x: f32, y: f32) {
-        self.input.handle_mouse_position(x, y);
-    }
-
-    #[deprecated(note = "use handle_mouse_up instead")]
-    pub fn handle_click(&mut self, _x: f32, _y: f32) -> bool {
-        false
-    }
-
-    pub fn update_modifiers(&mut self, modifiers: ModifiersState) {
-        self.camera_controller.shift_pressed = modifiers.shift_key();
-    }
-
-    /// Set shift state directly (from frontend IPC, no winit dependency
-    /// needed).
-    pub fn set_shift_pressed(&mut self, shift: bool) {
-        self.camera_controller.shift_pressed = shift;
-    }
-
-    /// Clear residue selection.
-    pub fn clear_selection(&mut self) {
-        self.picking.clear_selection();
-    }
 }
 
 // ── KeyAction execution ──
@@ -198,22 +169,22 @@ impl KeyAction {
             Self::ToggleSolvent => engine.toggle_solvent(),
             Self::ToggleLipids => engine.toggle_lipids(),
             Self::ToggleAutoRotate => {
-                engine.toggle_auto_rotate();
+                engine.camera_controller.toggle_auto_rotate();
             }
             Self::ToggleTrajectory => {
-                if engine.has_trajectory() {
+                if engine.trajectory_player.is_some() {
                     engine.toggle_trajectory();
                 }
             }
             Self::CycleFocus => {
-                engine.cycle_focus();
+                engine.scene.cycle_focus();
                 engine.fit_camera_to_focus();
             }
             Self::ResetFocus => {
-                engine.set_focus(Focus::Session);
+                engine.scene.set_focus(Focus::Session);
                 engine.fit_camera_to_focus();
             }
-            Self::Cancel => engine.clear_selection(),
+            Self::Cancel => engine.picking.clear_selection(),
         }
     }
 }

@@ -79,31 +79,22 @@ impl Default for LightingUniform {
             // Secondary light: upper-right-front for fill
             light2_dir: normalize([0.3, 0.6, -0.4]),
             _pad2: 0.0,
-            // Stronger primary light for better depth perception
-            light1_intensity: 0.7,
-            light2_intensity: 0.3,
-            // Slightly reduced ambient to allow darker shadows
-            ambient: 0.12,
-            // Broader specular for softer highlights across all geometry
+            // Values match LightingOptions::default()
+            light1_intensity: 2.0,
+            light2_intensity: 1.1,
+            ambient: 0.45,
             specular_intensity: 0.35,
-            // Lower shininess = wider highlights that read on ribbons too
             shininess: 38.0,
-            // Rim edge falloff (was fresnel_power)
-            rim_power: 3.0,
-            // Rim edge brightness (was fresnel_intensity)
+            rim_power: 5.0,
             rim_intensity: 0.3,
-            // Mostly view-dependent with slight directional bias
             rim_directionality: 0.3,
-            // Warm rim tint for cinematic look
             rim_color: [1.0, 0.85, 0.7],
-            // IBL enabled by default
-            ibl_strength: 1.0,
+            ibl_strength: 0.6,
             // Rim back-light: below-behind relative to camera
             rim_dir: normalize([0.0, -0.7, 0.5]),
             _pad3: 0.0,
-            // PBR material defaults
-            roughness: 0.5,
-            metalness: 0.0,
+            roughness: 0.35,
+            metalness: 0.15,
             _pad4: 0.0,
             _pad5: 0.0,
         }

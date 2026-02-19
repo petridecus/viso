@@ -113,23 +113,6 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Animate to new pose with sidechain data.
-    ///
-    /// Uses AnimationAction::Wiggle by default for backwards compatibility.
-    pub fn animate_to_full_pose(
-        &mut self,
-        new_backbone: &[Vec<Vec3>],
-        sidechain: &SidechainData,
-        sidechain_atom_names: &[String],
-    ) {
-        self.animate_to_full_pose_with_action(
-            new_backbone,
-            sidechain,
-            sidechain_atom_names,
-            AnimationAction::Wiggle,
-        );
-    }
-
     /// Animate to new pose with sidechain data and explicit action.
     pub fn animate_to_full_pose_with_action(
         &mut self,
@@ -247,18 +230,4 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Skip all animations to final state.
-    pub fn skip_animations(&mut self) {
-        self.animator.skip();
-    }
-
-    /// Cancel all animations.
-    pub fn cancel_animations(&mut self) {
-        self.animator.cancel();
-    }
-
-    /// Set animation enabled/disabled.
-    pub fn set_animation_enabled(&mut self, enabled: bool) {
-        self.animator.set_enabled(enabled);
-    }
 }

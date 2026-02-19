@@ -18,14 +18,13 @@ use glam::{Mat4, Vec3};
 
 use crate::{
     animation::{sidechain_state::SidechainAnimationState, StructureAnimator},
-    camera::{
-        controller::CameraController, input::InputHandler,
-        input_state::InputState,
-    },
+    camera::controller::CameraController,
     gpu::{
         render_context::RenderContext, residue_color::ResidueColorBuffer,
         shader_composer::ShaderComposer,
     },
+    input::InputState,
+    options::Options,
     picking::{picking_state::PickingState, Picking, SelectionBuffer},
     renderer::{
         molecular::{
@@ -45,7 +44,6 @@ use crate::{
         bond_topology::{get_residue_bonds, is_hydrophobic},
         frame_timing::FrameTiming,
         lighting::Lighting,
-        options::Options,
         trajectory::TrajectoryPlayer,
     },
 };
@@ -55,40 +53,39 @@ const TARGET_FPS: u32 = 300;
 
 pub struct ProteinRenderEngine {
     // GPU context
-    pub(crate) context: RenderContext,
+    pub context: RenderContext,
     pub(crate) _shader_composer: ShaderComposer,
 
     // Composed sub-structs
-    pub(crate) post_process: PostProcessStack,
-    pub(crate) input: InputState,
-    pub(crate) picking_groups: PickingState,
-    pub(crate) sc: SidechainAnimationState,
+    pub post_process: PostProcessStack,
+    pub input: InputState,
+    pub picking_groups: PickingState,
+    pub sc: SidechainAnimationState,
 
     // Existing composed types
-    pub(crate) camera_controller: CameraController,
-    pub(crate) lighting: Lighting,
-    pub(crate) scene: Scene,
-    pub(crate) scene_processor: SceneProcessor,
-    pub(crate) animator: StructureAnimator,
-    pub(crate) options: Options,
-    pub(crate) active_preset: Option<String>,
-    pub(crate) frame_timing: FrameTiming,
-    pub(crate) _input_handler: InputHandler,
-    pub(crate) trajectory_player: Option<TrajectoryPlayer>,
+    pub camera_controller: CameraController,
+    pub lighting: Lighting,
+    pub scene: Scene,
+    pub scene_processor: SceneProcessor,
+    pub animator: StructureAnimator,
+    pub options: Options,
+    pub active_preset: Option<String>,
+    pub frame_timing: FrameTiming,
+    pub trajectory_player: Option<TrajectoryPlayer>,
 
     // Molecular renderers
-    pub(crate) tube_renderer: TubeRenderer,
-    pub(crate) ribbon_renderer: RibbonRenderer,
-    pub(crate) sidechain_renderer: CapsuleSidechainRenderer,
-    pub(crate) band_renderer: BandRenderer,
-    pub(crate) pull_renderer: PullRenderer,
-    pub(crate) ball_and_stick_renderer: BallAndStickRenderer,
-    pub(crate) nucleic_acid_renderer: NucleicAcidRenderer,
+    pub tube_renderer: TubeRenderer,
+    pub ribbon_renderer: RibbonRenderer,
+    pub sidechain_renderer: CapsuleSidechainRenderer,
+    pub band_renderer: BandRenderer,
+    pub pull_renderer: PullRenderer,
+    pub ball_and_stick_renderer: BallAndStickRenderer,
+    pub nucleic_acid_renderer: NucleicAcidRenderer,
 
     // Shared GPU state
-    pub(crate) picking: Picking,
-    pub(crate) selection_buffer: SelectionBuffer,
-    pub(crate) residue_color_buffer: ResidueColorBuffer,
+    pub picking: Picking,
+    pub selection_buffer: SelectionBuffer,
+    pub residue_color_buffer: ResidueColorBuffer,
 }
 
 // =============================================================================
@@ -130,8 +127,6 @@ impl ProteinRenderEngine {
 
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
-        let input_handler = InputHandler::new();
-
         // Load coords from structure file (PDB or mmCIF, detected by extension)
         let coords = structure_file_to_coords(std::path::Path::new(cif_path))
             .expect("Failed to load coords from structure file");
@@ -448,7 +443,6 @@ impl ProteinRenderEngine {
             options,
             active_preset: None,
             frame_timing,
-            _input_handler: input_handler,
             trajectory_player: None,
             tube_renderer,
             ribbon_renderer,
@@ -693,15 +687,6 @@ impl ProteinRenderEngine {
         }
     }
 
-    pub fn set_scale_factor(&mut self, scale: f64) {
-        let new_render_scale: u32 = if scale < 2.0 { 2 } else { 1 };
-        self.context.render_scale = new_render_scale;
-    }
-
-    /// Shut down the background scene processor thread.
-    pub fn shutdown_scene_processor(&mut self) {
-        self.scene_processor.shutdown();
-    }
 }
 
 // =============================================================================
@@ -709,56 +694,6 @@ impl ProteinRenderEngine {
 // =============================================================================
 
 impl ProteinRenderEngine {
-    /// Fit the camera to show all provided positions (instant)
-    pub fn fit_camera_to_positions(&mut self, positions: &[Vec3]) {
-        if !positions.is_empty() {
-            self.camera_controller.fit_to_positions(positions);
-        }
-    }
-
-    /// Fit the camera to show all provided positions (animated)
-    pub fn fit_camera_to_positions_animated(&mut self, positions: &[Vec3]) {
-        if !positions.is_empty() {
-            self.camera_controller.fit_to_positions_animated(positions);
-        }
-    }
-
-    /// Update camera animation. Call this every frame.
-    /// Returns true if animation is still in progress.
-    pub fn update_camera_animation(&mut self, dt: f32) -> bool {
-        self.camera_controller.update_animation(dt)
-    }
-
-    /// Convert screen delta (pixels) to world-space offset.
-    /// Useful for drag operations like pulling.
-    pub fn screen_delta_to_world(&self, delta_x: f32, delta_y: f32) -> Vec3 {
-        self.camera_controller
-            .screen_delta_to_world(delta_x, delta_y)
-    }
-
-    /// Unproject screen coordinates to a world-space point at the depth of a
-    /// reference point. Useful for pull operations where the target should
-    /// be on a plane at the residue's depth.
-    pub fn screen_to_world_at_depth(
-        &self,
-        screen_x: f32,
-        screen_y: f32,
-        world_point: Vec3,
-    ) -> Vec3 {
-        self.camera_controller.screen_to_world_at_depth(
-            screen_x,
-            screen_y,
-            self.context.config.width,
-            self.context.config.height,
-            world_point,
-        )
-    }
-
-    /// Toggle auto-rotation. Returns the new state (true = rotating).
-    pub fn toggle_auto_rotate(&mut self) -> bool {
-        self.camera_controller.toggle_auto_rotate()
-    }
-
     /// Fit camera to the currently focused element.
     pub fn fit_camera_to_focus(&mut self) {
         match *self.scene.focus() {
