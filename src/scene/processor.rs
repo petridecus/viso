@@ -38,10 +38,15 @@ const FALLBACK_RESIDUE_COLOR: [f32; 3] = [0.7, 0.7, 0.7];
 
 /// Sidechain data bundled for animation frame processing.
 pub struct AnimationSidechainData {
+    /// Sidechain atom positions in world space.
     pub sidechain_positions: Vec<Vec3>,
+    /// Intra-residue bonds as (atom_idx, atom_idx) pairs.
     pub sidechain_bonds: Vec<(u32, u32)>,
+    /// Backbone-to-sidechain bonds as (CA position, atom idx).
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// Hydrophobicity flag per sidechain atom.
     pub sidechain_hydrophobicity: Vec<bool>,
+    /// Residue index per sidechain atom.
     pub sidechain_residue_indices: Vec<u32>,
 }
 
@@ -49,21 +54,29 @@ pub struct AnimationSidechainData {
 pub enum SceneRequest {
     /// Full scene rebuild with per-group data + aggregated passthrough.
     FullRebuild {
+        /// Per-group data for mesh generation.
         groups: Vec<PerGroupData>,
+        /// Pre-aggregated render data (unused by processor, passed through).
         aggregated: Arc<AggregatedRenderData>,
         /// Per-entity animation actions. Entities in the map animate with
         /// their action; entities not in the map snap. Empty map =
         /// snap all.
         entity_actions: HashMap<GroupId, AnimationAction>,
+        /// Current display options for mesh generation.
         display: DisplayOptions,
+        /// Current color options for mesh generation.
         colors: ColorOptions,
     },
     /// Per-frame animation mesh generation (tube + ribbon + optional
     /// sidechains).
     AnimationFrame {
+        /// Interpolated backbone atom chains.
         backbone_chains: Vec<Vec<Vec3>>,
+        /// Optional interpolated sidechain data.
         sidechains: Option<AnimationSidechainData>,
+        /// Secondary structure types for the current frame.
         ss_types: Option<Vec<SSType>>,
+        /// Per-residue colors for the current frame.
         per_residue_colors: Option<Vec<[f32; 3]>>,
     },
     /// Shut down the background thread.
@@ -73,46 +86,67 @@ pub enum SceneRequest {
 /// All pre-computed CPU data, ready for GPU-only upload on the main thread.
 #[derive(Clone)]
 pub struct PreparedScene {
-    // Tube mesh
+    /// Tube mesh vertex bytes.
     pub tube_vertices: Vec<u8>,
+    /// Tube mesh index bytes.
     pub tube_indices: Vec<u8>,
+    /// Number of tube indices.
     pub tube_index_count: u32,
 
-    // Ribbon mesh
+    /// Ribbon mesh vertex bytes.
     pub ribbon_vertices: Vec<u8>,
+    /// Ribbon mesh index bytes.
     pub ribbon_indices: Vec<u8>,
+    /// Number of ribbon indices.
     pub ribbon_index_count: u32,
+    /// Per-residue sheet normal offsets for sidechain adjustment.
     pub sheet_offsets: Vec<(u32, Vec3)>,
 
-    // Sidechain capsules
+    /// Sidechain capsule instance bytes.
     pub sidechain_instances: Vec<u8>,
+    /// Number of sidechain capsule instances.
     pub sidechain_instance_count: u32,
 
-    // Ball-and-stick instances
+    /// Ball-and-stick sphere instance bytes.
     pub bns_sphere_instances: Vec<u8>,
+    /// Number of ball-and-stick spheres.
     pub bns_sphere_count: u32,
+    /// Ball-and-stick capsule instance bytes.
     pub bns_capsule_instances: Vec<u8>,
+    /// Number of ball-and-stick capsules.
     pub bns_capsule_count: u32,
+    /// Ball-and-stick picking capsule bytes.
     pub bns_picking_capsules: Vec<u8>,
+    /// Number of ball-and-stick picking capsules.
     pub bns_picking_count: u32,
 
-    // Nucleic acid mesh
+    /// Nucleic acid mesh vertex bytes.
     pub na_vertices: Vec<u8>,
+    /// Nucleic acid mesh index bytes.
     pub na_indices: Vec<u8>,
+    /// Number of nucleic acid indices.
     pub na_index_count: u32,
 
-    // Passthrough data for animation setup (fast array copies on main thread)
+    /// Backbone chains for animation setup.
     pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Sidechain atom positions.
     pub sidechain_positions: Vec<Vec3>,
+    /// Sidechain intra-residue bonds.
     pub sidechain_bonds: Vec<(u32, u32)>,
+    /// Hydrophobicity per sidechain atom.
     pub sidechain_hydrophobicity: Vec<bool>,
+    /// Residue index per sidechain atom.
     pub sidechain_residue_indices: Vec<u32>,
+    /// PDB atom names per sidechain atom.
     pub sidechain_atom_names: Vec<String>,
+    /// Backbone-to-sidechain bonds.
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// Flat secondary structure types.
     pub ss_types: Option<Vec<SSType>>,
     /// Concatenated per-residue colors (derived from scores, cached for
     /// animation).
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// All atom positions for camera fitting.
     pub all_positions: Vec<Vec3>,
     /// Per-entity animation actions. Entities in the map animate; others snap.
     /// Empty map = snap all (no animation).
@@ -120,22 +154,34 @@ pub struct PreparedScene {
     /// Where each entity's residues land in the flat concatenated arrays:
     /// `(entity_id, global_residue_start, residue_count)`.
     pub entity_residue_ranges: Vec<(GroupId, u32, u32)>,
+    /// Non-protein entities for ball-and-stick rendering.
     pub non_protein_entities: Vec<MoleculeEntity>,
+    /// P-atom chains from DNA/RNA entities.
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
+    /// Base ring geometry from DNA/RNA entities.
     pub nucleic_acid_rings: Vec<NucleotideRing>,
 }
 
 /// Pre-computed animation frame data, ready for GPU upload.
 #[derive(Clone)]
 pub struct PreparedAnimationFrame {
+    /// Tube mesh vertex bytes.
     pub tube_vertices: Vec<u8>,
+    /// Tube mesh index bytes.
     pub tube_indices: Vec<u8>,
+    /// Number of tube indices.
     pub tube_index_count: u32,
+    /// Ribbon mesh vertex bytes.
     pub ribbon_vertices: Vec<u8>,
+    /// Ribbon mesh index bytes.
     pub ribbon_indices: Vec<u8>,
+    /// Number of ribbon indices.
     pub ribbon_index_count: u32,
+    /// Per-residue sheet normal offsets.
     pub sheet_offsets: Vec<(u32, Vec3)>,
+    /// Optional sidechain capsule instance bytes.
     pub sidechain_instances: Option<Vec<u8>>,
+    /// Number of sidechain capsule instances.
     pub sidechain_instance_count: u32,
 }
 
@@ -230,13 +276,13 @@ impl SceneProcessor {
 
     /// Non-blocking check for completed full scene rebuild.
     pub fn try_recv_scene(&mut self) -> Option<PreparedScene> {
-        self.scene_result.update();
+        let _ = self.scene_result.update();
         self.scene_result.output_buffer_mut().take()
     }
 
     /// Non-blocking check for completed animation frame.
     pub fn try_recv_animation(&mut self) -> Option<PreparedAnimationFrame> {
-        self.anim_result.update();
+        let _ = self.anim_result.update();
         self.anim_result.output_buffer_mut().take()
     }
 
@@ -306,7 +352,7 @@ impl SceneProcessor {
                         if needs_regen {
                             let mesh =
                                 Self::generate_group_mesh(g, &display, &colors);
-                            mesh_cache.insert(g.id, (g.mesh_version, mesh));
+                            let _ = mesh_cache.insert(g.id, (g.mesh_version, mesh));
                         }
                     }
 
@@ -370,7 +416,7 @@ impl SceneProcessor {
         // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
         let tube_filter = {
             let mut coil_only = HashSet::new();
-            coil_only.insert(SSType::Coil);
+            let _ = coil_only.insert(SSType::Coil);
             Some(coil_only)
         };
         let (tube_verts_typed, tube_inds) =
@@ -724,7 +770,7 @@ impl SceneProcessor {
         // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
         let tube_filter = {
             let mut coil_only = HashSet::new();
-            coil_only.insert(SSType::Coil);
+            let _ = coil_only.insert(SSType::Coil);
             Some(coil_only)
         };
         let (tube_verts, tube_inds) = TubeRenderer::generate_tube_mesh_colored(

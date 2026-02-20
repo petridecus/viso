@@ -84,39 +84,58 @@ const TARGET_FPS: u32 = 300;
 /// Control the animation style per-action through
 /// [`AnimationPreferences`](crate::animation::AnimationPreferences).
 pub struct ProteinRenderEngine {
-    // GPU context
+    /// Core wgpu device, queue, and surface.
     pub context: RenderContext,
     pub(crate) _shader_composer: ShaderComposer,
 
-    // Composed sub-structs
+    /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
     pub post_process: PostProcessStack,
+    /// Mouse and keyboard input state.
     pub input: InputState,
+    /// GPU picking bind groups for capsule geometry.
     pub picking_groups: PickingState,
+    /// Cached sidechain animation and SS-type state.
     pub sc: SidechainAnimationState,
 
-    // Existing composed types
+    /// Orbital camera controller.
     pub camera_controller: CameraController,
+    /// GPU lighting uniform and bind group.
     pub lighting: Lighting,
+    /// Scene graph holding all entity groups.
     pub scene: Scene,
+    /// Background thread for off-main-thread mesh generation.
     pub scene_processor: SceneProcessor,
+    /// Structural animation driver.
     pub animator: StructureAnimator,
+    /// Runtime display, lighting, color, and geometry options.
     pub options: Options,
+    /// Currently applied options preset name, if any.
     pub active_preset: Option<String>,
+    /// Per-frame timing and FPS tracking.
     pub frame_timing: FrameTiming,
+    /// Multi-frame trajectory player, if loaded.
     pub trajectory_player: Option<TrajectoryPlayer>,
 
-    // Molecular renderers
+    /// Backbone tube renderer (coils only when ribbon mode active).
     pub tube_renderer: TubeRenderer,
+    /// Secondary-structure ribbon renderer.
     pub ribbon_renderer: RibbonRenderer,
+    /// Capsule-based sidechain renderer.
     pub sidechain_renderer: CapsuleSidechainRenderer,
+    /// Constraint band renderer.
     pub band_renderer: BandRenderer,
+    /// Interactive pull arrow renderer.
     pub pull_renderer: PullRenderer,
+    /// Ball-and-stick renderer for small molecules.
     pub ball_and_stick_renderer: BallAndStickRenderer,
+    /// Nucleic acid backbone renderer.
     pub nucleic_acid_renderer: NucleicAcidRenderer,
 
-    // Shared GPU state
+    /// GPU picking pass (offscreen R32Uint render + readback).
     pub picking: Picking,
+    /// Per-residue selection bit-array on GPU.
     pub selection_buffer: SelectionBuffer,
+    /// Per-residue color override buffer on GPU.
     pub residue_color_buffer: ResidueColorBuffer,
 }
 
@@ -455,7 +474,7 @@ impl ProteinRenderEngine {
         // Tube renderer only renders coils; ribbons handle helices/sheets
         {
             let mut coil_only = HashSet::new();
-            coil_only.insert(SSType::Coil);
+            let _ = coil_only.insert(SSType::Coil);
             tube_renderer.set_ss_filter(Some(coil_only));
             tube_renderer.regenerate(&context.device, &context.queue);
         }
@@ -702,7 +721,7 @@ impl ProteinRenderEngine {
 
         // Try to complete any pending readback from previous frame
         // (non-blocking poll)
-        self.picking.complete_readback(&self.context.device);
+        let _ = self.picking.complete_readback(&self.context.device);
 
         frame.present();
 

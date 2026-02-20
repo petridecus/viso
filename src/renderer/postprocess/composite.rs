@@ -14,20 +14,35 @@ use crate::gpu::{
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CompositeParams {
+    /// Screen dimensions in pixels `[width, height]`.
     pub screen_size: [f32; 2],
-    pub outline_thickness: f32, // 1.0 = 1 texel
-    pub outline_strength: f32,  // 0.0-1.0, how dark
+    /// Outline thickness in texels.
+    pub outline_thickness: f32,
+    /// Outline darkness strength (0.0–1.0).
+    pub outline_strength: f32,
+    /// SSAO contribution strength.
     pub ao_strength: f32,
+    /// Near clipping plane distance.
     pub near: f32,
+    /// Far clipping plane distance.
     pub far: f32,
+    /// Distance at which depth fog begins.
     pub fog_start: f32,
+    /// Fog density factor.
     pub fog_density: f32,
+    /// Normal-based outline strength.
     pub normal_outline_strength: f32,
+    /// Exposure multiplier for tone mapping.
     pub exposure: f32,
+    /// Gamma correction exponent.
     pub gamma: f32,
+    /// Bloom blend intensity.
     pub bloom_intensity: f32,
+    /// Padding for GPU alignment.
     pub _pad: f32,
+    /// Padding for GPU alignment.
     pub _pad2: f32,
+    /// Padding for GPU alignment.
     pub _pad3: f32,
 }
 
@@ -72,11 +87,12 @@ pub struct CompositePass {
     sampler: wgpu::Sampler,
     depth_sampler: wgpu::Sampler,
 
-    // Intermediate color texture (geometry renders here instead of swapchain)
+    /// Intermediate color texture (geometry renders here instead of swapchain).
     pub color_texture: wgpu::Texture,
+    /// View into the intermediate color texture.
     pub color_view: wgpu::TextureView,
 
-    // Composite params for outline/SSAO control
+    /// Composite effect parameters (outline, AO, fog, tone-mapping).
     pub params: CompositeParams,
     params_buffer: wgpu::Buffer,
 
@@ -85,6 +101,7 @@ pub struct CompositePass {
 }
 
 impl CompositePass {
+    /// Create a new composite pass with all textures, samplers, and pipeline.
     pub fn new(
         context: &RenderContext,
         ssao_view: &wgpu::TextureView,

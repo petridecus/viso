@@ -170,7 +170,7 @@ impl KeyAction {
             Self::ToggleSolvent => engine.toggle_solvent(),
             Self::ToggleLipids => engine.toggle_lipids(),
             Self::ToggleAutoRotate => {
-                engine.camera_controller.toggle_auto_rotate();
+                let _ = engine.camera_controller.toggle_auto_rotate();
             }
             Self::ToggleTrajectory => {
                 if engine.trajectory_player.is_some() {
@@ -178,7 +178,7 @@ impl KeyAction {
                 }
             }
             Self::CycleFocus => {
-                engine.scene.cycle_focus();
+                let _ = engine.scene.cycle_focus();
                 engine.fit_camera_to_focus();
             }
             Self::ResetFocus => {

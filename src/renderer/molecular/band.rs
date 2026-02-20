@@ -114,6 +114,7 @@ impl Default for BandRenderInfo {
     }
 }
 
+/// Renders constraint bands between atoms as capsule impostors.
 pub struct BandRenderer {
     pipeline: wgpu::RenderPipeline,
     instance_buffer: TypedBuffer<CapsuleInstance>,
@@ -123,6 +124,7 @@ pub struct BandRenderer {
 }
 
 impl BandRenderer {
+    /// Create a new band renderer with empty instance buffer.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -440,6 +442,7 @@ impl BandRenderer {
         self.instance_count = 0;
     }
 
+    /// Draw band capsules into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,

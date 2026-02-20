@@ -16,7 +16,12 @@ pub enum EasingFunction {
     SqrtOut,
     /// Cubic Hermite interpolation with configurable control points.
     /// Formula: c1·3t(1-t)² + c2·3(1-t)t² + t³
-    CubicHermite { c1: f32, c2: f32 },
+    CubicHermite {
+        /// First control point.
+        c1: f32,
+        /// Second control point.
+        c2: f32,
+    },
 }
 
 impl EasingFunction {

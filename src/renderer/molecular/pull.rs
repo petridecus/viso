@@ -48,6 +48,7 @@ pub struct PullRenderInfo {
     pub residue_idx: u32,
 }
 
+/// Renders the active pull constraint (capsule cylinder + cone arrow).
 pub struct PullRenderer {
     // Capsule pipeline for cylinder
     capsule_pipeline: wgpu::RenderPipeline,
@@ -65,6 +66,7 @@ pub struct PullRenderer {
 }
 
 impl PullRenderer {
+    /// Create a new pull renderer with empty instance buffers.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -394,6 +396,7 @@ impl PullRenderer {
         (capsules, cones)
     }
 
+    /// Draw pull geometry (cylinder + cone arrow) into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -420,6 +423,7 @@ impl PullRenderer {
         }
     }
 
+    /// Whether a pull is currently being rendered.
     pub fn is_active(&self) -> bool {
         self.capsule_count > 0 || self.cone_count > 0
     }

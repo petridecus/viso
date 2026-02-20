@@ -292,7 +292,7 @@ impl ProteinRenderEngine {
             let suppress_sidechains =
                 dominant_action == Some(AnimationAction::DiffusionFinalize);
             if !suppress_sidechains {
-                self.sidechain_renderer.apply_prepared(
+                let _ = self.sidechain_renderer.apply_prepared(
                     &self.context.device,
                     &self.context.queue,
                     &prepared.sidechain_instances,

@@ -130,7 +130,7 @@ impl ShaderComposer {
         // Register shared modules in dependency order.
         for path in MODULE_PATHS {
             let source = sources[path];
-            composer
+            let _ = composer
                 .add_composable_module(ComposableModuleDescriptor {
                     source,
                     file_path: path,
@@ -232,7 +232,7 @@ mod tests {
     fn test_all_shaders_compose() {
         let mut composer = ShaderComposer::new();
         for path in composable_shader_paths() {
-            composer.compose_naga(path).unwrap_or_else(|e| {
+            let _ = composer.compose_naga(path).unwrap_or_else(|e| {
                 panic!("Shader '{}' failed to compose: {}", path, e)
             });
         }

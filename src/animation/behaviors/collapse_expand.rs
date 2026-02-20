@@ -23,9 +23,13 @@ use crate::util::easing::EasingFunction;
 /// The backbone positions interpolate smoothly throughout both phases.
 #[derive(Debug, Clone)]
 pub struct CollapseExpand {
+    /// Duration of the collapse (retraction) phase.
     pub collapse_duration: Duration,
+    /// Duration of the expand (growth) phase.
     pub expand_duration: Duration,
+    /// Easing curve for the collapse phase.
     pub collapse_easing: EasingFunction,
+    /// Easing curve for the expand phase.
     pub expand_easing: EasingFunction,
 }
 

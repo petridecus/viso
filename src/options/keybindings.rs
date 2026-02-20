@@ -6,6 +6,7 @@ use crate::input::KeyAction;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+/// Configurable keyboard bindings mapping actions to key codes.
 pub struct KeybindingOptions {
     /// Maps action → key string (e.g. `CycleFocus` → `"Tab"`).
     pub bindings: HashMap<KeyAction, String>,
@@ -43,7 +44,7 @@ impl KeybindingOptions {
     pub fn rebuild_reverse_map(&mut self) {
         self.key_to_action.clear();
         for (action, key) in &self.bindings {
-            self.key_to_action.insert(key.clone(), *action);
+            let _ = self.key_to_action.insert(key.clone(), *action);
         }
     }
 

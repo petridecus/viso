@@ -54,7 +54,7 @@ pub(crate) struct TubeVertex {
 /// Get the vertex buffer layout for TubeVertex (for use with picking pipeline)
 pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<TubeVertex>() as wgpu::BufferAddress,
+        array_stride: size_of::<TubeVertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &[
             wgpu::VertexAttribute {
@@ -88,17 +88,24 @@ pub fn tube_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
 
 /// Pre-computed tube mesh data for GPU upload.
 pub struct PreparedTubeData<'a> {
+    /// Raw vertex bytes for GPU upload.
     pub vertices: &'a [u8],
+    /// Raw index bytes for GPU upload.
     pub indices: &'a [u8],
+    /// Number of indices in the mesh.
     pub index_count: u32,
+    /// Cached backbone chain data for regeneration.
     pub cached_chains: Vec<Vec<Vec3>>,
+    /// Pre-computed SS types override (from annotation or DSSP).
     pub ss_override: Option<Vec<SSType>>,
 }
 
+/// Renders backbone as smooth tubes with rotation-minimizing frames.
 pub struct TubeRenderer {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
+    /// Number of indices in the current tube mesh.
     pub index_count: u32,
     /// Hash of the last chain data for change detection
     last_chain_hash: u64,
@@ -111,6 +118,7 @@ pub struct TubeRenderer {
 }
 
 impl TubeRenderer {
+    /// Create a new tube renderer with initial mesh from backbone chains.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -129,7 +137,7 @@ impl TubeRenderer {
             DynamicBuffer::new(
                 &context.device,
                 "Backbone Vertex Buffer",
-                std::mem::size_of::<TubeVertex>() * 1000,
+                size_of::<TubeVertex>() * 1000,
                 wgpu::BufferUsages::VERTEX,
             )
         } else {
@@ -145,7 +153,7 @@ impl TubeRenderer {
             DynamicBuffer::new(
                 &context.device,
                 "Backbone Index Buffer",
-                std::mem::size_of::<u32>() * 3000,
+                size_of::<u32>() * 3000,
                 wgpu::BufferUsages::INDEX,
             )
         } else {
@@ -199,8 +207,8 @@ impl TubeRenderer {
             self.ss_override.as_deref(),
         );
         if !vertices.is_empty() {
-            self.vertex_buffer.write(device, queue, &vertices);
-            self.index_buffer.write(device, queue, &indices);
+            let _ = self.vertex_buffer.write(device, queue, &vertices);
+            let _ = self.index_buffer.write(device, queue, &indices);
         }
         self.index_count = indices.len() as u32;
     }
@@ -235,8 +243,8 @@ impl TubeRenderer {
             return;
         }
 
-        self.vertex_buffer.write(device, queue, &vertices);
-        self.index_buffer.write(device, queue, &indices);
+        let _ = self.vertex_buffer.write(device, queue, &vertices);
+        let _ = self.index_buffer.write(device, queue, &indices);
         self.index_count = indices.len() as u32;
     }
 
@@ -695,6 +703,7 @@ impl TubeRenderer {
         (vertices, indices)
     }
 
+    /// Draw the tube mesh into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -743,8 +752,8 @@ impl TubeRenderer {
         data: PreparedTubeData,
     ) {
         if !data.vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, data.vertices);
-            self.index_buffer.write_bytes(device, queue, data.indices);
+            let _ = self.vertex_buffer.write_bytes(device, queue, data.vertices);
+            let _ = self.index_buffer.write_bytes(device, queue, data.indices);
         }
         self.index_count = data.index_count;
         self.cached_chains = data.cached_chains;
@@ -785,8 +794,8 @@ impl TubeRenderer {
         index_count: u32,
     ) {
         if !vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, vertices);
-            self.index_buffer.write_bytes(device, queue, indices);
+            let _ = self.vertex_buffer.write_bytes(device, queue, vertices);
+            let _ = self.index_buffer.write_bytes(device, queue, indices);
         }
         self.index_count = index_count;
     }

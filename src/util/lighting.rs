@@ -32,9 +32,11 @@ use crate::gpu::render_context::RenderContext;
 pub struct LightingUniform {
     /// Primary light direction (normalized)
     pub light1_dir: [f32; 3],
+    /// Padding for GPU alignment.
     pub _pad1: f32,
     /// Secondary light direction (normalized)
     pub light2_dir: [f32; 3],
+    /// Padding for GPU alignment.
     pub _pad2: f32,
     /// Primary light intensity
     pub light1_intensity: f32,
@@ -61,12 +63,15 @@ pub struct LightingUniform {
     /// Rim back-light direction (normalized, points toward the rim light
     /// source)
     pub rim_dir: [f32; 3],
+    /// Padding for GPU alignment.
     pub _pad3: f32,
     /// Surface roughness (0.05 = mirror-like, 1.0 = completely matte)
     pub roughness: f32,
     /// Surface metalness (0.0 = dielectric, 1.0 = metal)
     pub metalness: f32,
+    /// Padding for GPU alignment.
     pub _pad4: f32,
+    /// Padding for GPU alignment.
     pub _pad5: f32,
 }
 
@@ -106,14 +111,20 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     [v[0] / len, v[1] / len, v[2] / len]
 }
 
+/// GPU lighting uniform, buffer, and bind group.
 pub struct Lighting {
+    /// Current lighting uniform data.
     pub uniform: LightingUniform,
+    /// GPU buffer holding the lighting uniform.
     pub buffer: wgpu::Buffer,
+    /// Bind group layout for the lighting uniform.
     pub layout: wgpu::BindGroupLayout,
+    /// Bind group referencing the lighting buffer.
     pub bind_group: wgpu::BindGroup,
 }
 
 impl Lighting {
+    /// Create a new lighting instance with default uniform and GPU resources.
     pub fn new(context: &RenderContext) -> Self {
         let uniform = LightingUniform::default();
 
@@ -265,6 +276,7 @@ impl Lighting {
         }
     }
 
+    /// Write the current lighting uniform to the GPU buffer.
     pub fn update_gpu(&self, queue: &wgpu::Queue) {
         queue.write_buffer(
             &self.buffer,

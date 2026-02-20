@@ -57,10 +57,12 @@ impl AnimationRunner {
         }
     }
 
+    /// Get the animation behavior.
     pub fn behavior(&self) -> &SharedBehavior {
         &self.behavior
     }
 
+    /// Get the total animation duration.
     pub fn duration(&self) -> Duration {
         self.behavior.duration()
     }
@@ -77,6 +79,7 @@ impl AnimationRunner {
         }
     }
 
+    /// Whether the animation has reached completion.
     pub fn is_complete(&self, now: Instant) -> bool {
         self.progress(now) >= 1.0
     }
@@ -99,10 +102,12 @@ impl AnimationRunner {
         }
     }
 
+    /// Get the per-residue animation data.
     pub fn residues(&self) -> &[ResidueAnimationData] {
         &self.residues
     }
 
+    /// Number of residues being animated.
     pub fn residue_count(&self) -> usize {
         self.residues.len()
     }

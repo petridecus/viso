@@ -14,8 +14,11 @@ use crate::util::easing::EasingFunction;
 /// Uses the Rosetta-Interactive defaults by default.
 #[derive(Debug, Clone)]
 pub struct SmoothInterpolation {
+    /// Total animation duration.
     pub duration: Duration,
+    /// Easing curve for interpolation.
     pub easing: EasingFunction,
+    /// Strategy when a new target arrives mid-animation.
     pub preemption: PreemptionStrategy,
 }
 

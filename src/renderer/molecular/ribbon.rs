@@ -33,10 +33,15 @@ const TUBE_DIAMETER: f32 = 0.6;
 /// Parameters for ribbon rendering
 #[derive(Clone, Copy)]
 pub struct RibbonParams {
+    /// Half-width of helix ribbons.
     pub helix_width: f32,
+    /// Thickness of helix ribbons.
     pub helix_thickness: f32,
+    /// Half-width of sheet ribbons.
     pub sheet_width: f32,
+    /// Thickness of sheet ribbons.
     pub sheet_thickness: f32,
+    /// Spline subdivision segments per residue.
     pub segments_per_residue: usize,
 }
 
@@ -82,11 +87,17 @@ struct SSSegment {
 
 /// Pre-computed ribbon mesh data for GPU upload.
 pub struct PreparedRibbonData<'a> {
+    /// Raw vertex bytes for GPU upload.
     pub vertices: &'a [u8],
+    /// Raw index bytes for GPU upload.
     pub indices: &'a [u8],
+    /// Number of indices in the mesh.
     pub index_count: u32,
+    /// Per-residue sheet surface offsets for sidechain positioning.
     pub sheet_offsets: Vec<(u32, Vec3)>,
+    /// Cached backbone chain data for regeneration.
     pub cached_chains: Vec<Vec<Vec3>>,
+    /// Pre-computed SS types override (from annotation or DSSP).
     pub ss_override: Option<Vec<SSType>>,
 }
 
@@ -98,10 +109,12 @@ struct SheetContext {
     pub taper_end: usize,
 }
 
+/// Renders secondary-structure ribbons (helices, sheets, coils).
 pub struct RibbonRenderer {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
+    /// Number of indices in the current mesh.
     pub index_count: u32,
     last_chain_hash: u64,
     params: RibbonParams,
@@ -116,6 +129,7 @@ pub struct RibbonRenderer {
 }
 
 impl RibbonRenderer {
+    /// Create a new ribbon renderer with initial mesh from backbone chains.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -180,6 +194,7 @@ impl RibbonRenderer {
         }
     }
 
+    /// Create a new ribbon renderer from per-residue backbone data.
     pub fn new_from_residues(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -256,6 +271,7 @@ impl RibbonRenderer {
         hasher.finish()
     }
 
+    /// Update the ribbon mesh from new backbone chains (skips if unchanged).
     pub fn update(
         &mut self,
         device: &wgpu::Device,
@@ -279,8 +295,8 @@ impl RibbonRenderer {
             self.ss_override.as_deref(),
         );
         if !vertices.is_empty() {
-            self.vertex_buffer.write(device, queue, &vertices);
-            self.index_buffer.write(device, queue, &indices);
+            let _ = self.vertex_buffer.write(device, queue, &vertices);
+            let _ = self.index_buffer.write(device, queue, &indices);
         }
         self.index_count = indices.len() as u32;
         self.sheet_offsets = offsets;
@@ -299,13 +315,14 @@ impl RibbonRenderer {
             self.ss_override.as_deref(),
         );
         if !vertices.is_empty() {
-            self.vertex_buffer.write(device, queue, &vertices);
-            self.index_buffer.write(device, queue, &indices);
+            let _ = self.vertex_buffer.write(device, queue, &vertices);
+            let _ = self.index_buffer.write(device, queue, &indices);
         }
         self.index_count = indices.len() as u32;
         self.sheet_offsets = offsets;
     }
 
+    /// Update ribbon mesh from per-residue backbone data.
     pub fn update_from_residues(
         &mut self,
         device: &wgpu::Device,
@@ -324,8 +341,8 @@ impl RibbonRenderer {
             self.ss_override.as_deref(),
         );
         if !vertices.is_empty() {
-            self.vertex_buffer.write(device, queue, &vertices);
-            self.index_buffer.write(device, queue, &indices);
+            let _ = self.vertex_buffer.write(device, queue, &vertices);
+            let _ = self.index_buffer.write(device, queue, &indices);
         }
         self.index_count = indices.len() as u32;
         self.sheet_offsets = offsets;
@@ -339,6 +356,7 @@ impl RibbonRenderer {
         &self.sheet_offsets
     }
 
+    /// Update rendering parameters and invalidate the mesh hash.
     pub fn set_params(&mut self, params: RibbonParams) {
         self.params = params;
         self.last_chain_hash = 0;
@@ -674,6 +692,7 @@ impl RibbonRenderer {
         (all_verts, all_inds, all_surface_pos)
     }
 
+    /// Draw the ribbon mesh into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -743,8 +762,8 @@ impl RibbonRenderer {
         sheet_offsets: Vec<(u32, Vec3)>,
     ) {
         if !vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, vertices);
-            self.index_buffer.write_bytes(device, queue, indices);
+            let _ = self.vertex_buffer.write_bytes(device, queue, vertices);
+            let _ = self.index_buffer.write_bytes(device, queue, indices);
         }
         self.index_count = index_count;
         self.sheet_offsets = sheet_offsets;
@@ -758,8 +777,8 @@ impl RibbonRenderer {
         data: PreparedRibbonData,
     ) {
         if !data.vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, data.vertices);
-            self.index_buffer.write_bytes(device, queue, data.indices);
+            let _ = self.vertex_buffer.write_bytes(device, queue, data.vertices);
+            let _ = self.index_buffer.write_bytes(device, queue, data.indices);
         }
         self.index_count = data.index_count;
         self.sheet_offsets = data.sheet_offsets;

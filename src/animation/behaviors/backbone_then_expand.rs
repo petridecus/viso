@@ -25,9 +25,13 @@ use crate::util::easing::EasingFunction;
 ///    sidechain atom positions expand from CA toward their final positions.
 #[derive(Debug, Clone)]
 pub struct BackboneThenExpand {
+    /// Duration of the backbone lerp phase.
     pub backbone_duration: Duration,
+    /// Duration of the sidechain expand phase.
     pub expand_duration: Duration,
+    /// Easing curve for the backbone phase.
     pub backbone_easing: EasingFunction,
+    /// Easing curve for the expand phase.
     pub expand_easing: EasingFunction,
 }
 

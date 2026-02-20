@@ -3,12 +3,19 @@ use glam::{Mat4, Vec3};
 /// Perspective camera defined by eye position, target, and projection
 /// parameters.
 pub struct Camera {
+    /// Eye (camera) position in world space.
     pub eye: Vec3,
+    /// Look-at target position.
     pub target: Vec3,
+    /// Up direction vector.
     pub up: Vec3,
+    /// Viewport aspect ratio (width / height).
     pub aspect: f32,
+    /// Vertical field of view in degrees.
     pub fovy: f32,
+    /// Near clipping plane distance.
     pub znear: f32,
+    /// Far clipping plane distance.
     pub zfar: f32,
 }
 
@@ -16,12 +23,19 @@ pub struct Camera {
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 /// GPU uniform buffer holding the view-projection matrix and camera metadata.
 pub struct CameraUniform {
+    /// Combined view-projection matrix.
     pub view_proj: [[f32; 4]; 4],
+    /// Camera world-space position.
     pub position: [f32; 3],
+    /// Viewport aspect ratio.
     pub aspect: f32,
-    pub forward: [f32; 3], // Camera forward direction for lighting
+    /// Camera forward direction for lighting.
+    pub forward: [f32; 3],
+    /// Vertical field of view in degrees.
     pub fovy: f32,
-    pub hovered_residue: i32, // Currently hovered residue (-1 if none)
+    /// Currently hovered residue index (-1 if none).
+    pub hovered_residue: i32,
+    /// Padding for GPU alignment.
     pub _pad: [f32; 3],
 }
 
@@ -63,7 +77,7 @@ impl CameraUniform {
     /// Create a new camera uniform with identity view-projection.
     pub fn new() -> Self {
         Self {
-            view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             position: [0.0; 3],
             aspect: 1.6,
             forward: [0.0, 0.0, -1.0],

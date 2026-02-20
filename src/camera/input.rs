@@ -3,6 +3,7 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 
 use crate::camera::controller::CameraController;
 
+/// Translates `winit` window events into camera controller actions.
 pub struct InputHandler {
     last_mouse_pos: Vec2,
 }
@@ -14,6 +15,7 @@ impl Default for InputHandler {
 }
 
 impl InputHandler {
+    /// Create a new input handler with zeroed mouse position.
     pub fn new() -> Self {
         Self {
             last_mouse_pos: Vec2::ZERO,

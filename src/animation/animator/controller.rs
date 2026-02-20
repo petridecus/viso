@@ -35,10 +35,12 @@ impl AnimationController {
         }
     }
 
+    /// Get mutable access to animation preferences.
     pub fn preferences_mut(&mut self) -> &mut AnimationPreferences {
         &mut self.preferences
     }
 
+    /// Get immutable access to animation preferences.
     pub fn preferences(&self) -> &AnimationPreferences {
         &self.preferences
     }
@@ -48,6 +50,7 @@ impl AnimationController {
         self.enabled = enabled;
     }
 
+    /// Whether animations are enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }

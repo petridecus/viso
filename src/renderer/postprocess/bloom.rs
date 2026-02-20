@@ -22,6 +22,7 @@ struct BlurParams {
 /// Number of downsample levels in the bloom chain
 const MIP_LEVELS: usize = 4;
 
+/// Bloom post-processing pass (threshold + blur chain + upsample).
 pub struct BloomPass {
     // Threshold extraction
     threshold_pipeline: wgpu::RenderPipeline,
@@ -49,19 +50,23 @@ pub struct BloomPass {
     upsample_bind_group_layout: wgpu::BindGroupLayout,
     upsample_bind_groups: Vec<wgpu::BindGroup>,
 
-    // Final bloom output (same size as first mip = half resolution)
+    /// Final bloom output texture (half resolution).
     pub output_texture: wgpu::Texture,
+    /// View into the bloom output texture.
     pub output_view: wgpu::TextureView,
 
     sampler: wgpu::Sampler,
 
+    /// Brightness threshold for bloom extraction.
     pub threshold: f32,
+    /// Bloom blend intensity.
     pub intensity: f32,
     width: u32,
     height: u32,
 }
 
 impl BloomPass {
+    /// Create a new bloom pass with threshold, blur chain, and upsample pipelines.
     pub fn new(
         context: &RenderContext,
         color_view: &wgpu::TextureView,

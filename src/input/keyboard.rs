@@ -11,14 +11,24 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyAction {
+    /// Re-center camera on the current focus.
     RecenterCamera,
+    /// Toggle trajectory playback.
     ToggleTrajectory,
+    /// Toggle ion visibility.
     ToggleIons,
+    /// Toggle water molecule visibility.
     ToggleWaters,
+    /// Toggle solvent visibility.
     ToggleSolvent,
+    /// Toggle lipid visibility.
     ToggleLipids,
+    /// Cycle focus through groups and entities.
     CycleFocus,
+    /// Toggle turntable auto-rotation.
     ToggleAutoRotate,
+    /// Reset focus to session level.
     ResetFocus,
+    /// Cancel current operation.
     Cancel,
 }

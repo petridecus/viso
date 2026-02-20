@@ -80,14 +80,21 @@ pub(crate) struct SphereInstance {
 
 /// Pre-computed instance data for GPU upload.
 pub struct PreparedBallAndStickData<'a> {
+    /// Raw bytes for sphere instance data.
     pub sphere_bytes: &'a [u8],
+    /// Number of sphere instances.
     pub sphere_count: u32,
+    /// Raw bytes for bond capsule instance data.
     pub capsule_bytes: &'a [u8],
+    /// Number of bond capsule instances.
     pub capsule_count: u32,
+    /// Raw bytes for picking capsule instance data.
     pub picking_bytes: &'a [u8],
+    /// Number of picking capsule instances.
     pub picking_count: u32,
 }
 
+/// Renders small molecules as ray-cast sphere + capsule impostors.
 pub struct BallAndStickRenderer {
     // Atom spheres
     sphere_pipeline: wgpu::RenderPipeline,
@@ -111,6 +118,7 @@ pub struct BallAndStickRenderer {
 }
 
 impl BallAndStickRenderer {
+    /// Create a new ball-and-stick renderer with empty buffers.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,

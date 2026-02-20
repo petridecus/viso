@@ -89,6 +89,7 @@ impl StructureAnimator {
         &mut self.controller
     }
 
+    /// Get immutable access to the controller.
     pub fn controller(&self) -> &AnimationController {
         &self.controller
     }
@@ -101,10 +102,12 @@ impl StructureAnimator {
         }
     }
 
+    /// Whether animations are enabled.
     pub fn is_enabled(&self) -> bool {
         self.controller.is_enabled()
     }
 
+    /// Whether an animation is currently in progress.
     pub fn is_animating(&self) -> bool {
         self.runner.is_some()
     }
@@ -194,14 +197,17 @@ impl StructureAnimator {
         self.state.to_backbone_chains()
     }
 
+    /// Total number of residues in the structure.
     pub fn residue_count(&self) -> usize {
         self.state.residue_count()
     }
 
+    /// Get the current structure state.
     pub fn state(&self) -> &StructureState {
         &self.state
     }
 
+    /// Get the active animation runner, if any.
     pub fn runner(&self) -> Option<&AnimationRunner> {
         self.runner.as_ref()
     }

@@ -10,15 +10,25 @@ use crate::gpu::{
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SsaoParams {
+    /// Inverse projection matrix.
     pub inv_proj: [[f32; 4]; 4],
+    /// Projection matrix.
     pub proj: [[f32; 4]; 4],
+    /// View matrix.
     pub view: [[f32; 4]; 4],
+    /// Screen dimensions in pixels `[width, height]`.
     pub screen_size: [f32; 2],
+    /// Near clipping plane distance.
     pub near: f32,
+    /// Far clipping plane distance.
     pub far: f32,
+    /// SSAO sampling radius in view space.
     pub radius: f32,
+    /// Depth bias to prevent self-occlusion.
     pub bias: f32,
+    /// Exponent applied to the AO factor.
     pub power: f32,
+    /// Padding for GPU alignment.
     pub _pad: f32,
 }
 
@@ -33,37 +43,52 @@ struct SsaoViews<'a> {
     pub params_buffer: &'a wgpu::Buffer,
 }
 
+/// SSAO (Screen-Space Ambient Occlusion) renderer.
 pub struct SsaoRenderer {
-    // SSAO output textures
+    /// Raw SSAO output texture (before blur).
     pub ssao_texture: wgpu::Texture,
+    /// View into the raw SSAO texture.
     pub ssao_view: wgpu::TextureView,
+    /// Blurred SSAO output texture.
     pub ssao_blurred_texture: wgpu::Texture,
+    /// View into the blurred SSAO texture.
     pub ssao_blurred_view: wgpu::TextureView,
 
-    // Buffers
+    /// GPU buffer holding the sample kernel.
     pub kernel_buffer: wgpu::Buffer,
+    /// GPU buffer holding SSAO parameters uniform.
     pub params_buffer: wgpu::Buffer,
 
-    // Noise texture
+    /// Random rotation noise texture.
     pub noise_texture: wgpu::Texture,
+    /// View into the noise texture.
     pub noise_view: wgpu::TextureView,
+    /// Sampler for the noise texture (repeat addressing).
     pub noise_sampler: wgpu::Sampler,
+    /// Sampler for the SSAO texture (clamp-to-edge).
     pub ssao_sampler: wgpu::Sampler,
 
-    // Pipelines and bind groups
+    /// Render pipeline for the SSAO pass.
     pub ssao_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the SSAO pass.
     pub ssao_bind_group_layout: wgpu::BindGroupLayout,
+    /// Bind group for the SSAO pass.
     pub ssao_bind_group: wgpu::BindGroup,
+    /// Render pipeline for the SSAO blur pass.
     pub blur_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the blur pass.
     pub blur_bind_group_layout: wgpu::BindGroupLayout,
+    /// Bind group for the blur pass.
     pub blur_bind_group: wgpu::BindGroup,
 
     width: u32,
     height: u32,
 
-    // Tunable SSAO parameters
+    /// SSAO sampling radius in view space.
     pub radius: f32,
+    /// Depth bias for self-occlusion prevention.
     pub bias: f32,
+    /// Exponent applied to the AO factor.
     pub power: f32,
 }
 
@@ -71,6 +96,7 @@ const KERNEL_SIZE: usize = 32;
 const NOISE_SIZE: u32 = 4;
 
 impl SsaoRenderer {
+    /// Create a new SSAO renderer with kernel, noise, and pipeline resources.
     pub fn new(
         context: &RenderContext,
         depth_view: &wgpu::TextureView,
@@ -679,6 +705,7 @@ impl SsaoRenderer {
         );
     }
 
+    /// Recreate SSAO textures and bind groups after a window resize.
     pub fn resize(
         &mut self,
         context: &RenderContext,
@@ -780,6 +807,7 @@ impl SsaoRenderer {
         }
     }
 
+    /// Get the final (blurred) SSAO texture view for the composite pass.
     pub fn get_ssao_view(&self) -> &wgpu::TextureView {
         &self.ssao_blurred_view
     }

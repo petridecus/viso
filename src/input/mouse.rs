@@ -7,19 +7,35 @@ pub enum ClickResult {
     /// No selection action (drag, mismatched up/down, etc.)
     NoAction,
     /// Single click on a residue.
-    SingleClick { shift_held: bool },
+    SingleClick {
+        /// Whether shift was held during the click.
+        shift_held: bool,
+    },
     /// Double-click on a residue — select secondary structure segment.
-    DoubleClick { residue: i32, shift_held: bool },
+    DoubleClick {
+        /// Target residue index.
+        residue: i32,
+        /// Whether shift was held during the click.
+        shift_held: bool,
+    },
     /// Triple-click on a residue — select entire chain.
-    TripleClick { residue: i32, shift_held: bool },
+    TripleClick {
+        /// Target residue index.
+        residue: i32,
+        /// Whether shift was held during the click.
+        shift_held: bool,
+    },
     /// Clicked on background — clear selection.
     ClearSelection,
 }
 
 /// Tracks mouse position, drag state, and the multi-click state machine.
 pub struct InputState {
+    /// Current cursor position in screen coordinates.
     pub mouse_pos: (f32, f32),
+    /// Residue under cursor at mouse-down (-1 if none).
     pub mouse_down_residue: i32,
+    /// Whether a drag is in progress.
     pub is_dragging: bool,
     last_click_time: Instant,
     last_click_residue: i32,

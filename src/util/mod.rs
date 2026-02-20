@@ -4,11 +4,19 @@
 //! mapping, sheet-surface adjustments, easing curves, lighting, and bond
 //! topology lookups.
 
+/// Residue-level bond and element lookups from `foldit_conv`.
 pub mod bond_topology;
+/// Easing curves for smooth animation interpolation.
 pub mod easing;
+/// Per-frame timing, FPS capping, and delta-time tracking.
 pub mod frame_timing;
+/// Fast hashing helpers for change detection on Vec3 data.
 pub mod hash;
+/// GPU lighting uniform and bind group management.
 pub mod lighting;
+/// Score-to-color gradient mapping.
 pub mod score_color;
+/// Sheet-surface sidechain position adjustment.
 pub mod sheet_adjust;
+/// Multi-frame trajectory playback.
 pub mod trajectory;

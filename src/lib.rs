@@ -72,6 +72,7 @@
 
 pub mod animation;
 pub mod camera;
+/// Core rendering engine and frame loop.
 pub mod engine;
 pub mod gpu;
 pub mod input;

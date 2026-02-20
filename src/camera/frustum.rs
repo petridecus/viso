@@ -9,7 +9,9 @@ use glam::{Mat4, Vec3, Vec4};
 /// where the plane equation is: ax + by + cz + d = 0
 #[derive(Debug, Clone, Copy)]
 pub struct Plane {
+    /// Unit normal pointing into the positive half-space.
     pub normal: Vec3,
+    /// Signed distance from origin (`n · p + d = 0`).
     pub distance: f32,
 }
 
@@ -41,15 +43,21 @@ impl Plane {
 /// View frustum consisting of 6 planes
 #[derive(Debug, Clone)]
 pub struct Frustum {
+    /// Six clipping planes: left, right, bottom, top, near, far.
     pub planes: [Plane; 6],
 }
 
-/// Indices for frustum planes
+/// Index of the left clipping plane.
 pub const PLANE_LEFT: usize = 0;
+/// Index of the right clipping plane.
 pub const PLANE_RIGHT: usize = 1;
+/// Index of the bottom clipping plane.
 pub const PLANE_BOTTOM: usize = 2;
+/// Index of the top clipping plane.
 pub const PLANE_TOP: usize = 3;
+/// Index of the near clipping plane.
 pub const PLANE_NEAR: usize = 4;
+/// Index of the far clipping plane.
 pub const PLANE_FAR: usize = 5;
 
 impl Frustum {

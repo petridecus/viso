@@ -31,18 +31,25 @@ const CAPSULE_RADIUS: f32 = 0.3;
 
 /// Sidechain geometry data that always travels together.
 pub struct SidechainData<'a> {
+    /// World-space atom positions.
     pub positions: &'a [Vec3],
+    /// Intra-sidechain bonds as `(atom_a, atom_b)` index pairs.
     pub bonds: &'a [(u32, u32)],
+    /// CA-CB backbone bonds as `(ca_position, cb_sidechain_index)`.
     pub backbone_bonds: &'a [(Vec3, u32)],
+    /// Per-atom hydrophobicity flags.
     pub hydrophobicity: &'a [bool],
+    /// Residue index for each sidechain atom.
     pub residue_indices: &'a [u32],
 }
 
+/// Renders sidechains as capsule chains (cylinders with hemispherical caps).
 pub struct CapsuleSidechainRenderer {
     pipeline: wgpu::RenderPipeline,
     instance_buffer: TypedBuffer<CapsuleInstance>,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
+    /// Number of capsule instances to draw.
     pub instance_count: u32,
 }
 
@@ -348,6 +355,7 @@ impl CapsuleSidechainRenderer {
         self.instance_count = instances.len() as u32;
     }
 
+    /// Draw sidechain capsules into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,

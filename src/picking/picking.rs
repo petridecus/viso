@@ -19,7 +19,9 @@ use crate::{
 /// Selection buffer for GPU - stores selection state as a bit array
 pub struct SelectionBuffer {
     buffer: wgpu::Buffer,
+    /// Bind group layout for the selection storage buffer.
     pub layout: wgpu::BindGroupLayout,
+    /// Bind group referencing the selection storage buffer.
     pub bind_group: wgpu::BindGroup,
     /// Number of residues (for sizing)
     capacity: usize,
@@ -127,15 +129,25 @@ impl SelectionBuffer {
 
 /// Geometry buffers needed for the picking render pass.
 pub struct PickingGeometry<'a> {
+    /// Tube mesh vertex buffer.
     pub tube_vertex_buffer: &'a wgpu::Buffer,
+    /// Tube mesh index buffer.
     pub tube_index_buffer: &'a wgpu::Buffer,
+    /// Number of tube indices to draw.
     pub tube_index_count: u32,
+    /// Ribbon mesh vertex buffer (None if ribbon not active).
     pub ribbon_vertex_buffer: Option<&'a wgpu::Buffer>,
+    /// Ribbon mesh index buffer (None if ribbon not active).
     pub ribbon_index_buffer: Option<&'a wgpu::Buffer>,
+    /// Number of ribbon indices to draw.
     pub ribbon_index_count: u32,
+    /// Sidechain capsule bind group for picking.
     pub capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    /// Number of sidechain capsule instances.
     pub capsule_count: u32,
+    /// Ball-and-stick capsule bind group for picking.
     pub bns_capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    /// Number of ball-and-stick capsule instances.
     pub bns_capsule_count: u32,
 }
 
@@ -639,7 +651,7 @@ impl Picking {
             if let Some(pos) =
                 self.selected_residues.iter().position(|&r| r == hit)
             {
-                self.selected_residues.remove(pos);
+                let _ = self.selected_residues.remove(pos);
             } else {
                 self.selected_residues.push(hit);
             }

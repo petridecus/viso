@@ -3,9 +3,13 @@ use std::fmt;
 /// Errors that can occur during GPU context initialization.
 #[derive(Debug)]
 pub enum RenderContextError {
+    /// Failed to create a wgpu surface from the window handle.
     SurfaceCreation(wgpu::CreateSurfaceError),
+    /// No compatible GPU adapter found.
     AdapterRequest(wgpu::RequestAdapterError),
+    /// GPU device request failed (limits or features not met).
     DeviceRequest(wgpu::RequestDeviceError),
+    /// Surface configuration not supported by the selected adapter.
     UnsupportedSurface,
 }
 
@@ -39,9 +43,13 @@ impl std::error::Error for RenderContextError {
 
 /// Owns the core wgpu resources: device, queue, surface, and configuration.
 pub struct RenderContext {
+    /// The wgpu logical device.
     pub device: wgpu::Device,
+    /// The wgpu command queue.
     pub queue: wgpu::Queue,
+    /// The window surface for presentation.
     pub surface: wgpu::Surface<'static>,
+    /// Current surface configuration (format, size, present mode).
     pub config: wgpu::SurfaceConfiguration,
     /// Supersampling scale factor (1 = native, 2 = 2x SSAA).
     pub render_scale: u32,
@@ -136,6 +144,6 @@ impl RenderContext {
 
     /// Finish the encoder and submit its command buffer to the GPU queue.
     pub fn submit(&self, encoder: wgpu::CommandEncoder) {
-        self.queue.submit(std::iter::once(encoder.finish()));
+        let _ = self.queue.submit(std::iter::once(encoder.finish()));
     }
 }

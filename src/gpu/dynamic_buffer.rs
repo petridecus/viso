@@ -178,7 +178,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         label: &str,
         usage: wgpu::BufferUsages,
     ) -> Self {
-        let initial_capacity = std::mem::size_of::<T>() * 1000;
+        let initial_capacity = size_of::<T>() * 1000;
         Self {
             inner: DynamicBuffer::new(device, label, initial_capacity, usage),
             count: 0,
@@ -193,7 +193,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         capacity: usize,
         usage: wgpu::BufferUsages,
     ) -> Self {
-        let initial_capacity = std::mem::size_of::<T>() * capacity;
+        let initial_capacity = size_of::<T>() * capacity;
         Self {
             inner: DynamicBuffer::new(device, label, initial_capacity, usage),
             count: 0,
@@ -238,7 +238,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         queue: &wgpu::Queue,
         data: &[u8],
     ) -> bool {
-        self.count = data.len() / std::mem::size_of::<T>();
+        self.count = data.len() / size_of::<T>();
         self.inner.write_bytes(device, queue, data)
     }
 
@@ -259,6 +259,6 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
 
     /// Returns the allocated capacity in number of `T` items.
     pub fn capacity(&self) -> usize {
-        self.inner.capacity() / std::mem::size_of::<T>()
+        self.inner.capacity() / size_of::<T>()
     }
 }

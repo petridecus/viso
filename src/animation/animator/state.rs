@@ -81,6 +81,7 @@ impl StructureState {
         self.current.len()
     }
 
+    /// Whether no residues are stored.
     pub fn is_empty(&self) -> bool {
         self.current.is_empty()
     }
@@ -103,10 +104,12 @@ impl StructureState {
         }
     }
 
+    /// Whether this state has a different residue count than `other`.
     pub fn size_differs(&self, other: &StructureState) -> bool {
         self.current.len() != other.current.len()
     }
 
+    /// Whether any target residue state differs from `other`.
     pub fn target_differs(&self, other: &StructureState) -> bool {
         if self.target.len() != other.target.len() {
             return true;

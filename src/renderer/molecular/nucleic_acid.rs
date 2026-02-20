@@ -63,15 +63,18 @@ struct RibbonFrame {
     residue_idx: u32,
 }
 
+/// Renders DNA/RNA backbones as flat ribbons tracing phosphorus atoms.
 pub struct NucleicAcidRenderer {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: DynamicBuffer,
+    /// Number of indices in the current mesh.
     pub index_count: u32,
     last_chain_hash: u64,
 }
 
 impl NucleicAcidRenderer {
+    /// Create a new nucleic acid renderer from phosphorus atom chains.
     pub fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -87,7 +90,7 @@ impl NucleicAcidRenderer {
             DynamicBuffer::new(
                 &context.device,
                 "NA Vertex Buffer",
-                std::mem::size_of::<NaVertex>() * 1000,
+                size_of::<NaVertex>() * 1000,
                 wgpu::BufferUsages::VERTEX,
             )
         } else {
@@ -103,7 +106,7 @@ impl NucleicAcidRenderer {
             DynamicBuffer::new(
                 &context.device,
                 "NA Index Buffer",
-                std::mem::size_of::<u32>() * 3000,
+                size_of::<u32>() * 3000,
                 wgpu::BufferUsages::INDEX,
             )
         } else {
@@ -133,6 +136,7 @@ impl NucleicAcidRenderer {
         }
     }
 
+    /// Update the mesh from new chain data (skips if unchanged).
     pub fn update(
         &mut self,
         device: &wgpu::Device,
@@ -153,11 +157,12 @@ impl NucleicAcidRenderer {
             return;
         }
 
-        self.vertex_buffer.write(device, queue, &vertices);
-        self.index_buffer.write(device, queue, &indices);
+        let _ = self.vertex_buffer.write(device, queue, &vertices);
+        let _ = self.index_buffer.write(device, queue, &indices);
         self.index_count = indices.len() as u32;
     }
 
+    /// Draw the nucleic acid mesh into the given render pass.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -179,10 +184,12 @@ impl NucleicAcidRenderer {
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
+    /// Get the vertex buffer for picking.
     pub fn vertex_buffer(&self) -> &wgpu::Buffer {
         self.vertex_buffer.buffer()
     }
 
+    /// Get the index buffer for picking.
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
     }
@@ -197,8 +204,8 @@ impl NucleicAcidRenderer {
         index_count: u32,
     ) {
         if !vertices.is_empty() {
-            self.vertex_buffer.write_bytes(device, queue, vertices);
-            self.index_buffer.write_bytes(device, queue, indices);
+            let _ = self.vertex_buffer.write_bytes(device, queue, vertices);
+            let _ = self.index_buffer.write_bytes(device, queue, indices);
         }
         self.index_count = index_count;
         self.last_chain_hash = 0; // Invalidate hash so next synchronous update

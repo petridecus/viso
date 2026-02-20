@@ -72,8 +72,11 @@ pub enum Focus {
 /// Per-residue render data aggregated from controllers.
 #[derive(Debug, Clone, Default)]
 pub struct ResidueRenderData {
+    /// Ramachandran plot colors per residue.
     pub rama_colors: Option<Vec<[f32; 3]>>,
+    /// Blueprint colors per residue.
     pub blueprint_colors: Option<Vec<[f32; 3]>>,
+    /// Selected residue indices.
     pub selection: Vec<u32>,
 }
 
@@ -84,8 +87,11 @@ pub struct ResidueRenderData {
 /// Cached rendering data for a single group's protein entities.
 #[derive(Debug, Clone)]
 pub struct GroupRenderData {
+    /// Extracted backbone and sidechain coordinates for rendering.
     pub render_coords: RenderCoords,
+    /// Full amino acid sequence string.
     pub sequence: String,
+    /// Per-chain sequences as (chain_id, sequence) pairs.
     pub chain_sequences: Vec<(u8, String)>,
 }
 
@@ -96,9 +102,13 @@ pub struct GroupRenderData {
 /// Sidechain atom data for a single group (local indices).
 #[derive(Debug, Clone)]
 pub struct SidechainAtom {
+    /// Atom position in world space.
     pub position: Vec3,
+    /// Whether this atom is hydrophobic.
     pub is_hydrophobic: bool,
+    /// Local residue index within the group.
     pub residue_idx: u32,
+    /// PDB atom name (e.g. "CB", "CG").
     pub atom_name: String,
 }
 
@@ -106,26 +116,33 @@ pub struct SidechainAtom {
 /// Indices are LOCAL (0-based within the group).
 #[derive(Debug, Clone)]
 pub struct PerGroupData {
+    /// Group identifier.
     pub id: GroupId,
+    /// Monotonic version counter for cache invalidation.
     pub mesh_version: u64,
-    // Protein backbone
+    /// Protein backbone atom chains (N, CA, C triplets).
     pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Chain IDs for each backbone chain.
     pub backbone_chain_ids: Vec<u8>,
+    /// Per-chain backbone residue data.
     pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
-    // Sidechain (local residue indices)
+    /// Sidechain atom data (local residue indices).
     pub sidechain_atoms: Vec<SidechainAtom>,
+    /// Sidechain intra-residue bonds as (atom_idx, atom_idx) pairs.
     pub sidechain_bonds: Vec<(u32, u32)>,
+    /// Backbone-to-sidechain bonds as (CA position, sidechain atom idx).
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
-    // Secondary structure
+    /// Pre-computed secondary structure assignments.
     pub ss_override: Option<Vec<SSType>>,
-    // Per-residue energy scores (scene processor derives colors from these)
+    /// Per-residue energy scores for color derivation.
     pub per_residue_scores: Option<Vec<f64>>,
-    // Non-protein
+    /// Non-protein entities (ligands, ions, etc.).
     pub non_protein_entities: Vec<MoleculeEntity>,
-    // Nucleic acid
+    /// P-atom chains from DNA/RNA entities.
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
+    /// Base ring geometry from DNA/RNA entities.
     pub nucleic_acid_rings: Vec<NucleotideRing>,
-    // Counts
+    /// Total residue count in this group.
     pub residue_count: u32,
 }
 
@@ -137,11 +154,15 @@ pub struct PerGroupData {
 /// operation).
 #[derive(Debug, Clone)]
 pub struct EntityGroup {
+    /// Unique group identifier.
     pub id: GroupId,
+    /// Whether this group is visible in the scene.
     pub visible: bool,
+    /// Human-readable name (e.g. filename).
     pub name: String,
     entities: Vec<MoleculeEntity>,
     mesh_version: u64,
+    /// Pre-computed secondary structure assignments.
     pub ss_override: Option<Vec<SSType>>,
     /// Cached per-residue energy scores from Rosetta (raw data for viz).
     pub per_residue_scores: Option<Vec<f64>>,
@@ -342,17 +363,29 @@ impl EntityGroup {
 /// groups.
 #[derive(Debug, Clone, Default)]
 pub struct AggregatedRenderData {
+    /// Concatenated backbone atom chains across all visible groups.
     pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Chain IDs for each backbone chain.
     pub backbone_chain_ids: Vec<u8>,
+    /// Per-chain backbone residue data.
     pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
+    /// All sidechain atom positions (global indices).
     pub sidechain_positions: Vec<Vec3>,
+    /// Hydrophobicity flag per sidechain atom.
     pub sidechain_hydrophobicity: Vec<bool>,
+    /// Global residue index per sidechain atom.
     pub sidechain_residue_indices: Vec<u32>,
+    /// PDB atom name per sidechain atom.
     pub sidechain_atom_names: Vec<String>,
+    /// Sidechain intra-residue bonds (global atom indices).
     pub sidechain_bonds: Vec<(u32, u32)>,
+    /// Backbone-to-sidechain bonds (CA position, global atom idx).
     pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// All atom positions for camera fitting.
     pub all_positions: Vec<Vec3>,
+    /// Flat secondary structure types across all residues.
     pub ss_types: Option<Vec<SSType>>,
+    /// Per-residue rendering data from controllers.
     pub residue_render_data: ResidueRenderData,
     /// All non-protein entities across all visible groups (for
     /// ball-and-stick).
@@ -372,6 +405,7 @@ pub struct AggregatedRenderData {
 /// Result of combining coords from all visible groups for Rosetta.
 #[derive(Debug, Clone)]
 pub struct CombinedCoordsResult {
+    /// Combined ASSEM01 coordinate bytes for Rosetta.
     pub bytes: Vec<u8>,
     /// Chain IDs assigned to each group (for splitting Rosetta exports by
     /// chain).

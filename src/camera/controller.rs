@@ -28,19 +28,29 @@ pub struct CameraController {
     target_distance: Option<f32>,
     target_bounding_radius: Option<f32>,
 
+    /// The underlying perspective camera.
     pub camera: Camera,
+    /// GPU uniform data for the camera.
     pub uniform: CameraUniform,
+    /// GPU buffer holding the camera uniform.
     pub buffer: wgpu::Buffer,
+    /// Bind group layout for the camera uniform.
     pub layout: wgpu::BindGroupLayout,
+    /// Bind group for the camera uniform.
     pub bind_group: wgpu::BindGroup,
 
     /// When Some, the camera spins around the captured axis (camera up at
     /// toggle time).
     auto_rotate_axis: Option<Vec3>,
+    /// Whether the primary mouse button is pressed.
     pub mouse_pressed: bool,
+    /// Whether the shift key is held.
     pub shift_pressed: bool,
+    /// Rotation sensitivity multiplier.
     pub rotate_speed: f32,
+    /// Pan sensitivity multiplier.
     pub pan_speed: f32,
+    /// Zoom sensitivity multiplier.
     pub zoom_speed: f32,
 }
 

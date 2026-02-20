@@ -34,14 +34,21 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(default)]
 pub struct Options {
+    /// Display toggles and coloring modes.
     pub display: DisplayOptions,
+    /// Lighting parameters.
     pub lighting: LightingOptions,
+    /// Post-processing effect parameters.
     pub post_processing: PostProcessingOptions,
+    /// Camera projection and control parameters.
     pub camera: CameraOptions,
+    /// Color palette options.
     #[schemars(skip)]
     pub colors: ColorOptions,
+    /// Geometry detail options.
     #[schemars(skip)]
     pub geometry: GeometryOptions,
+    /// Keyboard binding options.
     #[schemars(skip)]
     pub keybindings: KeybindingOptions,
 }
