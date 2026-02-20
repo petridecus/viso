@@ -106,8 +106,7 @@ impl FxaaPass {
         let shader = shader_composer.compose(
             &context.device,
             "FXAA Shader",
-            include_str!("../../../assets/shaders/screen/fxaa.wgsl"),
-            "fxaa.wgsl",
+            "screen/fxaa.wgsl",
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(

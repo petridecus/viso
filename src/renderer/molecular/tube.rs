@@ -294,10 +294,7 @@ impl TubeRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Backbone Tube Shader",
-            include_str!(
-                "../../../assets/shaders/raster/mesh/backbone_tube.wgsl"
-            ),
-            "backbone_tube.wgsl",
+            "raster/mesh/backbone_tube.wgsl",
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(

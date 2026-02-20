@@ -210,10 +210,7 @@ impl BandRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Band Renderer Shader",
-            include_str!(
-                "../../../assets/shaders/raster/impostor/capsule.wgsl"
-            ),
-            "capsule_impostor.wgsl",
+            "raster/impostor/capsule.wgsl",
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(

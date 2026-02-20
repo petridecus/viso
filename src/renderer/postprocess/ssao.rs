@@ -237,8 +237,7 @@ impl SsaoRenderer {
         let ssao_shader = shader_composer.compose(
             &context.device,
             "SSAO Shader",
-            include_str!("../../../assets/shaders/screen/ssao.wgsl"),
-            "ssao.wgsl",
+            "screen/ssao.wgsl",
         );
 
         let ssao_pipeline_layout = context.device.create_pipeline_layout(
@@ -347,8 +346,7 @@ impl SsaoRenderer {
         let blur_shader = shader_composer.compose(
             &context.device,
             "SSAO Blur Shader",
-            include_str!("../../../assets/shaders/screen/ssao_blur.wgsl"),
-            "ssao_blur.wgsl",
+            "screen/ssao_blur.wgsl",
         );
 
         let blur_pipeline_layout = context.device.create_pipeline_layout(

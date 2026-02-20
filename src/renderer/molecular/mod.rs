@@ -1,3 +1,10 @@
+//! Molecular geometry renderers.
+//!
+//! Each renderer produces GPU-ready vertex/instance data for a specific
+//! molecular representation: backbone tubes, secondary-structure ribbons,
+//! sidechain capsules, ball-and-stick ligands, nucleic acid backbones,
+//! constraint bands, and interactive pulls.
+
 pub mod ball_and_stick;
 pub mod band;
 pub mod capsule_instance;

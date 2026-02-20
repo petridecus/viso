@@ -193,10 +193,7 @@ impl PullRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Pull Capsule Shader",
-            include_str!(
-                "../../../assets/shaders/raster/impostor/capsule.wgsl"
-            ),
-            "capsule_impostor.wgsl",
+            "raster/impostor/capsule.wgsl",
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(
@@ -248,8 +245,7 @@ impl PullRenderer {
         let shader = shader_composer.compose(
             &context.device,
             "Pull Cone Shader",
-            include_str!("../../../assets/shaders/raster/impostor/cone.wgsl"),
-            "cone_impostor.wgsl",
+            "raster/impostor/cone.wgsl",
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(

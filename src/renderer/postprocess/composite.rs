@@ -260,8 +260,7 @@ impl CompositePass {
         let shader = shader_composer.compose(
             &context.device,
             "Composite Shader",
-            include_str!("../../../assets/shaders/screen/composite.wgsl"),
-            "composite.wgsl",
+            "screen/composite.wgsl",
         );
 
         // Pipeline layout

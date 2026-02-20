@@ -26,6 +26,7 @@ pub struct SelectionBuffer {
 }
 
 impl SelectionBuffer {
+    /// Create a selection buffer sized for up to `max_residues` residues.
     pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
         // Round up to multiple of 32 bits
         let num_words = max_residues.div_ceil(32);
@@ -124,7 +125,6 @@ impl SelectionBuffer {
     }
 }
 
-/// GPU picking buffer that stores residue indices
 /// Geometry buffers needed for the picking render pass.
 pub struct PickingGeometry<'a> {
     pub tube_vertex_buffer: &'a wgpu::Buffer,
@@ -139,6 +139,7 @@ pub struct PickingGeometry<'a> {
     pub bns_capsule_count: u32,
 }
 
+/// Manages GPU-based residue picking via an offscreen R32Uint render pass.
 pub struct Picking {
     /// Picking texture (R32Uint format for residue indices)
     texture: wgpu::Texture,
@@ -168,6 +169,7 @@ pub struct Picking {
 }
 
 impl Picking {
+    /// Create a new picking system with pipelines and textures sized to the current context.
     pub fn new(
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
@@ -196,8 +198,7 @@ impl Picking {
         let tube_shader = shader_composer.compose(
             &context.device,
             "Picking Tube Shader",
-            include_str!("../../assets/shaders/utility/picking_mesh.wgsl"),
-            "picking.wgsl",
+            "utility/picking_mesh.wgsl",
         );
 
         // Tube picking pipeline
@@ -251,8 +252,7 @@ impl Picking {
         let capsule_shader = shader_composer.compose(
             &context.device,
             "Picking Capsule Shader",
-            include_str!("../../assets/shaders/utility/picking_capsule.wgsl"),
-            "picking_capsule.wgsl",
+            "utility/picking_capsule.wgsl",
         );
 
         let capsule_bind_group_layout = context
@@ -388,6 +388,7 @@ impl Picking {
         (texture, view)
     }
 
+    /// Resize the picking and depth textures to match the new dimensions.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         if width == self.width && height == self.height {
             return;
@@ -617,7 +618,9 @@ impl Picking {
         true
     }
 
-    /// Handle click for selection
+    /// Process a click event, updating the selection based on the hovered residue.
+    ///
+    /// Returns `true` if the selection changed. Shift-click toggles individual residues.
     pub fn handle_click(&mut self, shift_held: bool) -> bool {
         let hit = self.hovered_residue;
 

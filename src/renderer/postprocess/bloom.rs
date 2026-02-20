@@ -154,8 +154,7 @@ impl BloomPass {
         let threshold_shader = shader_composer.compose(
             &context.device,
             "Bloom Threshold Shader",
-            include_str!("../../../assets/shaders/screen/bloom_threshold.wgsl"),
-            "bloom_threshold.wgsl",
+            "screen/bloom_threshold.wgsl",
         );
 
         let threshold_pipeline_layout = context.device.create_pipeline_layout(
@@ -236,8 +235,7 @@ impl BloomPass {
         let blur_shader = shader_composer.compose(
             &context.device,
             "Bloom Blur Shader",
-            include_str!("../../../assets/shaders/screen/bloom_blur.wgsl"),
-            "bloom_blur.wgsl",
+            "screen/bloom_blur.wgsl",
         );
 
         let blur_pipeline_layout = context.device.create_pipeline_layout(
@@ -323,8 +321,7 @@ impl BloomPass {
         let upsample_shader = shader_composer.compose(
             &context.device,
             "Bloom Upsample Shader",
-            include_str!("../../../assets/shaders/screen/bloom_upsample.wgsl"),
-            "bloom_upsample.wgsl",
+            "screen/bloom_upsample.wgsl",
         );
 
         let upsample_pipeline_layout = context.device.create_pipeline_layout(

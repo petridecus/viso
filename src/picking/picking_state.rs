@@ -14,6 +14,7 @@ pub(crate) struct PickingState {
 }
 
 impl PickingState {
+    /// Create a new picking state with no bind groups allocated.
     pub fn new() -> Self {
         Self {
             capsule_picking_bind_group: None,
