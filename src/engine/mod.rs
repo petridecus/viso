@@ -51,6 +51,36 @@ use crate::{
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
 
+/// The core rendering engine for protein visualization.
+///
+/// Manages the full GPU pipeline: molecular renderers (tube, ribbon,
+/// ball-and-stick, sidechain capsules, nucleic acid, bands, pulls),
+/// post-processing (SSAO, bloom, depth fog, FXAA), and GPU picking.
+///
+/// # Construction
+///
+/// Use [`ProteinRenderEngine::new`] for a default molecule or
+/// [`ProteinRenderEngine::new_with_path`] to load a specific `.cif`/`.pdb` file.
+///
+/// # Frame loop
+///
+/// Each frame, call [`render`](Self::render) to draw and present. Call
+/// [`resize`](Self::resize) when the window size changes. Input is forwarded
+/// via [`handle_mouse_move`](Self::handle_mouse_move),
+/// [`handle_mouse_button`](Self::handle_mouse_button), and
+/// [`handle_mouse_up`](Self::handle_mouse_up).
+///
+/// # Scene management
+///
+/// Load structures with [`load_entities`](Self::load_entities), update
+/// coordinates with [`update_backbone`](Self::update_backbone) or
+/// [`update_group_coords`](Self::update_group_coords), and sync changes to
+/// renderers with [`sync_scene_to_renderers`](Self::sync_scene_to_renderers).
+///
+/// # Animation
+///
+/// Structural changes are animated via the [`StructureAnimator`].
+/// Control the animation style per-action through [`AnimationPreferences`](crate::animation::AnimationPreferences).
 pub struct ProteinRenderEngine {
     // GPU context
     pub context: RenderContext,
@@ -457,6 +487,7 @@ impl ProteinRenderEngine {
         }
     }
 
+    /// Execute one frame: update animations, run the geometry pass, post-process, and present.
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         // Check if we should render based on FPS limit
         if !self.frame_timing.should_render() {
@@ -678,6 +709,7 @@ impl ProteinRenderEngine {
         Ok(())
     }
 
+    /// Resize all GPU surfaces and the camera projection to match the new window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.context.resize(width, height);

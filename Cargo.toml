@@ -2,6 +2,14 @@
 name = "viso"
 version = "0.1.0"
 edition = "2021"
+description = "GPU-accelerated 3D protein visualization engine"
+authors = ["Andreas Petrides <apetrides32@gmail.com>"]
+license-file = "LICENSE.md"
+repository = "https://github.com/petridecus/viso"
+readme = "README.md"
+keywords = ["protein", "visualization", "molecular", "wgpu", "3d"]
+categories = ["graphics", "rendering", "science", "visualization"]
+exclude = ["gallery/", "assets/models/", "docs/", ".github/"]
 
 [dependencies]
 wgpu = { version = "28.0", features = ["naga-ir"] }

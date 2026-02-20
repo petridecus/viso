@@ -61,15 +61,4 @@ impl FrameTiming {
     pub fn fps(&self) -> f32 {
         self.smoothed_fps
     }
-
-    /// Set target FPS (0 = unlimited)
-    #[allow(dead_code)]
-    pub fn set_target_fps(&mut self, fps: u32) {
-        self.target_fps = fps;
-        self.min_frame_duration = if fps > 0 {
-            Duration::from_secs_f64(1.0 / fps as f64)
-        } else {
-            Duration::ZERO
-        };
-    }
 }

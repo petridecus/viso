@@ -1107,63 +1107,6 @@ fn flatten_sheet(positions: &mut [Vec3], normals: &mut [Vec3], cycles: usize) {
     }
 }
 
-/// CA-only fallback for sheet generation. Estimates peptide plane normals
-/// from backbone path curvature when N/C atoms are unavailable.
-#[allow(dead_code)]
-fn generate_sheet_from_ca(
-    ca_positions: &[Vec3],
-    ss_types: &[SSType],
-    params: &RibbonParams,
-    base: u32,
-    global_residue_base: u32,
-) -> (Vec<RibbonVertex>, Vec<u32>) {
-    let n = ca_positions.len();
-    if n < 2 {
-        return (Vec::new(), Vec::new());
-    }
-
-    // Without real N/C positions, approximate peptide plane normals from
-    // backbone path curvature: cross(prev→curr, curr→next)
-    let mut normals: Vec<Vec3> = Vec::with_capacity(n);
-    for i in 0..n {
-        let prev = if i > 0 {
-            ca_positions[i - 1]
-        } else {
-            ca_positions[0] * 2.0 - ca_positions[1]
-        };
-        let next = if i + 1 < n {
-            ca_positions[i + 1]
-        } else {
-            ca_positions[n - 1] * 2.0 - ca_positions[n - 2]
-        };
-        let d1 = (ca_positions[i] - prev).normalize_or_zero();
-        let d2 = (next - ca_positions[i]).normalize_or_zero();
-        let normal = d1.cross(d2);
-        normals.push(if normal.length_squared() > 1e-6 {
-            normal.normalize()
-        } else {
-            Vec3::Y
-        });
-    }
-
-    for i in 1..n {
-        if normals[i].dot(normals[i - 1]) < 0.0 {
-            normals[i] = -normals[i];
-        }
-    }
-
-    let mut positions = ca_positions.to_vec();
-    flatten_sheet(&mut positions, &mut normals, 4);
-
-    let ctx = SheetContext {
-        base,
-        global_residue_base,
-        taper_start: 0,
-        taper_end: 0,
-    };
-    sheet_from_normals(&positions, &normals, ss_types, params, &ctx)
-}
-
 // ==================== MESH BUILDING ====================
 
 /// Compute per-frame ribbon widths with linear taper at segment boundaries.

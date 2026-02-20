@@ -6,9 +6,9 @@ use crate::gpu::render_context::RenderContext;
 /// NOTE: Must match WGSL struct layout exactly (112 bytes)
 ///
 /// WGSL layout (auto-padded):
-///   light1_dir: vec3<f32>     (offset 0,  align 16)
+///   light1_dir: `vec3<f32>`     (offset 0,  align 16)
 ///   _pad1: f32                (offset 12)
-///   light2_dir: vec3<f32>     (offset 16, align 16)
+///   light2_dir: `vec3<f32>`     (offset 16, align 16)
 ///   _pad2: f32                (offset 28)
 ///   light1_intensity: f32     (offset 32)
 ///   light2_intensity: f32     (offset 36)
@@ -18,9 +18,9 @@ use crate::gpu::render_context::RenderContext;
 ///   rim_power: f32            (offset 52)
 ///   rim_intensity: f32        (offset 56)
 ///   rim_directionality: f32   (offset 60)
-///   rim_color: vec3<f32>      (offset 64, align 16)
+///   rim_color: `vec3<f32>`      (offset 64, align 16)
 ///   ibl_strength: f32         (offset 76)
-///   rim_dir: vec3<f32>        (offset 80, align 16)
+///   rim_dir: `vec3<f32>`        (offset 80, align 16)
 ///   _pad3: f32                (offset 92)
 ///   roughness: f32            (offset 96)
 ///   metalness: f32            (offset 100)

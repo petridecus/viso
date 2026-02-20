@@ -10,6 +10,7 @@ use crate::{
 };
 
 impl ProteinRenderEngine {
+    /// Forward mouse movement deltas for camera orbit, pan, or drag selection.
     pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
         // Only allow rotation/pan if mouse down was on background (not on a
         // residue)
