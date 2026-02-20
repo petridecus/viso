@@ -187,6 +187,7 @@ struct CachedGroupMesh {
     nucleic_acid_rings: Vec<NucleotideRing>,
 }
 
+/// Background thread that generates CPU-side geometry from scene data.
 pub struct SceneProcessor {
     request_tx: mpsc::Sender<SceneRequest>,
     scene_result: triple_buffer::Output<Option<PreparedScene>>,

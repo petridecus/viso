@@ -141,18 +141,22 @@ impl DynamicBuffer {
         reallocated
     }
 
+    /// Returns a reference to the underlying `wgpu::Buffer`.
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
     }
 
+    /// Returns the current data length in bytes.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns `true` if the buffer contains no data.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Returns the allocated capacity in bytes.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -238,18 +242,22 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
         self.inner.write_bytes(device, queue, data)
     }
 
+    /// Returns a reference to the underlying `wgpu::Buffer`.
     pub fn buffer(&self) -> &wgpu::Buffer {
         self.inner.buffer()
     }
 
+    /// Returns the number of `T` items currently stored.
     pub fn count(&self) -> usize {
         self.count
     }
 
+    /// Returns `true` if the buffer contains no items.
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
 
+    /// Returns the allocated capacity in number of `T` items.
     pub fn capacity(&self) -> usize {
         self.inner.capacity() / std::mem::size_of::<T>()
     }

@@ -27,6 +27,7 @@ pub struct InputState {
 }
 
 impl InputState {
+    /// Create a new input state with no active click.
     pub fn new() -> Self {
         Self {
             mouse_pos: (0.0, 0.0),

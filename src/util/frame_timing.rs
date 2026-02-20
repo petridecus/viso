@@ -15,6 +15,7 @@ pub struct FrameTiming {
 }
 
 impl FrameTiming {
+    /// Create a new frame timer with the given FPS target (0 = unlimited).
     pub fn new(target_fps: u32) -> Self {
         let min_frame_duration = if target_fps > 0 {
             Duration::from_secs_f64(1.0 / target_fps as f64)

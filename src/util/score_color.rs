@@ -19,6 +19,7 @@ pub struct ColorRamp {
 }
 
 impl ColorRamp {
+    /// Create a color ramp from a list of evenly-spaced color stops.
     pub fn new(stops: Vec<[f32; 3]>) -> Self {
         assert!(stops.len() >= 2, "ColorRamp needs at least 2 stops");
         Self { stops }

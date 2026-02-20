@@ -1,5 +1,6 @@
 use glam::{Mat4, Vec3};
 
+/// Perspective camera defined by eye position, target, and projection parameters.
 pub struct Camera {
     pub eye: Vec3,
     pub target: Vec3,
@@ -12,6 +13,7 @@ pub struct Camera {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+/// GPU uniform buffer holding the view-projection matrix and camera metadata.
 pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub position: [f32; 3],
@@ -23,6 +25,7 @@ pub struct CameraUniform {
 }
 
 impl Camera {
+    /// Build the combined view-projection matrix.
     pub fn build_matrix(&self) -> Mat4 {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
         // perspective_rh already uses [0,1] depth range (wgpu/Vulkan
@@ -56,6 +59,7 @@ impl Default for CameraUniform {
 }
 
 impl CameraUniform {
+    /// Create a new camera uniform with identity view-projection.
     pub fn new() -> Self {
         Self {
             view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -68,6 +72,7 @@ impl CameraUniform {
         }
     }
 
+    /// Update uniform fields from the given camera's current state.
     pub fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.build_matrix().to_cols_array_2d();
         self.position = camera.eye.to_array();

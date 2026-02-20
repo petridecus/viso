@@ -15,6 +15,7 @@ const CAMERA_ANIMATION_SPEED: f32 = 3.0;
 /// Turntable auto-rotation speed in radians/sec (~29 deg/sec)
 const TURNTABLE_SPEED: f32 = 0.5;
 
+/// Orbital camera controller managing rotation, panning, zoom, and GPU resources.
 pub struct CameraController {
     orientation: Quat,
     distance: f32,
@@ -43,6 +44,7 @@ pub struct CameraController {
 }
 
 impl CameraController {
+    /// Create a new camera controller with default orbital parameters and GPU resources.
     pub fn new(context: &RenderContext) -> Self {
         let focus_point = Vec3::new(50.0, 50.0, 50.0);
         let distance = 150.0;
@@ -247,6 +249,7 @@ impl CameraController {
         self.camera.up = self.orientation * Vec3::Y;
     }
 
+    /// Write the current camera uniform to the GPU buffer.
     pub fn update_gpu(&mut self, queue: &wgpu::Queue) {
         self.uniform.update_view_proj(&self.camera);
         queue.write_buffer(
@@ -256,10 +259,12 @@ impl CameraController {
         );
     }
 
+    /// Update the camera aspect ratio after a window resize.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.camera.aspect = width as f32 / height as f32;
     }
 
+    /// Apply an orbital rotation from a screen-space mouse delta.
     pub fn rotate(&mut self, delta: Vec2) {
         // Horizontal rotation around camera's up vector
         let up = self.orientation * Vec3::Y;
@@ -281,6 +286,7 @@ impl CameraController {
         self.update_camera_pos();
     }
 
+    /// Pan the camera focus point along the view plane.
     pub fn pan(&mut self, delta: Vec2) {
         // Cancel any animated focus point — user input takes priority
         self.target_focus_point = None;
@@ -295,6 +301,7 @@ impl CameraController {
         self.update_camera_pos();
     }
 
+    /// Zoom the camera by adjusting the orbital distance.
     pub fn zoom(&mut self, delta: f32) {
         // Cancel any animated zoom — user input takes priority
         self.target_distance = None;

@@ -399,6 +399,7 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Create an empty scene with no groups and session-level focus.
     pub fn new() -> Self {
         Self {
             groups: Vec::new(),
@@ -521,10 +522,12 @@ impl Scene {
 
     // -- Focus / tab cycling --
 
+    /// Current focus state.
     pub fn focus(&self) -> &Focus {
         &self.focus
     }
 
+    /// Set the focus state directly.
     pub fn set_focus(&mut self, focus: Focus) {
         self.focus = focus;
     }

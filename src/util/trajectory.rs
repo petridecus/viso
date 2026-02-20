@@ -113,6 +113,7 @@ impl TrajectoryPlayer {
         chains
     }
 
+    /// Toggle between playing and paused states.
     pub fn toggle_playback(&mut self) {
         self.playing = !self.playing;
         if self.playing {
@@ -121,23 +122,28 @@ impl TrajectoryPlayer {
         }
     }
 
+    /// Set playback speed in frames per second (clamped to >= 0.1).
     pub fn set_fps(&mut self, fps: f32) {
         self.frame_duration =
             Duration::from_secs_f64(1.0 / fps.max(0.1) as f64);
     }
 
+    /// Enable or disable looping at the end of the trajectory.
     pub fn set_looping(&mut self, looping: bool) {
         self.looping = looping;
     }
 
+    /// Index of the current frame.
     pub fn current_frame(&self) -> usize {
         self.current_frame
     }
 
+    /// Total number of frames in the trajectory.
     pub fn total_frames(&self) -> usize {
         self.frames.len()
     }
 
+    /// Whether the player is currently advancing frames.
     pub fn is_playing(&self) -> bool {
         self.playing
     }
