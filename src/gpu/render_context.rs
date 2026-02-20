@@ -1,3 +1,41 @@
+use std::fmt;
+
+/// Errors that can occur during GPU context initialization.
+#[derive(Debug)]
+pub enum RenderContextError {
+    SurfaceCreation(wgpu::CreateSurfaceError),
+    AdapterRequest(wgpu::RequestAdapterError),
+    DeviceRequest(wgpu::RequestDeviceError),
+    UnsupportedSurface,
+}
+
+impl fmt::Display for RenderContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SurfaceCreation(e) => write!(f, "surface creation failed: {e}"),
+            Self::AdapterRequest(e) => {
+                write!(f, "no compatible GPU adapter found: {e}")
+            }
+            Self::DeviceRequest(e) => write!(f, "device request failed: {e}"),
+            Self::UnsupportedSurface => {
+                write!(f, "surface configuration not supported by adapter")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RenderContextError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SurfaceCreation(e) => Some(e),
+            Self::AdapterRequest(e) => Some(e),
+            Self::DeviceRequest(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// Owns the core wgpu resources: device, queue, surface, and configuration.
 pub struct RenderContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -8,12 +46,15 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
+    /// Create a new render context from the given window surface target and initial size.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         initial_size: (u32, u32),
-    ) -> Self {
+    ) -> Result<Self, RenderContextError> {
         let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance
+            .create_surface(window)
+            .map_err(RenderContextError::SurfaceCreation)?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -22,7 +63,7 @@ impl RenderContext {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .map_err(RenderContextError::AdapterRequest)?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -32,24 +73,24 @@ impl RenderContext {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .map_err(RenderContextError::DeviceRequest)?;
 
         let mut config = surface
             .get_default_config(&adapter, initial_size.0, initial_size.1)
-            .unwrap();
+            .ok_or(RenderContextError::UnsupportedSurface)?;
         config.width = initial_size.0;
         config.height = initial_size.1;
         config.present_mode = wgpu::PresentMode::Fifo;
 
         surface.configure(&device, &config);
 
-        Self {
+        Ok(Self {
             device,
             queue,
             surface,
             config,
             render_scale: 1,
-        }
+        })
     }
 
     /// Internal render width (swapchain width * render_scale).
@@ -62,6 +103,7 @@ impl RenderContext {
         self.config.height * self.render_scale
     }
 
+    /// Reconfigure the surface for the new window size. Ignores zero-sized dimensions.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
@@ -70,14 +112,17 @@ impl RenderContext {
         }
     }
 
+    /// Set the surface DPI scale factor (currently a no-op placeholder).
     pub fn set_surface_scale(&self, _scale: f64) {}
 
+    /// Acquire the next swapchain texture for rendering.
     pub fn get_next_frame(
         &self,
     ) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
         self.surface.get_current_texture()
     }
 
+    /// Create a new command encoder for recording GPU commands.
     pub fn create_encoder(&self) -> wgpu::CommandEncoder {
         self.device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -85,6 +130,7 @@ impl RenderContext {
             })
     }
 
+    /// Finish the encoder and submit its command buffer to the GPU queue.
     pub fn submit(&self, encoder: wgpu::CommandEncoder) {
         self.queue.submit(std::iter::once(encoder.finish()));
     }

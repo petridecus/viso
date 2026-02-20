@@ -128,7 +128,7 @@ impl ProteinRenderEngine {
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
         scale_factor: f64,
-    ) -> Self {
+    ) -> Result<Self, crate::gpu::render_context::RenderContextError> {
         Self::new_with_path(
             window,
             size,
@@ -144,8 +144,8 @@ impl ProteinRenderEngine {
         size: (u32, u32),
         scale_factor: f64,
         cif_path: &str,
-    ) -> Self {
-        let mut context = RenderContext::new(window, size).await;
+    ) -> Result<Self, crate::gpu::render_context::RenderContextError> {
+        let mut context = RenderContext::new(window, size).await?;
 
         // 2x supersampling on standard-DPI displays to compensate for low pixel
         // density
@@ -458,7 +458,7 @@ impl ProteinRenderEngine {
             tube_renderer.regenerate(&context.device, &context.queue);
         }
 
-        Self {
+        Ok(Self {
             context,
             _shader_composer: shader_composer,
             post_process,
@@ -484,7 +484,7 @@ impl ProteinRenderEngine {
             picking,
             selection_buffer,
             residue_color_buffer,
-        }
+        })
     }
 
     /// Execute one frame: update animations, run the geometry pass, post-process, and present.

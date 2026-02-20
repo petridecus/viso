@@ -59,7 +59,8 @@ impl ApplicationHandler for RenderApp {
                     (width, height),
                     scale,
                     &self.cif_path,
-                ));
+                ))
+                .expect("Failed to initialize GPU render context");
 
             // Kick off background scene processing so colors and geometry are
             // ready
