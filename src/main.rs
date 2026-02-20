@@ -94,15 +94,15 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                engine.context.render_scale = if scale_factor < 2.0 { 2 } else { 1 };
+                engine.context.render_scale =
+                    if scale_factor < 2.0 { 2 } else { 1 };
                 let inner = window.inner_size();
                 engine.resize(inner.width, inner.height);
             }
 
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
-                let dt =
-                    now.duration_since(self.last_frame_time).as_secs_f32();
+                let dt = now.duration_since(self.last_frame_time).as_secs_f32();
                 self.last_frame_time = now;
                 engine.camera_controller.update_animation(dt);
 
@@ -110,8 +110,7 @@ impl ApplicationHandler for RenderApp {
                 match engine.render() {
                     Ok(()) => {}
                     Err(
-                        wgpu::SurfaceError::Outdated
-                        | wgpu::SurfaceError::Lost,
+                        wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost,
                     ) => {
                         let inner = window.inner_size();
                         engine.resize(inner.width, inner.height);
@@ -158,7 +157,8 @@ impl ApplicationHandler for RenderApp {
             }
 
             WindowEvent::ModifiersChanged(modifiers) => {
-                engine.camera_controller.shift_pressed = modifiers.state().shift_key();
+                engine.camera_controller.shift_pressed =
+                    modifiers.state().shift_key();
             }
 
             WindowEvent::KeyboardInput { event, .. } => {

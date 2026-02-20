@@ -251,5 +251,4 @@ impl ProteinRenderEngine {
         }
         id
     }
-
 }

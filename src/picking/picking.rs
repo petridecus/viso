@@ -169,7 +169,8 @@ pub struct Picking {
 }
 
 impl Picking {
-    /// Create a new picking system with pipelines and textures sized to the current context.
+    /// Create a new picking system with pipelines and textures sized to the
+    /// current context.
     pub fn new(
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
@@ -618,9 +619,11 @@ impl Picking {
         true
     }
 
-    /// Process a click event, updating the selection based on the hovered residue.
+    /// Process a click event, updating the selection based on the hovered
+    /// residue.
     ///
-    /// Returns `true` if the selection changed. Shift-click toggles individual residues.
+    /// Returns `true` if the selection changed. Shift-click toggles individual
+    /// residues.
     pub fn handle_click(&mut self, shift_held: bool) -> bool {
         let hit = self.hovered_residue;
 

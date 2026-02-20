@@ -41,7 +41,11 @@ const LIPID_CARBON_TINT: [f32; 3] = [0.76, 0.70, 0.50];
 
 /// Collect atom positions as `Vec3` from a `Coords` block.
 fn atom_positions(coords: &foldit_conv::coords::Coords) -> Vec<Vec3> {
-    coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z)).collect()
+    coords
+        .atoms
+        .iter()
+        .map(|a| Vec3::new(a.x, a.y, a.z))
+        .collect()
 }
 
 /// Return atom color: if a carbon tint is provided, carbon atoms use it;

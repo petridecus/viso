@@ -12,7 +12,9 @@ pub enum RenderContextError {
 impl fmt::Display for RenderContextError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SurfaceCreation(e) => write!(f, "surface creation failed: {e}"),
+            Self::SurfaceCreation(e) => {
+                write!(f, "surface creation failed: {e}")
+            }
             Self::AdapterRequest(e) => {
                 write!(f, "no compatible GPU adapter found: {e}")
             }
@@ -46,7 +48,8 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    /// Create a new render context from the given window surface target and initial size.
+    /// Create a new render context from the given window surface target and
+    /// initial size.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         initial_size: (u32, u32),
@@ -103,7 +106,8 @@ impl RenderContext {
         self.config.height * self.render_scale
     }
 
-    /// Reconfigure the surface for the new window size. Ignores zero-sized dimensions.
+    /// Reconfigure the surface for the new window size. Ignores zero-sized
+    /// dimensions.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;

@@ -15,7 +15,8 @@ const CAMERA_ANIMATION_SPEED: f32 = 3.0;
 /// Turntable auto-rotation speed in radians/sec (~29 deg/sec)
 const TURNTABLE_SPEED: f32 = 0.5;
 
-/// Orbital camera controller managing rotation, panning, zoom, and GPU resources.
+/// Orbital camera controller managing rotation, panning, zoom, and GPU
+/// resources.
 pub struct CameraController {
     orientation: Quat,
     distance: f32,
@@ -44,7 +45,8 @@ pub struct CameraController {
 }
 
 impl CameraController {
-    /// Create a new camera controller with default orbital parameters and GPU resources.
+    /// Create a new camera controller with default orbital parameters and GPU
+    /// resources.
     pub fn new(context: &RenderContext) -> Self {
         let focus_point = Vec3::new(50.0, 50.0, 50.0);
         let distance = 150.0;

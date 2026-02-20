@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage,
@@ -36,33 +35,94 @@ impl Default for ShaderComposer {
 }
 
 impl ShaderComposer {
-    /// Create a new composer with all shader sources loaded and shared modules registered.
+    /// Create a new composer with all shader sources loaded and shared modules
+    /// registered.
     pub fn new() -> Self {
         let sources: HashMap<&'static str, &'static str> = HashMap::from([
             // Shared modules
-            ("modules/fullscreen.wgsl", include_str!("../shaders/modules/fullscreen.wgsl")),
-            ("modules/camera.wgsl", include_str!("../shaders/modules/camera.wgsl")),
-            ("modules/lighting.wgsl", include_str!("../shaders/modules/lighting.wgsl")),
-            ("modules/sdf.wgsl", include_str!("../shaders/modules/sdf.wgsl")),
-            ("modules/raymarch.wgsl", include_str!("../shaders/modules/raymarch.wgsl")),
-            ("modules/volume.wgsl", include_str!("../shaders/modules/volume.wgsl")),
+            (
+                "modules/fullscreen.wgsl",
+                include_str!("../shaders/modules/fullscreen.wgsl"),
+            ),
+            (
+                "modules/camera.wgsl",
+                include_str!("../shaders/modules/camera.wgsl"),
+            ),
+            (
+                "modules/lighting.wgsl",
+                include_str!("../shaders/modules/lighting.wgsl"),
+            ),
+            (
+                "modules/sdf.wgsl",
+                include_str!("../shaders/modules/sdf.wgsl"),
+            ),
+            (
+                "modules/raymarch.wgsl",
+                include_str!("../shaders/modules/raymarch.wgsl"),
+            ),
+            (
+                "modules/volume.wgsl",
+                include_str!("../shaders/modules/volume.wgsl"),
+            ),
             // Screen-space / post-processing
-            ("screen/bloom_threshold.wgsl", include_str!("../shaders/screen/bloom_threshold.wgsl")),
-            ("screen/bloom_blur.wgsl", include_str!("../shaders/screen/bloom_blur.wgsl")),
-            ("screen/bloom_upsample.wgsl", include_str!("../shaders/screen/bloom_upsample.wgsl")),
-            ("screen/fxaa.wgsl", include_str!("../shaders/screen/fxaa.wgsl")),
-            ("screen/composite.wgsl", include_str!("../shaders/screen/composite.wgsl")),
-            ("screen/ssao.wgsl", include_str!("../shaders/screen/ssao.wgsl")),
-            ("screen/ssao_blur.wgsl", include_str!("../shaders/screen/ssao_blur.wgsl")),
+            (
+                "screen/bloom_threshold.wgsl",
+                include_str!("../shaders/screen/bloom_threshold.wgsl"),
+            ),
+            (
+                "screen/bloom_blur.wgsl",
+                include_str!("../shaders/screen/bloom_blur.wgsl"),
+            ),
+            (
+                "screen/bloom_upsample.wgsl",
+                include_str!("../shaders/screen/bloom_upsample.wgsl"),
+            ),
+            (
+                "screen/fxaa.wgsl",
+                include_str!("../shaders/screen/fxaa.wgsl"),
+            ),
+            (
+                "screen/composite.wgsl",
+                include_str!("../shaders/screen/composite.wgsl"),
+            ),
+            (
+                "screen/ssao.wgsl",
+                include_str!("../shaders/screen/ssao.wgsl"),
+            ),
+            (
+                "screen/ssao_blur.wgsl",
+                include_str!("../shaders/screen/ssao_blur.wgsl"),
+            ),
             // Raster geometry
-            ("raster/mesh/backbone_tube.wgsl", include_str!("../shaders/raster/mesh/backbone_tube.wgsl")),
-            ("raster/mesh/backbone_na.wgsl", include_str!("../shaders/raster/mesh/backbone_na.wgsl")),
-            ("raster/impostor/capsule.wgsl", include_str!("../shaders/raster/impostor/capsule.wgsl")),
-            ("raster/impostor/sphere.wgsl", include_str!("../shaders/raster/impostor/sphere.wgsl")),
-            ("raster/impostor/cone.wgsl", include_str!("../shaders/raster/impostor/cone.wgsl")),
+            (
+                "raster/mesh/backbone_tube.wgsl",
+                include_str!("../shaders/raster/mesh/backbone_tube.wgsl"),
+            ),
+            (
+                "raster/mesh/backbone_na.wgsl",
+                include_str!("../shaders/raster/mesh/backbone_na.wgsl"),
+            ),
+            (
+                "raster/impostor/capsule.wgsl",
+                include_str!("../shaders/raster/impostor/capsule.wgsl"),
+            ),
+            (
+                "raster/impostor/sphere.wgsl",
+                include_str!("../shaders/raster/impostor/sphere.wgsl"),
+            ),
+            (
+                "raster/impostor/cone.wgsl",
+                include_str!("../shaders/raster/impostor/cone.wgsl"),
+            ),
             // Utility
-            ("utility/picking_mesh.wgsl", include_str!("../shaders/utility/picking_mesh.wgsl")),
-            ("utility/picking_capsule.wgsl", include_str!("../shaders/utility/picking_capsule.wgsl")),
+            (
+                "utility/picking_mesh.wgsl",
+                include_str!("../shaders/utility/picking_mesh.wgsl"),
+            ),
+            (
+                "utility/picking_capsule.wgsl",
+                include_str!("../shaders/utility/picking_capsule.wgsl"),
+            ),
         ]);
 
         let mut composer = Composer::default();

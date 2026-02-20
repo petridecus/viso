@@ -55,17 +55,20 @@
 //!
 //! - [`engine::ProteinRenderEngine`] - the main rendering engine
 //! - [`scene::Scene`] - the scene graph holding entity groups
-//! - [`options::Options`] - runtime configuration (display, lighting, camera, colors)
+//! - [`options::Options`] - runtime configuration (display, lighting, camera,
+//!   colors)
 //! - [`animation`] - behavior-driven structural animation system
 //!
 //! # Architecture
 //!
-//! The engine runs a background [`scene::processor::SceneProcessor`] thread that
-//! generates mesh data off the main thread, delivering results via a lock-free
-//! triple buffer. The main thread uploads prepared geometry to the GPU and
-//! orchestrates a multi-pass pipeline: geometry → SSAO → bloom → composite → FXAA.
+//! The engine runs a background [`scene::processor::SceneProcessor`] thread
+//! that generates mesh data off the main thread, delivering results via a
+//! lock-free triple buffer. The main thread uploads prepared geometry to the
+//! GPU and orchestrates a multi-pass pipeline: geometry → SSAO → bloom →
+//! composite → FXAA.
 //!
-//! For integration guides and deep dives, see the companion mdBook documentation.
+//! For integration guides and deep dives, see the companion mdBook
+//! documentation.
 
 pub mod animation;
 pub mod camera;

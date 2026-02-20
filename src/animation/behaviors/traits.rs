@@ -25,7 +25,8 @@ pub enum PreemptionStrategy {
 /// Defines how a structural change should be animated.
 ///
 /// Implementations control the interpolation curve, timing, and visual effects.
-/// See [`super::SmoothInterpolation`], [`super::CollapseExpand`], [`super::Cascade`] for examples.
+/// See [`super::SmoothInterpolation`], [`super::CollapseExpand`],
+/// [`super::Cascade`] for examples.
 pub trait AnimationBehavior: Send + Sync {
     /// Eased time for a given raw progress. Override for custom easing.
     /// Default: linear (no easing).

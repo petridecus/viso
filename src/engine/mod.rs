@@ -60,7 +60,8 @@ const TARGET_FPS: u32 = 300;
 /// # Construction
 ///
 /// Use [`ProteinRenderEngine::new`] for a default molecule or
-/// [`ProteinRenderEngine::new_with_path`] to load a specific `.cif`/`.pdb` file.
+/// [`ProteinRenderEngine::new_with_path`] to load a specific `.cif`/`.pdb`
+/// file.
 ///
 /// # Frame loop
 ///
@@ -80,7 +81,8 @@ const TARGET_FPS: u32 = 300;
 /// # Animation
 ///
 /// Structural changes are animated via the [`StructureAnimator`].
-/// Control the animation style per-action through [`AnimationPreferences`](crate::animation::AnimationPreferences).
+/// Control the animation style per-action through
+/// [`AnimationPreferences`](crate::animation::AnimationPreferences).
 pub struct ProteinRenderEngine {
     // GPU context
     pub context: RenderContext,
@@ -487,7 +489,8 @@ impl ProteinRenderEngine {
         })
     }
 
-    /// Execute one frame: update animations, run the geometry pass, post-process, and present.
+    /// Execute one frame: update animations, run the geometry pass,
+    /// post-process, and present.
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         // Check if we should render based on FPS limit
         if !self.frame_timing.should_render() {
@@ -709,7 +712,8 @@ impl ProteinRenderEngine {
         Ok(())
     }
 
-    /// Resize all GPU surfaces and the camera projection to match the new window size.
+    /// Resize all GPU surfaces and the camera projection to match the new
+    /// window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.context.resize(width, height);
@@ -718,7 +722,6 @@ impl ProteinRenderEngine {
             self.picking.resize(&self.context.device, width, height);
         }
     }
-
 }
 
 // =============================================================================

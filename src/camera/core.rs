@@ -1,6 +1,7 @@
 use glam::{Mat4, Vec3};
 
-/// Perspective camera defined by eye position, target, and projection parameters.
+/// Perspective camera defined by eye position, target, and projection
+/// parameters.
 pub struct Camera {
     pub eye: Vec3,
     pub target: Vec3,

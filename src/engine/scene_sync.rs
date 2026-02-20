@@ -694,5 +694,4 @@ impl ProteinRenderEngine {
         self.scene.update_group_protein_coords(id, coords);
         self.sync_scene_to_renderers(Some(action));
     }
-
 }
