@@ -1,7 +1,48 @@
 # Contributing to Viso
 
-Thanks for your interest in contributing! This document covers the conventions
-and tooling you need to know.
+Thanks for your interest in contributing! This document covers the tools you
+need, the conventions we follow, and how to get everything running.
+
+## Getting started
+
+Make sure you have the Rust toolchain installed first (see the
+[Prerequisites](README.md#prerequisites) section in the README).
+
+### Install just
+
+[just](https://github.com/casey/just) is our task runner. All common workflows
+(`check`, `fmt`, `test`, etc.) are defined in the `justfile`.
+
+```sh
+# macOS
+brew install just
+
+# Cargo (any platform)
+cargo install just
+
+# Arch Linux
+pacman -S just
+
+# Windows
+winget install Casey.Just
+```
+
+### Repo setup
+
+Run once after cloning to activate the commit-msg hook and commit template:
+
+```sh
+just setup
+```
+
+### Optional tools
+
+These are only needed for `just check-all`:
+
+- [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) (dependency audit):
+  `cargo install cargo-deny`
+- [cargo-machete](https://github.com/bnjbvr/cargo-machete) (unused dependency
+  detection): `cargo install cargo-machete`
 
 ## Lint policy
 
@@ -18,8 +59,6 @@ Highlights:
   `excessive_nesting`) are denied with thresholds set in `clippy.toml`.
 
 ## Running checks locally
-
-If you have [just](https://github.com/casey/just) installed:
 
 ```sh
 just check        # fmt + clippy + test + doc (mirrors CI)
@@ -52,6 +91,44 @@ section.
 Source files should stay under **500 lines**. A few legacy files are above this
 today (CI currently enforces 800 as a transitional limit). If you are adding to
 a file that is already long, consider splitting it.
+
+## Commit messages
+
+We use [Conventional Commits](https://www.conventionalcommits.org/) (lowercase,
+no scope). Every commit subject must match:
+
+```
+<type>: <subject>
+```
+
+Valid types: `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`, `perf`.
+
+Rules:
+
+- **Subject line**: imperative mood, lowercase, no trailing period, max 72 chars
+  (aim for 50).
+- **Body** (optional): separated by a blank line, wrap at 72 chars. Explain
+  *why*, not *what*.
+
+Use `git commit` (without `-m`) to get the guided template in your editor.
+
+### Examples
+
+Good:
+
+```
+feat: add camera orbit controls
+fix: prevent panic on empty mesh buffer
+refactor: extract uniform bind group into helper
+```
+
+Bad:
+
+```
+updated stuff          # no type prefix
+feat: Add Feature.     # uppercase, trailing period
+fix: things            # vague subject
+```
 
 ## Pull requests
 

@@ -28,9 +28,29 @@ Viso supports multiple representation styles — backbone ribbons, tubes, ball-a
 - **TOML-based presets**: configure display, lighting, coloring, geometry, and post-processing via preset files
 - **Background scene processing**: mesh generation runs on a dedicated CPU thread to keep the render loop responsive
 
-## Building
+## Prerequisites
 
-Viso requires a working Rust toolchain. Install one via [rustup](https://rustup.rs/) if you don't have one already.
+Viso requires a Rust toolchain. Install one via [rustup](https://rustup.rs/):
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then add the **nightly** toolchain (used for formatting):
+
+```sh
+rustup toolchain install nightly
+rustup component add rustfmt --toolchain nightly
+```
+
+Verify both are available:
+
+```sh
+cargo --version
+cargo +nightly fmt --version
+```
+
+## Building
 
 ```bash
 # Debug build

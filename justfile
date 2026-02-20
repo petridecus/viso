@@ -43,5 +43,11 @@ file-lengths:
     done < <(find src -name '*.rs' -not -path '*/target/*')
     exit $failed
 
+# One-time repo setup (hooks + commit template)
+setup:
+    git config core.hooksPath .githooks
+    git config commit.template .gitmessage
+    @echo "Done. Hooks and commit template activated."
+
 # Run everything including optional tools
 check-all: check deny machete file-lengths
