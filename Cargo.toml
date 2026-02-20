@@ -52,12 +52,6 @@ foldit-conv = { git = "https://github.com/petridecus/foldit-conv" }
 [dev-dependencies]
 criterion = "0.5"
 
-# warnings for functions that are too long or complex- anti-spaghetti measures
-[lints.clippy]
-too_many_lines = "warn"
-cognitive_complexity = "warn"
-excessive_nesting = "warn"
-
 [[bench]]
 name = "animation_bench"
 harness = false

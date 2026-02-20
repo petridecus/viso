@@ -1,3 +1,6 @@
 too-many-lines-threshold = 60
 cognitive-complexity-threshold = 15
 excessive-nesting-threshold = 3
+too-many-arguments-threshold = 5
+max-fn-params-bools = 2
+max-struct-bools = 3

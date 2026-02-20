@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -22,11 +25,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
+      - run: cargo test --all-features
+
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # TODO: lower threshold to 500 once large files are split
+  file-lengths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check file lengths
+        run: |
+          failed=0
+          while IFS= read -r file; do
+            lines=$(wc -l < "$file")
+            if [ "$lines" -gt 800 ]; then
+              echo "::error file=$file::$file has $lines lines (max 800)"
+              failed=1
+            fi
+          done < <(find src -name '*.rs')
+          exit $failed
