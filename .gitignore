@@ -1,5 +1,5 @@
 target/
-assets/models/*
+assets/models/
 
 # OS
 .DS_Store
