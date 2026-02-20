@@ -777,7 +777,8 @@ impl RibbonRenderer {
         data: PreparedRibbonData,
     ) {
         if !data.vertices.is_empty() {
-            let _ = self.vertex_buffer.write_bytes(device, queue, data.vertices);
+            let _ =
+                self.vertex_buffer.write_bytes(device, queue, data.vertices);
             let _ = self.index_buffer.write_bytes(device, queue, data.indices);
         }
         self.index_count = data.index_count;

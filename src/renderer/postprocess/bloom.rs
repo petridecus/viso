@@ -66,7 +66,8 @@ pub struct BloomPass {
 }
 
 impl BloomPass {
-    /// Create a new bloom pass with threshold, blur chain, and upsample pipelines.
+    /// Create a new bloom pass with threshold, blur chain, and upsample
+    /// pipelines.
     pub fn new(
         context: &RenderContext,
         color_view: &wgpu::TextureView,

@@ -87,7 +87,8 @@ pub struct CompositePass {
     sampler: wgpu::Sampler,
     depth_sampler: wgpu::Sampler,
 
-    /// Intermediate color texture (geometry renders here instead of swapchain).
+    /// Intermediate color texture (geometry renders here instead of
+    /// swapchain).
     pub color_texture: wgpu::Texture,
     /// View into the intermediate color texture.
     pub color_view: wgpu::TextureView,

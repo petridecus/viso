@@ -352,7 +352,8 @@ impl SceneProcessor {
                         if needs_regen {
                             let mesh =
                                 Self::generate_group_mesh(g, &display, &colors);
-                            let _ = mesh_cache.insert(g.id, (g.mesh_version, mesh));
+                            let _ =
+                                mesh_cache.insert(g.id, (g.mesh_version, mesh));
                         }
                     }
 
