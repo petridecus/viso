@@ -10,5 +10,7 @@ pub mod composite;
 /// FXAA screen-space anti-aliasing pass.
 pub mod fxaa;
 pub(crate) mod post_process;
+/// Uniform interface for fullscreen post-processing passes.
+pub(crate) mod screen_pass;
 /// Screen-space ambient occlusion (SSAO) renderer.
 pub mod ssao;

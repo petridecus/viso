@@ -12,10 +12,7 @@ use crate::{
         ball_and_stick::PreparedBallAndStickData,
         capsule_sidechain::SidechainData,
     },
-    scene::{
-        processor::{AnimationSidechainData, PreparedScene, SceneRequest},
-        GroupId,
-    },
+    scene::processor::{AnimationSidechainData, PreparedScene, SceneRequest},
     util::score_color,
 };
 
@@ -119,18 +116,16 @@ impl ProteinRenderEngine {
             return;
         }
 
-        let groups = self.scene.per_group_data();
+        let entities = self.scene.per_entity_data();
         // Build entity_actions: all entities get the same action
         let entity_actions = match action {
-            Some(a) => groups.iter().map(|g| (g.id, a)).collect(),
+            Some(a) => entities.iter().map(|e| (e.id, a)).collect(),
             None => HashMap::new(),
         };
-        let agg = self.scene.aggregated();
         self.scene.mark_rendered();
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
-            groups,
-            aggregated: agg,
+            entities,
             entity_actions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
@@ -142,19 +137,17 @@ impl ProteinRenderEngine {
     /// Entities in the map animate with their action; all others snap.
     pub fn sync_scene_to_renderers_targeted(
         &mut self,
-        entity_actions: HashMap<GroupId, AnimationAction>,
+        entity_actions: HashMap<u32, AnimationAction>,
     ) {
         if !self.scene.is_dirty() && entity_actions.is_empty() {
             return;
         }
 
-        let groups = self.scene.per_group_data();
-        let agg = self.scene.aggregated();
+        let entities = self.scene.per_entity_data();
         self.scene.mark_rendered();
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
-            groups,
-            aggregated: agg,
+            entities,
             entity_actions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
@@ -182,7 +175,7 @@ impl ProteinRenderEngine {
             self.setup_animation_targets_from_prepared(&prepared, action);
 
             // Snap residues for entities NOT in entity_actions
-            let active: HashSet<GroupId> =
+            let active: HashSet<u32> =
                 prepared.entity_actions.keys().copied().collect();
             self.animator.snap_entities_without_action(
                 &prepared.entity_residue_ranges,
@@ -508,8 +501,8 @@ impl ProteinRenderEngine {
             BackboneColorMode::Score | BackboneColorMode::ScoreRelative => {
                 let mut all_scores: Vec<f64> = Vec::new();
                 let mut has_any = false;
-                for group in self.scene.iter() {
-                    if let Some(ref scores) = group.per_residue_scores {
+                for entity in self.scene.entities() {
+                    if let Some(ref scores) = entity.per_residue_scores {
                         has_any = true;
                         all_scores.extend_from_slice(scores);
                     }
@@ -672,26 +665,14 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Apply combined Rosetta update to all groups.
-    pub fn apply_combined_update(
+    /// Update protein coords for a specific entity.
+    pub fn update_entity_coords(
         &mut self,
-        bytes: &[u8],
-        chain_ids: &[(GroupId, Vec<u8>)],
-        action: AnimationAction,
-    ) -> Result<(), String> {
-        self.scene.apply_combined_update(bytes, chain_ids)?;
-        self.sync_scene_to_renderers(Some(action));
-        Ok(())
-    }
-
-    /// Update protein coords for a specific group.
-    pub fn update_group_coords(
-        &mut self,
-        id: GroupId,
+        id: u32,
         coords: foldit_conv::coords::Coords,
         action: AnimationAction,
     ) {
-        self.scene.update_group_protein_coords(id, coords);
+        self.scene.update_entity_protein_coords(id, coords);
         self.sync_scene_to_renderers(Some(action));
     }
 }

@@ -235,7 +235,7 @@ impl NucleicAcidRenderer {
                     lighting_layout,
                     selection_layout,
                 ],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -265,7 +265,7 @@ impl NucleicAcidRenderer {
                 },
                 depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             })
     }
@@ -469,7 +469,9 @@ fn linear_interpolate(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
             result.push(points[i].lerp(points[i + 1], t));
         }
     }
-    result.push(*points.last().unwrap());
+    if let Some(&last) = points.last() {
+        result.push(last);
+    }
     result
 }
 
@@ -531,7 +533,7 @@ fn closest_point(points: &[Vec3], target: Vec3) -> Option<&Vec3> {
     points.iter().min_by(|a, b| {
         a.distance_squared(target)
             .partial_cmp(&b.distance_squared(target))
-            .unwrap()
+            .unwrap_or(std::cmp::Ordering::Equal)
     })
 }
 

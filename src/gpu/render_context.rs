@@ -47,8 +47,8 @@ pub struct RenderContext {
     pub device: wgpu::Device,
     /// The wgpu command queue.
     pub queue: wgpu::Queue,
-    /// The window surface for presentation.
-    pub surface: wgpu::Surface<'static>,
+    /// The window surface for presentation (`None` in texture-only mode).
+    pub surface: Option<wgpu::Surface<'static>>,
     /// Current surface configuration (format, size, present mode).
     pub config: wgpu::SurfaceConfiguration,
     /// Supersampling scale factor (1 = native, 2 = 2x SSAA).
@@ -98,10 +98,43 @@ impl RenderContext {
         Ok(Self {
             device,
             queue,
-            surface,
+            surface: Some(surface),
             config,
             render_scale: 1,
         })
+    }
+
+    /// Create a render context from an externally-owned device and queue
+    /// (no surface — for texture-only / embedded rendering).
+    pub fn from_device(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+        Self {
+            device,
+            queue,
+            surface: None,
+            config,
+            render_scale: 1,
+        }
+    }
+
+    /// The surface texture format.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.config.format
     }
 
     /// Internal render width (swapchain width * render_scale).
@@ -120,7 +153,9 @@ impl RenderContext {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+            if let Some(ref surface) = self.surface {
+                surface.configure(&self.device, &self.config);
+            }
         }
     }
 
@@ -128,10 +163,21 @@ impl RenderContext {
     pub fn set_surface_scale(&self, _scale: f64) {}
 
     /// Acquire the next swapchain texture for rendering.
+    ///
+    /// Returns [`wgpu::SurfaceError::Lost`] if no surface is available
+    /// (texture-only mode).
     pub fn get_next_frame(
         &self,
     ) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
-        self.surface.get_current_texture()
+        match self.surface {
+            Some(ref surface) => surface.get_current_texture(),
+            None => Err(wgpu::SurfaceError::Lost),
+        }
+    }
+
+    /// Returns `true` if this context has a presentation surface.
+    pub fn has_surface(&self) -> bool {
+        self.surface.is_some()
     }
 
     /// Create a new command encoder for recording GPU commands.

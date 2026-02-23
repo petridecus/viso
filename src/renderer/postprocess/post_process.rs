@@ -5,7 +5,7 @@ use crate::{
     options::Options,
     renderer::postprocess::{
         bloom::BloomPass, composite::CompositePass, fxaa::FxaaPass,
-        ssao::SsaoRenderer,
+        screen_pass::ScreenPass, ssao::SsaoRenderer,
     },
 };
 
@@ -71,6 +71,7 @@ impl PostProcessStack {
         };
 
         let fxaa_pass = FxaaPass::new(context, shader_composer);
+        composite_pass.set_output_view(fxaa_pass.get_input_view().clone());
 
         Self {
             depth_texture,
@@ -93,28 +94,37 @@ impl PostProcessStack {
             Self::create_normal_texture(context);
         self.normal_texture = normal_texture;
         self.normal_view = normal_view;
-        self.ssao_renderer
-            .resize(context, &self.depth_view, &self.normal_view);
-        self.bloom_pass.resize(context, &self.normal_view);
-        self.composite_pass.resize(
-            context,
-            self.ssao_renderer.get_ssao_view(),
-            &self.depth_view,
-            &self.normal_view,
-            self.bloom_pass.get_output_view(),
+
+        self.ssao_renderer.set_geometry_views(
+            self.depth_view.clone(),
+            self.normal_view.clone(),
         );
+        self.ssao_renderer.resize(context);
+
+        self.bloom_pass.resize(context);
+
+        self.composite_pass.set_external_views(
+            self.ssao_renderer.get_ssao_view().clone(),
+            self.depth_view.clone(),
+            self.normal_view.clone(),
+            self.bloom_pass.get_output_view().clone(),
+        );
+        self.composite_pass.resize(context);
+
         self.bloom_pass
             .rebind_input(context, self.composite_pass.get_color_view());
         self.fxaa_pass.resize(context);
+        self.composite_pass
+            .set_output_view(self.fxaa_pass.get_input_view().clone());
     }
 
     /// Run the SSAO → bloom → composite → FXAA sequence.
     pub fn render(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
         camera: &PostProcessCamera,
-        final_view: &wgpu::TextureView,
+        final_view: wgpu::TextureView,
     ) {
         // SSAO pass
         self.ssao_renderer.update_matrices(
@@ -130,11 +140,11 @@ impl PostProcessStack {
         self.bloom_pass.render(encoder);
 
         // Composite pass → writes into FXAA input texture
-        self.composite_pass
-            .render(encoder, self.fxaa_pass.get_input_view());
+        self.composite_pass.render(encoder);
 
         // FXAA pass → writes to swapchain
-        self.fxaa_pass.render(encoder, final_view);
+        self.fxaa_pass.set_output_view(final_view);
+        self.fxaa_pass.render(encoder);
     }
 
     /// Update fog uniforms.

@@ -385,7 +385,7 @@ impl RibbonRenderer {
                     selection_layout,
                     color_layout,
                 ],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -415,7 +415,7 @@ impl RibbonRenderer {
                 },
                 depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             })
     }
@@ -465,20 +465,14 @@ impl RibbonRenderer {
 
                 // Extend segment into coil regions at boundaries for smooth
                 // taper
-                let taper_start =
-                    if start > 0 && ss_types[start - 1] == SSType::Coil {
-                        1
-                    } else {
-                        0
-                    };
-                let taper_end = if end < chain.len()
-                    && end < ss_types.len()
-                    && ss_types[end] == SSType::Coil
-                {
-                    1
-                } else {
-                    0
-                };
+                let taper_start = usize::from(
+                    start > 0 && ss_types[start - 1] == SSType::Coil,
+                );
+                let taper_end = usize::from(
+                    end < chain.len()
+                        && end < ss_types.len()
+                        && ss_types[end] == SSType::Coil,
+                );
                 let ext_start = start - taper_start;
                 let ext_end = (end + taper_end).min(chain.len());
 
@@ -491,9 +485,10 @@ impl RibbonRenderer {
                     ss[0] = seg.ss_type;
                 }
                 if taper_end > 0 {
-                    if let Some(last) = ss.last_mut() {
-                        *last = seg.ss_type;
-                    }
+                    // ss always has ≥ 2 elements (segment requires ≥ 2
+                    // residues)
+                    let end_idx = ss.len() - 1;
+                    ss[end_idx] = seg.ss_type;
                 }
                 let base = all_verts.len() as u32;
                 let segment_residue_base =
@@ -598,18 +593,12 @@ impl RibbonRenderer {
 
                 // Extend segment into coil regions at boundaries for smooth
                 // taper
-                let taper_start =
-                    if start > 0 && ss_types[start - 1] == SSType::Coil {
-                        1
-                    } else {
-                        0
-                    };
-                let taper_end =
-                    if end < ss_types.len() && ss_types[end] == SSType::Coil {
-                        1
-                    } else {
-                        0
-                    };
+                let taper_start = usize::from(
+                    start > 0 && ss_types[start - 1] == SSType::Coil,
+                );
+                let taper_end = usize::from(
+                    end < ss_types.len() && ss_types[end] == SSType::Coil,
+                );
                 let ext_start = start - taper_start;
                 let ext_end = (end + taper_end).min(ca_positions.len());
 
@@ -622,9 +611,10 @@ impl RibbonRenderer {
                     ss[0] = seg.ss_type;
                 }
                 if taper_end > 0 {
-                    if let Some(last) = ss.last_mut() {
-                        *last = seg.ss_type;
-                    }
+                    // ss always has ≥ 2 elements (segment requires ≥ 2
+                    // residues)
+                    let end_idx = ss.len() - 1;
+                    ss[end_idx] = seg.ss_type;
                 }
                 let base = all_verts.len() as u32;
                 let segment_residue_base =
@@ -702,9 +692,8 @@ impl RibbonRenderer {
             return;
         }
 
-        let color_bind_group = match bind_groups.color {
-            Some(bg) => bg,
-            None => return,
+        let Some(color_bind_group) = bind_groups.color else {
+            return;
         };
 
         render_pass.set_pipeline(&self.pipeline);
@@ -886,8 +875,7 @@ fn generate_helix_from_ca(
         let local_residue_idx = (i * (n - 1)) / spline_points.len().max(1);
         let color = ss_types
             .get(local_residue_idx)
-            .map(|s| s.color())
-            .unwrap_or(SSType::Helix.color());
+            .map_or(SSType::Helix.color(), SSType::color);
         let residue_idx = global_residue_base + local_residue_idx as u32;
 
         frames.push(RibbonFrame {
@@ -1055,8 +1043,7 @@ fn sheet_from_normals(
         let local_residue_idx = (i * (n - 1)) / spline_points.len().max(1);
         let color = ss_types
             .get(local_residue_idx)
-            .map(|s| s.color())
-            .unwrap_or(SSType::Sheet.color());
+            .map_or(SSType::Sheet.color(), SSType::color);
         let residue_idx = ctx.global_residue_base + local_residue_idx as u32;
 
         frames.push(RibbonFrame {
@@ -1162,101 +1149,257 @@ fn build_ribbon_mesh(
     base: u32,
     smooth_normals: bool,
 ) -> (Vec<RibbonVertex>, Vec<u32>) {
-    let mut vertices = Vec::with_capacity(frames.len() * 4);
+    // 8 vertices per frame: 4 for top/bottom faces + 4 for left/right edges.
+    // Separate vertices are needed because the shader reconstructs per-pixel
+    // normals via `normalize(world_position - center_pos)`. Sharing vertices
+    // between faces and edges causes the opposing normal contributions to
+    // cancel at edge midpoints, producing degenerate zero-length normals.
+    let mut vertices = Vec::with_capacity(frames.len() * 8);
     let mut indices = Vec::new();
 
     let ht = thickness * 0.5;
 
     for (idx, frame) in frames.iter().enumerate() {
         let hw = widths[idx] * 0.5;
-        // 4 vertices per frame: top-left, top-right, bottom-right, bottom-left
         let tl = frame.position + frame.normal * ht - frame.binormal * hw;
         let tr = frame.position + frame.normal * ht + frame.binormal * hw;
         let br = frame.position - frame.normal * ht + frame.binormal * hw;
         let bl = frame.position - frame.normal * ht - frame.binormal * hw;
 
-        let (n_tl, n_tr, n_br, n_bl) = if smooth_normals {
+        if smooth_normals {
             // Smooth normals: treat cross-section as an ellipse with semi-axes
-            // (hw, ht). The outward normal at offset (b, n) is
-            // proportional to (b/hw², n/ht²). This gives top
-            // vertices normals mostly pointing up with subtle side tilt,
-            // creating gradual specular falloff across the surface.
+            // (hw, ht). The outward normal at offset (b, n) is proportional to
+            // (b/hw², n/ht²). Face vertices use `center_pos = pos - normal`
+            // so the shader reconstructs the ellipse normal per-pixel.
             let inv_hw2 = 1.0 / (hw * hw).max(1e-6);
             let inv_ht2 = 1.0 / (ht * ht).max(1e-6);
-            // TL: binormal_offset = -hw, normal_offset = +ht
             let n_tl = (frame.binormal * (-hw * inv_hw2)
                 + frame.normal * (ht * inv_ht2))
                 .normalize();
-            // TR: binormal_offset = +hw, normal_offset = +ht
             let n_tr = (frame.binormal * (hw * inv_hw2)
                 + frame.normal * (ht * inv_ht2))
                 .normalize();
-            // BR: binormal_offset = +hw, normal_offset = -ht
             let n_br = (frame.binormal * (hw * inv_hw2)
                 + frame.normal * (-ht * inv_ht2))
                 .normalize();
-            // BL: binormal_offset = -hw, normal_offset = -ht
             let n_bl = (frame.binormal * (-hw * inv_hw2)
                 + frame.normal * (-ht * inv_ht2))
                 .normalize();
-            (n_tl, n_tr, n_br, n_bl)
+
+            // Face vertices (0–3): top and bottom faces
+            vertices.push(RibbonVertex {
+                position: tl.into(),
+                normal: n_tl.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tl - n_tl).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: tr.into(),
+                normal: n_tr.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tr - n_tr).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: br.into(),
+                normal: n_br.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (br - n_br).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: bl.into(),
+                normal: n_bl.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (bl - n_bl).into(),
+            });
+
+            // Edge vertices (4–7): right and left edge faces
+            // Use pure lateral normals so the shader reconstructs correct
+            // edge-facing normals instead of the degenerate interpolation
+            // between opposing face normals.
+            let right = frame.binormal;
+            let left = -frame.binormal;
+            vertices.push(RibbonVertex {
+                position: tr.into(),
+                normal: right.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tr - right).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: br.into(),
+                normal: right.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (br - right).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: bl.into(),
+                normal: left.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (bl - left).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: tl.into(),
+                normal: left.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tl - left).into(),
+            });
         } else {
-            // Flat normals: top face up, bottom face down (for sheets)
+            // Flat normals (sheets): each face type gets a uniform normal
+            // direction via the center_pos encoding.
             let up = frame.normal;
             let down = -frame.normal;
-            (up, up, down, down)
-        };
+            let right = frame.binormal;
+            let left = -frame.binormal;
 
-        vertices.push(RibbonVertex {
-            position: tl.into(),
-            normal: n_tl.into(),
-            color: frame.color,
-            residue_idx: frame.residue_idx,
-            center_pos: (tl - n_tl).into(),
-        });
-        vertices.push(RibbonVertex {
-            position: tr.into(),
-            normal: n_tr.into(),
-            color: frame.color,
-            residue_idx: frame.residue_idx,
-            center_pos: (tr - n_tr).into(),
-        });
-        vertices.push(RibbonVertex {
-            position: br.into(),
-            normal: n_br.into(),
-            color: frame.color,
-            residue_idx: frame.residue_idx,
-            center_pos: (br - n_br).into(),
-        });
-        vertices.push(RibbonVertex {
-            position: bl.into(),
-            normal: n_bl.into(),
-            color: frame.color,
-            residue_idx: frame.residue_idx,
-            center_pos: (bl - n_bl).into(),
-        });
+            // Face vertices (0–3): top and bottom faces
+            vertices.push(RibbonVertex {
+                position: tl.into(),
+                normal: up.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tl - up).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: tr.into(),
+                normal: up.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tr - up).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: br.into(),
+                normal: down.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (br - down).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: bl.into(),
+                normal: down.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (bl - down).into(),
+            });
+
+            // Edge vertices (4–7): right and left edge faces
+            vertices.push(RibbonVertex {
+                position: tr.into(),
+                normal: right.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tr - right).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: br.into(),
+                normal: right.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (br - right).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: bl.into(),
+                normal: left.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (bl - left).into(),
+            });
+            vertices.push(RibbonVertex {
+                position: tl.into(),
+                normal: left.into(),
+                color: frame.color,
+                residue_idx: frame.residue_idx,
+                center_pos: (tl - left).into(),
+            });
+        }
     }
 
-    // Connect adjacent frames
+    // Connect adjacent frames (8 vertices per frame)
     for i in 0..frames.len() - 1 {
-        let v0 = base + (i * 4) as u32; // current TL
-        let v1 = base + (i * 4 + 1) as u32; // current TR
-        let v2 = base + (i * 4 + 2) as u32; // current BR
-        let v3 = base + (i * 4 + 3) as u32; // current BL
+        let a = base + (i * 8) as u32; // current frame
+        let b = base + ((i + 1) * 8) as u32; // next frame
 
-        let v4 = base + ((i + 1) * 4) as u32; // next TL
-        let v5 = base + ((i + 1) * 4 + 1) as u32; // next TR
-        let v6 = base + ((i + 1) * 4 + 2) as u32; // next BR
-        let v7 = base + ((i + 1) * 4 + 3) as u32; // next BL
+        // Top face: TL_top(0), TR_top(1)
+        indices.extend_from_slice(&[a, b, a + 1, a + 1, b, b + 1]);
+        // Bottom face: BL_bottom(3), BR_bottom(2)
+        indices.extend_from_slice(&[a + 3, a + 2, b + 3, b + 3, a + 2, b + 2]);
+        // Right edge: TR_right(4), BR_right(5)
+        indices.extend_from_slice(&[a + 4, b + 4, a + 5, a + 5, b + 4, b + 5]);
+        // Left edge: TL_left(7), BL_left(6)
+        indices.extend_from_slice(&[a + 7, a + 6, b + 7, b + 7, a + 6, b + 6]);
+    }
 
-        // Top face
-        indices.extend_from_slice(&[v0, v4, v1, v1, v4, v5]);
-        // Bottom face
-        indices.extend_from_slice(&[v3, v2, v7, v7, v2, v6]);
-        // Right edge
-        indices.extend_from_slice(&[v1, v5, v2, v2, v5, v6]);
-        // Left edge
-        indices.extend_from_slice(&[v0, v3, v4, v4, v3, v7]);
+    // End caps: close the first and last cross-sections with flat quads.
+    // tangent = normal × binormal (recovers the tangent from the frame).
+    if frames.len() >= 2 {
+        // Start cap (frame 0): normal points in -tangent direction
+        {
+            let f = &frames[0];
+            let hw = widths[0] * 0.5;
+            let cap_n = -(f.normal.cross(f.binormal));
+            let tl = f.position + f.normal * ht - f.binormal * hw;
+            let tr = f.position + f.normal * ht + f.binormal * hw;
+            let br = f.position - f.normal * ht + f.binormal * hw;
+            let bl = f.position - f.normal * ht - f.binormal * hw;
+
+            let cap_base = base + vertices.len() as u32;
+            for &pos in &[tl, tr, br, bl] {
+                vertices.push(RibbonVertex {
+                    position: pos.into(),
+                    normal: cap_n.into(),
+                    color: f.color,
+                    residue_idx: f.residue_idx,
+                    center_pos: (pos - cap_n).into(),
+                });
+            }
+            // CCW when viewed from -tangent: TL(0) BL(3) TR(1), TR(1) BL(3) BR(2)
+            indices.extend_from_slice(&[
+                cap_base,
+                cap_base + 3,
+                cap_base + 1,
+                cap_base + 1,
+                cap_base + 3,
+                cap_base + 2,
+            ]);
+        }
+
+        // End cap (last frame): normal points in +tangent direction
+        {
+            let last = frames.len() - 1;
+            let f = &frames[last];
+            let hw = widths[last] * 0.5;
+            let cap_n = f.normal.cross(f.binormal);
+            let tl = f.position + f.normal * ht - f.binormal * hw;
+            let tr = f.position + f.normal * ht + f.binormal * hw;
+            let br = f.position - f.normal * ht + f.binormal * hw;
+            let bl = f.position - f.normal * ht - f.binormal * hw;
+
+            let cap_base = base + vertices.len() as u32;
+            for &pos in &[tl, tr, br, bl] {
+                vertices.push(RibbonVertex {
+                    position: pos.into(),
+                    normal: cap_n.into(),
+                    color: f.color,
+                    residue_idx: f.residue_idx,
+                    center_pos: (pos - cap_n).into(),
+                });
+            }
+            // CCW when viewed from +tangent: TL(0) TR(1) BL(3), TR(1) BR(2) BL(3)
+            indices.extend_from_slice(&[
+                cap_base,
+                cap_base + 1,
+                cap_base + 3,
+                cap_base + 1,
+                cap_base + 2,
+                cap_base + 3,
+            ]);
+        }
     }
 
     (vertices, indices)
@@ -1368,7 +1511,9 @@ fn linear_interpolate(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
             result.push(points[i].lerp(points[i + 1], t));
         }
     }
-    result.push(*points.last().unwrap());
+    if let Some(&last) = points.last() {
+        result.push(last);
+    }
     result
 }
 

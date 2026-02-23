@@ -15,7 +15,6 @@ use crate::{
         band::BandRenderInfo, capsule_sidechain::SidechainData,
         pull::PullRenderInfo,
     },
-    scene::GroupId,
 };
 
 impl ProteinRenderEngine {
@@ -134,12 +133,13 @@ impl ProteinRenderEngine {
 
     /// Refresh ball-and-stick renderer with current visibility flags.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
-        // Collect all non-protein entities from visible groups
+        // Collect all non-protein entities from visible scene entities
         let entities: Vec<MoleculeEntity> = self
             .scene
+            .entities()
             .iter()
-            .filter(|g| g.visible)
-            .flat_map(|g| g.entities().iter())
+            .filter(|se| se.visible)
+            .map(|se| &se.entity)
             .filter(|e| {
                 e.molecule_type != MoleculeType::Protein
                     && !matches!(
@@ -233,22 +233,22 @@ impl ProteinRenderEngine {
         );
     }
 
-    /// Load entities into a new group. Optionally fits camera.
+    /// Load entities into the scene. Optionally fits camera.
+    /// Returns the assigned entity IDs.
     pub fn load_entities(
         &mut self,
         entities: Vec<MoleculeEntity>,
-        name: &str,
         fit_camera: bool,
-    ) -> GroupId {
-        let id = self.scene.add_group(entities, name);
+    ) -> Vec<u32> {
+        let ids = self.scene.add_entities(entities);
         if fit_camera {
-            // Sync immediately so aggregated data is available for camera fit
+            // Sync immediately so entity data is available for camera fit
             self.sync_scene_to_renderers(Some(AnimationAction::Load));
             let positions = self.scene.all_positions();
             if !positions.is_empty() {
                 self.camera_controller.fit_to_positions(&positions);
             }
         }
-        id
+        ids
     }
 }

@@ -1,3 +1,4 @@
+mod accessors;
 mod animation;
 mod input;
 mod options;
@@ -69,13 +70,13 @@ const TARGET_FPS: u32 = 300;
 /// [`resize`](Self::resize) when the window size changes. Input is forwarded
 /// via [`handle_mouse_move`](Self::handle_mouse_move),
 /// [`handle_mouse_button`](Self::handle_mouse_button), and
-/// [`handle_mouse_up`](Self::handle_mouse_up).
+/// [`handle_input`](Self::handle_input).
 ///
 /// # Scene management
 ///
 /// Load structures with [`load_entities`](Self::load_entities), update
 /// coordinates with [`update_backbone`](Self::update_backbone) or
-/// [`update_group_coords`](Self::update_group_coords), and sync changes to
+/// [`update_entity_coords`](Self::update_entity_coords), and sync changes to
 /// renderers with [`sync_scene_to_renderers`](Self::sync_scene_to_renderers).
 ///
 /// # Animation
@@ -86,33 +87,33 @@ const TARGET_FPS: u32 = 300;
 pub struct ProteinRenderEngine {
     /// Core wgpu device, queue, and surface.
     pub context: RenderContext,
-    pub(crate) _shader_composer: ShaderComposer,
+    _shader_composer: ShaderComposer,
 
     /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
-    pub post_process: PostProcessStack,
+    pub(crate) post_process: PostProcessStack,
     /// Mouse and keyboard input state.
     pub input: InputState,
     /// GPU picking bind groups for capsule geometry.
-    pub picking_groups: PickingState,
+    pub(crate) picking_groups: PickingState,
     /// Cached sidechain animation and SS-type state.
-    pub sc: SidechainAnimationState,
+    pub(crate) sc: SidechainAnimationState,
 
     /// Orbital camera controller.
     pub camera_controller: CameraController,
     /// GPU lighting uniform and bind group.
     pub lighting: Lighting,
-    /// Scene graph holding all entity groups.
-    pub scene: Scene,
+    /// Scene graph holding all entities.
+    scene: Scene,
     /// Background thread for off-main-thread mesh generation.
-    pub scene_processor: SceneProcessor,
+    pub(crate) scene_processor: SceneProcessor,
     /// Structural animation driver.
-    pub animator: StructureAnimator,
+    pub(crate) animator: StructureAnimator,
     /// Runtime display, lighting, color, and geometry options.
-    pub options: Options,
+    options: Options,
     /// Currently applied options preset name, if any.
-    pub active_preset: Option<String>,
+    active_preset: Option<String>,
     /// Per-frame timing and FPS tracking.
-    pub frame_timing: FrameTiming,
+    pub(crate) frame_timing: FrameTiming,
     /// Multi-frame trajectory player, if loaded.
     pub trajectory_player: Option<TrajectoryPlayer>,
 
@@ -134,9 +135,13 @@ pub struct ProteinRenderEngine {
     /// GPU picking pass (offscreen R32Uint render + readback).
     pub picking: Picking,
     /// Per-residue selection bit-array on GPU.
-    pub selection_buffer: SelectionBuffer,
+    pub(crate) selection_buffer: SelectionBuffer,
     /// Per-residue color override buffer on GPU.
-    pub residue_color_buffer: ResidueColorBuffer,
+    pub(crate) residue_color_buffer: ResidueColorBuffer,
+
+    /// Last cursor position for computing deltas in
+    /// [`handle_input`](Self::handle_input).
+    last_cursor_pos: Option<(f32, f32)>,
 }
 
 // =============================================================================
@@ -149,7 +154,7 @@ impl ProteinRenderEngine {
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
         scale_factor: f64,
-    ) -> Result<Self, crate::gpu::render_context::RenderContextError> {
+    ) -> Result<Self, crate::error::VisoError> {
         Self::new_with_path(
             window,
             size,
@@ -165,7 +170,7 @@ impl ProteinRenderEngine {
         size: (u32, u32),
         scale_factor: f64,
         cif_path: &str,
-    ) -> Result<Self, crate::gpu::render_context::RenderContextError> {
+    ) -> Result<Self, crate::error::VisoError> {
         let mut context = RenderContext::new(window, size).await?;
 
         // 2x supersampling on standard-DPI displays to compensate for low pixel
@@ -174,13 +179,40 @@ impl ProteinRenderEngine {
             context.render_scale = 2;
         }
 
+        Self::init_with_context(context, cif_path)
+    }
+
+    /// Engine from a pre-built [`RenderContext`] (for embedding in dioxus,
+    /// headless rendering, etc.).
+    ///
+    /// Use [`RenderContext::from_device`] to create a surface-less context
+    /// from an externally-owned `wgpu::Device` and `wgpu::Queue`.
+    pub fn new_from_context(
+        mut context: RenderContext,
+        scale_factor: f64,
+        cif_path: &str,
+    ) -> Result<Self, crate::error::VisoError> {
+        if scale_factor < 2.0 {
+            context.render_scale = 2;
+        }
+
+        Self::init_with_context(context, cif_path)
+    }
+
+    /// Shared construction logic for both windowed and headless modes.
+    fn init_with_context(
+        context: RenderContext,
+        cif_path: &str,
+    ) -> Result<Self, crate::error::VisoError> {
         let mut shader_composer = ShaderComposer::new();
 
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
         // Load coords from structure file (PDB or mmCIF, detected by extension)
         let coords = structure_file_to_coords(std::path::Path::new(cif_path))
-            .expect("Failed to load coords from structure file");
+            .map_err(|e| {
+            crate::error::VisoError::StructureLoad(e.to_string())
+        })?;
 
         let entities = split_into_entities(&coords);
 
@@ -194,17 +226,18 @@ impl ProteinRenderEngine {
             );
         }
 
-        let group_name = std::path::Path::new(cif_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(cif_path);
         let mut scene = Scene::new();
-        let group_id = scene.add_group(entities, group_name);
+        let entity_ids = scene.add_entities(entities);
 
         // Extract protein coords for rendering (may be absent for
         // nucleic-acid-only structures)
-        let render_coords = if let Some(protein_coords) =
-            scene.group(group_id).and_then(|g| g.protein_coords())
+        let protein_entity_id = entity_ids.iter().find(|&&id| {
+            scene.entity(id).map_or(false, |e| {
+                e.entity.molecule_type == MoleculeType::Protein
+            })
+        });
+        let render_coords = if let Some(protein_coords) = protein_entity_id
+            .and_then(|&id| scene.entity(id).and_then(|e| e.protein_coords()))
         {
             log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
             let protein_coords =
@@ -228,7 +261,7 @@ impl ProteinRenderEngine {
             );
             rc
         } else {
-            log::debug!("no protein coords found for group");
+            log::debug!("no protein coords found");
             let empty = foldit_conv::coords::Coords {
                 num_atoms: 0,
                 atoms: Vec::new(),
@@ -391,18 +424,13 @@ impl ProteinRenderEngine {
                 .set_colors_immediate(&context.queue, &initial_colors);
         }
 
-        // Collect non-protein entities from the group for ball-and-stick
-        let non_protein_entities: Vec<&MoleculeEntity> = scene
-            .group(group_id)
-            .map(|g| {
-                g.entities()
-                    .iter()
-                    .filter(|e| e.molecule_type != MoleculeType::Protein)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let non_protein_refs: Vec<MoleculeEntity> =
-            non_protein_entities.into_iter().cloned().collect();
+        // Collect non-protein entities for ball-and-stick
+        let non_protein_refs: Vec<MoleculeEntity> = scene
+            .entities()
+            .iter()
+            .filter(|se| se.entity.molecule_type != MoleculeType::Protein)
+            .map(|se| se.entity.clone())
+            .collect();
         ball_and_stick_renderer.update_from_entities(
             &context.device,
             &context.queue,
@@ -420,29 +448,28 @@ impl ProteinRenderEngine {
 
         // Create nucleic acid renderer for DNA/RNA backbone ribbons + base
         // rings
-        let na_entities: Vec<&MoleculeEntity> = scene
-            .group(group_id)
-            .map(|g| {
-                g.entities()
-                    .iter()
-                    .filter(|e| {
-                        matches!(
-                            e.molecule_type,
-                            MoleculeType::DNA | MoleculeType::RNA
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let na_chains: Vec<Vec<Vec3>> = na_entities
+        let na_chains: Vec<Vec<Vec3>> = scene
+            .entities()
             .iter()
-            .flat_map(|e| e.extract_p_atom_chains())
+            .filter(|se| {
+                matches!(
+                    se.entity.molecule_type,
+                    MoleculeType::DNA | MoleculeType::RNA
+                )
+            })
+            .flat_map(|se| se.entity.extract_p_atom_chains())
             .collect();
-        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> =
-            na_entities
-                .iter()
-                .flat_map(|e| e.extract_base_rings())
-                .collect();
+        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = scene
+            .entities()
+            .iter()
+            .filter(|se| {
+                matches!(
+                    se.entity.molecule_type,
+                    MoleculeType::DNA | MoleculeType::RNA
+                )
+            })
+            .flat_map(|se| se.entity.extract_base_rings())
+            .collect();
         let nucleic_acid_renderer = NucleicAcidRenderer::new(
             &context,
             &camera_controller.layout,
@@ -469,7 +496,8 @@ impl ProteinRenderEngine {
         let animator = StructureAnimator::new();
 
         // Create background scene processor
-        let scene_processor = SceneProcessor::new();
+        let scene_processor = SceneProcessor::new()
+            .map_err(crate::error::VisoError::ThreadSpawn)?;
 
         // Tube renderer only renders coils; ribbons handle helices/sheets
         {
@@ -505,17 +533,12 @@ impl ProteinRenderEngine {
             picking,
             selection_buffer,
             residue_color_buffer,
+            last_cursor_pos: None,
         })
     }
 
-    /// Execute one frame: update animations, run the geometry pass,
-    /// post-process, and present.
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // Check if we should render based on FPS limit
-        if !self.frame_timing.should_render() {
-            return Ok(());
-        }
-
+    /// Per-frame updates: animation ticks, uniform uploads, frustum culling.
+    fn pre_render(&mut self) {
         // Apply any pending animation frame from the background thread
         // (non-blocking)
         self.apply_pending_animation();
@@ -579,11 +602,14 @@ impl ProteinRenderEngine {
         // Frustum culling for sidechains - update when camera moves
         // significantly
         self.update_frustum_culling();
+    }
 
-        let frame = self.context.get_next_frame()?;
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+    /// Core render — geometry, post-process, picking — targeting the given
+    /// view. Returns the encoder so the caller can submit it.
+    fn render_to_view(
+        &mut self,
+        view: &wgpu::TextureView,
+    ) -> wgpu::CommandEncoder {
         let mut encoder = self.context.create_encoder();
 
         // Geometry pass — render to intermediate color/normal textures at
@@ -674,7 +700,7 @@ impl ProteinRenderEngine {
                 znear: self.camera_controller.camera.znear,
                 zfar: self.camera_controller.camera.zfar,
             },
-            &view,
+            view.clone(),
         );
 
         // GPU Picking pass - render residue IDs to picking buffer (includes
@@ -714,6 +740,24 @@ impl ProteinRenderEngine {
             self.input.mouse_pos.1 as u32,
         );
 
+        encoder
+    }
+
+    /// Execute one frame: update animations, run the geometry pass,
+    /// post-process, and present.
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        // Check if we should render based on FPS limit
+        if !self.frame_timing.should_render() {
+            return Ok(());
+        }
+
+        self.pre_render();
+
+        let frame = self.context.get_next_frame()?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let encoder = self.render_to_view(&view);
         self.context.submit(encoder);
 
         // Start async GPU picking readback (non-blocking)
@@ -729,6 +773,15 @@ impl ProteinRenderEngine {
         self.frame_timing.end_frame();
 
         Ok(())
+    }
+
+    /// Render the scene to the given texture view (for embedding in
+    /// dioxus/etc). The caller owns the texture — no surface present happens.
+    pub fn render_to_texture(&mut self, view: &wgpu::TextureView) {
+        self.pre_render();
+        let encoder = self.render_to_view(view);
+        self.context.submit(encoder);
+        self.frame_timing.end_frame();
     }
 
     /// Resize all GPU surfaces and the camera projection to match the new
@@ -758,30 +811,12 @@ impl ProteinRenderEngine {
                         .fit_to_positions_animated(&positions);
                 }
             }
-            Focus::Group(id) => {
-                if let Some(group) = self.scene.group(id) {
-                    let positions: Vec<Vec3> = group
-                        .entities()
-                        .iter()
-                        .flat_map(|e: &MoleculeEntity| e.positions())
-                        .collect();
+            Focus::Entity(eid) => {
+                if let Some(se) = self.scene.entity(eid) {
+                    let positions = se.entity.positions();
                     if !positions.is_empty() {
                         self.camera_controller
                             .fit_to_positions_animated(&positions);
-                    }
-                }
-            }
-            Focus::Entity(eid) => {
-                for g in self.scene.iter() {
-                    for e in g.entities() {
-                        if e.entity_id == eid {
-                            let positions = e.positions();
-                            if !positions.is_empty() {
-                                self.camera_controller
-                                    .fit_to_positions_animated(&positions);
-                            }
-                            return;
-                        }
                     }
                 }
             }

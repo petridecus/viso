@@ -177,7 +177,7 @@ impl CapsuleSidechainRenderer {
                     lighting_layout,
                     selection_layout,
                 ],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -201,7 +201,7 @@ impl CapsuleSidechainRenderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             })
     }

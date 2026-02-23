@@ -6,6 +6,7 @@
 
 use wgpu::util::DeviceExt;
 
+use super::screen_pass::ScreenPass;
 use crate::gpu::{
     render_context::RenderContext, shader_composer::ShaderComposer,
 };
@@ -56,6 +57,8 @@ pub struct BloomPass {
     pub output_view: wgpu::TextureView,
 
     sampler: wgpu::Sampler,
+    /// Stored input color view for bind group recreation on resize.
+    input_color_view: wgpu::TextureView,
 
     /// Brightness threshold for bloom extraction.
     pub threshold: f32,
@@ -167,7 +170,7 @@ impl BloomPass {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom Threshold Pipeline Layout"),
                 bind_group_layouts: &[&threshold_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -194,7 +197,7 @@ impl BloomPass {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -248,7 +251,7 @@ impl BloomPass {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom Blur Pipeline Layout"),
                 bind_group_layouts: &[&blur_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -275,7 +278,7 @@ impl BloomPass {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -334,7 +337,7 @@ impl BloomPass {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom Upsample Pipeline Layout"),
                 bind_group_layouts: &[&upsample_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -368,7 +371,7 @@ impl BloomPass {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -399,6 +402,7 @@ impl BloomPass {
             output_texture,
             output_view,
             sampler,
+            input_color_view: color_view.clone(),
             threshold,
             intensity,
             width,
@@ -633,7 +637,7 @@ impl BloomPass {
     }
 
     /// Render the bloom pass: threshold → downsample+blur → upsample+accumulate
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder) {
+    fn render_bloom(&self, encoder: &mut wgpu::CommandEncoder) {
         if self.intensity <= 0.0 {
             return;
         }
@@ -745,6 +749,7 @@ impl BloomPass {
         context: &RenderContext,
         color_view: &wgpu::TextureView,
     ) {
+        self.input_color_view = color_view.clone();
         self.threshold_bind_group = Self::create_threshold_bind_group(
             context,
             &self.threshold_bind_group_layout,
@@ -762,13 +767,18 @@ impl BloomPass {
             bytemuck::cast_slice(&[self.threshold]),
         );
     }
+}
 
-    /// Resize all textures on window resize
-    pub fn resize(
-        &mut self,
-        context: &RenderContext,
-        color_view: &wgpu::TextureView,
-    ) {
+impl ScreenPass for BloomPass {
+    fn label(&self) -> &'static str {
+        "Bloom"
+    }
+
+    fn render(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.render_bloom(encoder);
+    }
+
+    fn resize(&mut self, context: &RenderContext) {
         let width = context.render_width();
         let height = context.render_height();
         if width == self.width && height == self.height {
@@ -785,7 +795,7 @@ impl BloomPass {
         self.threshold_bind_group = Self::create_threshold_bind_group(
             context,
             &self.threshold_bind_group_layout,
-            color_view,
+            &self.input_color_view,
             &self.sampler,
             &self.threshold_buffer,
         );

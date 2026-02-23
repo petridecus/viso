@@ -7,7 +7,7 @@ use glam::Vec3;
 use super::ProteinRenderEngine;
 use crate::{
     animation::AnimationAction,
-    renderer::molecular::capsule_sidechain::SidechainData,
+    renderer::molecular::capsule_sidechain::SidechainData, scene::SceneEntity,
     util::trajectory::TrajectoryPlayer,
 };
 
@@ -26,13 +26,14 @@ impl ProteinRenderEngine {
             }
         };
 
-        // Get protein coords from the first visible group to build backbone
+        // Get protein coords from the first visible entity to build backbone
         // mapping
         let protein_coords = self
             .scene
+            .entities()
             .iter()
-            .filter(|g| g.visible)
-            .find_map(|g| g.protein_coords());
+            .filter(|e| e.visible)
+            .find_map(SceneEntity::protein_coords);
 
         let protein_coords = match protein_coords {
             Some(c) => protein_only(&c),

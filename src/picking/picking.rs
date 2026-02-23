@@ -219,7 +219,7 @@ impl Picking {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Picking Tube Pipeline Layout"),
                 bind_group_layouts: &[camera_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -256,7 +256,7 @@ impl Picking {
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -294,7 +294,7 @@ impl Picking {
                     &capsule_bind_group_layout,
                     camera_bind_group_layout,
                 ],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -331,7 +331,7 @@ impl Picking {
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );

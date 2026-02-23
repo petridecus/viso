@@ -7,9 +7,9 @@ use crate::gpu::render_context::RenderContext;
 ///
 /// WGSL layout (auto-padded):
 ///   light1_dir: `vec3<f32>`     (offset 0,  align 16)
-///   _pad1: f32                (offset 12)
+///   pad1: f32                (offset 12)
 ///   light2_dir: `vec3<f32>`     (offset 16, align 16)
-///   _pad2: f32                (offset 28)
+///   pad2: f32                (offset 28)
 ///   light1_intensity: f32     (offset 32)
 ///   light2_intensity: f32     (offset 36)
 ///   ambient: f32              (offset 40)
@@ -21,11 +21,11 @@ use crate::gpu::render_context::RenderContext;
 ///   rim_color: `vec3<f32>`      (offset 64, align 16)
 ///   ibl_strength: f32         (offset 76)
 ///   rim_dir: `vec3<f32>`        (offset 80, align 16)
-///   _pad3: f32                (offset 92)
+///   pad3: f32                (offset 92)
 ///   roughness: f32            (offset 96)
 ///   metalness: f32            (offset 100)
-///   _pad4: f32                (offset 104)
-///   _pad5: f32                (offset 108)
+///   pad4: f32                (offset 104)
+///   pad5: f32                (offset 108)
 ///   Total: 112 bytes
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -33,11 +33,11 @@ pub struct LightingUniform {
     /// Primary light direction (normalized)
     pub light1_dir: [f32; 3],
     /// Padding for GPU alignment.
-    pub _pad1: f32,
+    pub pad1: f32,
     /// Secondary light direction (normalized)
     pub light2_dir: [f32; 3],
     /// Padding for GPU alignment.
-    pub _pad2: f32,
+    pub pad2: f32,
     /// Primary light intensity
     pub light1_intensity: f32,
     /// Secondary light intensity
@@ -64,15 +64,15 @@ pub struct LightingUniform {
     /// source)
     pub rim_dir: [f32; 3],
     /// Padding for GPU alignment.
-    pub _pad3: f32,
+    pub pad3: f32,
     /// Surface roughness (0.05 = mirror-like, 1.0 = completely matte)
     pub roughness: f32,
     /// Surface metalness (0.0 = dielectric, 1.0 = metal)
     pub metalness: f32,
     /// Padding for GPU alignment.
-    pub _pad4: f32,
+    pub pad4: f32,
     /// Padding for GPU alignment.
-    pub _pad5: f32,
+    pub pad5: f32,
 }
 
 impl Default for LightingUniform {
@@ -80,10 +80,10 @@ impl Default for LightingUniform {
         Self {
             // Primary light: upper-left for strong directional contrast
             light1_dir: normalize([-0.3, 0.9, -0.3]),
-            _pad1: 0.0,
+            pad1: 0.0,
             // Secondary light: upper-right-front for fill
             light2_dir: normalize([0.3, 0.6, -0.4]),
-            _pad2: 0.0,
+            pad2: 0.0,
             // Values match LightingOptions::default()
             light1_intensity: 2.0,
             light2_intensity: 1.1,
@@ -97,11 +97,11 @@ impl Default for LightingUniform {
             ibl_strength: 0.6,
             // Rim back-light: below-behind relative to camera
             rim_dir: normalize([0.0, -0.7, 0.5]),
-            _pad3: 0.0,
+            pad3: 0.0,
             roughness: 0.35,
             metalness: 0.15,
-            _pad4: 0.0,
-            _pad5: 0.0,
+            pad4: 0.0,
+            pad5: 0.0,
         }
     }
 }
@@ -125,6 +125,7 @@ pub struct Lighting {
 
 impl Lighting {
     /// Create a new lighting instance with default uniform and GPU resources.
+    #[allow(clippy::too_many_lines)] // GPU resource setup is inherently verbose
     pub fn new(context: &RenderContext) -> Self {
         let uniform = LightingUniform::default();
 
@@ -157,7 +158,7 @@ impl Lighting {
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
 
@@ -333,6 +334,9 @@ impl Lighting {
 ///
 /// The irradiance map is sampled by surface normal in the shader to provide
 /// directionally-varying ambient light, replacing the flat ambient term.
+#[allow(clippy::too_many_lines)] // cubemap generation with per-face texture upload
+#[allow(clippy::cast_precision_loss)] // texel indices and small sizes fit in f32
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // color channel clamped to 0..=255
 fn generate_irradiance_cubemap(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -468,6 +472,9 @@ fn evaluate_irradiance(dir: [f32; 3]) -> [f32; 3] {
 /// Each mip level represents a different roughness: mip 0 = sharp reflections,
 /// higher mips = progressively blurred (rougher) reflections.
 /// 64x64 base, 6 mip levels.
+#[allow(clippy::too_many_lines)] // cubemap mip-chain generation with per-face texture upload
+#[allow(clippy::cast_precision_loss)] // texel indices and small mip sizes fit in f32
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // color channel clamped to 0..=255
 fn generate_prefiltered_cubemap(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -592,6 +599,7 @@ fn evaluate_prefiltered(dir: [f32; 3], roughness: f32) -> [f32; 3] {
 ///
 /// 256x256 Rg16Float texture. X axis = NdotV, Y axis = roughness.
 /// R = scale, G = bias for the Fresnel term: `specular = F0 * scale + bias`
+#[allow(clippy::cast_precision_loss)] // texel indices and LUT size (256) fit in f32
 fn generate_brdf_lut(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -662,6 +670,8 @@ fn generate_brdf_lut(
 
 /// Integrate the BRDF for given NdotV and roughness using importance sampling.
 /// Returns (scale, bias) for the split-sum approximation.
+#[allow(clippy::many_single_char_names)] // standard math notation for BRDF vectors (v, h, l, a, b, g)
+#[allow(clippy::cast_precision_loss)] // sample_count is small (256), fits in f32
 fn integrate_brdf(
     ndot_v: f32,
     roughness: f32,
@@ -728,16 +738,18 @@ fn geometry_smith_ibl(ndot_v: f32, ndot_l: f32, roughness: f32) -> f32 {
 }
 
 /// Hammersley quasi-random sequence (2D)
+#[allow(clippy::cast_precision_loss)] // sample index and count are small, fit in f32
 fn hammersley(i: u32, n: u32) -> [f32; 2] {
     [i as f32 / n as f32, radical_inverse_vdc(i)]
 }
 
 /// Van der Corput radical inverse (base 2)
+#[allow(clippy::cast_precision_loss)] // intentional u32-to-f32 for normalized [0,1) output
 fn radical_inverse_vdc(mut bits: u32) -> f32 {
     bits = bits.rotate_right(16);
-    bits = ((bits & 0x55555555) << 1) | ((bits & 0xAAAAAAAA) >> 1);
-    bits = ((bits & 0x33333333) << 2) | ((bits & 0xCCCCCCCC) >> 2);
-    bits = ((bits & 0x0F0F0F0F) << 4) | ((bits & 0xF0F0F0F0) >> 4);
-    bits = ((bits & 0x00FF00FF) << 8) | ((bits & 0xFF00FF00) >> 8);
-    bits as f32 * 2.328_306_4e-10 // 1.0 / 0x100000000
+    bits = ((bits & 0x5555_5555) << 1) | ((bits & 0xAAAA_AAAA) >> 1);
+    bits = ((bits & 0x3333_3333) << 2) | ((bits & 0xCCCC_CCCC) >> 2);
+    bits = ((bits & 0x0F0F_0F0F) << 4) | ((bits & 0xF0F0_F0F0) >> 4);
+    bits = ((bits & 0x00FF_00FF) << 8) | ((bits & 0xFF00_FF00) >> 8);
+    bits as f32 * 2.328_306_4e-10 // 1.0 / 0x1_0000_0000
 }

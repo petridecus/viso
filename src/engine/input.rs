@@ -1,24 +1,69 @@
 //! Input & Selection methods for ProteinRenderEngine
 
 use glam::Vec2;
-use winit::event::MouseButton;
 
 use super::ProteinRenderEngine;
 use crate::{
-    input::{ClickResult, KeyAction},
+    input::{ClickResult, InputEvent, KeyAction, MouseButton},
     scene::Focus,
 };
 
+// ── Unified input handler ──
+
 impl ProteinRenderEngine {
-    /// Forward mouse movement deltas for camera orbit, pan, or drag selection.
-    pub fn handle_mouse_move(&mut self, delta_x: f32, delta_y: f32) {
-        // Only allow rotation/pan if mouse down was on background (not on a
-        // residue)
+    /// Process a platform-agnostic input event.
+    ///
+    /// This is the primary input entry point. Consumers forward raw window
+    /// events as [`InputEvent`] variants; the engine internally dispatches
+    /// to camera rotation/pan/zoom, picking hover updates, and click
+    /// detection/selection.
+    ///
+    /// Returns `true` if selection changed (only relevant for
+    /// [`InputEvent::MouseButton`] releases).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// engine.handle_input(InputEvent::CursorMoved { x, y });
+    /// engine.handle_input(InputEvent::Scroll { delta: 1.0 });
+    /// ```
+    pub fn handle_input(&mut self, event: InputEvent) -> bool {
+        match event {
+            InputEvent::CursorMoved { x, y } => {
+                self.dispatch_cursor_moved(x, y);
+                false
+            }
+            InputEvent::MouseButton { button, pressed } => {
+                self.dispatch_mouse_button(button, pressed)
+            }
+            InputEvent::Scroll { delta } => {
+                self.camera_controller.zoom(delta);
+                false
+            }
+            InputEvent::ModifiersChanged { shift } => {
+                self.camera_controller.shift_pressed = shift;
+                false
+            }
+        }
+    }
+
+    /// Cursor moved — compute delta, forward to camera/picking.
+    fn dispatch_cursor_moved(&mut self, x: f32, y: f32) {
+        let (delta_x, delta_y) = if let Some((lx, ly)) = self.last_cursor_pos {
+            (x - lx, y - ly)
+        } else {
+            (0.0, 0.0)
+        };
+        self.last_cursor_pos = Some((x, y));
+
+        // Update picking hover position
+        self.input.handle_mouse_position(x, y);
+
+        // Camera rotate/pan if left-mouse is down on background
         if self.camera_controller.mouse_pressed
             && self.input.mouse_down_residue < 0
         {
             let delta = Vec2::new(delta_x, delta_y);
-            // Mark that we're dragging (moved after mouse down)
             if delta.length_squared() > 1.0 {
                 self.input.mark_dragging();
             }
@@ -30,22 +75,37 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Handle mouse button press/release
-    /// On press: record what residue (if any) is under cursor
-    /// On release: handled by handle_mouse_up
-    pub fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+    /// Mouse button — dispatch press/release for left button.
+    fn dispatch_mouse_button(
+        &mut self,
+        button: MouseButton,
+        pressed: bool,
+    ) -> bool {
         if button == MouseButton::Left {
             if pressed {
-                // Mouse down - record what's under cursor
                 self.input.handle_mouse_down(self.picking.hovered_residue);
+                self.camera_controller.mouse_pressed = true;
+                false
+            } else {
+                self.camera_controller.mouse_pressed = false;
+                self.handle_mouse_up()
             }
-            self.camera_controller.mouse_pressed = pressed;
+        } else {
+            false
         }
     }
 
-    /// Handle mouse button release for selection
-    /// Returns true if selection changed
-    pub fn handle_mouse_up(&mut self) -> bool {
+    /// Release mouse state without processing click detection.
+    ///
+    /// Used by consumers that intercept mouse events for pull/band drag
+    /// and need to release the mouse without triggering selection changes.
+    pub fn release_mouse_state(&mut self) {
+        self.camera_controller.mouse_pressed = false;
+    }
+
+    /// Handle mouse button release for selection.
+    /// Returns true if selection changed.
+    fn handle_mouse_up(&mut self) -> bool {
         let shift_held = self.camera_controller.shift_pressed;
         let hovered = self.picking.hovered_residue;
 
@@ -74,8 +134,8 @@ impl ProteinRenderEngine {
     }
 
     /// Select all residues in the same secondary structure segment as the given
-    /// residue If shift_held is true, adds to existing selection; otherwise
-    /// replaces selection
+    /// residue. If shift_held is true, adds to existing selection; otherwise
+    /// replaces selection.
     fn select_ss_segment(
         &mut self,
         residue_idx: i32,
@@ -129,9 +189,8 @@ impl ProteinRenderEngine {
         }
         let target = residue_idx as usize;
 
-        // Get backbone chains to determine chain boundaries
-        let agg = self.scene.aggregated();
-        let chains = &agg.backbone_chains;
+        // Get backbone chains from tube renderer to determine chain boundaries
+        let chains = self.tube_renderer.cached_chains();
 
         // Walk chains to find which one contains this residue
         let mut global_start = 0usize;

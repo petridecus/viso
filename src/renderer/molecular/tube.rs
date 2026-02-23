@@ -314,7 +314,7 @@ impl TubeRenderer {
                     selection_layout,
                     color_layout,
                 ],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -344,7 +344,7 @@ impl TubeRenderer {
                 },
                 depth_stencil: Some(pipeline_util::depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             })
     }
@@ -694,9 +694,108 @@ impl TubeRenderer {
                 let v2 = base_vertex + (next_ring_offset + k) as u32;
                 let v3 = base_vertex + (next_ring_offset + k_next) as u32;
 
-                // Two triangles per quad
-                indices.extend_from_slice(&[v0, v2, v1]);
-                indices.extend_from_slice(&[v1, v2, v3]);
+                // Two triangles per quad (CCW winding for outward-facing front)
+                indices.extend_from_slice(&[v0, v1, v2]);
+                indices.extend_from_slice(&[v1, v3, v2]);
+            }
+        }
+
+        // End caps: triangle fan closing the first and last rings.
+        if num_rings >= 2 {
+            // Start cap: normal = -tangent (points away from tube start)
+            {
+                let p = &points[0];
+                let cap_n = -p.tangent;
+                let color =
+                    colors.first().copied().unwrap_or([0.6, 0.85, 0.6]);
+                let residue_idx =
+                    residue_indices.first().copied().unwrap_or(0);
+
+                // Center vertex
+                let center_idx = base_vertex + vertices.len() as u32;
+                vertices.push(TubeVertex {
+                    position: p.pos.into(),
+                    normal: cap_n.into(),
+                    color,
+                    residue_idx,
+                    center_pos: (p.pos - cap_n).into(),
+                });
+
+                // Ring of edge vertices with cap-facing normal
+                let edge_base = base_vertex + vertices.len() as u32;
+                for k in 0..RADIAL_SEGMENTS {
+                    let angle = (k as f32 / RADIAL_SEGMENTS as f32)
+                        * std::f32::consts::TAU;
+                    let offset =
+                        p.normal * angle.cos() + p.binormal * angle.sin();
+                    let pos = p.pos + offset * TUBE_RADIUS;
+                    vertices.push(TubeVertex {
+                        position: pos.into(),
+                        normal: cap_n.into(),
+                        color,
+                        residue_idx,
+                        center_pos: (pos - cap_n).into(),
+                    });
+                }
+
+                // Fan: [center, k+1, k] — outward-facing CCW from -tangent
+                for k in 0..RADIAL_SEGMENTS {
+                    let k_next = (k + 1) % RADIAL_SEGMENTS;
+                    indices.extend_from_slice(&[
+                        center_idx,
+                        edge_base + k_next as u32,
+                        edge_base + k as u32,
+                    ]);
+                }
+            }
+
+            // End cap: normal = +tangent (points away from tube end)
+            {
+                let p = &points[num_rings - 1];
+                let cap_n = p.tangent;
+                let color = colors
+                    .get(num_rings - 1)
+                    .copied()
+                    .unwrap_or([0.6, 0.85, 0.6]);
+                let residue_idx = residue_indices
+                    .get(num_rings - 1)
+                    .copied()
+                    .unwrap_or(0);
+
+                let center_idx = base_vertex + vertices.len() as u32;
+                vertices.push(TubeVertex {
+                    position: p.pos.into(),
+                    normal: cap_n.into(),
+                    color,
+                    residue_idx,
+                    center_pos: (p.pos - cap_n).into(),
+                });
+
+                let edge_base = base_vertex + vertices.len() as u32;
+                for k in 0..RADIAL_SEGMENTS {
+                    let angle = (k as f32 / RADIAL_SEGMENTS as f32)
+                        * std::f32::consts::TAU;
+                    let offset =
+                        p.normal * angle.cos() + p.binormal * angle.sin();
+                    let pos = p.pos + offset * TUBE_RADIUS;
+                    vertices.push(TubeVertex {
+                        position: pos.into(),
+                        normal: cap_n.into(),
+                        color,
+                        residue_idx,
+                        center_pos: (pos - cap_n).into(),
+                    });
+                }
+
+                // Fan: [center, k, k+1] — outward-facing CCW from +tangent
+                for k in 0..RADIAL_SEGMENTS {
+                    let k_next = (k + 1) % RADIAL_SEGMENTS;
+                    indices.extend_from_slice(&[
+                        center_idx,
+                        edge_base + k as u32,
+                        edge_base + k_next as u32,
+                    ]);
+                }
             }
         }
 

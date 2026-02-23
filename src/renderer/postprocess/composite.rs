@@ -6,6 +6,7 @@
 
 use wgpu::util::DeviceExt;
 
+use super::screen_pass::ScreenPass;
 use crate::gpu::{
     render_context::RenderContext, shader_composer::ShaderComposer,
 };
@@ -92,6 +93,17 @@ pub struct CompositePass {
     pub color_texture: wgpu::Texture,
     /// View into the intermediate color texture.
     pub color_view: wgpu::TextureView,
+
+    /// Output view (FXAA input texture), set before render.
+    output_view: Option<wgpu::TextureView>,
+    /// Stored SSAO view for bind group recreation on resize.
+    ssao_view: wgpu::TextureView,
+    /// Stored depth view for bind group recreation on resize.
+    depth_view: wgpu::TextureView,
+    /// Stored normal view for bind group recreation on resize.
+    normal_view: wgpu::TextureView,
+    /// Stored bloom view for bind group recreation on resize.
+    bloom_view: wgpu::TextureView,
 
     /// Composite effect parameters (outline, AO, fog, tone-mapping).
     pub params: CompositeParams,
@@ -286,7 +298,7 @@ impl CompositePass {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Composite Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -314,7 +326,7 @@ impl CompositePass {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -327,6 +339,11 @@ impl CompositePass {
             depth_sampler,
             color_texture,
             color_view,
+            output_view: None,
+            ssao_view: ssao_view.clone(),
+            depth_view: depth_view.clone(),
+            normal_view: normal_view.clone(),
+            bloom_view: bloom_view.clone(),
             params,
             params_buffer,
             width,
@@ -417,30 +434,23 @@ impl CompositePass {
             })
     }
 
-    /// Render the composite pass to the output view (swapchain)
-    pub fn render(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        output_view: &wgpu::TextureView,
-    ) {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Composite Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: output_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
+    /// Set the output view (FXAA input texture) for this frame.
+    pub fn set_output_view(&mut self, view: wgpu::TextureView) {
+        self.output_view = Some(view);
+    }
 
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..3, 0..1); // Full-screen triangle
+    /// Update the external texture views used in bind group recreation.
+    pub fn set_external_views(
+        &mut self,
+        ssao: wgpu::TextureView,
+        depth: wgpu::TextureView,
+        normal: wgpu::TextureView,
+        bloom: wgpu::TextureView,
+    ) {
+        self.ssao_view = ssao;
+        self.depth_view = depth;
+        self.normal_view = normal;
+        self.bloom_view = bloom;
     }
 
     /// Get the color view for geometry rendering
@@ -472,16 +482,38 @@ impl CompositePass {
             bytemuck::cast_slice(&[self.params]),
         );
     }
+}
 
-    /// Resize textures and recreate bind groups
-    pub fn resize(
-        &mut self,
-        context: &RenderContext,
-        ssao_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
-        normal_view: &wgpu::TextureView,
-        bloom_view: &wgpu::TextureView,
-    ) {
+impl ScreenPass for CompositePass {
+    fn label(&self) -> &'static str {
+        "Composite"
+    }
+
+    fn render(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(output_view) = &self.output_view else {
+            return;
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Composite Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn resize(&mut self, context: &RenderContext) {
         if context.render_width() == self.width
             && context.render_height() == self.height
         {
@@ -497,8 +529,7 @@ impl CompositePass {
         self.color_texture = color_texture;
         self.color_view = color_view;
 
-        // Update screen_size in params (write to existing buffer, no bind group
-        // recreation)
+        // Update screen_size in params
         self.params.screen_size = [self.width as f32, self.height as f32];
         context.queue.write_buffer(
             &self.params_buffer,
@@ -506,16 +537,16 @@ impl CompositePass {
             bytemuck::cast_slice(&[self.params]),
         );
 
-        // Recreate bind group with new textures
+        // Recreate bind group with stored views
         self.bind_group = Self::create_bind_group(
             context,
             &self.bind_group_layout,
             &CompositeViews {
                 color: &self.color_view,
-                ssao: ssao_view,
-                depth: depth_view,
-                normal: normal_view,
-                bloom: bloom_view,
+                ssao: &self.ssao_view,
+                depth: &self.depth_view,
+                normal: &self.normal_view,
+                bloom: &self.bloom_view,
                 sampler: &self.sampler,
                 depth_sampler: &self.depth_sampler,
                 params_buffer: &self.params_buffer,

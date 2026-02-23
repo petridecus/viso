@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/viso-ui"]
+
 [package]
 name = "viso"
 version = "0.1.0"
@@ -13,12 +16,14 @@ exclude = ["gallery/", "assets/", "docs/", ".github/"]
 
 [features]
 default = ["binary"]
-binary = ["dep:env_logger", "dep:ureq"]
+binary = ["gui", "dep:env_logger", "dep:ureq"]
+viewer = ["dep:winit", "dep:pollster"]
+gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
-wgpu = { version = "28.0", features = ["naga-ir"] }
-winit = "0.30.12"
-pollster = "0.4.0"
+wgpu = { version = "26.0", features = ["naga-ir"] }
+winit = { version = "0.30.12", optional = true }
+pollster = { version = "0.4.0", optional = true }
 bytemuck = "1.24.0"
 rand = "0.9.2"
 glam = "0.30.10"
@@ -36,6 +41,13 @@ env_logger = { version = "0.11", optional = true }
 # HTTP client for downloading structures from RCSB
 ureq = { version = "3", optional = true }
 
+# Embedded webview for GUI options panel
+wry = { version = "0.50", optional = true }
+
+# Embed viso-ui WASM bundle at compile time
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+
 # Time utilities
 instant = "0.1"
 
@@ -44,10 +56,15 @@ triple_buffer = "8"
 
 # Half-precision floats for BRDF LUT texture (Rg16Float)
 half = "2"
-naga_oil = "0.21"
-naga = "28"
+naga_oil = "0.19"
+naga = "26"
 
 foldit-conv = { git = "https://github.com/petridecus/foldit-conv" }
+
+[[bin]]
+name = "viso"
+path = "src/main.rs"
+required-features = ["binary"]
 
 [dev-dependencies]
 criterion = "0.5"

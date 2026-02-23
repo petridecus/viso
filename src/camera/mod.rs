@@ -9,5 +9,3 @@ pub mod controller;
 pub mod core;
 /// View frustum extraction and intersection tests.
 pub mod frustum;
-/// Window-event-based camera input handler.
-pub mod input;

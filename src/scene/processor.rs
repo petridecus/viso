@@ -3,14 +3,14 @@
 //! Moves all CPU-heavy mesh/instance generation off the main thread.
 //! The main thread only does GPU uploads (<1ms) and render passes.
 //!
-//! Supports **per-group mesh caching**: when a group's `mesh_version`
+//! Supports **per-entity mesh caching**: when an entity's `mesh_version`
 //! hasn't changed between frames, its cached mesh is reused instead of
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{mpsc, Arc},
+    sync::mpsc,
 };
 
 use foldit_conv::{
@@ -19,7 +19,7 @@ use foldit_conv::{
 };
 use glam::Vec3;
 
-use super::{AggregatedRenderData, GroupId, PerGroupData};
+use super::PerEntityData;
 use crate::{
     animation::AnimationAction,
     options::{ColorOptions, DisplayOptions},
@@ -52,16 +52,14 @@ pub struct AnimationSidechainData {
 
 /// Request sent from main thread to scene processor.
 pub enum SceneRequest {
-    /// Full scene rebuild with per-group data + aggregated passthrough.
+    /// Full scene rebuild with per-entity data.
     FullRebuild {
-        /// Per-group data for mesh generation.
-        groups: Vec<PerGroupData>,
-        /// Pre-aggregated render data (unused by processor, passed through).
-        aggregated: Arc<AggregatedRenderData>,
+        /// Per-entity data for mesh generation.
+        entities: Vec<PerEntityData>,
         /// Per-entity animation actions. Entities in the map animate with
         /// their action; entities not in the map snap. Empty map =
         /// snap all.
-        entity_actions: HashMap<GroupId, AnimationAction>,
+        entity_actions: HashMap<u32, AnimationAction>,
         /// Current display options for mesh generation.
         display: DisplayOptions,
         /// Current color options for mesh generation.
@@ -150,10 +148,10 @@ pub struct PreparedScene {
     pub all_positions: Vec<Vec3>,
     /// Per-entity animation actions. Entities in the map animate; others snap.
     /// Empty map = snap all (no animation).
-    pub entity_actions: HashMap<GroupId, AnimationAction>,
+    pub entity_actions: HashMap<u32, AnimationAction>,
     /// Where each entity's residues land in the flat concatenated arrays:
     /// `(entity_id, global_residue_start, residue_count)`.
-    pub entity_residue_ranges: Vec<(GroupId, u32, u32)>,
+    pub entity_residue_ranges: Vec<(u32, u32, u32)>,
     /// Non-protein entities for ball-and-stick rendering.
     pub non_protein_entities: Vec<MoleculeEntity>,
     /// P-atom chains from DNA/RNA entities.
@@ -191,7 +189,7 @@ pub struct PreparedAnimationFrame {
 
 /// Cached mesh data for a single group. Stored as byte buffers ready for
 /// concatenation, plus typed intermediates needed for index offsetting.
-struct CachedGroupMesh {
+struct CachedEntityMesh {
     // Tube
     tube_verts: Vec<u8>,
     tube_inds: Vec<u32>,
@@ -241,15 +239,9 @@ pub struct SceneProcessor {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-impl Default for SceneProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SceneProcessor {
     /// Spawn the background scene processing thread.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel::<SceneRequest>();
         let (scene_input, scene_output) = triple_buffer::triple_buffer(&None);
         let (anim_input, anim_output) = triple_buffer::triple_buffer(&None);
@@ -258,15 +250,14 @@ impl SceneProcessor {
             .name("scene-processor".into())
             .spawn(move || {
                 Self::thread_loop(request_rx, scene_input, anim_input);
-            })
-            .expect("Failed to spawn scene processor thread");
+            })?;
 
-        Self {
+        Ok(Self {
             request_tx,
             scene_result: scene_output,
             anim_result: anim_output,
             thread: Some(thread),
-        }
+        })
     }
 
     /// Submit a scene request (non-blocking send).
@@ -300,7 +291,7 @@ impl SceneProcessor {
         mut scene_input: triple_buffer::Input<Option<PreparedScene>>,
         mut anim_input: triple_buffer::Input<Option<PreparedAnimationFrame>>,
     ) {
-        let mut mesh_cache: HashMap<GroupId, (u64, CachedGroupMesh)> =
+        let mut mesh_cache: HashMap<u32, (u64, CachedEntityMesh)> =
             HashMap::new();
         let mut last_display: Option<DisplayOptions> = None;
         let mut last_colors: Option<ColorOptions> = None;
@@ -323,8 +314,7 @@ impl SceneProcessor {
             match latest {
                 SceneRequest::Shutdown => break,
                 SceneRequest::FullRebuild {
-                    groups,
-                    aggregated: _,
+                    entities,
                     entity_actions,
                     display,
                     colors,
@@ -340,39 +330,42 @@ impl SceneProcessor {
                         last_colors = Some(colors.clone());
                     }
 
-                    // Generate or reuse per-group meshes
-                    for g in &groups {
-                        let needs_regen = match mesh_cache.get(&g.id) {
+                    // Generate or reuse per-entity meshes
+                    for e in &entities {
+                        let needs_regen = match mesh_cache.get(&e.id) {
                             Some((cached_version, _)) => {
-                                *cached_version != g.mesh_version
+                                *cached_version != e.mesh_version
                             }
                             None => true,
                         };
 
                         if needs_regen {
-                            let mesh =
-                                Self::generate_group_mesh(g, &display, &colors);
+                            let mesh = Self::generate_entity_mesh(
+                                e, &display, &colors,
+                            );
                             let _ =
-                                mesh_cache.insert(g.id, (g.mesh_version, mesh));
+                                mesh_cache.insert(e.id, (e.mesh_version, mesh));
                         }
                     }
 
-                    // Evict removed groups
-                    let active_ids: HashSet<GroupId> =
-                        groups.iter().map(|g| g.id).collect();
+                    // Evict removed entities
+                    let active_ids: HashSet<u32> =
+                        entities.iter().map(|e| e.id).collect();
                     mesh_cache.retain(|id, _| active_ids.contains(id));
 
-                    // Collect references in group order
-                    let group_meshes: Vec<(GroupId, &CachedGroupMesh)> = groups
+                    // Collect references in entity order
+                    let entity_meshes: Vec<(u32, &CachedEntityMesh)> = entities
                         .iter()
-                        .filter_map(|g| {
-                            mesh_cache.get(&g.id).map(|(_, mesh)| (g.id, mesh))
+                        .filter_map(|e| {
+                            mesh_cache.get(&e.id).map(|(_, mesh)| (e.id, mesh))
                         })
                         .collect();
 
                     // Concatenate into PreparedScene
-                    let prepared =
-                        Self::concatenate_meshes(&group_meshes, entity_actions);
+                    let prepared = Self::concatenate_meshes(
+                        &entity_meshes,
+                        entity_actions,
+                    );
                     scene_input.write(Some(prepared));
                 }
                 SceneRequest::AnimationFrame {
@@ -393,12 +386,12 @@ impl SceneProcessor {
         }
     }
 
-    /// Generate mesh for a single group.
-    fn generate_group_mesh(
-        g: &PerGroupData,
+    /// Generate mesh for a single entity.
+    fn generate_entity_mesh(
+        g: &PerEntityData,
         display: &DisplayOptions,
         colors: &ColorOptions,
-    ) -> CachedGroupMesh {
+    ) -> CachedEntityMesh {
         // Derive per-residue colors from scores when in score coloring mode
         use crate::options::BackboneColorMode;
         let per_residue_colors = match display.backbone_color_mode {
@@ -506,7 +499,7 @@ impl SceneProcessor {
             .map(|a| a.atom_name.clone())
             .collect();
 
-        CachedGroupMesh {
+        CachedEntityMesh {
             tube_verts,
             tube_inds,
             ribbon_verts,
@@ -541,10 +534,40 @@ impl SceneProcessor {
         }
     }
 
+    /// Offset the `residue_idx` field embedded in raw vertex bytes.
+    ///
+    /// `TubeVertex`, `RibbonVertex`, and `NaVertex` all share the same 52-byte
+    /// layout with a `u32 residue_idx` at byte offset 36. When concatenating
+    /// vertices from multiple entities, each entity's local residue indices
+    /// must be shifted by the global offset so the GPU's per-residue color
+    /// buffer is indexed correctly.
+    fn offset_vertex_residue_idx(dst: &mut Vec<u8>, src: &[u8], offset: u32) {
+        const VERTEX_SIZE: usize = 52;
+        const RESIDUE_IDX_OFFSET: usize = 36;
+
+        if offset == 0 {
+            dst.extend_from_slice(src);
+            return;
+        }
+
+        let start = dst.len();
+        dst.extend_from_slice(src);
+
+        // Patch each vertex's residue_idx in-place
+        let mut pos = start + RESIDUE_IDX_OFFSET;
+        while pos + 4 <= dst.len() {
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&dst[pos..pos + 4]);
+            let patched = u32::from_ne_bytes(bytes) + offset;
+            dst[pos..pos + 4].copy_from_slice(&patched.to_ne_bytes());
+            pos += VERTEX_SIZE;
+        }
+    }
+
     /// Concatenate per-entity cached meshes into a single PreparedScene.
     fn concatenate_meshes(
-        group_meshes: &[(GroupId, &CachedGroupMesh)],
-        entity_actions: HashMap<GroupId, AnimationAction>,
+        entity_meshes: &[(u32, &CachedEntityMesh)],
+        entity_actions: HashMap<u32, AnimationAction>,
     ) -> PreparedScene {
         // --- Tube ---
         let mut all_tube_verts: Vec<u8> = Vec::new();
@@ -597,20 +620,28 @@ impl SceneProcessor {
         let mut all_per_residue_colors: Vec<[f32; 3]> = Vec::new();
 
         // Track where each entity's residues land in the flat arrays
-        let mut entity_residue_ranges: Vec<(GroupId, u32, u32)> = Vec::new();
+        let mut entity_residue_ranges: Vec<(u32, u32, u32)> = Vec::new();
 
-        for (group_id, mesh) in group_meshes {
+        for (entity_id, mesh) in entity_meshes {
             let sc_atom_offset = all_sidechain_positions.len() as u32;
 
-            // Tube: offset indices
-            all_tube_verts.extend_from_slice(&mesh.tube_verts);
+            // Tube: offset vertex indices and embedded residue_idx
+            Self::offset_vertex_residue_idx(
+                &mut all_tube_verts,
+                &mesh.tube_verts,
+                global_residue_offset,
+            );
             for &idx in &mesh.tube_inds {
                 all_tube_inds.push(idx + tube_vert_offset);
             }
             tube_vert_offset += mesh.tube_vert_count;
 
-            // Ribbon: offset indices
-            all_ribbon_verts.extend_from_slice(&mesh.ribbon_verts);
+            // Ribbon: offset vertex indices and embedded residue_idx
+            Self::offset_vertex_residue_idx(
+                &mut all_ribbon_verts,
+                &mesh.ribbon_verts,
+                global_residue_offset,
+            );
             for &idx in &mesh.ribbon_inds {
                 all_ribbon_inds.push(idx + ribbon_vert_offset);
             }
@@ -633,8 +664,12 @@ impl SceneProcessor {
             all_bns_picking.extend_from_slice(&mesh.bns_picking_capsules);
             total_bns_picking_count += mesh.bns_picking_count;
 
-            // NA: offset indices
-            all_na_verts.extend_from_slice(&mesh.na_verts);
+            // NA: offset vertex indices and embedded residue_idx
+            Self::offset_vertex_residue_idx(
+                &mut all_na_verts,
+                &mesh.na_verts,
+                global_residue_offset,
+            );
             for &idx in &mesh.na_inds {
                 all_na_inds.push(idx + na_vert_offset);
             }
@@ -692,7 +727,7 @@ impl SceneProcessor {
 
             // Track entity residue range
             entity_residue_ranges.push((
-                *group_id,
+                *entity_id,
                 global_residue_offset,
                 mesh.residue_count,
             ));

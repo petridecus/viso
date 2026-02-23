@@ -2,6 +2,7 @@ use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;
 
+use super::screen_pass::ScreenPass;
 use crate::gpu::{
     render_context::RenderContext, shader_composer::ShaderComposer,
 };
@@ -80,6 +81,11 @@ pub struct SsaoRenderer {
     pub blur_bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group for the blur pass.
     pub blur_bind_group: wgpu::BindGroup,
+
+    /// Stored depth view for bind group recreation on resize.
+    depth_view: wgpu::TextureView,
+    /// Stored normal view for bind group recreation on resize.
+    normal_view: wgpu::TextureView,
 
     width: u32,
     height: u32,
@@ -270,7 +276,7 @@ impl SsaoRenderer {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Pipeline Layout"),
                 bind_group_layouts: &[&ssao_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -297,7 +303,7 @@ impl SsaoRenderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -379,7 +385,7 @@ impl SsaoRenderer {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Blur Pipeline Layout"),
                 bind_group_layouts: &[&blur_bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -406,7 +412,7 @@ impl SsaoRenderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -453,6 +459,8 @@ impl SsaoRenderer {
             blur_pipeline,
             blur_bind_group_layout,
             blur_bind_group,
+            depth_view: depth_view.clone(),
+            normal_view: normal_view.clone(),
             width,
             height,
             radius,
@@ -705,53 +713,14 @@ impl SsaoRenderer {
         );
     }
 
-    /// Recreate SSAO textures and bind groups after a window resize.
-    pub fn resize(
+    /// Update the external geometry views used in bind group recreation.
+    pub fn set_geometry_views(
         &mut self,
-        context: &RenderContext,
-        depth_view: &wgpu::TextureView,
-        normal_view: &wgpu::TextureView,
+        depth: wgpu::TextureView,
+        normal: wgpu::TextureView,
     ) {
-        if context.render_width() == self.width
-            && context.render_height() == self.height
-        {
-            return;
-        }
-
-        self.width = context.render_width();
-        self.height = context.render_height();
-
-        self.ssao_texture =
-            Self::create_ssao_texture(context, self.width, self.height);
-        self.ssao_view = self.ssao_texture.create_view(&Default::default());
-        self.ssao_blurred_texture =
-            Self::create_ssao_texture(context, self.width, self.height);
-        self.ssao_blurred_view =
-            self.ssao_blurred_texture.create_view(&Default::default());
-
-        self.ssao_bind_group = Self::create_ssao_bind_group(
-            context,
-            &self.ssao_bind_group_layout,
-            &SsaoViews {
-                depth: depth_view,
-                noise: &self.noise_view,
-                normal: normal_view,
-                sampler: &self.ssao_sampler,
-                noise_sampler: &self.noise_sampler,
-                kernel_buffer: &self.kernel_buffer,
-                params_buffer: &self.params_buffer,
-            },
-        );
-
-        self.blur_bind_group = Self::create_blur_bind_group(
-            context,
-            &self.blur_bind_group_layout,
-            &self.ssao_view,
-            &self.ssao_sampler,
-            depth_view,
-            normal_view,
-            &self.params_buffer,
-        );
+        self.depth_view = depth;
+        self.normal_view = normal;
     }
 
     /// Render SSAO (call after geometry pass)
@@ -810,5 +779,58 @@ impl SsaoRenderer {
     /// Get the final (blurred) SSAO texture view for the composite pass.
     pub fn get_ssao_view(&self) -> &wgpu::TextureView {
         &self.ssao_blurred_view
+    }
+}
+
+impl ScreenPass for SsaoRenderer {
+    fn label(&self) -> &'static str {
+        "SSAO"
+    }
+
+    fn render(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.render_ssao(encoder);
+    }
+
+    fn resize(&mut self, context: &RenderContext) {
+        if context.render_width() == self.width
+            && context.render_height() == self.height
+        {
+            return;
+        }
+
+        self.width = context.render_width();
+        self.height = context.render_height();
+
+        self.ssao_texture =
+            Self::create_ssao_texture(context, self.width, self.height);
+        self.ssao_view = self.ssao_texture.create_view(&Default::default());
+        self.ssao_blurred_texture =
+            Self::create_ssao_texture(context, self.width, self.height);
+        self.ssao_blurred_view =
+            self.ssao_blurred_texture.create_view(&Default::default());
+
+        self.ssao_bind_group = Self::create_ssao_bind_group(
+            context,
+            &self.ssao_bind_group_layout,
+            &SsaoViews {
+                depth: &self.depth_view,
+                noise: &self.noise_view,
+                normal: &self.normal_view,
+                sampler: &self.ssao_sampler,
+                noise_sampler: &self.noise_sampler,
+                kernel_buffer: &self.kernel_buffer,
+                params_buffer: &self.params_buffer,
+            },
+        );
+
+        self.blur_bind_group = Self::create_blur_bind_group(
+            context,
+            &self.blur_bind_group_layout,
+            &self.ssao_view,
+            &self.ssao_sampler,
+            &self.depth_view,
+            &self.normal_view,
+            &self.params_buffer,
+        );
     }
 }

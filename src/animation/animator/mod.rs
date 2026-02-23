@@ -359,11 +359,12 @@ impl StructureAnimator {
         let raw_t = self.progress();
 
         // If no runner or animation complete, return target positions
-        if self.runner.is_none() || raw_t >= 1.0 {
+        let Some(runner) = self.runner.as_ref() else {
+            return self.target_sidechain_positions.clone();
+        };
+        if raw_t >= 1.0 {
             return self.target_sidechain_positions.clone();
         }
-
-        let runner = self.runner.as_ref().unwrap();
         let behavior = runner.behavior();
 
         let ctx = behavior.compute_context(raw_t);

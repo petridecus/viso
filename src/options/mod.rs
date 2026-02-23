@@ -27,6 +27,8 @@ pub use post_processing::PostProcessingOptions;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::error::VisoError;
+
 /// Top-level options container. All sub-structs use `#[serde(default)]` so
 /// partial TOML files (e.g. only overriding `[lighting]`) work correctly.
 #[derive(
@@ -60,28 +62,20 @@ impl Options {
     }
 
     /// Load options from a TOML file. Missing fields use defaults.
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    pub fn load(path: &Path) -> Result<Self, VisoError> {
+        let content = std::fs::read_to_string(path).map_err(VisoError::Io)?;
         toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+            .map_err(|e| VisoError::OptionsParse(e.to_string()))
     }
 
     /// Save options to a TOML file (pretty-printed).
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    pub fn save(&self, path: &Path) -> Result<(), VisoError> {
         let content = toml::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize options: {}", e))?;
+            .map_err(|e| VisoError::OptionsParse(e.to_string()))?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!(
-                    "Failed to create directory {}: {}",
-                    parent.display(),
-                    e
-                )
-            })?;
+            std::fs::create_dir_all(parent).map_err(VisoError::Io)?;
         }
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+        std::fs::write(path, content).map_err(VisoError::Io)
     }
 
     /// List available preset names (TOML file stems) in a directory.

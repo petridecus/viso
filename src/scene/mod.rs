@@ -1,17 +1,11 @@
-//! Authoritative scene: entity groups, focus cycling, aggregated render data.
+//! Authoritative scene: flat entity storage, focus cycling, per-entity
+//! render data.
 //!
-//! Everything is a `MoleculeEntity`. They're organized into **groups**
-//! (entities loaded/created together from one file or operation).
+//! Everything is a [`MoleculeEntity`]. Each entity is wrapped in a
+//! [`SceneEntity`] that pairs the core data with rendering metadata
+//! (visibility, name, SS override, score cache, mesh version).
 
 pub mod processor;
-
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
 
 use foldit_conv::{
     coords::{
@@ -25,29 +19,12 @@ use foldit_conv::{
     },
     secondary_structure::SSType,
     types::assembly::{
-        prepare_combined_assembly, protein_coords as assembly_protein_coords,
-        residue_count as assembly_residue_count, split_combined_result,
-        update_entities_from_backend, update_protein_entities,
+        protein_coords as assembly_protein_coords, update_protein_entities,
     },
 };
 use glam::Vec3;
 
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-
-// ---------------------------------------------------------------------------
-// IDs
-// ---------------------------------------------------------------------------
-
-/// Unique group identifier (atomic counter, assigned by Scene).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GroupId(pub u64);
-
-impl GroupId {
-    fn next() -> Self {
-        static COUNTER: AtomicU64 = AtomicU64::new(1);
-        Self(COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Focus
@@ -56,37 +33,20 @@ impl GroupId {
 /// Focus state for tab cycling.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Focus {
-    /// All groups.
+    /// All entities.
     #[default]
     Session,
-    /// A specific loaded group (protein + ligands + etc.)
-    Group(GroupId),
-    /// A specific non-protein entity by globally-unique entity_id.
+    /// A specific entity by ID.
     Entity(u32),
 }
 
 // ---------------------------------------------------------------------------
-// Per-residue render data (forwarded from controllers)
+// Cached per-entity rendering data
 // ---------------------------------------------------------------------------
 
-/// Per-residue render data aggregated from controllers.
-#[derive(Debug, Clone, Default)]
-pub struct ResidueRenderData {
-    /// Ramachandran plot colors per residue.
-    pub rama_colors: Option<Vec<[f32; 3]>>,
-    /// Blueprint colors per residue.
-    pub blueprint_colors: Option<Vec<[f32; 3]>>,
-    /// Selected residue indices.
-    pub selection: Vec<u32>,
-}
-
-// ---------------------------------------------------------------------------
-// Cached per-group rendering data
-// ---------------------------------------------------------------------------
-
-/// Cached rendering data for a single group's protein entities.
+/// Cached rendering data for a single entity's protein content.
 #[derive(Debug, Clone)]
-pub struct GroupRenderData {
+pub struct EntityRenderData {
     /// Extracted backbone and sidechain coordinates for rendering.
     pub render_coords: RenderCoords,
     /// Full amino acid sequence string.
@@ -96,28 +56,28 @@ pub struct GroupRenderData {
 }
 
 // ---------------------------------------------------------------------------
-// PerGroupData — per-group data for scene processor
+// PerEntityData — per-entity data for scene processor
 // ---------------------------------------------------------------------------
 
-/// Sidechain atom data for a single group (local indices).
+/// Sidechain atom data for a single entity (local indices).
 #[derive(Debug, Clone)]
 pub struct SidechainAtom {
     /// Atom position in world space.
     pub position: Vec3,
     /// Whether this atom is hydrophobic.
     pub is_hydrophobic: bool,
-    /// Local residue index within the group.
+    /// Local residue index within the entity.
     pub residue_idx: u32,
     /// PDB atom name (e.g. "CB", "CG").
     pub atom_name: String,
 }
 
-/// All render data for a single group, ready for the scene processor.
-/// Indices are LOCAL (0-based within the group).
+/// All render data for a single entity, ready for the scene processor.
+/// Indices are LOCAL (0-based within the entity).
 #[derive(Debug, Clone)]
-pub struct PerGroupData {
-    /// Group identifier.
-    pub id: GroupId,
+pub struct PerEntityData {
+    /// Entity identifier.
+    pub id: u32,
     /// Monotonic version counter for cache invalidation.
     pub mesh_version: u64,
     /// Protein backbone atom chains (N, CA, C triplets).
@@ -142,64 +102,63 @@ pub struct PerGroupData {
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
     /// Base ring geometry from DNA/RNA entities.
     pub nucleic_acid_rings: Vec<NucleotideRing>,
-    /// Total residue count in this group.
+    /// Total residue count in this entity.
     pub residue_count: u32,
 }
 
 // ---------------------------------------------------------------------------
-// EntityGroup
+// SceneEntity
 // ---------------------------------------------------------------------------
 
-/// A group of entities loaded together (from one file or one backend
-/// operation).
+/// A scene entity wrapping a single [`MoleculeEntity`] with rendering
+/// metadata.
 #[derive(Debug, Clone)]
-pub struct EntityGroup {
-    /// Unique group identifier.
-    pub id: GroupId,
-    /// Whether this group is visible in the scene.
+pub struct SceneEntity {
+    /// Core molecule data from foldit-conv.
+    pub entity: MoleculeEntity,
+    /// Whether this entity is visible in the scene.
     pub visible: bool,
-    /// Human-readable name (e.g. filename).
+    /// Human-readable name (defaults to entity label).
     pub name: String,
-    entities: Vec<MoleculeEntity>,
-    mesh_version: u64,
     /// Pre-computed secondary structure assignments.
     pub ss_override: Option<Vec<SSType>>,
     /// Cached per-residue energy scores from Rosetta (raw data for viz).
     pub per_residue_scores: Option<Vec<f64>>,
-    /// Cached per-group rendering data (derived from protein entities).
-    render_cache: Option<GroupRenderData>,
+    mesh_version: u64,
+    render_cache: Option<EntityRenderData>,
 }
 
-impl EntityGroup {
-    /// Human-readable name.
-    pub fn name(&self) -> &str {
-        &self.name
+impl SceneEntity {
+    /// Entity identifier (delegates to `entity.entity_id`).
+    #[must_use]
+    pub fn id(&self) -> u32 {
+        self.entity.entity_id
     }
 
-    /// Access entities (immutable).
-    pub fn entities(&self) -> &[MoleculeEntity] {
-        &self.entities
+    /// Immutable access to the underlying molecule entity.
+    #[must_use]
+    pub fn entity(&self) -> &MoleculeEntity {
+        &self.entity
     }
 
-    /// Mutable access to entities. Bumps mesh_version.
-    pub fn entities_mut(&mut self) -> &mut Vec<MoleculeEntity> {
+    /// Replace the underlying entity data. Preserves the scene-assigned
+    /// entity ID. Bumps mesh version and invalidates the render cache.
+    pub fn set_entity(&mut self, entity: MoleculeEntity) {
+        let id = self.entity.entity_id; // preserve scene-assigned ID
+        self.entity = entity;
+        self.entity.entity_id = id;
         self.mesh_version += 1;
-        &mut self.entities
-    }
-
-    /// Replace entities. Bumps mesh_version.
-    pub fn set_entities(&mut self, entities: Vec<MoleculeEntity>) {
-        self.entities = entities;
-        self.mesh_version += 1;
+        self.render_cache = None;
     }
 
     /// Current mesh version (cache key for scene processor).
+    #[must_use]
     pub fn mesh_version(&self) -> u64 {
         self.mesh_version
     }
 
-    /// Derive (or return cached) render data from protein entities.
-    pub fn render_data(&mut self) -> Option<&GroupRenderData> {
+    /// Derive (or return cached) render data from protein content.
+    pub fn render_data(&mut self) -> Option<&EntityRenderData> {
         if self.render_cache.is_none() {
             self.render_cache = self.compute_render_data();
         }
@@ -219,9 +178,14 @@ impl EntityGroup {
         self.per_residue_scores = scores;
     }
 
-    /// Get protein-only Coords for this group.
+    /// Get protein-only Coords for this entity.
+    #[must_use]
     pub fn protein_coords(&self) -> Option<Coords> {
-        let coords = assembly_protein_coords(&self.entities);
+        if self.entity.molecule_type != MoleculeType::Protein {
+            return None;
+        }
+        let coords =
+            assembly_protein_coords(std::slice::from_ref(&self.entity));
         if coords.num_atoms == 0 {
             None
         } else {
@@ -229,12 +193,13 @@ impl EntityGroup {
         }
     }
 
-    /// Get merged Coords for ALL entities.
+    /// Get merged Coords for this entity.
+    #[must_use]
     pub fn all_coords(&self) -> Option<Coords> {
-        if self.entities.is_empty() {
+        if self.entity.coords.num_atoms == 0 {
             return None;
         }
-        let coords = merge_entities(&self.entities);
+        let coords = merge_entities(std::slice::from_ref(&self.entity));
         if coords.num_atoms == 0 {
             None
         } else {
@@ -242,97 +207,110 @@ impl EntityGroup {
         }
     }
 
-    /// Build PerGroupData from this group's current state.
-    pub fn to_per_group_data(&mut self) -> Option<PerGroupData> {
-        // Collect non-protein entities and nucleic acid data
-        let mut non_protein_entities = Vec::new();
-        let mut nucleic_acid_chains = Vec::new();
-        let mut nucleic_acid_rings = Vec::new();
-
-        for entity in &self.entities {
-            if entity.molecule_type != MoleculeType::Protein {
-                non_protein_entities.push(entity.clone());
+    /// Build [`PerEntityData`] from this entity's current state.
+    pub fn to_per_entity_data(&mut self) -> Option<PerEntityData> {
+        match self.entity.molecule_type {
+            MoleculeType::Protein => self.per_entity_data_protein(),
+            MoleculeType::DNA | MoleculeType::RNA => {
+                self.per_entity_data_nucleic_acid()
             }
-            if matches!(
-                entity.molecule_type,
-                MoleculeType::DNA | MoleculeType::RNA
-            ) {
-                nucleic_acid_chains.extend(entity.extract_p_atom_chains());
-                nucleic_acid_rings.extend(entity.extract_base_rings());
-            }
+            _ => self.per_entity_data_non_protein(),
         }
+    }
 
+    /// Render data for a protein entity.
+    fn per_entity_data_protein(&mut self) -> Option<PerEntityData> {
+        let id = self.entity.entity_id;
+        let mesh_version = self.mesh_version;
         let ss_override = self.ss_override.clone();
+        let per_residue_scores = self.per_residue_scores.clone();
 
-        // Get protein render data
-        let render_data = self.render_data();
-        let (
-            backbone_chains,
-            backbone_chain_ids,
-            backbone_residue_chains,
-            sidechain_atoms,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
-            residue_count_val,
-        ) = if let Some(rd) = render_data {
-            let rc = &rd.render_coords;
-            let res_count: u32 = rc
-                .backbone_chains
-                .iter()
-                .map(|c| (c.len() / 3) as u32)
-                .sum();
+        let render_data = self.render_data()?;
+        let rc = &render_data.render_coords;
+        let res_count: u32 = rc
+            .backbone_chains
+            .iter()
+            .map(|c| (c.len() / 3) as u32)
+            .sum();
 
-            let sc_atoms: Vec<SidechainAtom> = rc
-                .sidechain_atoms
-                .iter()
-                .map(|a| SidechainAtom {
-                    position: a.position,
-                    is_hydrophobic: a.is_hydrophobic,
-                    residue_idx: a.residue_idx,
-                    atom_name: a.atom_name.clone(),
-                })
-                .collect();
+        let sc_atoms: Vec<SidechainAtom> = rc
+            .sidechain_atoms
+            .iter()
+            .map(|a| SidechainAtom {
+                position: a.position,
+                is_hydrophobic: a.is_hydrophobic,
+                residue_idx: a.residue_idx,
+                atom_name: a.atom_name.clone(),
+            })
+            .collect();
 
-            (
-                rc.backbone_chains.clone(),
-                rc.backbone_chain_ids.clone(),
-                rc.backbone_residue_chains.clone(),
-                sc_atoms,
-                rc.sidechain_bonds.clone(),
-                rc.backbone_sidechain_bonds.clone(),
-                res_count,
-            )
-        } else {
-            (vec![], vec![], vec![], vec![], vec![], vec![], 0)
-        };
-
-        // Skip groups with no geometry at all
-        if backbone_chains.is_empty()
-            && non_protein_entities.is_empty()
-            && nucleic_acid_chains.is_empty()
-        {
-            return None;
-        }
-
-        Some(PerGroupData {
-            id: self.id,
-            mesh_version: self.mesh_version,
-            backbone_chains,
-            backbone_chain_ids,
-            backbone_residue_chains,
-            sidechain_atoms,
-            sidechain_bonds,
-            backbone_sidechain_bonds,
+        Some(PerEntityData {
+            id,
+            mesh_version,
+            backbone_chains: rc.backbone_chains.clone(),
+            backbone_chain_ids: rc.backbone_chain_ids.clone(),
+            backbone_residue_chains: rc.backbone_residue_chains.clone(),
+            sidechain_atoms: sc_atoms,
+            sidechain_bonds: rc.sidechain_bonds.clone(),
+            backbone_sidechain_bonds: rc.backbone_sidechain_bonds.clone(),
             ss_override,
-            per_residue_scores: self.per_residue_scores.clone(),
-            non_protein_entities,
-            nucleic_acid_chains,
-            nucleic_acid_rings,
-            residue_count: residue_count_val,
+            per_residue_scores,
+            non_protein_entities: vec![],
+            nucleic_acid_chains: vec![],
+            nucleic_acid_rings: vec![],
+            residue_count: res_count,
         })
     }
 
-    fn compute_render_data(&self) -> Option<GroupRenderData> {
+    /// Render data for a DNA/RNA entity.
+    fn per_entity_data_nucleic_acid(&self) -> Option<PerEntityData> {
+        let chains = self.entity.extract_p_atom_chains();
+        let rings = self.entity.extract_base_rings();
+        if chains.is_empty() && rings.is_empty() {
+            return None;
+        }
+        Some(PerEntityData {
+            id: self.entity.entity_id,
+            mesh_version: self.mesh_version,
+            backbone_chains: vec![],
+            backbone_chain_ids: vec![],
+            backbone_residue_chains: vec![],
+            sidechain_atoms: vec![],
+            sidechain_bonds: vec![],
+            backbone_sidechain_bonds: vec![],
+            ss_override: None,
+            per_residue_scores: None,
+            non_protein_entities: vec![self.entity.clone()],
+            nucleic_acid_chains: chains,
+            nucleic_acid_rings: rings,
+            residue_count: 0,
+        })
+    }
+
+    /// Render data for a non-protein, non-nucleic-acid entity.
+    fn per_entity_data_non_protein(&self) -> Option<PerEntityData> {
+        if self.entity.coords.num_atoms == 0 {
+            return None;
+        }
+        Some(PerEntityData {
+            id: self.entity.entity_id,
+            mesh_version: self.mesh_version,
+            backbone_chains: vec![],
+            backbone_chain_ids: vec![],
+            backbone_residue_chains: vec![],
+            sidechain_atoms: vec![],
+            sidechain_bonds: vec![],
+            backbone_sidechain_bonds: vec![],
+            ss_override: None,
+            per_residue_scores: None,
+            non_protein_entities: vec![self.entity.clone()],
+            nucleic_acid_chains: vec![],
+            nucleic_acid_rings: vec![],
+            residue_count: 0,
+        })
+    }
+
+    fn compute_render_data(&self) -> Option<EntityRenderData> {
         let protein_coords = self.protein_coords()?;
         let coords = protein_only(&protein_coords);
         if coords.num_atoms == 0 {
@@ -347,7 +325,7 @@ impl EntityGroup {
 
         let (sequence, chain_sequences) = extract_sequences(&coords);
 
-        Some(GroupRenderData {
+        Some(EntityRenderData {
             render_coords,
             sequence,
             chain_sequences,
@@ -356,76 +334,15 @@ impl EntityGroup {
 }
 
 // ---------------------------------------------------------------------------
-// Aggregated render data (kept for backward compat with animation etc.)
-// ---------------------------------------------------------------------------
-
-/// Pre-computed aggregated data for efficient rendering across all visible
-/// groups.
-#[derive(Debug, Clone, Default)]
-pub struct AggregatedRenderData {
-    /// Concatenated backbone atom chains across all visible groups.
-    pub backbone_chains: Vec<Vec<Vec3>>,
-    /// Chain IDs for each backbone chain.
-    pub backbone_chain_ids: Vec<u8>,
-    /// Per-chain backbone residue data.
-    pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
-    /// All sidechain atom positions (global indices).
-    pub sidechain_positions: Vec<Vec3>,
-    /// Hydrophobicity flag per sidechain atom.
-    pub sidechain_hydrophobicity: Vec<bool>,
-    /// Global residue index per sidechain atom.
-    pub sidechain_residue_indices: Vec<u32>,
-    /// PDB atom name per sidechain atom.
-    pub sidechain_atom_names: Vec<String>,
-    /// Sidechain intra-residue bonds (global atom indices).
-    pub sidechain_bonds: Vec<(u32, u32)>,
-    /// Backbone-to-sidechain bonds (CA position, global atom idx).
-    pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
-    /// All atom positions for camera fitting.
-    pub all_positions: Vec<Vec3>,
-    /// Flat secondary structure types across all residues.
-    pub ss_types: Option<Vec<SSType>>,
-    /// Per-residue rendering data from controllers.
-    pub residue_render_data: ResidueRenderData,
-    /// All non-protein entities across all visible groups (for
-    /// ball-and-stick).
-    pub non_protein_entities: Vec<MoleculeEntity>,
-    /// P-atom chains from DNA/RNA entities (for nucleic acid ribbon
-    /// rendering).
-    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
-    /// Base ring geometry from DNA/RNA entities (for filled polygon
-    /// rendering).
-    pub nucleic_acid_rings: Vec<NucleotideRing>,
-}
-
-// ---------------------------------------------------------------------------
-// CombinedCoordsResult
-// ---------------------------------------------------------------------------
-
-/// Result of combining coords from all visible groups for Rosetta.
-#[derive(Debug, Clone)]
-pub struct CombinedCoordsResult {
-    /// Combined ASSEM01 coordinate bytes for Rosetta.
-    pub bytes: Vec<u8>,
-    /// Chain IDs assigned to each group (for splitting Rosetta exports by
-    /// chain).
-    pub chain_ids_per_group: Vec<(GroupId, Vec<u8>)>,
-    /// Residue ranges per group: GroupId -> (start_residue, end_residue) -
-    /// 1-indexed, inclusive.
-    pub residue_ranges: HashMap<GroupId, (usize, usize)>,
-}
-
-// ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
 
-/// The authoritative scene. Owns all entity groups.
+/// The authoritative scene. Owns all entities in a flat list.
 pub struct Scene {
-    /// Groups in insertion order.
-    groups: Vec<EntityGroup>,
+    /// Entities in insertion order.
+    entities: Vec<SceneEntity>,
     focus: Focus,
     next_entity_id: u32,
-    agg_cache: Option<Arc<AggregatedRenderData>>,
     /// Monotonically increasing generation; bumped on any mutation.
     generation: u64,
     /// Generation that was last consumed by the renderer.
@@ -433,13 +350,13 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// Create an empty scene with no groups and session-level focus.
+    /// Create an empty scene with no entities and session-level focus.
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            groups: Vec::new(),
+            entities: Vec::new(),
             focus: Focus::Session,
             next_entity_id: 0,
-            agg_cache: None,
             generation: 0,
             rendered_generation: 0,
         }
@@ -448,11 +365,11 @@ impl Scene {
     // -- Mutation helpers --
 
     fn invalidate(&mut self) {
-        self.agg_cache = None;
         self.generation += 1;
     }
 
     /// Whether scene data changed since last `mark_rendered()`.
+    #[must_use]
     pub fn is_dirty(&self) -> bool {
         self.generation != self.rendered_generation
     }
@@ -468,95 +385,108 @@ impl Scene {
         self.rendered_generation = self.generation;
     }
 
-    // -- Group management --
+    // -- Entity management --
 
-    /// Add a group of entities. Entity IDs are reassigned to be globally
-    /// unique.
-    pub fn add_group(
-        &mut self,
-        mut entities: Vec<MoleculeEntity>,
-        name: impl Into<String>,
-    ) -> GroupId {
-        // Reassign globally unique entity IDs
-        for entity in &mut entities {
-            entity.entity_id = self.next_entity_id;
+    /// Add entities to the scene. Entity IDs are reassigned to be globally
+    /// unique. Returns the assigned entity IDs.
+    pub fn add_entities(&mut self, entities: Vec<MoleculeEntity>) -> Vec<u32> {
+        let mut ids = Vec::with_capacity(entities.len());
+        for mut entity in entities {
+            let id = self.next_entity_id;
             self.next_entity_id += 1;
+            entity.entity_id = id;
+            let name = entity.label();
+            self.entities.push(SceneEntity {
+                entity,
+                visible: true,
+                name,
+                ss_override: None,
+                per_residue_scores: None,
+                mesh_version: 0,
+                render_cache: None,
+            });
+            ids.push(id);
         }
-
-        let id = GroupId::next();
-        self.groups.push(EntityGroup {
-            id,
-            visible: true,
-            name: name.into(),
-            entities,
-            mesh_version: 0,
-            ss_override: None,
-            per_residue_scores: None,
-            render_cache: None,
-        });
         self.invalidate();
-        id
+        ids
     }
 
-    /// Remove a group by ID. Returns the removed group, if any.
-    pub fn remove_group(&mut self, id: GroupId) -> Option<EntityGroup> {
-        let idx = self.groups.iter().position(|g| g.id == id)?;
-        let group = self.groups.remove(idx);
+    /// Remove an entity by ID. Returns the removed entity, if any.
+    pub fn remove_entity(&mut self, id: u32) -> Option<SceneEntity> {
+        let idx = self.entities.iter().position(|e| e.id() == id)?;
+        let entity = self.entities.remove(idx);
         self.invalidate();
-        Some(group)
+        Some(entity)
     }
 
-    /// Read access to a group.
-    pub fn group(&self, id: GroupId) -> Option<&EntityGroup> {
-        self.groups.iter().find(|g| g.id == id)
+    /// Remove multiple entities by ID.
+    pub fn remove_entities(&mut self, ids: &[u32]) {
+        self.entities.retain(|e| !ids.contains(&e.id()));
+        self.invalidate();
+    }
+
+    /// Replace all entities whose IDs are in `old_ids` with new entities.
+    /// Returns the new entity IDs.
+    pub fn replace_entities(
+        &mut self,
+        old_ids: &[u32],
+        new_entities: Vec<MoleculeEntity>,
+    ) -> Vec<u32> {
+        self.entities.retain(|e| !old_ids.contains(&e.id()));
+        self.add_entities(new_entities)
+    }
+
+    /// Read access to an entity.
+    #[must_use]
+    pub fn entity(&self, id: u32) -> Option<&SceneEntity> {
+        self.entities.iter().find(|e| e.id() == id)
     }
 
     /// Write access (invalidates cache).
-    pub fn group_mut(&mut self, id: GroupId) -> Option<&mut EntityGroup> {
+    pub fn entity_mut(&mut self, id: u32) -> Option<&mut SceneEntity> {
         self.invalidate();
-        self.groups.iter_mut().find(|g| g.id == id)
+        self.entities.iter_mut().find(|e| e.id() == id)
     }
 
-    /// Ordered group IDs.
-    pub fn group_ids(&self) -> Vec<GroupId> {
-        self.groups.iter().map(|g| g.id).collect()
+    /// Read access to all entities (insertion order).
+    #[must_use]
+    pub fn entities(&self) -> &[SceneEntity] {
+        &self.entities
     }
 
-    /// Number of groups.
-    pub fn group_count(&self) -> usize {
-        self.groups.len()
+    /// Number of entities.
+    #[must_use]
+    pub fn entity_count(&self) -> usize {
+        self.entities.len()
     }
 
     /// Toggle visibility.
-    pub fn set_visible(&mut self, id: GroupId, visible: bool) {
-        if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
-            if g.visible != visible {
-                g.visible = visible;
+    pub fn set_visible(&mut self, id: u32, visible: bool) {
+        if let Some(e) = self.entities.iter_mut().find(|e| e.id() == id) {
+            if e.visible != visible {
+                e.visible = visible;
                 self.invalidate();
             }
         }
     }
 
-    /// Remove all groups and reset.
+    /// Remove all entities and reset.
     pub fn clear(&mut self) {
-        self.groups.clear();
+        self.entities.clear();
         self.focus = Focus::Session;
         self.invalidate();
     }
 
-    /// Check if a group exists.
-    pub fn contains(&self, id: GroupId) -> bool {
-        self.groups.iter().any(|g| g.id == id)
-    }
-
-    /// Iterate over all groups (insertion order).
-    pub fn iter(&self) -> impl Iterator<Item = &EntityGroup> {
-        self.groups.iter()
+    /// Check if an entity exists.
+    #[must_use]
+    pub fn contains(&self, id: u32) -> bool {
+        self.entities.iter().any(|e| e.id() == id)
     }
 
     // -- Focus / tab cycling --
 
     /// Current focus state.
+    #[must_use]
     pub fn focus(&self) -> &Focus {
         &self.focus
     }
@@ -566,46 +496,25 @@ impl Scene {
         self.focus = focus;
     }
 
-    /// Cycle: Session -> Group1 -> ... -> GroupN -> focusable entities ->
-    /// Session.
+    /// Cycle: Session -> Entity1 -> ... -> EntityN -> Session.
     pub fn cycle_focus(&mut self) -> Focus {
-        let focusable_entities: Vec<u32> = self
-            .groups
+        let focusable: Vec<u32> = self
+            .entities
             .iter()
-            .filter(|g| g.visible)
-            .flat_map(|g| g.entities().iter())
-            .filter(|e| e.is_focusable())
-            .map(|e| e.entity_id)
+            .filter(|e| e.visible)
+            .map(|e| e.id())
             .collect();
 
-        let group_ids = self.group_ids();
-
         self.focus = match self.focus {
-            Focus::Session => group_ids
+            Focus::Session => focusable
                 .first()
-                .map(|&id| Focus::Group(id))
-                .or_else(|| {
-                    focusable_entities.first().map(|&id| Focus::Entity(id))
-                })
+                .map(|&id| Focus::Entity(id))
                 .unwrap_or(Focus::Session),
-            Focus::Group(current_id) => {
-                let idx = group_ids.iter().position(|&id| id == current_id);
-                match idx {
-                    Some(i) if i + 1 < group_ids.len() => {
-                        Focus::Group(group_ids[i + 1])
-                    }
-                    _ => focusable_entities
-                        .first()
-                        .map(|&id| Focus::Entity(id))
-                        .unwrap_or(Focus::Session),
-                }
-            }
             Focus::Entity(current_id) => {
-                let idx =
-                    focusable_entities.iter().position(|&id| id == current_id);
+                let idx = focusable.iter().position(|&id| id == current_id);
                 match idx {
-                    Some(i) if i + 1 < focusable_entities.len() => {
-                        Focus::Entity(focusable_entities[i + 1])
+                    Some(i) if i + 1 < focusable.len() => {
+                        Focus::Entity(focusable[i + 1])
                     }
                     _ => Focus::Session,
                 }
@@ -614,328 +523,68 @@ impl Scene {
         self.focus
     }
 
-    /// Revert to Session if focused group/entity was removed.
+    /// Revert to Session if focused entity was removed.
     pub fn validate_focus(&mut self) {
-        match self.focus {
-            Focus::Session => {}
-            Focus::Group(id) => {
-                if !self.contains(id) {
-                    self.focus = Focus::Session;
-                }
-            }
-            Focus::Entity(eid) => {
-                let exists = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| g.entities().iter())
-                    .any(|e| e.entity_id == eid);
-                if !exists {
-                    self.focus = Focus::Session;
-                }
+        if let Focus::Entity(eid) = self.focus {
+            if !self.contains(eid) {
+                self.focus = Focus::Session;
             }
         }
     }
 
     /// Human-readable description of current focus.
+    #[must_use]
     pub fn focus_description(&self) -> String {
         match self.focus {
-            Focus::Session => "Session (all structures)".to_string(),
-            Focus::Group(id) => {
-                let idx =
-                    self.groups.iter().position(|g| g.id == id).unwrap_or(0)
-                        + 1;
-                let name = self
-                    .group(id)
-                    .map(|g| g.name().to_string())
-                    .unwrap_or_default();
-                format!("Structure {} ({})", idx, name)
-            }
-            Focus::Entity(eid) => {
-                for g in &self.groups {
-                    for e in g.entities() {
-                        if e.entity_id == eid {
-                            return e.label();
-                        }
-                    }
-                }
-                "Entity (unknown)".to_string()
-            }
+            Focus::Session => "Session (all structures)".into(),
+            Focus::Entity(eid) => self
+                .entity(eid)
+                .map(|e| e.name.clone())
+                .unwrap_or_else(|| "Entity (unknown)".into()),
         }
     }
 
-    // -- Per-group data for scene processor --
+    // -- Per-entity data for scene processor --
 
-    /// Collect per-group render data for all visible groups.
-    pub fn per_group_data(&mut self) -> Vec<PerGroupData> {
-        self.groups
+    /// Collect per-entity render data for all visible entities.
+    pub fn per_entity_data(&mut self) -> Vec<PerEntityData> {
+        self.entities
             .iter_mut()
-            .filter(|g| g.visible)
-            .filter_map(|g| g.to_per_group_data())
+            .filter(|e| e.visible)
+            .filter_map(|e| e.to_per_entity_data())
             .collect()
     }
 
-    /// All atom positions across all visible groups (for camera fitting).
+    /// All atom positions across all visible entities (for camera fitting).
+    #[must_use]
     pub fn all_positions(&self) -> Vec<Vec3> {
-        self.groups
+        self.entities
             .iter()
-            .filter(|g| g.visible)
-            .flat_map(|g| g.entities().iter())
+            .filter(|e| e.visible)
             .flat_map(|e| {
-                e.coords.atoms.iter().map(|a| Vec3::new(a.x, a.y, a.z))
+                e.entity
+                    .coords
+                    .atoms
+                    .iter()
+                    .map(|a| Vec3::new(a.x, a.y, a.z))
             })
             .collect()
     }
 
-    // -- Aggregated data (lazy cached, for animation/passthrough) --
-
-    /// Get aggregated render data. Computed lazily and cached.
-    pub fn aggregated(&mut self) -> Arc<AggregatedRenderData> {
-        if self.agg_cache.is_none() {
-            self.agg_cache = Some(Arc::new(self.compute_aggregated()));
-        }
-        Arc::clone(self.agg_cache.as_ref().unwrap())
-    }
-
-    fn compute_aggregated(&mut self) -> AggregatedRenderData {
-        let mut data = AggregatedRenderData::default();
-        let mut global_residue_offset: u32 = 0;
-        let mut has_any_ss_override = false;
-        let mut ss_parts: Vec<(u32, Option<Vec<SSType>>, u32)> = Vec::new();
-
-        for group in &mut self.groups {
-            if !group.visible {
-                continue;
+    /// Update protein entity coords in a specific entity.
+    pub fn update_entity_protein_coords(&mut self, id: u32, coords: Coords) {
+        if let Some(se) =
+            self.entities.iter_mut().find(|e| e.entity.entity_id == id)
+        {
+            // Wrap in a temporary Vec for the assembly update function
+            let mut entities = vec![se.entity.clone()];
+            update_protein_entities(&mut entities, coords);
+            if let Some(updated) = entities.into_iter().next() {
+                se.entity = updated;
             }
-
-            // Collect non-protein entities for ball-and-stick, and NA chains
-            // for ribbon
-            for entity in group.entities() {
-                if entity.molecule_type != MoleculeType::Protein {
-                    data.non_protein_entities.push(entity.clone());
-                }
-                if matches!(
-                    entity.molecule_type,
-                    MoleculeType::DNA | MoleculeType::RNA
-                ) {
-                    let p_chains = entity.extract_p_atom_chains();
-                    for chain in &p_chains {
-                        data.all_positions.extend(chain);
-                    }
-                    data.nucleic_acid_chains.extend(p_chains);
-                    data.nucleic_acid_rings.extend(entity.extract_base_rings());
-                }
-            }
-
-            // Capture ss_override before the mutable borrow from render_data()
-            let ss_override = group.ss_override.clone();
-
-            let group_name = group.name().to_string();
-            let render_data = match group.render_data() {
-                Some(rd) => {
-                    log::debug!(
-                        "group '{}': {} backbone chains, {} residues, {} \
-                         sidechain atoms",
-                        group_name,
-                        rd.render_coords.backbone_chains.len(),
-                        rd.render_coords
-                            .backbone_chains
-                            .iter()
-                            .map(|c| c.len() / 3)
-                            .sum::<usize>(),
-                        rd.render_coords.sidechain_atoms.len(),
-                    );
-                    rd
-                }
-                None => {
-                    log::debug!(
-                        "group '{}': no protein render data",
-                        group_name
-                    );
-                    continue;
-                }
-            };
-
-            let atom_offset = data.sidechain_positions.len() as u32;
-
-            // Count residues
-            let structure_residue_count: u32 = render_data
-                .render_coords
-                .backbone_chains
-                .iter()
-                .map(|c| (c.len() / 3) as u32)
-                .sum();
-
-            // Track SS override
-            if ss_override.is_some() {
-                has_any_ss_override = true;
-            }
-            ss_parts.push((
-                global_residue_offset,
-                ss_override,
-                structure_residue_count,
-            ));
-
-            // Aggregate backbone
-            for chain in &render_data.render_coords.backbone_chains {
-                data.backbone_chains.push(chain.clone());
-                data.all_positions.extend(chain);
-            }
-            for chain_id in &render_data.render_coords.backbone_chain_ids {
-                data.backbone_chain_ids.push(*chain_id);
-            }
-            for residue_chain in
-                &render_data.render_coords.backbone_residue_chains
-            {
-                data.backbone_residue_chains.push(residue_chain.clone());
-            }
-
-            // Aggregate sidechain atoms with global residue indices
-            for atom in &render_data.render_coords.sidechain_atoms {
-                data.sidechain_positions.push(atom.position);
-                data.sidechain_hydrophobicity.push(atom.is_hydrophobic);
-                data.sidechain_residue_indices
-                    .push(atom.residue_idx + global_residue_offset);
-                data.sidechain_atom_names.push(atom.atom_name.clone());
-                data.all_positions.push(atom.position);
-            }
-
-            // Aggregate bonds (adjust indices by offset)
-            for &(a, b) in &render_data.render_coords.sidechain_bonds {
-                data.sidechain_bonds
-                    .push((a + atom_offset, b + atom_offset));
-            }
-
-            // Aggregate backbone-sidechain bonds
-            for &(ca_pos, cb_idx) in
-                &render_data.render_coords.backbone_sidechain_bonds
-            {
-                data.backbone_sidechain_bonds
-                    .push((ca_pos, cb_idx + atom_offset));
-            }
-
-            global_residue_offset += structure_residue_count;
-        }
-
-        // Build flat ss_types if any group has an override
-        if has_any_ss_override {
-            let total_residues = global_residue_offset as usize;
-            let mut ss_types = vec![SSType::Coil; total_residues];
-            for (offset, ss_override, count) in &ss_parts {
-                if let Some(overrides) = ss_override {
-                    let start = *offset as usize;
-                    let end = (start + *count as usize).min(total_residues);
-                    for (i, &ss) in overrides.iter().enumerate() {
-                        if start + i < end {
-                            ss_types[start + i] = ss;
-                        }
-                    }
-                }
-            }
-            data.ss_types = Some(ss_types);
-        }
-
-        data
-    }
-
-    // -- Backend support (combined coords for Rosetta) --
-
-    /// Get combined ASSEM01 bytes from all visible groups for Rosetta
-    /// operations.
-    pub fn combined_coords_for_backend(&self) -> Option<CombinedCoordsResult> {
-        let visible_groups: Vec<&EntityGroup> = self
-            .groups
-            .iter()
-            .filter(|g| g.visible && assembly_residue_count(g.entities()) > 0)
-            .collect();
-
-        if visible_groups.is_empty() {
-            return None;
-        }
-
-        let entity_slices: Vec<&[MoleculeEntity]> =
-            visible_groups.iter().map(|g| g.entities()).collect();
-        let group_ids: Vec<GroupId> =
-            visible_groups.iter().map(|g| g.id).collect();
-
-        let combined = prepare_combined_assembly(&entity_slices)?;
-
-        let chain_ids_per_group: Vec<(GroupId, Vec<u8>)> = group_ids
-            .iter()
-            .zip(combined.chain_ids.iter())
-            .map(|(&gid, chains)| (gid, chains.clone()))
-            .collect();
-
-        let residue_ranges: HashMap<GroupId, (usize, usize)> = group_ids
-            .iter()
-            .zip(combined.residue_ranges.iter())
-            .map(|(&gid, &range)| (gid, range))
-            .collect();
-
-        Some(CombinedCoordsResult {
-            bytes: combined.bytes,
-            chain_ids_per_group,
-            residue_ranges,
-        })
-    }
-
-    /// Apply combined Rosetta update to all groups in the session.
-    pub fn apply_combined_update(
-        &mut self,
-        coords_bytes: &[u8],
-        chain_ids_per_group: &[(GroupId, Vec<u8>)],
-    ) -> Result<(), String> {
-        let chain_ids_list: Vec<Vec<u8>> = chain_ids_per_group
-            .iter()
-            .map(|(_, chains)| chains.clone())
-            .collect();
-
-        let split_coords =
-            split_combined_result(coords_bytes, &chain_ids_list)?;
-
-        for (i, (group_id, _)) in chain_ids_per_group.iter().enumerate() {
-            let structure_coords = &split_coords[i];
-            if structure_coords.num_atoms == 0 {
-                log::warn!("No atoms found for group {:?}", group_id);
-                continue;
-            }
-
-            if let Some(group) =
-                self.groups.iter_mut().find(|g| g.id == *group_id)
-            {
-                update_entities_from_backend(
-                    group.entities_mut(),
-                    structure_coords.clone(),
-                );
-                group.invalidate_render_cache();
-                log::info!(
-                    "Updated group {:?} from backend ({} atoms)",
-                    group_id,
-                    structure_coords.num_atoms
-                );
-            }
-        }
-
-        self.invalidate();
-        Ok(())
-    }
-
-    /// Update protein entities' coords in a specific group.
-    pub fn update_group_protein_coords(&mut self, id: GroupId, coords: Coords) {
-        if let Some(group) = self.groups.iter_mut().find(|g| g.id == id) {
-            update_protein_entities(group.entities_mut(), coords);
-            group.invalidate_render_cache();
+            se.invalidate_render_cache();
         }
         self.invalidate();
-    }
-
-    /// Get visible group IDs and their residue counts (for Rosetta topology
-    /// check).
-    pub fn visible_residue_counts(&self) -> Vec<(GroupId, usize)> {
-        self.groups
-            .iter()
-            .filter(|g| g.visible)
-            .map(|g| (g.id, assembly_residue_count(g.entities())))
-            .collect()
     }
 }
 

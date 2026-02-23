@@ -7,6 +7,7 @@
 
 use wgpu::util::DeviceExt;
 
+use super::screen_pass::ScreenPass;
 use crate::gpu::{
     render_context::RenderContext, shader_composer::ShaderComposer,
 };
@@ -22,6 +23,8 @@ pub struct FxaaPass {
     pub input_texture: wgpu::Texture,
     /// View into the FXAA input texture.
     pub input_view: wgpu::TextureView,
+    /// Swapchain surface view, set each frame before render.
+    output_view: Option<wgpu::TextureView>,
     width: u32,
     height: u32,
 }
@@ -116,7 +119,7 @@ impl FxaaPass {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("FXAA Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                immediate_size: 0,
+                push_constant_ranges: &[],
             },
         );
 
@@ -143,7 +146,7 @@ impl FxaaPass {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
+                multiview: None,
                 cache: None,
             },
         );
@@ -156,6 +159,7 @@ impl FxaaPass {
             screen_size_buffer,
             input_texture,
             input_view,
+            output_view: None,
             width,
             height,
         }
@@ -216,13 +220,26 @@ impl FxaaPass {
             })
     }
 
-    /// Render FXAA pass: read from input_view, write to output_view
-    /// (swapchain).
-    pub fn render(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        output_view: &wgpu::TextureView,
-    ) {
+    /// Set the output view (swapchain surface) for this frame.
+    pub fn set_output_view(&mut self, view: wgpu::TextureView) {
+        self.output_view = Some(view);
+    }
+
+    /// Get the input view for composite to render into.
+    pub fn get_input_view(&self) -> &wgpu::TextureView {
+        &self.input_view
+    }
+}
+
+impl ScreenPass for FxaaPass {
+    fn label(&self) -> &'static str {
+        "FXAA"
+    }
+
+    fn render(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(output_view) = &self.output_view else {
+            return;
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("FXAA Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -243,13 +260,7 @@ impl FxaaPass {
         pass.draw(0..3, 0..1);
     }
 
-    /// Get the input view for composite to render into.
-    pub fn get_input_view(&self) -> &wgpu::TextureView {
-        &self.input_view
-    }
-
-    /// Resize textures and recreate bind group on window resize.
-    pub fn resize(&mut self, context: &RenderContext) {
+    fn resize(&mut self, context: &RenderContext) {
         let width = context.render_width();
         let height = context.render_height();
         if width == self.width && height == self.height {

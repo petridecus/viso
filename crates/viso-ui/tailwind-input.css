@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Foldit design tokens ─────────────────────────────────────────────── */
+
+:root {
+    --menu-bg-color: #1f2937;
+    --menu-hover-bg-color: #374151;
+    --bright-green: rgba(178, 252, 81, 1.0);
+    --dull-green: rgba(138, 184, 61, 1.0);
+    --bright-purple: rgba(126, 18, 148, 1.0);
+    --pale-gray: rgba(74, 73, 70, 1.0);
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: #171717;
+    overflow: hidden;
+    overscroll-behavior: none;
+    user-select: none;
+    font-family: 'Noto Sans', sans-serif;
+}
+
+*:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+    @apply rounded-md;
+}
+
+::-webkit-scrollbar-track {
+    background-color: #1f2937;
+    @apply rounded-md;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #374151;
+    border-radius: 4px;
+    border: 2px solid #1f2937;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 #1f2937;
+}
+
+/* ── Side panel (full-height, edge-to-edge) ───────────────────────────── */
+
+.side-panel {
+    @apply bg-neutral-900 text-white/90 w-full h-screen;
+    @apply px-3 py-2 overflow-y-auto overflow-x-hidden;
+}
+
+/* ── Section (collapsible group) ──────────────────────────────────────── */
+
+.section-header {
+    @apply cursor-pointer font-semibold text-sm text-white;
+    @apply py-1.5 border-b border-white/10;
+}
+
+.section-body {
+    @apply py-2 pl-2;
+}
+
+/* ── Field rows ───────────────────────────────────────────────────────── */
+
+.field-row {
+    @apply mb-2;
+}
+
+.field-label {
+    @apply block text-xs font-medium mb-1 text-gray-400;
+}
+
+/* ── Slider (native range input) ──────────────────────────────────────── */
+
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 9999px;
+    background: #404040;
+    cursor: pointer;
+    margin: 4px 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #60a5fa;
+    background: #171717;
+    cursor: pointer;
+    transition: box-shadow 0.15s;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+
+/* ── Checkbox ─────────────────────────────────────────────────────────── */
+
+.options-checkbox {
+    @apply flex items-center space-x-2;
+}
+
+.options-checkbox input[type="checkbox"] {
+    @apply accent-white w-4 h-4 rounded cursor-pointer;
+}
+
+/* ── Dropdown ─────────────────────────────────────────────────────────── */
+
+.options-dropdown {
+    @apply relative w-full;
+}
+
+.options-dropdown select {
+    @apply w-full px-2.5 py-1.5 pr-8;
+    @apply bg-neutral-700 border border-neutral-600 rounded-md text-gray-100 text-sm;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500;
+    @apply appearance-none cursor-pointer;
+}
+
+.options-dropdown select:hover {
+    @apply bg-neutral-600;
+}
+
+/* ── Text input ───────────────────────────────────────────────────────── */
+
+.text-input {
+    @apply w-full px-2.5 py-1.5;
+    @apply bg-neutral-700 border border-neutral-600 rounded-md text-gray-100 text-sm;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500;
+}
