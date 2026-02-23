@@ -22,13 +22,12 @@ use glam::Vec3;
 use super::PerEntityData;
 use crate::{
     animation::AnimationAction,
-    options::{ColorOptions, DisplayOptions},
+    options::{ColorOptions, DisplayOptions, GeometryOptions},
     renderer::molecular::{
+        backbone::BackboneRenderer,
         ball_and_stick::BallAndStickRenderer,
         capsule_sidechain::CapsuleSidechainRenderer,
         nucleic_acid::NucleicAcidRenderer,
-        ribbon::{RibbonParams, RibbonRenderer},
-        tube::TubeRenderer,
     },
     util::score_color,
 };
@@ -64,18 +63,23 @@ pub enum SceneRequest {
         display: DisplayOptions,
         /// Current color options for mesh generation.
         colors: ColorOptions,
+        /// Current geometry options for mesh generation.
+        geometry: GeometryOptions,
     },
-    /// Per-frame animation mesh generation (tube + ribbon + optional
-    /// sidechains).
+    /// Per-frame animation mesh generation (backbone + optional sidechains).
     AnimationFrame {
         /// Interpolated backbone atom chains.
         backbone_chains: Vec<Vec<Vec3>>,
+        /// Nucleic acid P-atom chains for backbone rendering.
+        na_chains: Vec<Vec<Vec3>>,
         /// Optional interpolated sidechain data.
         sidechains: Option<AnimationSidechainData>,
         /// Secondary structure types for the current frame.
         ss_types: Option<Vec<SSType>>,
         /// Per-residue colors for the current frame.
         per_residue_colors: Option<Vec<[f32; 3]>>,
+        /// Geometry options for mesh generation.
+        geometry: GeometryOptions,
     },
     /// Shut down the background thread.
     Shutdown,
@@ -84,19 +88,16 @@ pub enum SceneRequest {
 /// All pre-computed CPU data, ready for GPU-only upload on the main thread.
 #[derive(Clone)]
 pub struct PreparedScene {
-    /// Tube mesh vertex bytes.
-    pub tube_vertices: Vec<u8>,
-    /// Tube mesh index bytes.
-    pub tube_indices: Vec<u8>,
-    /// Number of tube indices.
-    pub tube_index_count: u32,
-
-    /// Ribbon mesh vertex bytes.
-    pub ribbon_vertices: Vec<u8>,
-    /// Ribbon mesh index bytes.
-    pub ribbon_indices: Vec<u8>,
-    /// Number of ribbon indices.
-    pub ribbon_index_count: u32,
+    /// Backbone mesh vertex bytes (shared by tube and ribbon passes).
+    pub backbone_vertices: Vec<u8>,
+    /// Backbone tube index bytes (back-face culled pass).
+    pub backbone_tube_indices: Vec<u8>,
+    /// Number of backbone tube indices.
+    pub backbone_tube_index_count: u32,
+    /// Backbone ribbon index bytes (no-cull pass).
+    pub backbone_ribbon_indices: Vec<u8>,
+    /// Number of backbone ribbon indices.
+    pub backbone_ribbon_index_count: u32,
     /// Per-residue sheet normal offsets for sidechain adjustment.
     pub sheet_offsets: Vec<(u32, Vec3)>,
 
@@ -127,6 +128,8 @@ pub struct PreparedScene {
 
     /// Backbone chains for animation setup.
     pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Nucleic acid P-atom chains.
+    pub na_chains: Vec<Vec<Vec3>>,
     /// Sidechain atom positions.
     pub sidechain_positions: Vec<Vec3>,
     /// Sidechain intra-residue bonds.
@@ -154,8 +157,6 @@ pub struct PreparedScene {
     pub entity_residue_ranges: Vec<(u32, u32, u32)>,
     /// Non-protein entities for ball-and-stick rendering.
     pub non_protein_entities: Vec<MoleculeEntity>,
-    /// P-atom chains from DNA/RNA entities.
-    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
     /// Base ring geometry from DNA/RNA entities.
     pub nucleic_acid_rings: Vec<NucleotideRing>,
 }
@@ -163,18 +164,16 @@ pub struct PreparedScene {
 /// Pre-computed animation frame data, ready for GPU upload.
 #[derive(Clone)]
 pub struct PreparedAnimationFrame {
-    /// Tube mesh vertex bytes.
-    pub tube_vertices: Vec<u8>,
-    /// Tube mesh index bytes.
-    pub tube_indices: Vec<u8>,
-    /// Number of tube indices.
-    pub tube_index_count: u32,
-    /// Ribbon mesh vertex bytes.
-    pub ribbon_vertices: Vec<u8>,
-    /// Ribbon mesh index bytes.
-    pub ribbon_indices: Vec<u8>,
-    /// Number of ribbon indices.
-    pub ribbon_index_count: u32,
+    /// Backbone mesh vertex bytes (shared by tube and ribbon passes).
+    pub backbone_vertices: Vec<u8>,
+    /// Backbone tube index bytes.
+    pub backbone_tube_indices: Vec<u8>,
+    /// Number of backbone tube indices.
+    pub backbone_tube_index_count: u32,
+    /// Backbone ribbon index bytes.
+    pub backbone_ribbon_indices: Vec<u8>,
+    /// Number of backbone ribbon indices.
+    pub backbone_ribbon_index_count: u32,
     /// Per-residue sheet normal offsets.
     pub sheet_offsets: Vec<(u32, Vec3)>,
     /// Optional sidechain capsule instance bytes.
@@ -190,12 +189,11 @@ pub struct PreparedAnimationFrame {
 /// Cached mesh data for a single group. Stored as byte buffers ready for
 /// concatenation, plus typed intermediates needed for index offsetting.
 struct CachedEntityMesh {
-    // Tube
-    tube_verts: Vec<u8>,
-    tube_inds: Vec<u32>,
-    // Ribbon
-    ribbon_verts: Vec<u8>,
-    ribbon_inds: Vec<u32>,
+    // Backbone (unified vertex buffer, partitioned index buffers)
+    backbone_verts: Vec<u8>,
+    backbone_tube_inds: Vec<u32>,
+    backbone_ribbon_inds: Vec<u32>,
+    backbone_vert_count: u32,
     sheet_offsets: Vec<(u32, Vec3)>,
     // Sidechain capsules
     sidechain_instances: Vec<u8>,
@@ -207,16 +205,14 @@ struct CachedEntityMesh {
     bns_capsule_count: u32,
     bns_picking_capsules: Vec<u8>,
     bns_picking_count: u32,
-    // Nucleic acid
+    // Nucleic acid (ring + stem only; backbone handled by BackboneRenderer)
     na_verts: Vec<u8>,
     na_inds: Vec<u32>,
-    // Counts for index offsetting
-    tube_vert_count: u32,
-    ribbon_vert_count: u32,
     na_vert_count: u32,
     residue_count: u32,
     // Passthrough per-group (for concatenation into global passthrough)
     backbone_chains: Vec<Vec<Vec3>>,
+    nucleic_acid_chains: Vec<Vec<Vec3>>,
     sidechain_positions: Vec<Vec3>,
     sidechain_bonds: Vec<(u32, u32)>,
     sidechain_hydrophobicity: Vec<bool>,
@@ -227,7 +223,6 @@ struct CachedEntityMesh {
     /// Per-residue colors derived from scores (cached to avoid recomputation).
     per_residue_colors: Option<Vec<[f32; 3]>>,
     non_protein_entities: Vec<MoleculeEntity>,
-    nucleic_acid_chains: Vec<Vec<Vec3>>,
     nucleic_acid_rings: Vec<NucleotideRing>,
 }
 
@@ -295,6 +290,7 @@ impl SceneProcessor {
             HashMap::new();
         let mut last_display: Option<DisplayOptions> = None;
         let mut last_colors: Option<ColorOptions> = None;
+        let mut last_geometry: Option<GeometryOptions> = None;
 
         while let Ok(request) = request_rx.recv() {
             // Drain any queued requests, keep only the latest.
@@ -318,16 +314,19 @@ impl SceneProcessor {
                     entity_actions,
                     display,
                     colors,
+                    geometry,
                 } => {
                     // Clear cache if global settings changed
                     let settings_changed = last_display.as_ref()
                         != Some(&display)
-                        || last_colors.as_ref() != Some(&colors);
+                        || last_colors.as_ref() != Some(&colors)
+                        || last_geometry.as_ref() != Some(&geometry);
 
                     if settings_changed {
                         mesh_cache.clear();
                         last_display = Some(display.clone());
                         last_colors = Some(colors.clone());
+                        last_geometry = Some(geometry.clone());
                     }
 
                     // Generate or reuse per-entity meshes
@@ -341,7 +340,7 @@ impl SceneProcessor {
 
                         if needs_regen {
                             let mesh = Self::generate_entity_mesh(
-                                e, &display, &colors,
+                                e, &display, &colors, &geometry,
                             );
                             let _ =
                                 mesh_cache.insert(e.id, (e.mesh_version, mesh));
@@ -370,15 +369,19 @@ impl SceneProcessor {
                 }
                 SceneRequest::AnimationFrame {
                     backbone_chains,
+                    na_chains,
                     sidechains,
                     ss_types,
                     per_residue_colors,
+                    geometry,
                 } => {
                     let prepared = Self::process_animation_frame(
                         backbone_chains,
+                        na_chains,
                         sidechains,
                         ss_types,
                         per_residue_colors,
+                        &geometry,
                     );
                     anim_input.write(Some(prepared));
                 }
@@ -391,6 +394,7 @@ impl SceneProcessor {
         g: &PerEntityData,
         display: &DisplayOptions,
         colors: &ColorOptions,
+        geometry: &GeometryOptions,
     ) -> CachedEntityMesh {
         // Derive per-residue colors from scores when in score coloring mode
         use crate::options::BackboneColorMode;
@@ -407,33 +411,17 @@ impl SceneProcessor {
             | BackboneColorMode::Chain => None,
         };
 
-        // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
-        let tube_filter = {
-            let mut coil_only = HashSet::new();
-            let _ = coil_only.insert(SSType::Coil);
-            Some(coil_only)
-        };
-        let (tube_verts_typed, tube_inds) =
-            TubeRenderer::generate_tube_mesh_colored(
+        // --- Backbone mesh (protein + nucleic acid, unified) ---
+        let (backbone_verts_typed, backbone_tube_inds, backbone_ribbon_inds, sheet_offsets) =
+            BackboneRenderer::generate_mesh_colored(
                 &g.backbone_chains,
-                &tube_filter,
+                &g.nucleic_acid_chains,
                 g.ss_override.as_deref(),
                 per_residue_colors.as_deref(),
+                geometry,
             );
-        let tube_vert_count = tube_verts_typed.len() as u32;
-        let tube_verts = bytemuck::cast_slice(&tube_verts_typed).to_vec();
-
-        // --- Ribbon mesh ---
-        let params = RibbonParams::default();
-        let (ribbon_verts_typed, ribbon_inds, sheet_offsets) =
-            RibbonRenderer::generate_from_ca_only_colored(
-                &g.backbone_chains,
-                &params,
-                g.ss_override.as_deref(),
-                per_residue_colors.as_deref(),
-            );
-        let ribbon_vert_count = ribbon_verts_typed.len() as u32;
-        let ribbon_verts = bytemuck::cast_slice(&ribbon_verts_typed).to_vec();
+        let backbone_vert_count = backbone_verts_typed.len() as u32;
+        let backbone_verts = bytemuck::cast_slice(&backbone_verts_typed).to_vec();
 
         // --- Sidechain capsules ---
         let sidechain_positions: Vec<Vec3> =
@@ -500,10 +488,10 @@ impl SceneProcessor {
             .collect();
 
         CachedEntityMesh {
-            tube_verts,
-            tube_inds,
-            ribbon_verts,
-            ribbon_inds,
+            backbone_verts,
+            backbone_tube_inds,
+            backbone_ribbon_inds,
+            backbone_vert_count,
             sheet_offsets,
             sidechain_instances,
             sidechain_instance_count,
@@ -515,11 +503,10 @@ impl SceneProcessor {
             bns_picking_count,
             na_verts,
             na_inds,
-            tube_vert_count,
-            ribbon_vert_count,
             na_vert_count,
             residue_count: g.residue_count,
             backbone_chains: g.backbone_chains.clone(),
+            nucleic_acid_chains: g.nucleic_acid_chains.clone(),
             sidechain_positions,
             sidechain_bonds: g.sidechain_bonds.clone(),
             sidechain_hydrophobicity,
@@ -529,14 +516,13 @@ impl SceneProcessor {
             ss_override: g.ss_override.clone(),
             per_residue_colors,
             non_protein_entities: g.non_protein_entities.clone(),
-            nucleic_acid_chains: g.nucleic_acid_chains.clone(),
             nucleic_acid_rings: g.nucleic_acid_rings.clone(),
         }
     }
 
     /// Offset the `residue_idx` field embedded in raw vertex bytes.
     ///
-    /// `TubeVertex`, `RibbonVertex`, and `NaVertex` all share the same 52-byte
+    /// `BackboneVertex` and `NaVertex` share the same 52-byte
     /// layout with a `u32 residue_idx` at byte offset 36. When concatenating
     /// vertices from multiple entities, each entity's local residue indices
     /// must be shifted by the global offset so the GPU's per-residue color
@@ -569,15 +555,11 @@ impl SceneProcessor {
         entity_meshes: &[(u32, &CachedEntityMesh)],
         entity_actions: HashMap<u32, AnimationAction>,
     ) -> PreparedScene {
-        // --- Tube ---
-        let mut all_tube_verts: Vec<u8> = Vec::new();
-        let mut all_tube_inds: Vec<u32> = Vec::new();
-        let mut tube_vert_offset: u32 = 0;
-
-        // --- Ribbon ---
-        let mut all_ribbon_verts: Vec<u8> = Vec::new();
-        let mut all_ribbon_inds: Vec<u32> = Vec::new();
-        let mut ribbon_vert_offset: u32 = 0;
+        // --- Backbone (unified vertex buffer, partitioned index buffers) ---
+        let mut all_backbone_verts: Vec<u8> = Vec::new();
+        let mut all_backbone_tube_inds: Vec<u32> = Vec::new();
+        let mut all_backbone_ribbon_inds: Vec<u32> = Vec::new();
+        let mut backbone_vert_offset: u32 = 0;
         let mut all_sheet_offsets: Vec<(u32, Vec3)> = Vec::new();
 
         // --- Sidechain ---
@@ -625,32 +607,24 @@ impl SceneProcessor {
         for (entity_id, mesh) in entity_meshes {
             let sc_atom_offset = all_sidechain_positions.len() as u32;
 
-            // Tube: offset vertex indices and embedded residue_idx
+            // Backbone: offset vertex residue_idx and indices
             Self::offset_vertex_residue_idx(
-                &mut all_tube_verts,
-                &mesh.tube_verts,
+                &mut all_backbone_verts,
+                &mesh.backbone_verts,
                 global_residue_offset,
             );
-            for &idx in &mesh.tube_inds {
-                all_tube_inds.push(idx + tube_vert_offset);
+            for &idx in &mesh.backbone_tube_inds {
+                all_backbone_tube_inds.push(idx + backbone_vert_offset);
             }
-            tube_vert_offset += mesh.tube_vert_count;
-
-            // Ribbon: offset vertex indices and embedded residue_idx
-            Self::offset_vertex_residue_idx(
-                &mut all_ribbon_verts,
-                &mesh.ribbon_verts,
-                global_residue_offset,
-            );
-            for &idx in &mesh.ribbon_inds {
-                all_ribbon_inds.push(idx + ribbon_vert_offset);
+            for &idx in &mesh.backbone_ribbon_inds {
+                all_backbone_ribbon_inds.push(idx + backbone_vert_offset);
             }
             // Sheet offsets: offset residue indices
             for &(res_idx, offset) in &mesh.sheet_offsets {
                 all_sheet_offsets
                     .push((res_idx + global_residue_offset, offset));
             }
-            ribbon_vert_offset += mesh.ribbon_vert_count;
+            backbone_vert_offset += mesh.backbone_vert_count;
 
             // Sidechain: concatenate directly (instances are self-contained)
             all_sidechain.extend_from_slice(&mesh.sidechain_instances);
@@ -756,12 +730,15 @@ impl SceneProcessor {
         };
 
         PreparedScene {
-            tube_vertices: all_tube_verts,
-            tube_indices: bytemuck::cast_slice(&all_tube_inds).to_vec(),
-            tube_index_count: all_tube_inds.len() as u32,
-            ribbon_vertices: all_ribbon_verts,
-            ribbon_indices: bytemuck::cast_slice(&all_ribbon_inds).to_vec(),
-            ribbon_index_count: all_ribbon_inds.len() as u32,
+            backbone_vertices: all_backbone_verts,
+            backbone_tube_indices: bytemuck::cast_slice(&all_backbone_tube_inds)
+                .to_vec(),
+            backbone_tube_index_count: all_backbone_tube_inds.len() as u32,
+            backbone_ribbon_indices: bytemuck::cast_slice(
+                &all_backbone_ribbon_inds,
+            )
+            .to_vec(),
+            backbone_ribbon_index_count: all_backbone_ribbon_inds.len() as u32,
             sheet_offsets: all_sheet_offsets,
             sidechain_instances: all_sidechain,
             sidechain_instance_count: total_sidechain_count,
@@ -775,6 +752,7 @@ impl SceneProcessor {
             na_indices: bytemuck::cast_slice(&all_na_inds).to_vec(),
             na_index_count: all_na_inds.len() as u32,
             backbone_chains: all_backbone_chains,
+            na_chains: all_na_chains,
             sidechain_positions: all_sidechain_positions,
             sidechain_bonds: all_sidechain_bonds,
             sidechain_hydrophobicity: all_sidechain_hydrophobicity,
@@ -791,46 +769,35 @@ impl SceneProcessor {
             entity_actions,
             entity_residue_ranges,
             non_protein_entities: all_non_protein,
-            nucleic_acid_chains: all_na_chains,
             nucleic_acid_rings: all_na_rings,
         }
     }
 
-    /// Generate tube + ribbon + optional sidechain mesh for an animation frame.
+    /// Generate backbone + optional sidechain mesh for an animation frame.
     fn process_animation_frame(
         backbone_chains: Vec<Vec<Vec3>>,
+        na_chains: Vec<Vec<Vec3>>,
         sidechains: Option<AnimationSidechainData>,
         ss_types: Option<Vec<SSType>>,
         per_residue_colors: Option<Vec<[f32; 3]>>,
+        geometry: &GeometryOptions,
     ) -> PreparedAnimationFrame {
-        // --- Tube mesh (coils only; ribbons handle helices/sheets) ---
-        let tube_filter = {
-            let mut coil_only = HashSet::new();
-            let _ = coil_only.insert(SSType::Coil);
-            Some(coil_only)
-        };
-        let (tube_verts, tube_inds) = TubeRenderer::generate_tube_mesh_colored(
-            &backbone_chains,
-            &tube_filter,
-            ss_types.as_deref(),
-            per_residue_colors.as_deref(),
-        );
-        let tube_index_count = tube_inds.len() as u32;
-        let tube_vertices = bytemuck::cast_slice(&tube_verts).to_vec();
-        let tube_indices = bytemuck::cast_slice(&tube_inds).to_vec();
-
-        // --- Ribbon mesh ---
-        let params = RibbonParams::default();
-        let (ribbon_verts, ribbon_inds, sheet_offsets) =
-            RibbonRenderer::generate_from_ca_only_colored(
+        // --- Backbone mesh (protein + nucleic acid, unified) ---
+        let (verts, tube_inds, ribbon_inds, sheet_offsets) =
+            BackboneRenderer::generate_mesh_colored(
                 &backbone_chains,
-                &params,
+                &na_chains,
                 ss_types.as_deref(),
                 per_residue_colors.as_deref(),
+                geometry,
             );
-        let ribbon_index_count = ribbon_inds.len() as u32;
-        let ribbon_vertices = bytemuck::cast_slice(&ribbon_verts).to_vec();
-        let ribbon_indices = bytemuck::cast_slice(&ribbon_inds).to_vec();
+        let backbone_tube_index_count = tube_inds.len() as u32;
+        let backbone_ribbon_index_count = ribbon_inds.len() as u32;
+        let backbone_vertices = bytemuck::cast_slice(&verts).to_vec();
+        let backbone_tube_indices =
+            bytemuck::cast_slice(&tube_inds).to_vec();
+        let backbone_ribbon_indices =
+            bytemuck::cast_slice(&ribbon_inds).to_vec();
 
         // --- Optional sidechain capsules ---
         let (sidechain_instances, sidechain_instance_count) =
@@ -863,12 +830,11 @@ impl SceneProcessor {
             };
 
         PreparedAnimationFrame {
-            tube_vertices,
-            tube_indices,
-            tube_index_count,
-            ribbon_vertices,
-            ribbon_indices,
-            ribbon_index_count,
+            backbone_vertices,
+            backbone_tube_indices,
+            backbone_tube_index_count,
+            backbone_ribbon_indices,
+            backbone_ribbon_index_count,
             sheet_offsets,
             sidechain_instances,
             sidechain_instance_count,

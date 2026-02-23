@@ -18,16 +18,16 @@ use crate::{
 };
 
 impl ProteinRenderEngine {
-    /// Update backbone with new chains (regenerates the tube mesh)
+    /// Update backbone with new chains (regenerates the backbone mesh)
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
-        self.tube_renderer
-            .update_chains(&self.context.device, backbone_chains);
-        self.ribbon_renderer.update(
+        self.backbone_renderer.update(
             &self.context.device,
             &self.context.queue,
             backbone_chains,
-            None, // use cached ss_override
+            &[], // NA chains unchanged
+            None,
+            &self.options.geometry,
         );
     }
 
@@ -165,16 +165,16 @@ impl ProteinRenderEngine {
     }
 
     /// Set SS override (from puzzle.toml annotation). Updates cached types
-    /// and forces tube/ribbon renderer regeneration.
+    /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
         self.sc.cached_ss_types = ss_types.to_vec();
-        self.tube_renderer.set_ss_override(Some(ss_types.to_vec()));
-        self.tube_renderer
-            .regenerate(&self.context.device, &self.context.queue);
-        self.ribbon_renderer
+        self.backbone_renderer
             .set_ss_override(Some(ss_types.to_vec()));
-        self.ribbon_renderer
-            .regenerate(&self.context.device, &self.context.queue);
+        self.backbone_renderer.regenerate(
+            &self.context.device,
+            &self.context.queue,
+            &self.options.geometry,
+        );
     }
 
     /// Compute secondary structure types for all residues across all chains
@@ -205,7 +205,7 @@ impl ProteinRenderEngine {
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.ribbon_renderer
+        self.backbone_renderer
             .sheet_offsets()
             .iter()
             .copied()

@@ -47,8 +47,7 @@ pub struct Options {
     /// Color palette options.
     #[schemars(skip)]
     pub colors: ColorOptions,
-    /// Geometry detail options.
-    #[schemars(skip)]
+    /// Backbone and ligand geometry options.
     pub geometry: GeometryOptions,
     /// Keyboard binding options.
     #[schemars(skip)]
@@ -156,8 +155,10 @@ shininess = 80.0
 
         // Skipped sections should be absent
         assert!(!props.contains_key("colors"));
-        assert!(!props.contains_key("geometry"));
         assert!(!props.contains_key("keybindings"));
+
+        // Geometry should be present (exposed in UI)
+        assert!(props.contains_key("geometry"));
 
         // Lighting should have exposed fields but not skipped ones
         let lighting = &props["lighting"]["properties"];

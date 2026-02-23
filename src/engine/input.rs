@@ -190,7 +190,7 @@ impl ProteinRenderEngine {
         let target = residue_idx as usize;
 
         // Get backbone chains from tube renderer to determine chain boundaries
-        let chains = self.tube_renderer.cached_chains();
+        let chains = self.backbone_renderer.cached_chains();
 
         // Walk chains to find which one contains this residue
         let mut global_start = 0usize;

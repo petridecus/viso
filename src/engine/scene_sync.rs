@@ -9,6 +9,7 @@ use super::ProteinRenderEngine;
 use crate::{
     animation::AnimationAction,
     renderer::molecular::{
+        backbone::PreparedBackboneData,
         ball_and_stick::PreparedBallAndStickData,
         capsule_sidechain::SidechainData,
     },
@@ -41,20 +42,14 @@ impl ProteinRenderEngine {
         self.selection_buffer
             .ensure_capacity(&self.context.device, total_residues);
 
-        // Update backbone tubes
-        self.tube_renderer.update(
+        // Update backbone renderer (protein + NA)
+        self.backbone_renderer.update(
             &self.context.device,
             &self.context.queue,
             backbone_chains,
+            &[], // NA chains not available in this path
             ss_types,
-        );
-
-        // Update ribbon renderer
-        self.ribbon_renderer.update(
-            &self.context.device,
-            &self.context.queue,
-            backbone_chains,
-            ss_types,
+            &self.options.geometry,
         );
 
         // Translate sidechains onto sheet surface (whole sidechain, not just
@@ -129,6 +124,7 @@ impl ProteinRenderEngine {
             entity_actions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
+            geometry: self.options.geometry.clone(),
         });
     }
 
@@ -151,6 +147,7 @@ impl ProteinRenderEngine {
             entity_actions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
+            geometry: self.options.geometry.clone(),
         });
     }
 
@@ -250,35 +247,24 @@ impl ProteinRenderEngine {
         // generate correct topology.
         let animating = !prepared.entity_actions.is_empty();
         if animating {
-            self.tube_renderer.update_metadata(
+            self.backbone_renderer.update_metadata(
                 prepared.backbone_chains.clone(),
-                prepared.ss_types.clone(),
-            );
-            self.ribbon_renderer.update_metadata(
-                prepared.backbone_chains.clone(),
+                prepared.na_chains.clone(),
                 prepared.ss_types.clone(),
             );
         } else {
-            self.tube_renderer.apply_prepared(
+            self.backbone_renderer.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
-                crate::renderer::molecular::tube::PreparedTubeData {
-                    vertices: &prepared.tube_vertices,
-                    indices: &prepared.tube_indices,
-                    index_count: prepared.tube_index_count,
-                    cached_chains: prepared.backbone_chains.clone(),
-                    ss_override: prepared.ss_types.clone(),
-                },
-            );
-            self.ribbon_renderer.apply_prepared(
-                &self.context.device,
-                &self.context.queue,
-                crate::renderer::molecular::ribbon::PreparedRibbonData {
-                    vertices: &prepared.ribbon_vertices,
-                    indices: &prepared.ribbon_indices,
-                    index_count: prepared.ribbon_index_count,
+                PreparedBackboneData {
+                    vertices: &prepared.backbone_vertices,
+                    tube_indices: &prepared.backbone_tube_indices,
+                    ribbon_indices: &prepared.backbone_ribbon_indices,
+                    tube_index_count: prepared.backbone_tube_index_count,
+                    ribbon_index_count: prepared.backbone_ribbon_index_count,
                     sheet_offsets: prepared.sheet_offsets.clone(),
                     cached_chains: prepared.backbone_chains.clone(),
+                    cached_na_chains: prepared.na_chains.clone(),
                     ss_override: prepared.ss_types.clone(),
                 },
             );
@@ -307,13 +293,15 @@ impl ProteinRenderEngine {
             },
         );
 
-        self.nucleic_acid_renderer.apply_prepared(
-            &self.context.device,
-            &self.context.queue,
-            &prepared.na_vertices,
-            &prepared.na_indices,
-            prepared.na_index_count,
-        );
+        if !prepared.na_vertices.is_empty() {
+            self.nucleic_acid_renderer.apply_prepared(
+                &self.context.device,
+                &self.context.queue,
+                &prepared.na_vertices,
+                &prepared.na_indices,
+                prepared.na_index_count,
+            );
+        }
 
         // Recreate picking bind groups (buffers may have been reallocated)
         self.picking_groups.rebuild_all(
@@ -618,9 +606,11 @@ impl ProteinRenderEngine {
 
         self.scene_processor.submit(SceneRequest::AnimationFrame {
             backbone_chains,
+            na_chains: self.backbone_renderer.cached_na_chains().to_vec(),
             sidechains,
             ss_types,
             per_residue_colors: self.sc.cached_per_residue_colors.clone(),
+            geometry: self.options.geometry.clone(),
         });
     }
 
@@ -631,20 +621,14 @@ impl ProteinRenderEngine {
             None => return,
         };
 
-        self.tube_renderer.apply_mesh(
+        self.backbone_renderer.apply_mesh(
             &self.context.device,
             &self.context.queue,
-            &prepared.tube_vertices,
-            &prepared.tube_indices,
-            prepared.tube_index_count,
-        );
-
-        self.ribbon_renderer.apply_mesh(
-            &self.context.device,
-            &self.context.queue,
-            &prepared.ribbon_vertices,
-            &prepared.ribbon_indices,
-            prepared.ribbon_index_count,
+            &prepared.backbone_vertices,
+            &prepared.backbone_tube_indices,
+            &prepared.backbone_ribbon_indices,
+            prepared.backbone_tube_index_count,
+            prepared.backbone_ribbon_index_count,
             prepared.sheet_offsets,
         );
 

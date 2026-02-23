@@ -6,6 +6,6 @@ pub struct DrawBindGroups<'a> {
     pub lighting: &'a wgpu::BindGroup,
     /// Selection state storage buffer bind group.
     pub selection: &'a wgpu::BindGroup,
-    /// Per-residue color override (used by tube/ribbon only).
+    /// Per-residue color override (used by backbone renderer only).
     pub color: Option<&'a wgpu::BindGroup>,
 }

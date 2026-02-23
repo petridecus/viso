@@ -302,25 +302,17 @@ impl ApplicationHandler for ViewerApp {
                 }
                 #[cfg(feature = "gui")]
                 if let Some(ref wv) = self.webview {
-                    let _ = wv.set_bounds(
-                        crate::gui::webview::panel_bounds(
-                            event_size.width,
-                            event_size.height,
-                        ),
-                    );
+                    let _ = wv.set_bounds(crate::gui::webview::panel_bounds(
+                        event_size.width,
+                        event_size.height,
+                    ));
                 }
             }
 
-            WindowEvent::ScaleFactorChanged {
-                scale_factor, ..
-            } => {
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 #[allow(clippy::cast_possible_truncation)]
-                let render_scale =
-                    if scale_factor < 2.0 { 2 } else { 1 };
-                let inner = self
-                    .window
-                    .as_ref()
-                    .map(|w| w.inner_size());
+                let render_scale = if scale_factor < 2.0 { 2 } else { 1 };
+                let inner = self.window.as_ref().map(|w| w.inner_size());
                 if let Some(engine) = &mut self.engine {
                     engine.set_render_scale(render_scale);
                     if let Some(inner) = inner {
@@ -339,9 +331,7 @@ impl ApplicationHandler for ViewerApp {
                 }
 
                 let now = Instant::now();
-                let dt = now
-                    .duration_since(self.last_frame_time)
-                    .as_secs_f32();
+                let dt = now.duration_since(self.last_frame_time).as_secs_f32();
                 self.last_frame_time = now;
 
                 if let Some(engine) = &mut self.engine {
@@ -354,16 +344,12 @@ impl ApplicationHandler for ViewerApp {
                         ) => {
                             if let Some(w) = &self.window {
                                 let inner = w.inner_size();
-                                let (vp_w, vp_h) =
-                                    viewport_size(inner);
+                                let (vp_w, vp_h) = viewport_size(inner);
                                 engine.resize(vp_w, vp_h);
                             }
                         }
                         Err(e) => {
-                            log::error!(
-                                "render error: {:?}",
-                                e
-                            );
+                            log::error!("render error: {:?}", e);
                         }
                     }
                 }
@@ -375,22 +361,20 @@ impl ApplicationHandler for ViewerApp {
             WindowEvent::MouseInput { button, state, .. } => {
                 let pressed = state == ElementState::Pressed;
                 if let Some(engine) = &mut self.engine {
-                    let _ =
-                        engine.handle_input(InputEvent::MouseButton {
-                            button: MouseButton::from(button),
-                            pressed,
-                        });
+                    let _ = engine.handle_input(InputEvent::MouseButton {
+                        button: MouseButton::from(button),
+                        pressed,
+                    });
                 }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(engine) = &mut self.engine {
                     #[allow(clippy::cast_possible_truncation)]
-                    let _ =
-                        engine.handle_input(InputEvent::CursorMoved {
-                            x: position.x as f32,
-                            y: position.y as f32,
-                        });
+                    let _ = engine.handle_input(InputEvent::CursorMoved {
+                        x: position.x as f32,
+                        y: position.y as f32,
+                    });
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -401,15 +385,12 @@ impl ApplicationHandler for ViewerApp {
                 #[allow(clippy::cast_possible_truncation)]
                 let scroll_delta = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(pos) => {
-                        pos.y as f32 * 0.01
-                    }
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
                 };
                 if let Some(engine) = &mut self.engine {
-                    let _ =
-                        engine.handle_input(InputEvent::Scroll {
-                            delta: scroll_delta,
-                        });
+                    let _ = engine.handle_input(InputEvent::Scroll {
+                        delta: scroll_delta,
+                    });
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -418,11 +399,9 @@ impl ApplicationHandler for ViewerApp {
 
             WindowEvent::ModifiersChanged(modifiers) => {
                 if let Some(engine) = &mut self.engine {
-                    let _ = engine.handle_input(
-                        InputEvent::ModifiersChanged {
-                            shift: modifiers.state().shift_key(),
-                        },
-                    );
+                    let _ = engine.handle_input(InputEvent::ModifiersChanged {
+                        shift: modifiers.state().shift_key(),
+                    });
                 }
             }
 
@@ -431,9 +410,7 @@ impl ApplicationHandler for ViewerApp {
                     return;
                 }
                 use winit::keyboard::PhysicalKey;
-                let PhysicalKey::Code(code) =
-                    event.physical_key
-                else {
+                let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
                 let key_str = format!("{code:?}");

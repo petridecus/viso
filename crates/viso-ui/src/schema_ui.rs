@@ -30,9 +30,7 @@ fn display_name(s: &str) -> String {
 /// property group.
 #[component]
 pub fn SchemaPanel(schema: Value, options: Value) -> Element {
-    let properties = schema
-        .pointer("/properties")
-        .and_then(Value::as_object);
+    let properties = schema.pointer("/properties").and_then(Value::as_object);
 
     let Some(props) = properties else {
         return rsx! { p { "No schema loaded" } };
@@ -123,8 +121,8 @@ fn render_field(
         .unwrap_or_else(|| display_name(field));
 
     let field_type = schema.get("type").and_then(Value::as_str);
-    let has_enum = schema.get("enum").is_some()
-        || schema.get("oneOf").is_some();
+    let has_enum =
+        schema.get("enum").is_some() || schema.get("oneOf").is_some();
     let section_owned = section.to_owned();
     let field_owned = field.to_owned();
 
@@ -190,13 +188,10 @@ fn render_number_field(
     schema: &Value,
     current: Option<&Value>,
 ) -> Element {
-    let current_val = current
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let current_val = current.and_then(Value::as_f64).unwrap_or(0.0);
     let min = schema.get("minimum").and_then(Value::as_f64);
     let max = schema.get("maximum").and_then(Value::as_f64);
-    let is_int =
-        schema.get("type").and_then(Value::as_str) == Some("integer");
+    let is_int = schema.get("type").and_then(Value::as_str) == Some("integer");
     let step = if is_int { "1" } else { "0.01" };
 
     let section = section.to_owned();
@@ -265,9 +260,7 @@ fn render_enum_field(
             .filter_map(Value::as_str)
             .map(String::from)
             .collect()
-    } else if let Some(arr) =
-        schema.get("oneOf").and_then(Value::as_array)
-    {
+    } else if let Some(arr) = schema.get("oneOf").and_then(Value::as_array) {
         arr.iter()
             .filter_map(|v| {
                 v.get("const")
@@ -280,9 +273,7 @@ fn render_enum_field(
         Vec::new()
     };
 
-    let current_str = current
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let current_str = current.and_then(Value::as_str).unwrap_or("");
 
     let section = section.to_owned();
     let field = field.to_owned();
@@ -313,9 +304,7 @@ fn render_string_field(
     field: &str,
     current: Option<&Value>,
 ) -> Element {
-    let current_str = current
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let current_str = current.and_then(Value::as_str).unwrap_or("");
 
     let section = section.to_owned();
     let field = field.to_owned();

@@ -6,14 +6,13 @@ mod queries;
 mod scene_management;
 mod scene_sync;
 
-use std::{collections::HashSet, time::Instant};
+use std::time::Instant;
 
 use foldit_conv::{
     coords::{
         split_into_entities, structure_file_to_coords, MoleculeEntity,
         MoleculeType, RenderCoords,
     },
-    secondary_structure::SSType,
 };
 use glam::{Mat4, Vec3};
 
@@ -29,14 +28,13 @@ use crate::{
     picking::{picking_state::PickingState, Picking, SelectionBuffer},
     renderer::{
         molecular::{
+            backbone::BackboneRenderer,
             ball_and_stick::BallAndStickRenderer,
             band::BandRenderer,
             capsule_sidechain::{CapsuleSidechainRenderer, SidechainData},
             draw_context::DrawBindGroups,
             nucleic_acid::NucleicAcidRenderer,
             pull::PullRenderer,
-            ribbon::RibbonRenderer,
-            tube::TubeRenderer,
         },
         postprocess::post_process::PostProcessStack,
     },
@@ -117,10 +115,8 @@ pub struct ProteinRenderEngine {
     /// Multi-frame trajectory player, if loaded.
     pub trajectory_player: Option<TrajectoryPlayer>,
 
-    /// Backbone tube renderer (coils only when ribbon mode active).
-    pub tube_renderer: TubeRenderer,
-    /// Secondary-structure ribbon renderer.
-    pub ribbon_renderer: RibbonRenderer,
+    /// Unified backbone renderer (protein + nucleic acid).
+    pub backbone_renderer: BackboneRenderer,
     /// Capsule-based sidechain renderer.
     pub sidechain_renderer: CapsuleSidechainRenderer,
     /// Constraint band renderer.
@@ -289,42 +285,32 @@ impl ProteinRenderEngine {
         let mut residue_color_buffer =
             ResidueColorBuffer::new(&context.device, total_residues.max(1));
 
-        let mut tube_renderer = TubeRenderer::new(
+        // Extract NA chains early so BackboneRenderer can handle both
+        let na_chains: Vec<Vec<Vec3>> = scene
+            .entities()
+            .iter()
+            .filter(|se| {
+                matches!(
+                    se.entity.molecule_type,
+                    MoleculeType::DNA | MoleculeType::RNA
+                )
+            })
+            .flat_map(|se| se.entity.extract_p_atom_chains())
+            .collect();
+
+        let options = Options::default();
+
+        let backbone_renderer = BackboneRenderer::new(
             &context,
             &camera_controller.layout,
             &lighting.layout,
             &selection_buffer.layout,
             &residue_color_buffer.layout,
             &render_coords.backbone_chains,
+            &na_chains,
+            &options.geometry,
             &mut shader_composer,
         );
-
-        // Create ribbon renderer for secondary structure visualization
-        // Use the Foldit-style renderer if we have full backbone residue data
-        // (N, CA, C, O)
-        let ribbon_renderer =
-            if !render_coords.backbone_residue_chains.is_empty() {
-                RibbonRenderer::new_from_residues(
-                    &context,
-                    &camera_controller.layout,
-                    &lighting.layout,
-                    &selection_buffer.layout,
-                    &residue_color_buffer.layout,
-                    &render_coords.backbone_residue_chains,
-                    &mut shader_composer,
-                )
-            } else {
-                // Fallback to legacy renderer if only backbone_chains available
-                RibbonRenderer::new(
-                    &context,
-                    &camera_controller.layout,
-                    &lighting.layout,
-                    &selection_buffer.layout,
-                    &residue_color_buffer.layout,
-                    &render_coords.backbone_chains,
-                    &mut shader_composer,
-                )
-            };
 
         // Get sidechain data from RenderCoords
         let sidechain_positions = render_coords.sidechain_positions();
@@ -396,7 +382,6 @@ impl ProteinRenderEngine {
             &selection_buffer.layout,
             &mut shader_composer,
         );
-        let options = Options::default();
 
         // Compute initial per-residue colors so the first frame isn't gray
         {
@@ -446,19 +431,8 @@ impl ProteinRenderEngine {
             &ball_and_stick_renderer,
         );
 
-        // Create nucleic acid renderer for DNA/RNA backbone ribbons + base
-        // rings
-        let na_chains: Vec<Vec<Vec3>> = scene
-            .entities()
-            .iter()
-            .filter(|se| {
-                matches!(
-                    se.entity.molecule_type,
-                    MoleculeType::DNA | MoleculeType::RNA
-                )
-            })
-            .flat_map(|se| se.entity.extract_p_atom_chains())
-            .collect();
+        // Create nucleic acid renderer for base rings + stem tubes
+        // (backbone is now handled by BackboneRenderer)
         let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = scene
             .entities()
             .iter()
@@ -499,14 +473,6 @@ impl ProteinRenderEngine {
         let scene_processor = SceneProcessor::new()
             .map_err(crate::error::VisoError::ThreadSpawn)?;
 
-        // Tube renderer only renders coils; ribbons handle helices/sheets
-        {
-            let mut coil_only = HashSet::new();
-            let _ = coil_only.insert(SSType::Coil);
-            tube_renderer.set_ss_filter(Some(coil_only));
-            tube_renderer.regenerate(&context.device, &context.queue);
-        }
-
         Ok(Self {
             context,
             _shader_composer: shader_composer,
@@ -523,8 +489,7 @@ impl ProteinRenderEngine {
             active_preset: None,
             frame_timing,
             trajectory_player: None,
-            tube_renderer,
-            ribbon_renderer,
+            backbone_renderer,
             sidechain_renderer,
             band_renderer,
             pull_renderer,
@@ -670,9 +635,8 @@ impl ProteinRenderEngine {
                 color: Some(&self.residue_color_buffer.bind_group),
             };
 
-            // Backbone: tubes for coils, ribbons for helices/sheets
-            self.tube_renderer.draw(&mut rp, &bind_groups);
-            self.ribbon_renderer.draw(&mut rp, &bind_groups);
+            // Backbone: unified renderer (tube + ribbon passes)
+            self.backbone_renderer.draw(&mut rp, &bind_groups);
 
             if self.options.display.show_sidechains {
                 self.sidechain_renderer.draw(&mut rp, &bind_groups);
@@ -703,24 +667,26 @@ impl ProteinRenderEngine {
             view.clone(),
         );
 
-        // GPU Picking pass - render residue IDs to picking buffer (includes
-        // ribbons)
-        let (ribbon_vb, ribbon_ib, ribbon_count) = (
-            Some(self.ribbon_renderer.vertex_buffer()),
-            Some(self.ribbon_renderer.index_buffer()),
-            self.ribbon_renderer.index_count,
-        );
-
+        // GPU Picking pass — render residue IDs to picking buffer
+        // BackboneRenderer shares one vertex buffer for both tube and ribbon
+        // index buffers; the picking pass draws both.
         self.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
             &crate::picking::PickingGeometry {
-                tube_vertex_buffer: self.tube_renderer.vertex_buffer(),
-                tube_index_buffer: self.tube_renderer.index_buffer(),
-                tube_index_count: self.tube_renderer.index_count,
-                ribbon_vertex_buffer: ribbon_vb,
-                ribbon_index_buffer: ribbon_ib,
-                ribbon_index_count: ribbon_count,
+                backbone_vertex_buffer: self.backbone_renderer.vertex_buffer(),
+                backbone_tube_index_buffer: self
+                    .backbone_renderer
+                    .tube_index_buffer(),
+                backbone_tube_index_count: self
+                    .backbone_renderer
+                    .tube_index_count(),
+                backbone_ribbon_index_buffer: self
+                    .backbone_renderer
+                    .ribbon_index_buffer(),
+                backbone_ribbon_index_count: self
+                    .backbone_renderer
+                    .ribbon_index_count(),
                 capsule_bind_group: self
                     .picking_groups
                     .capsule_picking_bind_group

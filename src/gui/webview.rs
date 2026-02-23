@@ -4,12 +4,14 @@
 //! loads the viso-ui WASM bundle via a custom `viso://` protocol, and
 //! bridges IPC between the Dioxus web app and the native engine.
 
-use std::borrow::Cow;
-use std::sync::mpsc;
+use std::{borrow::Cow, sync::mpsc};
 
 use rust_embed::RustEmbed;
-use wry::http::{header::CONTENT_TYPE, Response};
-use wry::{dpi, Rect, WebView, WebViewBuilder};
+use wry::{
+    dpi,
+    http::{header::CONTENT_TYPE, Response},
+    Rect, WebView, WebViewBuilder,
+};
 
 use crate::options::Options;
 
@@ -58,7 +60,11 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
         .with_custom_protocol("viso".into(), |_id, request| {
             let path = request.uri().path();
             // Default to index.html for the root path.
-            let path = if path == "/" { "index.html" } else { &path[1..] };
+            let path = if path == "/" {
+                "index.html"
+            } else {
+                &path[1..]
+            };
 
             match UiAssets::get(path) {
                 Some(asset) => {
@@ -75,18 +81,14 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
                 None => Response::builder()
                     .status(404)
                     .body(Cow::from(Vec::new()))
-                    .unwrap_or_else(|_| {
-                        Response::new(Cow::from(Vec::new()))
-                    }),
+                    .unwrap_or_else(|_| Response::new(Cow::from(Vec::new()))),
             }
         })
         .with_url("viso://localhost/")
         .with_initialization_script(BRIDGE_JS)
         .with_ipc_handler(move |req| {
             let body = req.body();
-            if let Ok(msg) =
-                serde_json::from_str::<serde_json::Value>(body)
-            {
+            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(body) {
                 if let Some(action) = parse_action(&msg) {
                     let _ = tx.send(action);
                 }
@@ -117,9 +119,8 @@ pub fn push_schema(webview: &WebView, options: &Options) {
     let schema = schemars::schema_for!(Options);
     let json = serde_json::to_string(&schema).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    let _ = webview.evaluate_script(&format!(
-        "window.__viso_push_schema('{escaped}')"
-    ));
+    let _ = webview
+        .evaluate_script(&format!("window.__viso_push_schema('{escaped}')"));
 
     push_options(webview, options);
 }
@@ -128,9 +129,8 @@ pub fn push_schema(webview: &WebView, options: &Options) {
 pub fn push_options(webview: &WebView, options: &Options) {
     let json = serde_json::to_string(options).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    let _ = webview.evaluate_script(&format!(
-        "window.__viso_push_options('{escaped}')"
-    ));
+    let _ = webview
+        .evaluate_script(&format!("window.__viso_push_options('{escaped}')"));
 }
 
 // ── Internals ────────────────────────────────────────────────────────────

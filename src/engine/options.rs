@@ -19,7 +19,7 @@ impl ProteinRenderEngine {
         self.refresh_ball_and_stick();
 
         // Recompute backbone colors (handles backbone_color_mode changes)
-        let chains = self.tube_renderer.cached_chains().to_vec();
+        let chains = self.backbone_renderer.cached_chains().to_vec();
         let new_colors = self.compute_per_residue_colors(&chains);
         self.residue_color_buffer.set_target_colors(&new_colors);
         self.sc.cached_per_residue_colors = Some(new_colors);

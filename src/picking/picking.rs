@@ -13,7 +13,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::molecular::tube::tube_vertex_buffer_layout,
+    renderer::molecular::backbone::backbone_vertex_buffer_layout,
 };
 
 /// Selection buffer for GPU - stores selection state as a bit array
@@ -129,18 +129,16 @@ impl SelectionBuffer {
 
 /// Geometry buffers needed for the picking render pass.
 pub struct PickingGeometry<'a> {
-    /// Tube mesh vertex buffer.
-    pub tube_vertex_buffer: &'a wgpu::Buffer,
-    /// Tube mesh index buffer.
-    pub tube_index_buffer: &'a wgpu::Buffer,
-    /// Number of tube indices to draw.
-    pub tube_index_count: u32,
-    /// Ribbon mesh vertex buffer (None if ribbon not active).
-    pub ribbon_vertex_buffer: Option<&'a wgpu::Buffer>,
-    /// Ribbon mesh index buffer (None if ribbon not active).
-    pub ribbon_index_buffer: Option<&'a wgpu::Buffer>,
-    /// Number of ribbon indices to draw.
-    pub ribbon_index_count: u32,
+    /// Backbone vertex buffer (shared by tube and ribbon passes).
+    pub backbone_vertex_buffer: &'a wgpu::Buffer,
+    /// Backbone tube index buffer (back-face culled pass).
+    pub backbone_tube_index_buffer: &'a wgpu::Buffer,
+    /// Number of backbone tube indices to draw.
+    pub backbone_tube_index_count: u32,
+    /// Backbone ribbon index buffer (no-cull pass).
+    pub backbone_ribbon_index_buffer: &'a wgpu::Buffer,
+    /// Number of backbone ribbon indices to draw.
+    pub backbone_ribbon_index_count: u32,
     /// Sidechain capsule bind group for picking.
     pub capsule_bind_group: Option<&'a wgpu::BindGroup>,
     /// Number of sidechain capsule instances.
@@ -230,7 +228,7 @@ impl Picking {
                 vertex: wgpu::VertexState {
                     module: &tube_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[tube_vertex_buffer_layout()],
+                    buffers: &[backbone_vertex_buffer_layout()],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -448,12 +446,11 @@ impl Picking {
         mouse_y: u32,
     ) {
         let PickingGeometry {
-            tube_vertex_buffer,
-            tube_index_buffer,
-            tube_index_count,
-            ribbon_vertex_buffer,
-            ribbon_index_buffer,
-            ribbon_index_count,
+            backbone_vertex_buffer,
+            backbone_tube_index_buffer,
+            backbone_tube_index_count,
+            backbone_ribbon_index_buffer,
+            backbone_ribbon_index_count,
             capsule_bind_group,
             capsule_count,
             bns_capsule_bind_group,
@@ -493,34 +490,37 @@ impl Picking {
                     ..Default::default()
                 });
 
-            // Draw tubes (coils in ribbon mode, everything in tube mode)
-            if tube_index_count > 0 {
-                render_pass.set_pipeline(&self.tube_pipeline);
-                render_pass.set_bind_group(0, camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, tube_vertex_buffer.slice(..));
+            // Draw backbone geometry (tube + ribbon share the same vertex
+            // buffer)
+            render_pass.set_pipeline(&self.tube_pipeline);
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(
+                0,
+                backbone_vertex_buffer.slice(..),
+            );
+
+            if backbone_tube_index_count > 0 {
                 render_pass.set_index_buffer(
-                    tube_index_buffer.slice(..),
+                    backbone_tube_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                render_pass.draw_indexed(0..tube_index_count, 0, 0..1);
+                render_pass.draw_indexed(
+                    0..backbone_tube_index_count,
+                    0,
+                    0..1,
+                );
             }
 
-            // Draw ribbons (helices/sheets in ribbon mode)
-            // Uses the same pipeline as tubes - same vertex layout and picking
-            // shader
-            if let (Some(ribbon_vb), Some(ribbon_ib)) =
-                (ribbon_vertex_buffer, ribbon_index_buffer)
-            {
-                if ribbon_index_count > 0 {
-                    render_pass.set_pipeline(&self.tube_pipeline);
-                    render_pass.set_bind_group(0, camera_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, ribbon_vb.slice(..));
-                    render_pass.set_index_buffer(
-                        ribbon_ib.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..ribbon_index_count, 0, 0..1);
-                }
+            if backbone_ribbon_index_count > 0 {
+                render_pass.set_index_buffer(
+                    backbone_ribbon_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(
+                    0..backbone_ribbon_index_count,
+                    0,
+                    0..1,
+                );
             }
 
             // Draw capsules (sidechains)
