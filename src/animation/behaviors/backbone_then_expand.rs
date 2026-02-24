@@ -37,6 +37,7 @@ pub struct BackboneThenExpand {
 
 impl BackboneThenExpand {
     /// Create with custom durations for each phase.
+    #[must_use]
     pub fn new(backbone_duration: Duration, expand_duration: Duration) -> Self {
         Self {
             backbone_duration,
@@ -47,6 +48,7 @@ impl BackboneThenExpand {
     }
 
     /// Set custom easing functions.
+    #[must_use]
     pub fn with_easing(
         mut self,
         backbone_easing: EasingFunction,

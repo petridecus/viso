@@ -253,10 +253,7 @@ mod tests {
             let dist = pos.length();
             assert!(
                 (dist - hw).abs() < 1e-5,
-                "k={}: position dist {} != hw {}",
-                k,
-                dist,
-                hw,
+                "k={k}: position dist {dist} != hw {hw}",
             );
 
             // Normal should be the radial direction (unit vector from origin to
@@ -265,19 +262,14 @@ mod tests {
             let dot = nrm.dot(expected_normal);
             assert!(
                 dot > 0.9999,
-                "k={}: normal {:?} not radial (dot with expected {:?} = {})",
-                k,
-                nrm,
-                expected_normal,
-                dot,
+                "k={k}: normal {nrm:?} not radial (dot with expected \
+                 {expected_normal:?} = {dot})",
             );
 
             // center_pos should equal frame.pos (origin) for circles
             assert!(
                 cp.length() < 1e-5,
-                "k={}: center_pos {:?} should be ~origin for circle",
-                k,
-                cp,
+                "k={k}: center_pos {cp:?} should be ~origin for circle",
             );
         }
     }
@@ -311,8 +303,7 @@ mod tests {
         let dot = nrm.dot(radial);
         assert!(
             dot < 0.999,
-            "ellipse normal should differ from radial (dot={})",
-            dot,
+            "ellipse normal should differ from radial (dot={dot})",
         );
 
         // Verify it's a unit vector
@@ -328,11 +319,9 @@ mod tests {
         let recon_dot = reconstructed.dot(nrm);
         assert!(
             recon_dot > 0.999,
-            "center_pos reconstruction should match stored normal (dot={}, \
-             stored={:?}, reconstructed={:?})",
-            recon_dot,
-            nrm,
-            reconstructed,
+            "center_pos reconstruction should match stored normal \
+             (dot={recon_dot}, stored={nrm:?}, \
+             reconstructed={reconstructed:?})",
         );
     }
 
@@ -386,15 +375,9 @@ mod tests {
                 let dot = reconstructed.dot(nrm);
                 assert!(
                     dot > 0.999,
-                    "hw={} ht={} r={} k={}: reconstruction mismatch \
-                     (dot={:.6}, stored={:?}, reconstructed={:?})",
-                    hw,
-                    ht,
-                    roundness,
-                    k,
-                    dot,
-                    nrm,
-                    reconstructed,
+                    "hw={hw} ht={ht} r={roundness} k={k}: reconstruction \
+                     mismatch (dot={dot:.6}, stored={nrm:?}, \
+                     reconstructed={reconstructed:?})",
                 );
             }
         }

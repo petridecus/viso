@@ -10,7 +10,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::Transition,
+    animation::transition::Transition,
     renderer::molecular::{
         band::BandRenderInfo, capsule_sidechain::SidechainData,
         pull::PullRenderInfo,

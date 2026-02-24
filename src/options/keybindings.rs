@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::KeyAction;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 /// Configurable keyboard bindings mapping actions to key codes.
 pub struct KeybindingOptions {
@@ -49,6 +49,7 @@ impl KeybindingOptions {
     }
 
     /// Look up the action for a key string.
+    #[must_use]
     pub fn lookup(&self, key: &str) -> Option<KeyAction> {
         self.key_to_action.get(key).copied()
     }

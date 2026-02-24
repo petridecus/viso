@@ -139,7 +139,7 @@ impl PullRenderer {
         label: &str,
     ) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("{} Layout", label)),
+            label: Some(&format!("{label} Layout")),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX
@@ -295,36 +295,33 @@ impl PullRenderer {
         queue: &wgpu::Queue,
         pull: Option<&PullRenderInfo>,
     ) {
-        match pull {
-            Some(p) => {
-                let (capsules, cones) = Self::generate_instances(p);
+        if let Some(p) = pull {
+            let (capsules, cones) = Self::generate_instances(p);
 
-                let capsule_reallocated =
-                    self.capsule_buffer.write(device, queue, &capsules);
-                if capsule_reallocated {
-                    self.capsule_bind_group = Self::create_capsule_bind_group(
-                        device,
-                        &self.capsule_bind_group_layout,
-                        &self.capsule_buffer,
-                    );
-                }
-                self.capsule_count = capsules.len() as u32;
+            let capsule_reallocated =
+                self.capsule_buffer.write(device, queue, &capsules);
+            if capsule_reallocated {
+                self.capsule_bind_group = Self::create_capsule_bind_group(
+                    device,
+                    &self.capsule_bind_group_layout,
+                    &self.capsule_buffer,
+                );
+            }
+            self.capsule_count = capsules.len() as u32;
 
-                let cone_reallocated =
-                    self.cone_buffer.write(device, queue, &cones);
-                if cone_reallocated {
-                    self.cone_bind_group = Self::create_cone_bind_group(
-                        device,
-                        &self.cone_bind_group_layout,
-                        &self.cone_buffer,
-                    );
-                }
-                self.cone_count = cones.len() as u32;
+            let cone_reallocated =
+                self.cone_buffer.write(device, queue, &cones);
+            if cone_reallocated {
+                self.cone_bind_group = Self::create_cone_bind_group(
+                    device,
+                    &self.cone_bind_group_layout,
+                    &self.cone_buffer,
+                );
             }
-            None => {
-                self.capsule_count = 0;
-                self.cone_count = 0;
-            }
+            self.cone_count = cones.len() as u32;
+        } else {
+            self.capsule_count = 0;
+            self.cone_count = 0;
         }
     }
 

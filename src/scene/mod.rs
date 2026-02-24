@@ -31,7 +31,7 @@ use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
 // ---------------------------------------------------------------------------
 
 /// Focus state for tab cycling.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Focus {
     /// All entities.
     #[default]
@@ -320,7 +320,7 @@ impl SceneEntity {
         let render_coords = RenderCoords::from_coords_with_topology(
             &coords,
             is_hydrophobic,
-            |name| get_residue_bonds(name).map(|b| b.to_vec()),
+            |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
         );
 
         let (sequence, chain_sequences) = extract_sequences(&coords);
@@ -502,14 +502,13 @@ impl Scene {
             .entities
             .iter()
             .filter(|e| e.visible)
-            .map(|e| e.id())
+            .map(SceneEntity::id)
             .collect();
 
         self.focus = match self.focus {
             Focus::Session => focusable
                 .first()
-                .map(|&id| Focus::Entity(id))
-                .unwrap_or(Focus::Session),
+                .map_or(Focus::Session, |&id| Focus::Entity(id)),
             Focus::Entity(current_id) => {
                 let idx = focusable.iter().position(|&id| id == current_id);
                 match idx {
@@ -539,8 +538,7 @@ impl Scene {
             Focus::Session => "Session (all structures)".into(),
             Focus::Entity(eid) => self
                 .entity(eid)
-                .map(|e| e.name.clone())
-                .unwrap_or_else(|| "Entity (unknown)".into()),
+                .map_or_else(|| "Entity (unknown)".into(), |e| e.name.clone()),
         }
     }
 
@@ -551,7 +549,7 @@ impl Scene {
         self.entities
             .iter_mut()
             .filter(|e| e.visible)
-            .filter_map(|e| e.to_per_entity_data())
+            .filter_map(SceneEntity::to_per_entity_data)
             .collect()
     }
 

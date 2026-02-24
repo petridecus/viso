@@ -206,7 +206,7 @@ pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
 ///
 /// Calls that arrive before the WASM app has registered listeners are
 /// buffered. When a listener attaches it replays any pending data.
-const BRIDGE_JS: &str = r#"
+const BRIDGE_JS: &str = r"
 (function() {
     var pending = { schema: null, options: null, stats: null, panel_pinned: null };
 
@@ -249,7 +249,7 @@ const BRIDGE_JS: &str = r#"
         }
     };
 })();
-"#;
+";
 
 /// Parse an IPC message from the WASM side into a [`UiAction`].
 fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Debug visualization toggles.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[schemars(title = "Debug", inline)]
 #[serde(default)]

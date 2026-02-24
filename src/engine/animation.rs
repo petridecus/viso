@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::Transition,
+    animation::transition::Transition,
     renderer::molecular::capsule_sidechain::SidechainData, scene::SceneEntity,
     util::trajectory::TrajectoryPlayer,
 };
@@ -35,14 +35,11 @@ impl ProteinRenderEngine {
             .filter(|e| e.visible)
             .find_map(SceneEntity::protein_coords);
 
-        let protein_coords = match protein_coords {
-            Some(c) => protein_only(&c),
-            None => {
-                log::error!(
-                    "No protein structure loaded — cannot play trajectory"
-                );
-                return;
-            }
+        let protein_coords = if let Some(c) = protein_coords {
+            protein_only(&c)
+        } else {
+            log::error!("No protein structure loaded — cannot play trajectory");
+            return;
         };
 
         // Validate atom count
@@ -75,10 +72,8 @@ impl ProteinRenderEngine {
         self.trajectory_player = Some(player);
 
         log::info!(
-            "Trajectory loaded: {} frames, {} atoms, ~{:.1}s at 30fps",
-            num_frames,
-            num_atoms,
-            duration_secs,
+            "Trajectory loaded: {num_frames} frames, {num_atoms} atoms, \
+             ~{duration_secs:.1}s at 30fps",
         );
     }
 

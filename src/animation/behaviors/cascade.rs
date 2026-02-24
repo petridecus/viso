@@ -34,6 +34,7 @@ pub struct Cascade {
 
 impl Cascade {
     /// Cascade with the given per-residue timing.
+    #[must_use]
     pub fn new(base_duration: Duration, delay_per_residue: Duration) -> Self {
         Self {
             base_duration,
@@ -43,6 +44,7 @@ impl Cascade {
     }
 
     /// Set custom easing.
+    #[must_use]
     pub fn with_easing(mut self, easing: EasingFunction) -> Self {
         self.easing = easing;
         self
@@ -50,6 +52,7 @@ impl Cascade {
 
     /// Maps global animation progress to per-residue progress,
     /// accounting for staggered start times.
+    #[must_use]
     pub fn residue_t(
         &self,
         global_t: f32,
@@ -89,6 +92,7 @@ impl Cascade {
     }
 
     /// Total duration for a given number of residues.
+    #[must_use]
     pub fn total_duration_for(&self, num_residues: usize) -> Duration {
         if num_residues == 0 {
             return Duration::ZERO;

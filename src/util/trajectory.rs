@@ -42,7 +42,7 @@ impl TrajectoryPlayer {
         backbone_atom_indices: Vec<usize>,
     ) -> Self {
         let chain_lengths: Vec<usize> =
-            backbone_chains.iter().map(|c| c.len()).collect();
+            backbone_chains.iter().map(Vec::len).collect();
         Self {
             frames,
             num_atoms,

@@ -171,7 +171,6 @@ mod tests {
     use glam::Vec3;
 
     use super::*;
-    use crate::animation::behaviors::{shared, Snap};
 
     fn make_backbone(y: f32, num_residues: usize) -> Vec<Vec<Vec3>> {
         let atoms: Vec<Vec3> = (0..num_residues)
@@ -304,7 +303,7 @@ mod tests {
         let new_target = StructureState::from_backbone(&make_backbone(5.0, 5)); // Larger
 
         let transition = Transition::with_behavior(
-            crate::animation::BackboneThenExpand::new(
+            crate::animation::behaviors::BackboneThenExpand::new(
                 std::time::Duration::from_millis(400),
                 std::time::Duration::from_millis(600),
             ),

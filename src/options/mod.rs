@@ -63,6 +63,7 @@ pub struct Options {
 
 impl Options {
     /// Generate JSON Schema describing the UI-exposed options.
+    #[must_use]
     pub fn json_schema() -> schemars::Schema {
         schemars::schema_for!(Options)
     }
@@ -85,6 +86,7 @@ impl Options {
     }
 
     /// List available preset names (TOML file stems) in a directory.
+    #[must_use]
     pub fn list_presets(dir: &Path) -> Vec<String> {
         let mut names = Vec::new();
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -94,7 +96,7 @@ impl Options {
                     if let Some(stem) =
                         path.file_stem().and_then(|s| s.to_str())
                     {
-                        names.push(stem.to_string());
+                        names.push(stem.to_owned());
                     }
                 }
             }
@@ -118,10 +120,10 @@ mod tests {
 
     #[test]
     fn partial_toml_fills_defaults() {
-        let toml_str = r#"
+        let toml_str = r"
 [lighting]
 shininess = 80.0
-"#;
+";
         let opts: Options = toml::from_str(toml_str).unwrap();
         assert_eq!(opts.lighting.shininess, 80.0);
         // Everything else should be default

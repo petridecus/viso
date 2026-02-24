@@ -537,7 +537,7 @@ impl SsaoRenderer {
         for i in 0..(NOISE_SIZE * NOISE_SIZE) as usize {
             let x = rng.random::<f32>() * 2.0 - 1.0;
             let y = rng.random::<f32>() * 2.0 - 1.0;
-            let len = (x * x + y * y).sqrt();
+            let len = x.hypot(y);
             let (nx, ny) = if len > 0.0 {
                 (x / len, y / len)
             } else {

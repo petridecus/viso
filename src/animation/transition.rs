@@ -27,6 +27,7 @@ pub struct Transition {
 
 impl Transition {
     /// Instant snap with no animation. Allows size changes.
+    #[must_use]
     pub fn snap() -> Self {
         Self {
             behavior: Arc::new(Snap),
@@ -36,6 +37,7 @@ impl Transition {
     }
 
     /// Standard smooth interpolation (300ms, cubic hermite ease-out).
+    #[must_use]
     pub fn smooth() -> Self {
         Self {
             behavior: Arc::new(SmoothInterpolation::standard()),

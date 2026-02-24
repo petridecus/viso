@@ -31,17 +31,17 @@ pub struct ColorOptions {
 impl Default for ColorOptions {
     fn default() -> Self {
         let mut cofactor_tints = HashMap::new();
-        let _ = cofactor_tints.insert("CLA".to_string(), [0.2, 0.7, 0.3]);
-        let _ = cofactor_tints.insert("CHL".to_string(), [0.2, 0.6, 0.35]);
-        let _ = cofactor_tints.insert("BCR".to_string(), [0.9, 0.5, 0.1]);
-        let _ = cofactor_tints.insert("BCB".to_string(), [0.9, 0.5, 0.1]);
-        let _ = cofactor_tints.insert("HEM".to_string(), [0.7, 0.15, 0.15]);
-        let _ = cofactor_tints.insert("HEC".to_string(), [0.7, 0.15, 0.15]);
-        let _ = cofactor_tints.insert("HEA".to_string(), [0.7, 0.15, 0.15]);
-        let _ = cofactor_tints.insert("HEB".to_string(), [0.7, 0.15, 0.15]);
-        let _ = cofactor_tints.insert("PHO".to_string(), [0.5, 0.7, 0.3]);
-        let _ = cofactor_tints.insert("PL9".to_string(), [0.6, 0.5, 0.2]);
-        let _ = cofactor_tints.insert("PLQ".to_string(), [0.6, 0.5, 0.2]);
+        let _ = cofactor_tints.insert("CLA".to_owned(), [0.2, 0.7, 0.3]);
+        let _ = cofactor_tints.insert("CHL".to_owned(), [0.2, 0.6, 0.35]);
+        let _ = cofactor_tints.insert("BCR".to_owned(), [0.9, 0.5, 0.1]);
+        let _ = cofactor_tints.insert("BCB".to_owned(), [0.9, 0.5, 0.1]);
+        let _ = cofactor_tints.insert("HEM".to_owned(), [0.7, 0.15, 0.15]);
+        let _ = cofactor_tints.insert("HEC".to_owned(), [0.7, 0.15, 0.15]);
+        let _ = cofactor_tints.insert("HEA".to_owned(), [0.7, 0.15, 0.15]);
+        let _ = cofactor_tints.insert("HEB".to_owned(), [0.7, 0.15, 0.15]);
+        let _ = cofactor_tints.insert("PHO".to_owned(), [0.5, 0.7, 0.3]);
+        let _ = cofactor_tints.insert("PL9".to_owned(), [0.6, 0.5, 0.2]);
+        let _ = cofactor_tints.insert("PLQ".to_owned(), [0.6, 0.5, 0.2]);
 
         Self {
             lipid_carbon_tint: [0.76, 0.70, 0.50],
@@ -61,6 +61,7 @@ impl Default for ColorOptions {
 impl ColorOptions {
     /// Look up cofactor carbon tint by 3-letter residue name. Falls back to
     /// neutral gray.
+    #[must_use]
     pub fn cofactor_tint(&self, res_name: &str) -> [f32; 3] {
         self.cofactor_tints
             .get(res_name.trim())

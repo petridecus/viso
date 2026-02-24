@@ -217,7 +217,7 @@ impl BallAndStickRenderer {
         label: &str,
     ) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("Ball-and-Stick {} Layout", label)),
+            label: Some(&format!("Ball-and-Stick {label} Layout")),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX
@@ -244,7 +244,7 @@ impl BallAndStickRenderer {
                 binding: 0,
                 resource: buffer.buffer().as_entire_binding(),
             }],
-            label: Some(&format!("Ball-and-Stick {} Bind Group", label)),
+            label: Some(&format!("Ball-and-Stick {label} Bind Group")),
         })
     }
 
@@ -383,11 +383,9 @@ impl BallAndStickRenderer {
                     );
                 }
                 MoleculeType::Cofactor => {
-                    let tint = entity
-                        .coords
-                        .res_names
-                        .first()
-                        .map(|rn| {
+                    let tint = entity.coords.res_names.first().map_or(
+                        [0.5, 0.5, 0.5],
+                        |rn| {
                             if let Some(c) = colors {
                                 c.cofactor_tint(
                                     std::str::from_utf8(rn)
@@ -397,8 +395,8 @@ impl BallAndStickRenderer {
                             } else {
                                 Self::cofactor_carbon_tint(rn)
                             }
-                        })
-                        .unwrap_or([0.5, 0.5, 0.5]);
+                        },
+                    );
                     Self::generate_ligand_instances(
                         &entity.coords,
                         entity.entity_id,
@@ -612,62 +610,59 @@ impl BallAndStickRenderer {
             // Use pick_id from atom_a for the bond
             let pick_id = 100000 + bond.atom_a as u32;
 
-            match bond.order {
-                BondOrder::Double => {
-                    // Two parallel capsules offset perpendicular to bond axis
-                    let axis = (pos_b - pos_a).normalize_or_zero();
-                    let perp = find_perpendicular(axis);
-                    let offset = perp * DOUBLE_BOND_OFFSET;
-                    let thin_radius = BOND_RADIUS * 0.7;
+            if bond.order == BondOrder::Double {
+                // Two parallel capsules offset perpendicular to bond axis
+                let axis = (pos_b - pos_a).normalize_or_zero();
+                let perp = find_perpendicular(axis);
+                let offset = perp * DOUBLE_BOND_OFFSET;
+                let thin_radius = BOND_RADIUS * 0.7;
 
-                    // Bond 1 (offset +)
-                    let a1 = pos_a + offset;
-                    let b1 = pos_b + offset;
-                    bonds.push(CapsuleInstance {
-                        endpoint_a: [a1.x, a1.y, a1.z, thin_radius],
-                        endpoint_b: [b1.x, b1.y, b1.z, pick_id as f32],
-                        color_a: [color_a[0], color_a[1], color_a[2], 0.0],
-                        color_b: [color_b[0], color_b[1], color_b[2], 0.0],
-                    });
-                    picking.push(CapsuleInstance {
-                        endpoint_a: [a1.x, a1.y, a1.z, thin_radius],
-                        endpoint_b: [b1.x, b1.y, b1.z, pick_id as f32],
-                        color_a: [0.0; 4],
-                        color_b: [0.0; 4],
-                    });
+                // Bond 1 (offset +)
+                let a1 = pos_a + offset;
+                let b1 = pos_b + offset;
+                bonds.push(CapsuleInstance {
+                    endpoint_a: [a1.x, a1.y, a1.z, thin_radius],
+                    endpoint_b: [b1.x, b1.y, b1.z, pick_id as f32],
+                    color_a: [color_a[0], color_a[1], color_a[2], 0.0],
+                    color_b: [color_b[0], color_b[1], color_b[2], 0.0],
+                });
+                picking.push(CapsuleInstance {
+                    endpoint_a: [a1.x, a1.y, a1.z, thin_radius],
+                    endpoint_b: [b1.x, b1.y, b1.z, pick_id as f32],
+                    color_a: [0.0; 4],
+                    color_b: [0.0; 4],
+                });
 
-                    // Bond 2 (offset -)
-                    let a2 = pos_a - offset;
-                    let b2 = pos_b - offset;
-                    bonds.push(CapsuleInstance {
-                        endpoint_a: [a2.x, a2.y, a2.z, thin_radius],
-                        endpoint_b: [b2.x, b2.y, b2.z, pick_id as f32],
-                        color_a: [color_a[0], color_a[1], color_a[2], 0.0],
-                        color_b: [color_b[0], color_b[1], color_b[2], 0.0],
-                    });
-                    picking.push(CapsuleInstance {
-                        endpoint_a: [a2.x, a2.y, a2.z, thin_radius],
-                        endpoint_b: [b2.x, b2.y, b2.z, pick_id as f32],
-                        color_a: [0.0; 4],
-                        color_b: [0.0; 4],
-                    });
-                }
-                _ => {
-                    // Single bond (or triple/aromatic rendered as single for
-                    // now)
-                    bonds.push(CapsuleInstance {
-                        endpoint_a: [pos_a.x, pos_a.y, pos_a.z, BOND_RADIUS],
-                        endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
-                        color_a: [color_a[0], color_a[1], color_a[2], 0.0],
-                        color_b: [color_b[0], color_b[1], color_b[2], 0.0],
-                    });
-                    picking.push(CapsuleInstance {
-                        endpoint_a: [pos_a.x, pos_a.y, pos_a.z, BOND_RADIUS],
-                        endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
-                        color_a: [0.0; 4],
-                        color_b: [0.0; 4],
-                    });
-                }
+                // Bond 2 (offset -)
+                let a2 = pos_a - offset;
+                let b2 = pos_b - offset;
+                bonds.push(CapsuleInstance {
+                    endpoint_a: [a2.x, a2.y, a2.z, thin_radius],
+                    endpoint_b: [b2.x, b2.y, b2.z, pick_id as f32],
+                    color_a: [color_a[0], color_a[1], color_a[2], 0.0],
+                    color_b: [color_b[0], color_b[1], color_b[2], 0.0],
+                });
+                picking.push(CapsuleInstance {
+                    endpoint_a: [a2.x, a2.y, a2.z, thin_radius],
+                    endpoint_b: [b2.x, b2.y, b2.z, pick_id as f32],
+                    color_a: [0.0; 4],
+                    color_b: [0.0; 4],
+                });
+            } else {
+                // Single bond (or triple/aromatic rendered as single for
+                // now)
+                bonds.push(CapsuleInstance {
+                    endpoint_a: [pos_a.x, pos_a.y, pos_a.z, BOND_RADIUS],
+                    endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
+                    color_a: [color_a[0], color_a[1], color_a[2], 0.0],
+                    color_b: [color_b[0], color_b[1], color_b[2], 0.0],
+                });
+                picking.push(CapsuleInstance {
+                    endpoint_a: [pos_a.x, pos_a.y, pos_a.z, BOND_RADIUS],
+                    endpoint_b: [pos_b.x, pos_b.y, pos_b.z, pick_id as f32],
+                    color_a: [0.0; 4],
+                    color_b: [0.0; 4],
+                });
             }
         }
     }

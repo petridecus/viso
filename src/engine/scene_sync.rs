@@ -7,7 +7,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::Transition,
+    animation::transition::Transition,
     renderer::molecular::{
         backbone::PreparedBackboneData,
         ball_and_stick::PreparedBallAndStickData,
@@ -167,7 +167,9 @@ impl ProteinRenderEngine {
 
         // Animation target setup or snap update (fast: array copies + animator)
         let dominant_transition = prepared.entity_transitions.values().next();
-        if !prepared.entity_transitions.is_empty() {
+        if prepared.entity_transitions.is_empty() {
+            self.snap_from_prepared(&prepared);
+        } else {
             let transition = dominant_transition.cloned().unwrap_or_default();
             self.setup_animation_targets_from_prepared(&prepared, &transition);
 
@@ -235,8 +237,6 @@ impl ProteinRenderEngine {
             // one-frame jump), this ensures the next render picks up a
             // correctly interpolated mesh with minimal latency.
             self.submit_animation_frame();
-        } else {
-            self.snap_from_prepared(&prepared);
         }
 
         // GPU uploads — each is <0.2ms
@@ -270,7 +270,7 @@ impl ProteinRenderEngine {
                 },
             );
             let suppress_sidechains = dominant_transition
-                .map_or(false, |t| t.suppress_initial_sidechains);
+                .is_some_and(|t| t.suppress_initial_sidechains);
             if !suppress_sidechains {
                 let _ = self.sidechain_renderer.apply_prepared(
                     &self.context.device,
@@ -367,19 +367,19 @@ impl ProteinRenderEngine {
                 })
                 .collect();
             self.sc.start_backbone_sidechain_bonds =
-                backbone_sidechain_bonds.to_vec();
+                backbone_sidechain_bonds.clone();
         }
 
         // Set new targets and cached data
-        self.sc.target_sidechain_positions = sidechain_positions.to_vec();
+        self.sc.target_sidechain_positions = sidechain_positions.clone();
         self.sc.target_backbone_sidechain_bonds =
-            backbone_sidechain_bonds.to_vec();
-        self.sc.cached_sidechain_bonds = sidechain_bonds.to_vec();
+            backbone_sidechain_bonds.clone();
+        self.sc.cached_sidechain_bonds = sidechain_bonds.clone();
         self.sc.cached_sidechain_hydrophobicity =
-            sidechain_hydrophobicity.to_vec();
+            sidechain_hydrophobicity.clone();
         self.sc.cached_sidechain_residue_indices =
-            sidechain_residue_indices.to_vec();
-        self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
+            sidechain_residue_indices.clone();
+        self.sc.cached_sidechain_atom_names = sidechain_atom_names.clone();
 
         // Cache secondary structure types
         if let Some(ref ss) = prepared.ss_types {
@@ -512,11 +512,7 @@ impl ProteinRenderEngine {
                 if self.sc.cached_ss_types.is_empty() {
                     vec![[0.5, 0.5, 0.5]; residue_count]
                 } else {
-                    self.sc
-                        .cached_ss_types
-                        .iter()
-                        .map(|ss| ss.color())
-                        .collect()
+                    self.sc.cached_ss_types.iter().map(SSType::color).collect()
                 }
             }
             BackboneColorMode::Chain => {
@@ -633,7 +629,7 @@ impl ProteinRenderEngine {
                 .backbone_renderer
                 .cached_na_chains()
                 .iter()
-                .map(|c| c.len())
+                .map(Vec::len)
                 .sum::<usize>();
         let base_geo =
             self.options.geometry.clamped_for_residues(total_residues);

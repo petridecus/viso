@@ -15,7 +15,9 @@ use foldit_conv::coords::{
 use glam::{Mat4, Vec3};
 
 use crate::{
-    animation::{sidechain_state::SidechainAnimationState, StructureAnimator},
+    animation::{
+        animator::StructureAnimator, sidechain_state::SidechainAnimationState,
+    },
     camera::controller::CameraController,
     gpu::{
         render_context::RenderContext, residue_color::ResidueColorBuffer,
@@ -78,8 +80,8 @@ const TARGET_FPS: u32 = 300;
 /// # Animation
 ///
 /// Structural changes are animated via the [`StructureAnimator`].
-/// Control the animation style per-action through
-/// [`AnimationPreferences`](crate::animation::AnimationPreferences).
+/// Control the animation style per-update by passing a
+/// [`Transition`](crate::animation::transition::Transition).
 pub struct ProteinRenderEngine {
     /// Core wgpu device, queue, and surface.
     pub context: RenderContext,
@@ -231,13 +233,16 @@ impl ProteinRenderEngine {
         // Extract protein coords for rendering (may be absent for
         // nucleic-acid-only structures)
         let protein_entity_id = entity_ids.iter().find(|&&id| {
-            scene.entity(id).map_or(false, |e| {
+            scene.entity(id).is_some_and(|e| {
                 e.entity.molecule_type == MoleculeType::Protein
             })
         });
         let render_coords = if let Some(protein_coords) = protein_entity_id
-            .and_then(|&id| scene.entity(id).and_then(|e| e.protein_coords()))
-        {
+            .and_then(|&id| {
+                scene
+                    .entity(id)
+                    .and_then(super::scene::SceneEntity::protein_coords)
+            }) {
             log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
             let protein_coords =
                 foldit_conv::coords::protein_only(&protein_coords);
@@ -248,7 +253,7 @@ impl ProteinRenderEngine {
             let rc = RenderCoords::from_coords_with_topology(
                 &protein_coords,
                 is_hydrophobic,
-                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+                |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
             );
             log::debug!(
                 "render_coords: {} backbone chains, {} residues",
@@ -273,7 +278,7 @@ impl ProteinRenderEngine {
             RenderCoords::from_coords_with_topology(
                 &empty,
                 is_hydrophobic,
-                |name| get_residue_bonds(name).map(|b| b.to_vec()),
+                |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
             )
         };
 

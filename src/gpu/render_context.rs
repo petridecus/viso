@@ -106,6 +106,7 @@ impl RenderContext {
 
     /// Create a render context from an externally-owned device and queue
     /// (no surface — for texture-only / embedded rendering).
+    #[must_use]
     pub fn from_device(
         device: wgpu::Device,
         queue: wgpu::Queue,

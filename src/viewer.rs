@@ -490,7 +490,7 @@ impl ApplicationHandler for ViewerApp {
                             }
                         }
                         Err(e) => {
-                            log::error!("render error: {:?}", e);
+                            log::error!("render error: {e:?}");
                         }
                     }
 

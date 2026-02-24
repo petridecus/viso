@@ -268,7 +268,7 @@ impl StructureAnimator {
             // so CollapseExpand can animate them expanding outward.
             // Otherwise snap to target.
             let allows_resize =
-                transition.map(|t| t.allows_size_change).unwrap_or(false);
+                transition.is_some_and(|t| t.allows_size_change);
             if allows_resize {
                 // Start each sidechain atom at its residue's CA position
                 self.start_sidechain_positions = residue_indices
@@ -464,7 +464,7 @@ impl StructureAnimator {
         // Snap backbone state so current = target for those residues
         for &(start, end) in &snap_ranges {
             for r in start..end {
-                if let Some(target) = self.state.get_target(r).cloned() {
+                if let Some(target) = self.state.get_target(r).copied() {
                     self.state.set_current(r, target);
                 }
             }

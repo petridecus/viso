@@ -37,6 +37,7 @@ impl EasingFunction {
     ///
     /// Target performance: <100ns
     #[inline]
+    #[must_use]
     pub fn evaluate(&self, t: f32) -> f32 {
         // Clamp input to [0, 1]
         let t = t.clamp(0.0, 1.0);
@@ -95,8 +96,8 @@ mod tests {
         let result_at_quarter = hermite.evaluate(0.25);
         assert!(
             result_at_quarter > 0.25,
-            "Ease-out should have value > 0.25 at t=0.25, got {}",
-            result_at_quarter
+            "Ease-out should have value > 0.25 at t=0.25, got \
+             {result_at_quarter}"
         );
     }
 

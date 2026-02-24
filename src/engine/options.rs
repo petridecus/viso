@@ -81,16 +81,16 @@ impl ProteinRenderEngine {
         name: &str,
         presets_dir: &std::path::Path,
     ) -> bool {
-        let path = presets_dir.join(format!("{}.toml", name));
+        let path = presets_dir.join(format!("{name}.toml"));
         match Options::load(&path) {
             Ok(opts) => {
-                log::info!("Loaded view preset '{}'", name);
+                log::info!("Loaded view preset '{name}'");
                 self.set_options(opts);
-                self.active_preset = Some(name.to_string());
+                self.active_preset = Some(name.to_owned());
                 true
             }
             Err(e) => {
-                log::error!("Failed to load view preset '{}': {}", name, e);
+                log::error!("Failed to load view preset '{name}': {e}");
                 false
             }
         }
@@ -103,15 +103,15 @@ impl ProteinRenderEngine {
         name: &str,
         presets_dir: &std::path::Path,
     ) -> bool {
-        let path = presets_dir.join(format!("{}.toml", name));
+        let path = presets_dir.join(format!("{name}.toml"));
         match self.options.save(&path) {
             Ok(()) => {
-                log::info!("Saved view preset '{}'", name);
-                self.active_preset = Some(name.to_string());
+                log::info!("Saved view preset '{name}'");
+                self.active_preset = Some(name.to_owned());
                 true
             }
             Err(e) => {
-                log::error!("Failed to save view preset '{}': {}", name, e);
+                log::error!("Failed to save view preset '{name}': {e}");
                 false
             }
         }

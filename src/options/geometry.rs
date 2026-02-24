@@ -75,6 +75,7 @@ impl GeometryOptions {
     /// - Tier 1: 50% (16 spr, 8 csv)
     /// - Tier 2: 25% (8 spr, 4 csv)
     /// - Tier 3: 12.5% (4 spr, 4 csv)
+    #[must_use]
     pub fn with_lod_tier(&self, tier: u8) -> Self {
         if tier == 0 {
             return self.clone();
@@ -93,6 +94,7 @@ impl GeometryOptions {
 
     /// Clamp detail so the estimated vertex buffer stays under the wgpu 256 MB
     /// max buffer size. Returns `self` unchanged for small structures.
+    #[must_use]
     pub fn clamped_for_residues(&self, total_residues: usize) -> Self {
         const MAX_BUFFER_BYTES: usize = 256 * 1024 * 1024;
         const VERTEX_BYTES: usize = 52; // size_of::<BackboneVertex>()
@@ -138,6 +140,7 @@ impl GeometryOptions {
 /// - Tier 1: spr 50%
 /// - Tier 2: spr 25%
 /// - Tier 3: spr 12.5%
+#[must_use]
 pub fn lod_scaled(max_spr: usize, max_csv: usize, tier: u8) -> (usize, usize) {
     let spr = match tier {
         0 => max_spr,
@@ -149,6 +152,7 @@ pub fn lod_scaled(max_spr: usize, max_csv: usize, tier: u8) -> (usize, usize) {
 }
 
 /// Convenience: LOD tier params from defaults (for backward compat).
+#[must_use]
 pub fn lod_params(tier: u8) -> (usize, usize) {
     let defaults = GeometryOptions::default();
     lod_scaled(
@@ -167,6 +171,7 @@ pub fn lod_params(tier: u8) -> (usize, usize) {
 /// - Medium (150–250 A): tier 1 — 16 spr (half detail)
 /// - Far (250–400 A):    tier 2 — 8 spr (quarter detail)
 /// - Very far (> 400 A): tier 3 — 4 spr (minimum detail)
+#[must_use]
 pub fn select_lod_tier(camera_distance: f32, _bounding_radius: f32) -> u8 {
     if camera_distance < 150.0 {
         0
@@ -181,6 +186,7 @@ pub fn select_lod_tier(camera_distance: f32, _bounding_radius: f32) -> u8 {
 
 /// Select LOD tier for a single chain based on its bounding center distance
 /// to the camera eye.
+#[must_use]
 pub fn select_chain_lod_tier(chain_center: Vec3, camera_eye: Vec3) -> u8 {
     let distance = (chain_center - camera_eye).length();
     select_lod_tier(distance, 0.0)

@@ -39,7 +39,7 @@ impl DynamicBuffer {
             capacity,
             len: 0,
             usage,
-            label: label.to_string(),
+            label: label.to_owned(),
         }
     }
 
@@ -65,7 +65,7 @@ impl DynamicBuffer {
             capacity,
             len: data_bytes.len(),
             usage,
-            label: label.to_string(),
+            label: label.to_owned(),
         }
     }
 

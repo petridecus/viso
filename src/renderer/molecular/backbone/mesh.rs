@@ -117,7 +117,7 @@ pub(crate) fn generate_mesh_colored(
         let ribbon_start = all_ribbon_indices.len() as u32;
 
         let (chain_spr, chain_csv) =
-            per_chain_lod.map(|l| l[chain_idx]).unwrap_or((spr, csv));
+            per_chain_lod.map_or((spr, csv), |l| l[chain_idx]);
 
         let base_vertex = all_vertices.len() as u32;
         let (verts, tube_inds, ribbon_inds, offsets) =
@@ -170,8 +170,7 @@ pub(crate) fn generate_mesh_colored(
         let ribbon_start = all_ribbon_indices.len() as u32;
 
         let (chain_spr, chain_csv) = per_chain_lod
-            .map(|l| l[protein_chains.len() + na_idx])
-            .unwrap_or((spr, csv));
+            .map_or((spr, csv), |l| l[protein_chains.len() + na_idx]);
 
         let base_vertex = all_vertices.len() as u32;
         let (verts, tube_inds, ribbon_inds) = generate_na_chain_mesh(

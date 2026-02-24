@@ -1,50 +1,44 @@
 // -- Lint policy ---------------------------------------------------------
 // This is the single source of truth for crate-wide lints.
 
-// Broad lint groups
+// Broad lint groups (covers all, pedantic, nursery sub-lints)
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
 #![deny(clippy::nursery)]
+// Cargo lints (warn, not deny since cargo lints can be noisy)
+#![deny(clippy::cargo)]
 // Documentation
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::bare_urls)]
-// No panicking in library code
+// Restriction lints (opt-in, not covered by the groups above)
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::todo)]
 #![deny(clippy::unimplemented)]
-// No debug/print artifacts
 #![deny(clippy::dbg_macro)]
 #![deny(clippy::print_stdout)]
 #![deny(clippy::print_stderr)]
-// Import hygiene
-#![deny(clippy::wildcard_imports)]
-// Complexity limits (thresholds in clippy.toml)
-#![deny(clippy::cognitive_complexity)]
-#![deny(clippy::too_many_lines)]
-#![deny(clippy::excessive_nesting)]
-// Function signature hygiene
-#![deny(clippy::too_many_arguments)]
-#![deny(clippy::fn_params_excessive_bools)]
-// Clone / pass-by-value hygiene
-#![deny(clippy::needless_pass_by_value)]
-#![deny(clippy::implicit_clone)]
-// String hygiene
-#![deny(clippy::inefficient_to_string)]
-#![deny(clippy::redundant_closure_for_method_calls)]
-#![deny(clippy::manual_string_new)]
 #![deny(clippy::str_to_string)]
-// Cargo lints (warn, not deny since cargo lints can be noisy)
-#![warn(clippy::cargo)]
-// Unused / redundant code
+// Rustc lints
 #![deny(unused_results)]
 #![deny(unused_qualifications)]
-// Cast hygiene
 #![deny(trivial_casts)]
 #![deny(trivial_numeric_casts)]
+// ── GPU / graphics allowances ──
+// Casts: GPU code constantly converts between usize/u32/f32/f64 for indices,
+// buffer sizes, and shader uniforms.  These are intentional and safe.
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_lossless)]
+// Float comparison: graphics math frequently compares against 0.0, 1.0, etc.
+#![allow(clippy::float_cmp)]
+// Multiple crate versions: transitive deps (objc2, syn, etc.) — not actionable
+#![allow(clippy::multiple_crate_versions)]
 // ── Pedantic allowances ──
 // mul_add: wgpu shader math reads more clearly as a*b+c
 #![allow(clippy::suboptimal_flops)]

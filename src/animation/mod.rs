@@ -12,7 +12,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use viso::animation::{StructureAnimator, Transition};
+//! use viso::{Transition, StructureAnimator};
 //!
 //! let mut animator = StructureAnimator::new();
 //!
@@ -29,15 +29,3 @@ pub mod behaviors;
 pub mod interpolation;
 pub(crate) mod sidechain_state;
 pub mod transition;
-
-// Re-export commonly used types
-pub use animator::{
-    AnimationController, AnimationRunner, StructureAnimator, StructureState,
-};
-pub use behaviors::{
-    shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
-    PreemptionStrategy, ResidueVisualState, SharedBehavior,
-    SmoothInterpolation, Snap,
-};
-pub use interpolation::{lerp_f32, lerp_position, InterpolationContext};
-pub use transition::Transition;

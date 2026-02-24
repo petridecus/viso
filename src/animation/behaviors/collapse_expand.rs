@@ -35,6 +35,7 @@ pub struct CollapseExpand {
 
 impl CollapseExpand {
     /// Create with custom durations.
+    #[must_use]
     pub fn new(collapse_duration: Duration, expand_duration: Duration) -> Self {
         Self {
             collapse_duration,
@@ -45,12 +46,14 @@ impl CollapseExpand {
     }
 
     /// Create with symmetric durations.
+    #[must_use]
     pub fn symmetric(duration: Duration) -> Self {
         let half = duration / 2;
         Self::new(half, half)
     }
 
     /// Set custom easing functions.
+    #[must_use]
     pub fn with_easing(
         mut self,
         collapse_easing: EasingFunction,

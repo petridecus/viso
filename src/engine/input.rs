@@ -123,11 +123,11 @@ impl ProteinRenderEngine {
                 shift_held,
             } => self.select_chain(residue, shift_held),
             ClickResult::ClearSelection => {
-                if !self.picking.selected_residues.is_empty() {
+                if self.picking.selected_residues.is_empty() {
+                    false
+                } else {
                     self.picking.selected_residues.clear();
                     true
-                } else {
-                    false
                 }
             }
         }

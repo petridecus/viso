@@ -448,12 +448,8 @@ impl BloomPass {
         for i in 0..MIP_LEVELS {
             w = (w / 2).max(1);
             h = (h / 2).max(1);
-            let (tex, view) = Self::create_texture(
-                context,
-                w,
-                h,
-                &format!("Bloom Mip {}", i),
-            );
+            let (tex, view) =
+                Self::create_texture(context, w, h, &format!("Bloom Mip {i}"));
             textures.push(tex);
             views.push(view);
         }
@@ -520,7 +516,7 @@ impl BloomPass {
             };
             let h_buffer = context.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("Bloom Blur H Params {}", i)),
+                    label: Some(&format!("Bloom Blur H Params {i}")),
                     contents: bytemuck::cast_slice(&[h_params]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
@@ -529,7 +525,7 @@ impl BloomPass {
                 context
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(&format!("Bloom Blur H BG {}", i)),
+                        label: Some(&format!("Bloom Blur H BG {i}")),
                         layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -559,7 +555,7 @@ impl BloomPass {
             };
             let v_buffer = context.device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("Bloom Blur V Params {}", i)),
+                    label: Some(&format!("Bloom Blur V Params {i}")),
                     contents: bytemuck::cast_slice(&[v_params]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
@@ -568,7 +564,7 @@ impl BloomPass {
                 context
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(&format!("Bloom Blur V BG {}", i)),
+                        label: Some(&format!("Bloom Blur V BG {i}")),
                         layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -614,7 +610,7 @@ impl BloomPass {
                 context
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(&format!("Bloom Upsample BG {}", i)),
+                        label: Some(&format!("Bloom Upsample BG {i}")),
                         layout,
                         entries: &[
                             wgpu::BindGroupEntry {

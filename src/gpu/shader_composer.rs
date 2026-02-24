@@ -138,10 +138,7 @@ impl ShaderComposer {
                     ..Default::default()
                 })
                 .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to register shader module '{}': {:?}",
-                        path, e
-                    )
+                    panic!("Failed to register shader module '{path}': {e:?}")
                 });
         }
 
@@ -162,7 +159,7 @@ impl ShaderComposer {
         let source = self
             .sources
             .get(path)
-            .unwrap_or_else(|| panic!("Unknown shader path: {}", path));
+            .unwrap_or_else(|| panic!("Unknown shader path: {path}"));
 
         let naga_module = self
             .composer
@@ -173,7 +170,7 @@ impl ShaderComposer {
                 ..Default::default()
             })
             .unwrap_or_else(|e| {
-                panic!("Failed to compose shader '{}': {}", path, e)
+                panic!("Failed to compose shader '{path}': {e}")
             });
 
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -192,7 +189,7 @@ impl ShaderComposer {
         let source = self
             .sources
             .get(path)
-            .unwrap_or_else(|| panic!("Unknown shader path: {}", path));
+            .unwrap_or_else(|| panic!("Unknown shader path: {path}"));
 
         self.composer
             .make_naga_module(NagaModuleDescriptor {
@@ -233,7 +230,7 @@ mod tests {
         let mut composer = ShaderComposer::new();
         for path in composable_shader_paths() {
             let _ = composer.compose_naga(path).unwrap_or_else(|e| {
-                panic!("Shader '{}' failed to compose: {}", path, e)
+                panic!("Shader '{path}' failed to compose: {e}")
             });
         }
     }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// How protein backbone is colored.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum BackboneColorMode {
@@ -20,7 +20,7 @@ pub enum BackboneColorMode {
 
 /// How sidechains are colored.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SidechainColorMode {
@@ -31,7 +31,7 @@ pub enum SidechainColorMode {
 
 /// How nucleic acid backbone is colored.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum NaColorMode {
@@ -42,7 +42,7 @@ pub enum NaColorMode {
 
 /// Lipid display style.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum LipidMode {
@@ -54,7 +54,7 @@ pub enum LipidMode {
 }
 
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
 #[schemars(title = "Display", inline)]
 #[serde(default)]
@@ -91,6 +91,7 @@ pub struct DisplayOptions {
 
 impl DisplayOptions {
     /// Whether lipid mode uses full ball-and-stick representation.
+    #[must_use]
     pub fn lipid_ball_and_stick(&self) -> bool {
         matches!(self.lipid_mode, LipidMode::BallAndStick)
     }

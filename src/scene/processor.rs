@@ -21,7 +21,7 @@ use glam::Vec3;
 
 use super::PerEntityData;
 use crate::{
-    animation::Transition,
+    animation::transition::Transition,
     options::{ColorOptions, DisplayOptions, GeometryOptions},
     renderer::molecular::{
         backbone::{BackboneRenderer, ChainRange},
@@ -336,7 +336,7 @@ impl SceneProcessor {
                                 .sum::<usize>()
                                 + e.nucleic_acid_chains
                                     .iter()
-                                    .map(|c| c.len())
+                                    .map(Vec::len)
                                     .sum::<usize>()
                         })
                         .sum();
@@ -843,7 +843,7 @@ impl SceneProcessor {
         // --- Backbone mesh (protein + nucleic acid, unified) ---
         let total_residues: usize =
             backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
-                + na_chains.iter().map(|c| c.len()).sum::<usize>();
+                + na_chains.iter().map(Vec::len).sum::<usize>();
         let safe_geo = geometry.clamped_for_residues(total_residues);
         let (verts, tube_inds, ribbon_inds, sheet_offsets, chain_ranges) =
             BackboneRenderer::generate_mesh_colored(
