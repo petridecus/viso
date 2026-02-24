@@ -7,7 +7,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::AnimationAction,
+    animation::Transition,
     renderer::molecular::{
         backbone::PreparedBackboneData,
         ball_and_stick::PreparedBallAndStickData,
@@ -103,39 +103,39 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Sync scene data to renderers with a global animation action.
+    /// Sync scene data to renderers with a global transition.
     ///
-    /// All entities animate with the same action (or snap if `None`).
-    pub fn sync_scene_to_renderers(&mut self, action: Option<AnimationAction>) {
-        if !self.scene.is_dirty() && action.is_none() {
+    /// All entities animate with the same transition (or snap if `None`).
+    pub fn sync_scene_to_renderers(&mut self, transition: Option<Transition>) {
+        if !self.scene.is_dirty() && transition.is_none() {
             return;
         }
 
         let entities = self.scene.per_entity_data();
-        // Build entity_actions: all entities get the same action
-        let entity_actions = match action {
-            Some(a) => entities.iter().map(|e| (e.id, a)).collect(),
+        // Build entity_transitions: all entities get the same transition
+        let entity_transitions = match transition {
+            Some(t) => entities.iter().map(|e| (e.id, t.clone())).collect(),
             None => HashMap::new(),
         };
         self.scene.mark_rendered();
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
             entities,
-            entity_actions,
+            entity_transitions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
             geometry: self.options.geometry.clone(),
         });
     }
 
-    /// Sync scene data to renderers with per-entity animation actions.
+    /// Sync scene data to renderers with per-entity transitions.
     ///
-    /// Entities in the map animate with their action; all others snap.
+    /// Entities in the map animate with their transition; all others snap.
     pub fn sync_scene_to_renderers_targeted(
         &mut self,
-        entity_actions: HashMap<u32, AnimationAction>,
+        entity_transitions: HashMap<u32, Transition>,
     ) {
-        if !self.scene.is_dirty() && entity_actions.is_empty() {
+        if !self.scene.is_dirty() && entity_transitions.is_empty() {
             return;
         }
 
@@ -144,7 +144,7 @@ impl ProteinRenderEngine {
 
         self.scene_processor.submit(SceneRequest::FullRebuild {
             entities,
-            entity_actions,
+            entity_transitions,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
             geometry: self.options.geometry.clone(),
@@ -166,14 +166,14 @@ impl ProteinRenderEngine {
         // so no drain loop needed — stale intermediates are skipped.
 
         // Animation target setup or snap update (fast: array copies + animator)
-        let dominant_action = prepared.entity_actions.values().next().copied();
-        if !prepared.entity_actions.is_empty() {
-            let action = dominant_action.unwrap_or(AnimationAction::Wiggle);
-            self.setup_animation_targets_from_prepared(&prepared, action);
+        let dominant_transition = prepared.entity_transitions.values().next();
+        if !prepared.entity_transitions.is_empty() {
+            let transition = dominant_transition.cloned().unwrap_or_default();
+            self.setup_animation_targets_from_prepared(&prepared, &transition);
 
-            // Snap residues for entities NOT in entity_actions
+            // Snap residues for entities NOT in entity_transitions
             let active: HashSet<u32> =
-                prepared.entity_actions.keys().copied().collect();
+                prepared.entity_transitions.keys().copied().collect();
             self.animator.snap_entities_without_action(
                 &prepared.entity_residue_ranges,
                 &active,
@@ -245,7 +245,7 @@ impl ProteinRenderEngine {
         // positions. The animation frame path will provide interpolated meshes.
         // We still update metadata (chains, SS types) so animation frames
         // generate correct topology.
-        let animating = !prepared.entity_actions.is_empty();
+        let animating = !prepared.entity_transitions.is_empty();
         if animating {
             self.backbone_renderer.update_metadata(
                 prepared.backbone_chains.clone(),
@@ -269,8 +269,8 @@ impl ProteinRenderEngine {
                     ss_override: prepared.ss_types.clone(),
                 },
             );
-            let suppress_sidechains =
-                dominant_action == Some(AnimationAction::DiffusionFinalize);
+            let suppress_sidechains = dominant_transition
+                .map_or(false, |t| t.suppress_initial_sidechains);
             if !suppress_sidechains {
                 let _ = self.sidechain_renderer.apply_prepared(
                     &self.context.device,
@@ -317,7 +317,7 @@ impl ProteinRenderEngine {
     fn setup_animation_targets_from_prepared(
         &mut self,
         prepared: &PreparedScene,
-        action: AnimationAction,
+        transition: &Transition,
     ) {
         let new_backbone = &prepared.backbone_chains;
         let sidechain_positions = &prepared.sidechain_positions;
@@ -400,15 +400,15 @@ impl ProteinRenderEngine {
             .collect();
 
         // Pass sidechain data to animator FIRST (before set_target)
-        self.animator.set_sidechain_target_with_action(
+        self.animator.set_sidechain_target_with_transition(
             sidechain_positions,
             sidechain_residue_indices,
             &ca_positions,
-            Some(action),
+            Some(transition),
         );
 
         // Set backbone target (starts the animation)
-        self.animator.set_target(new_backbone, action);
+        self.animator.set_target(new_backbone, transition);
 
         // Ensure selection/color buffers have capacity and update colors
         let total_residues: usize =
@@ -708,9 +708,9 @@ impl ProteinRenderEngine {
         &mut self,
         id: u32,
         coords: foldit_conv::coords::Coords,
-        action: AnimationAction,
+        transition: Transition,
     ) {
         self.scene.update_entity_protein_coords(id, coords);
-        self.sync_scene_to_renderers(Some(action));
+        self.sync_scene_to_renderers(Some(transition));
     }
 }

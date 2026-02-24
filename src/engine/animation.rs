@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::AnimationAction,
+    animation::Transition,
     renderer::molecular::capsule_sidechain::SidechainData, scene::SceneEntity,
     util::trajectory::TrajectoryPlayer,
 };
@@ -99,13 +99,13 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Animate backbone to new pose with specified action.
+    /// Animate backbone to new pose with specified transition.
     pub fn animate_to_pose(
         &mut self,
         new_backbone: &[Vec<Vec3>],
-        action: AnimationAction,
+        transition: &Transition,
     ) {
-        self.animator.set_target(new_backbone, action);
+        self.animator.set_target(new_backbone, transition);
 
         // If animator has visual state, update renderers
         if self.animator.residue_count() > 0 {
@@ -114,13 +114,13 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Animate to new pose with sidechain data and explicit action.
-    pub fn animate_to_full_pose_with_action(
+    /// Animate to new pose with sidechain data and explicit transition.
+    pub fn animate_to_full_pose(
         &mut self,
         new_backbone: &[Vec<Vec3>],
         sidechain: &SidechainData,
         sidechain_atom_names: &[String],
-        action: AnimationAction,
+        transition: &Transition,
     ) {
         // Capture current VISUAL positions as start (for smooth preemption)
         // If animation is in progress, use interpolated positions, not old
@@ -186,16 +186,16 @@ impl ProteinRenderEngine {
         // This allows set_target to detect sidechain changes and force
         // animation even when backbone is unchanged (for Shake/MPNN
         // animations)
-        self.animator.set_sidechain_target_with_action(
+        self.animator.set_sidechain_target_with_transition(
             sidechain.positions,
             sidechain.residue_indices,
             &ca_positions,
-            Some(action),
+            Some(transition),
         );
 
         // Set backbone target (this starts the animation, checking sidechain
         // changes)
-        self.animator.set_target(new_backbone, action);
+        self.animator.set_target(new_backbone, transition);
 
         // Update renderers with START visual state (animation will interpolate
         // from here)

@@ -6,19 +6,18 @@
 //!
 //! - **Behaviors** (`behaviors/`): Define how animations look (easing, phasing,
 //!   etc.)
-//! - **Preferences** (`preferences.rs`): Map actions to behaviors
-//!   (user-configurable)
+//! - **Transition** (`transition.rs`): Bundles a behavior with metadata flags
 //! - **Animator** (`animator/`): Manages state and executes animations
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use foldit_render::animation::{StructureAnimator, AnimationAction};
+//! use viso::animation::{StructureAnimator, Transition};
 //!
 //! let mut animator = StructureAnimator::new();
 //!
 //! // When structure changes
-//! animator.set_target(&backbone_chains, AnimationAction::Wiggle);
+//! animator.set_target(&backbone_chains, &Transition::smooth());
 //!
 //! // Each frame
 //! animator.update(Instant::now());
@@ -28,16 +27,17 @@
 pub mod animator;
 pub mod behaviors;
 pub mod interpolation;
-pub mod preferences;
 pub(crate) mod sidechain_state;
+pub mod transition;
 
 // Re-export commonly used types
 pub use animator::{
     AnimationController, AnimationRunner, StructureAnimator, StructureState,
 };
 pub use behaviors::{
-    shared, AnimationBehavior, Cascade, CollapseExpand, PreemptionStrategy,
-    ResidueVisualState, SharedBehavior, SmoothInterpolation, Snap,
+    shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
+    PreemptionStrategy, ResidueVisualState, SharedBehavior,
+    SmoothInterpolation, Snap,
 };
 pub use interpolation::{lerp_f32, lerp_position, InterpolationContext};
-pub use preferences::{AnimationAction, AnimationPreferences};
+pub use transition::Transition;

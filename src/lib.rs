@@ -76,7 +76,7 @@
 //! - [`Options`](options::Options) — runtime configuration (display, lighting,
 //!   camera, colors)
 //! - [`InputEvent`] — platform-agnostic input forwarding
-//! - [`AnimationAction`] — action hints for scene sync
+//! - [`Transition`] — animation transition for scene sync
 //!
 //! # Architecture
 //!
@@ -114,8 +114,14 @@ pub mod viewer;
 // ── Public re-exports from internal modules ──
 
 // Input types — platform-agnostic event API
-// Animation action for use with `sync_scene_to_renderers`
-pub use animation::preferences::AnimationAction;
+// Animation types for scene sync and custom behaviors
+pub use animation::{
+    behaviors::{
+        shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
+        PreemptionStrategy, SharedBehavior, SmoothInterpolation, Snap,
+    },
+    transition::Transition,
+};
 // Convenience re-exports
 pub use engine::ProteinRenderEngine;
 pub use error::VisoError;
@@ -129,5 +135,6 @@ pub use input::{InputEvent, KeyAction, MouseButton};
 pub use renderer::molecular::band::BandRenderInfo;
 pub use renderer::molecular::pull::PullRenderInfo;
 pub use scene::{Focus, Scene, SceneEntity};
+pub use util::easing::EasingFunction;
 #[cfg(feature = "viewer")]
 pub use viewer::{Viewer, ViewerBuilder};

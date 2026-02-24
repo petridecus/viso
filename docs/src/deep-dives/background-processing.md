@@ -51,11 +51,11 @@ A complete scene rebuild with all visible group data:
 
 ```rust
 SceneRequest::FullRebuild {
-    groups: Vec<PerGroupData>,
-    aggregated: Arc<AggregatedRenderData>,
-    entity_actions: HashMap<GroupId, AnimationAction>,
+    entities: Vec<PerEntityData>,
+    entity_transitions: HashMap<u32, Transition>,
     display: DisplayOptions,
     colors: ColorOptions,
+    geometry: GeometryOptions,
 }
 ```
 
@@ -175,8 +175,8 @@ pub struct PreparedScene {
     pub ss_types: Option<Vec<SSType>>,
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     pub all_positions: Vec<Vec3>,
-    pub entity_actions: HashMap<GroupId, AnimationAction>,
-    pub entity_residue_ranges: Vec<(GroupId, u32, u32)>,
+    pub entity_transitions: HashMap<u32, Transition>,
+    pub entity_residue_ranges: Vec<(u32, u32, u32)>,
     // ... more passthrough fields
 }
 ```

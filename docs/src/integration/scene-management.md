@@ -157,12 +157,19 @@ The background processor uses `mesh_version` to decide whether to regenerate or 
 After modifying the scene, sync to the rendering pipeline:
 
 ```rust
-// Full sync with optional animation action
-engine.sync_scene_to_renderers(Some(AnimationAction::Wiggle));
+// Full sync with optional transition
+engine.sync_scene_to_renderers(Some(Transition::smooth()));
 
-// Targeted sync -- only specific groups get animation, others snap
+// Targeted sync -- only specific entities get animation, others snap
 engine.sync_scene_to_renderers_targeted(
-    HashMap::from([(design_id, AnimationAction::DiffusionFinalize)])
+    HashMap::from([(design_id, Transition::with_behavior(
+        BackboneThenExpand::new(
+            Duration::from_millis(400),
+            Duration::from_millis(600),
+        ))
+        .allowing_size_change()
+        .suppressing_initial_sidechains()
+    )])
 );
 ```
 

@@ -21,7 +21,7 @@ use glam::Vec3;
 
 use super::PerEntityData;
 use crate::{
-    animation::AnimationAction,
+    animation::Transition,
     options::{ColorOptions, DisplayOptions, GeometryOptions},
     renderer::molecular::{
         backbone::{BackboneRenderer, ChainRange},
@@ -55,10 +55,10 @@ pub enum SceneRequest {
     FullRebuild {
         /// Per-entity data for mesh generation.
         entities: Vec<PerEntityData>,
-        /// Per-entity animation actions. Entities in the map animate with
-        /// their action; entities not in the map snap. Empty map =
+        /// Per-entity transitions. Entities in the map animate with
+        /// their transition; entities not in the map snap. Empty map =
         /// snap all.
-        entity_actions: HashMap<u32, AnimationAction>,
+        entity_transitions: HashMap<u32, Transition>,
         /// Current display options for mesh generation.
         display: DisplayOptions,
         /// Current color options for mesh generation.
@@ -155,9 +155,9 @@ pub struct PreparedScene {
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     /// All atom positions for camera fitting.
     pub all_positions: Vec<Vec3>,
-    /// Per-entity animation actions. Entities in the map animate; others snap.
+    /// Per-entity transitions. Entities in the map animate; others snap.
     /// Empty map = snap all (no animation).
-    pub entity_actions: HashMap<u32, AnimationAction>,
+    pub entity_transitions: HashMap<u32, Transition>,
     /// Where each entity's residues land in the flat concatenated arrays:
     /// `(entity_id, global_residue_start, residue_count)`.
     pub entity_residue_ranges: Vec<(u32, u32, u32)>,
@@ -320,7 +320,7 @@ impl SceneProcessor {
                 SceneRequest::Shutdown => break,
                 SceneRequest::FullRebuild {
                     entities,
-                    entity_actions,
+                    entity_transitions,
                     display,
                     colors,
                     geometry,
@@ -390,7 +390,7 @@ impl SceneProcessor {
                     // Concatenate into PreparedScene
                     let prepared = Self::concatenate_meshes(
                         &entity_meshes,
-                        entity_actions,
+                        entity_transitions,
                     );
                     scene_input.write(Some(prepared));
                 }
@@ -590,7 +590,7 @@ impl SceneProcessor {
     /// Concatenate per-entity cached meshes into a single PreparedScene.
     fn concatenate_meshes(
         entity_meshes: &[(u32, &CachedEntityMesh)],
-        entity_actions: HashMap<u32, AnimationAction>,
+        entity_transitions: HashMap<u32, Transition>,
     ) -> PreparedScene {
         // --- Backbone (unified vertex buffer, partitioned index buffers) ---
         let mut all_backbone_verts: Vec<u8> = Vec::new();
@@ -823,7 +823,7 @@ impl SceneProcessor {
                 None
             },
             all_positions,
-            entity_actions,
+            entity_transitions,
             entity_residue_ranges,
             non_protein_entities: all_non_protein,
             nucleic_acid_rings: all_na_rings,

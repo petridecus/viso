@@ -1,4 +1,4 @@
-//! Animation controller handles preemption and action->behavior mapping.
+//! Animation controller handles preemption and transition-based behavior.
 
 use std::time::Instant;
 
@@ -6,43 +6,18 @@ use super::{
     runner::{AnimationRunner, ResidueAnimationData},
     state::StructureState,
 };
-use crate::animation::{
-    behaviors::PreemptionStrategy,
-    preferences::{AnimationAction, AnimationPreferences},
-};
+use crate::animation::{behaviors::PreemptionStrategy, transition::Transition};
 
 /// Controls animation lifecycle: when to start, preempt, or ignore new targets.
 #[derive(Clone)]
 pub struct AnimationController {
-    preferences: AnimationPreferences,
     enabled: bool,
 }
 
 impl AnimationController {
-    /// Create with default preferences.
+    /// Create a new controller.
     pub fn new() -> Self {
-        Self {
-            preferences: AnimationPreferences::default(),
-            enabled: true,
-        }
-    }
-
-    /// Create with custom preferences.
-    pub fn with_preferences(preferences: AnimationPreferences) -> Self {
-        Self {
-            preferences,
-            enabled: true,
-        }
-    }
-
-    /// Get mutable access to animation preferences.
-    pub fn preferences_mut(&mut self) -> &mut AnimationPreferences {
-        &mut self.preferences
-    }
-
-    /// Get immutable access to animation preferences.
-    pub fn preferences(&self) -> &AnimationPreferences {
-        &self.preferences
+        Self { enabled: true }
     }
 
     /// Enable or disable animations.
@@ -73,7 +48,7 @@ impl AnimationController {
         current_state: &mut StructureState,
         new_target: &StructureState,
         current_runner: Option<&AnimationRunner>,
-        action: AnimationAction,
+        transition: &Transition,
         force: bool,
     ) -> Option<AnimationRunner> {
         // Disabled means no animation
@@ -85,7 +60,7 @@ impl AnimationController {
         // Structure size changed
         let did_resize;
         if current_state.size_differs(new_target) {
-            if action.allows_size_change() {
+            if transition.allows_size_change {
                 // Resize current state to match the new target dimensions.
                 // Existing residues keep their current visual positions (and
                 // will lerp to the new target). New residues
@@ -108,8 +83,8 @@ impl AnimationController {
             return None;
         }
 
-        // Get behavior for this action
-        let behavior = self.preferences.get(action).clone();
+        // Get behavior from transition
+        let behavior = transition.behavior.clone();
 
         // Handle preemption if animation is in progress
         if let Some(runner) = current_runner {
@@ -187,7 +162,6 @@ impl std::fmt::Debug for AnimationController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimationController")
             .field("enabled", &self.enabled)
-            .field("preferences", &self.preferences)
             .finish()
     }
 }
@@ -223,7 +197,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Wiggle,
+            &Transition::smooth(),
             false,
         );
 
@@ -241,7 +215,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Wiggle,
+            &Transition::smooth(),
             false,
         );
 
@@ -261,7 +235,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Wiggle,
+            &Transition::smooth(),
             false,
         );
 
@@ -270,10 +244,7 @@ mod tests {
 
     #[test]
     fn test_controller_respects_snap_behavior() {
-        let mut controller = AnimationController::new();
-        controller
-            .preferences_mut()
-            .set(AnimationAction::Load, shared(Snap));
+        let controller = AnimationController::new();
 
         let mut state = StructureState::from_backbone(&make_backbone(0.0, 2));
         let new_target = StructureState::from_backbone(&make_backbone(10.0, 2));
@@ -282,7 +253,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Load,
+            &Transition::snap(),
             false,
         );
 
@@ -301,7 +272,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Wiggle,
+            &Transition::smooth(), // allows_size_change=false
             false,
         );
 
@@ -319,7 +290,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Wiggle,
+            &Transition::smooth(),
             false,
         );
 
@@ -327,20 +298,28 @@ mod tests {
     }
 
     #[test]
-    fn test_controller_size_change_animates_for_diffusion_finalize() {
+    fn test_controller_size_change_animates_when_allowed() {
         let controller = AnimationController::new();
         let mut state = StructureState::from_backbone(&make_backbone(0.0, 3));
         let new_target = StructureState::from_backbone(&make_backbone(5.0, 5)); // Larger
+
+        let transition = Transition::with_behavior(
+            crate::animation::BackboneThenExpand::new(
+                std::time::Duration::from_millis(400),
+                std::time::Duration::from_millis(600),
+            ),
+        )
+        .allowing_size_change();
 
         let runner = controller.handle_new_target(
             &mut state,
             &new_target,
             None,
-            AnimationAction::DiffusionFinalize,
+            &transition,
             false,
         );
 
-        // DiffusionFinalize allows size change — should create animation
+        // allows_size_change=true — should create animation
         assert!(runner.is_some());
         // State should be resized to match new target
         assert_eq!(state.residue_count(), 5);
@@ -356,16 +335,18 @@ mod tests {
     }
 
     #[test]
-    fn test_controller_size_change_smaller_animates_for_diffusion_finalize() {
+    fn test_controller_size_change_smaller_animates_when_allowed() {
         let controller = AnimationController::new();
         let mut state = StructureState::from_backbone(&make_backbone(0.0, 5));
         let new_target = StructureState::from_backbone(&make_backbone(5.0, 3)); // Smaller
+
+        let transition = Transition::snap(); // snap allows_size_change=true by default
 
         let runner = controller.handle_new_target(
             &mut state,
             &new_target,
             None,
-            AnimationAction::DiffusionFinalize,
+            &transition,
             false,
         );
 
@@ -385,7 +366,7 @@ mod tests {
             &mut state,
             &new_target,
             None,
-            AnimationAction::Shake,
+            &Transition::smooth(),
             true, // force animation for sidechain-only change
         );
 

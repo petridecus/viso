@@ -4,12 +4,12 @@ Viso is designed for live manipulation -- structures can be updated mid-session 
 
 ## Coordinate Updates
 
-### Single Group
+### Single Entity
 
 ```rust
-// Update protein coordinates in a specific group
-engine.scene.update_group_protein_coords(group_id, new_coords);
-engine.sync_scene_to_renderers(Some(AnimationAction::Wiggle));
+// Update protein coordinates in a specific entity
+engine.scene.update_entity_protein_coords(entity_id, new_coords);
+engine.sync_scene_to_renderers(Some(Transition::smooth()));
 ```
 
 ### Combined Multi-Group Update (Rosetta)
@@ -27,7 +27,7 @@ engine.scene.apply_combined_update(
     &response_bytes,
     &result.chain_ids_per_group,
 )?;
-engine.sync_scene_to_renderers(Some(AnimationAction::Wiggle));
+engine.sync_scene_to_renderers(Some(Transition::smooth()));
 ```
 
 ### Replacing Entities
@@ -40,33 +40,44 @@ if let Some(group) = engine.group_mut(group_id) {
     group.name = "Updated Structure".to_string();
     group.invalidate_render_cache();
 }
-engine.sync_scene_to_renderers(Some(AnimationAction::DiffusionFinalize));
+engine.sync_scene_to_renderers(Some(
+    Transition::with_behavior(BackboneThenExpand::new(
+        Duration::from_millis(400),
+        Duration::from_millis(600),
+    ))
+    .allowing_size_change()
+    .suppressing_initial_sidechains()
+));
 ```
 
-## Animation Actions
+## Transitions
 
-Every update can specify an `AnimationAction` that controls the visual transition:
+Every update can specify a `Transition` that controls the visual animation:
 
 ```rust
-pub enum AnimationAction {
-    Wiggle,           // Rosetta minimize -- smooth 300ms ease-out
-    Shake,            // Rosetta rotamer pack -- smooth 300ms ease-out
-    Mutation,         // Residue mutation -- collapse/expand effect
-    Diffusion,        // ML intermediate -- fast 100ms linear
-    DiffusionFinalize,// ML final result -- backbone lerp then sidechain expand
-    Reveal,           // Prediction reveal -- cascading effect
-    Load,             // New structure load -- instant snap
-}
+// Instant snap (for loading, no animation)
+Transition::snap()
+
+// Standard smooth interpolation (300ms ease-out)
+Transition::smooth()
+
+// Custom behavior
+Transition::with_behavior(CollapseExpand::default())
+
+// With flags
+Transition::with_behavior(BackboneThenExpand::new(...))
+    .allowing_size_change()
+    .suppressing_initial_sidechains()
 ```
 
-Each action maps to an animation behavior through `AnimationPreferences`. See [Animation System](../deep-dives/animation-system.md) for details.
+See [Animation System](../deep-dives/animation-system.md) for details on built-in behaviors.
 
 ## Backbone Animation
 
 For updates that only change backbone coordinates:
 
 ```rust
-engine.animate_to_pose(&new_backbone_chains, AnimationAction::Wiggle);
+engine.animate_to_pose(&new_backbone_chains, &Transition::smooth());
 ```
 
 This sets a new animation target. The animator interpolates from the current visual position to the new target over the behavior's duration.
@@ -76,11 +87,11 @@ This sets a new animation target. The animator interpolates from the current vis
 For updates that include sidechain data:
 
 ```rust
-engine.animate_to_full_pose_with_action(
+engine.animate_to_full_pose(
     &new_backbone_chains,
     &sidechain_data,        // SidechainData { positions, bonds, backbone_bonds, ... }
     &sidechain_atom_names,
-    AnimationAction::Shake,
+    &Transition::smooth(),
 );
 ```
 
@@ -98,7 +109,7 @@ If a new update arrives while an animation is playing, the behavior's `Preemptio
 - **Ignore** -- ignore the new target until current animation completes
 - **Blend** -- blend toward new target while maintaining velocity
 
-Most behaviors use `Restart`, which gives responsive feedback during rapid Rosetta cycles.
+Most behaviors use `Restart`, which gives responsive feedback during rapid update cycles.
 
 ## Targeted Per-Entity Animation
 
@@ -109,12 +120,19 @@ use std::collections::HashMap;
 
 engine.sync_scene_to_renderers_targeted(
     HashMap::from([
-        (design_group_id, AnimationAction::DiffusionFinalize),
+        (design_entity_id, Transition::with_behavior(
+            BackboneThenExpand::new(
+                Duration::from_millis(400),
+                Duration::from_millis(600),
+            ))
+            .allowing_size_change()
+            .suppressing_initial_sidechains()
+        ),
     ])
 );
 ```
 
-Groups not in the map are snapped instantly to their current state, preventing unwanted animation of unchanged structures.
+Entities not in the map are snapped instantly to their current state, preventing unwanted animation of unchanged structures.
 
 ## Band and Pull Visualization
 
@@ -184,7 +202,7 @@ if let BackendUpdate::RosettaCoords { coords_bytes, score, .. } = update {
         group.set_per_residue_scores(Some(scores));
     }
 
-    engine.sync_scene_to_renderers(Some(AnimationAction::Wiggle));
+    engine.sync_scene_to_renderers(Some(Transition::smooth()));
 }
 ```
 
@@ -198,7 +216,9 @@ fn on_ml_intermediate(engine: &mut Engine, entities: Vec<MoleculeEntity>, step: 
         group.name = format!("Predicting... ({}/{})", step, total_steps);
         group.invalidate_render_cache();
     }
-    engine.sync_scene_to_renderers(Some(AnimationAction::Diffusion));
+    engine.sync_scene_to_renderers(Some(
+        Transition::with_behavior(SmoothInterpolation::linear(Duration::from_millis(100)))
+    ));
 }
 
 // Final result
@@ -209,7 +229,14 @@ fn on_ml_complete(engine: &mut Engine, entities: Vec<MoleculeEntity>) {
         group.invalidate_render_cache();
     }
     engine.sync_scene_to_renderers_targeted(
-        HashMap::from([(group_id, AnimationAction::DiffusionFinalize)])
+        HashMap::from([(group_id, Transition::with_behavior(
+            BackboneThenExpand::new(
+                Duration::from_millis(400),
+                Duration::from_millis(600),
+            ))
+            .allowing_size_change()
+            .suppressing_initial_sidechains()
+        )])
     );
 }
 ```
@@ -225,10 +252,16 @@ let coords = backbone_chains_to_coords(&backbone_chains);
 let entities = split_into_entities(&coords);
 engine.load_entities(entities, "Designing...", false);
 
-// Final: full-atom with DiffusionFinalize animation
-// BackboneThenExpand behavior: backbone lerps first, then sidechains expand
+// Final: full-atom with backbone-then-expand animation
 engine.sync_scene_to_renderers_targeted(
-    HashMap::from([(design_id, AnimationAction::DiffusionFinalize)])
+    HashMap::from([(design_id, Transition::with_behavior(
+        BackboneThenExpand::new(
+            Duration::from_millis(400),
+            Duration::from_millis(600),
+        ))
+        .allowing_size_change()
+        .suppressing_initial_sidechains()
+    )])
 );
 ```
 

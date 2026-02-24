@@ -10,8 +10,8 @@ use crate::util::easing::EasingFunction;
 
 /// Smooth interpolation with configurable easing.
 ///
-/// This is the default behavior for most animations (wiggle, shake, etc).
-/// Uses the Rosetta-Interactive defaults by default.
+/// This is the default behavior for most animations.
+/// Uses 300ms cubic hermite ease-out by default.
 #[derive(Debug, Clone)]
 pub struct SmoothInterpolation {
     /// Total animation duration.
@@ -32,8 +32,8 @@ impl SmoothInterpolation {
         }
     }
 
-    /// Rosetta-Interactive defaults: 300ms, cubic hermite ease-out.
-    pub fn rosetta_default() -> Self {
+    /// Standard defaults: 300ms, cubic hermite ease-out.
+    pub fn standard() -> Self {
         Self {
             duration: Duration::from_millis(300),
             easing: EasingFunction::DEFAULT,
@@ -41,7 +41,7 @@ impl SmoothInterpolation {
         }
     }
 
-    /// Fast interpolation for snappy feedback.
+    /// Fast interpolation (100ms, quadratic ease-out).
     pub fn fast() -> Self {
         Self {
             duration: Duration::from_millis(100),
@@ -51,7 +51,6 @@ impl SmoothInterpolation {
     }
 
     /// Linear interpolation (no easing distortion).
-    /// Useful for diffusion intermediates.
     pub fn linear(duration: Duration) -> Self {
         Self {
             duration,
@@ -69,7 +68,7 @@ impl SmoothInterpolation {
 
 impl Default for SmoothInterpolation {
     fn default() -> Self {
-        Self::rosetta_default()
+        Self::standard()
     }
 }
 
@@ -148,8 +147,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rosetta_default_values() {
-        let behavior = SmoothInterpolation::rosetta_default();
+    fn test_standard_values() {
+        let behavior = SmoothInterpolation::standard();
         assert_eq!(behavior.duration, Duration::from_millis(300));
         assert_eq!(behavior.easing, EasingFunction::DEFAULT);
     }

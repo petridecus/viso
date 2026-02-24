@@ -160,7 +160,7 @@ viso/src/
 │   └── processor.rs        # SceneProcessor background thread
 ├── animation/
 │   ├── mod.rs              # Module re-exports
-│   ├── preferences.rs      # AnimationAction, AnimationPreferences
+│   ├── transition.rs       # Transition (behavior + flags)
 │   ├── interpolation.rs    # InterpolationContext, lerp utilities
 │   ├── sidechain_state.rs  # Sidechain animation tracking
 │   ├── behaviors/

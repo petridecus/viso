@@ -2,7 +2,7 @@
 //!
 //! - `StructureState`: Holds current and target visual states
 //! - `AnimationRunner`: Executes a single animation
-//! - `AnimationController`: Handles preemption and action->behavior mapping
+//! - `AnimationController`: Handles preemption and transition-based behavior
 
 mod controller;
 mod runner;
@@ -15,9 +15,7 @@ use glam::Vec3;
 pub use runner::AnimationRunner;
 pub use state::StructureState;
 
-use super::{
-    interpolation::InterpolationContext, preferences::AnimationAction,
-};
+use super::{interpolation::InterpolationContext, transition::Transition};
 
 /// Composes [`StructureState`], [`AnimationRunner`], and
 /// [`AnimationController`] to animate backbone/sidechain transitions.
@@ -38,8 +36,8 @@ pub struct StructureAnimator {
     /// Flag indicating sidechains changed (for triggering animation even when
     /// backbone is static)
     sidechains_changed: bool,
-    /// Pending action for sidechain-only animation
-    pending_sidechain_action: Option<AnimationAction>,
+    /// Pending transition for sidechain-only animation
+    pending_sidechain_transition: Option<Transition>,
     /// Current frame's animation progress (0.0 to 1.0), set by update().
     current_frame_progress: f32,
     /// Residue ranges that have been snapped (non-targeted entities).
@@ -48,7 +46,7 @@ pub struct StructureAnimator {
 }
 
 impl StructureAnimator {
-    /// Animator with default preferences.
+    /// Animator with default settings.
     pub fn new() -> Self {
         Self {
             state: StructureState::new(),
@@ -60,38 +58,10 @@ impl StructureAnimator {
             start_ca_positions: Vec::new(),
             target_ca_positions: Vec::new(),
             sidechains_changed: false,
-            pending_sidechain_action: None,
+            pending_sidechain_transition: None,
             current_frame_progress: 1.0,
             snapped_residue_ranges: Vec::new(),
         }
-    }
-
-    /// Create with custom controller (for custom preferences).
-    pub fn with_controller(controller: AnimationController) -> Self {
-        Self {
-            state: StructureState::new(),
-            runner: None,
-            controller,
-            start_sidechain_positions: Vec::new(),
-            target_sidechain_positions: Vec::new(),
-            sidechain_residue_indices: Vec::new(),
-            start_ca_positions: Vec::new(),
-            target_ca_positions: Vec::new(),
-            sidechains_changed: false,
-            pending_sidechain_action: None,
-            current_frame_progress: 1.0,
-            snapped_residue_ranges: Vec::new(),
-        }
-    }
-
-    /// Get mutable access to the controller (for changing preferences).
-    pub fn controller_mut(&mut self) -> &mut AnimationController {
-        &mut self.controller
-    }
-
-    /// Get immutable access to the controller.
-    pub fn controller(&self) -> &AnimationController {
-        &self.controller
     }
 
     /// Enable or disable animations.
@@ -121,19 +91,21 @@ impl StructureAnimator {
     pub fn set_target(
         &mut self,
         backbone_chains: &[Vec<Vec3>],
-        action: AnimationAction,
+        transition: &Transition,
     ) {
         let new_target = StructureState::from_backbone(backbone_chains);
 
         // Check if we have pending sidechain changes that should force
         // animation
         let force_animation = self.sidechains_changed;
-        let effective_action = if force_animation {
-            // Use the pending sidechain action if available, otherwise use the
-            // provided action
-            self.pending_sidechain_action.take().unwrap_or(action)
+        let effective_transition = if force_animation {
+            // Use the pending sidechain transition if available, otherwise use
+            // the provided transition
+            self.pending_sidechain_transition
+                .take()
+                .unwrap_or_else(|| transition.clone())
         } else {
-            action
+            transition.clone()
         };
 
         // Let controller decide what to do
@@ -141,7 +113,7 @@ impl StructureAnimator {
             &mut self.state,
             &new_target,
             self.runner.as_ref(),
-            effective_action,
+            &effective_transition,
             force_animation,
         );
 
@@ -228,15 +200,14 @@ impl StructureAnimator {
     ///
     /// Call this alongside `set_target` when sidechain data changes.
     /// The residue_indices map each sidechain atom to its residue for collapse
-    /// animation. Pass an action to enable sidechain-only animation
-    /// triggering.
+    /// animation.
     pub fn set_sidechain_target(
         &mut self,
         positions: &[Vec3],
         residue_indices: &[u32],
         ca_positions: &[Vec3],
     ) {
-        self.set_sidechain_target_with_action(
+        self.set_sidechain_target_with_transition(
             positions,
             residue_indices,
             ca_positions,
@@ -244,18 +215,18 @@ impl StructureAnimator {
         );
     }
 
-    /// Set sidechain target positions with an explicit action for
+    /// Set sidechain target positions with an explicit transition for
     /// sidechain-only animations.
     ///
-    /// If sidechains change but backbone doesn't, this action will be used to
-    /// trigger an animation. Call this BEFORE `set_target()` for proper
+    /// If sidechains change but backbone doesn't, this transition will be used
+    /// to trigger an animation. Call this BEFORE `set_target()` for proper
     /// animation triggering.
-    pub fn set_sidechain_target_with_action(
+    pub fn set_sidechain_target_with_transition(
         &mut self,
         positions: &[Vec3],
         residue_indices: &[u32],
         ca_positions: &[Vec3],
-        action: Option<AnimationAction>,
+        transition: Option<&Transition>,
     ) {
         // Clear per-entity snap ranges (will be re-set by
         // remove_non_targeted_from_runner if needed)
@@ -292,11 +263,12 @@ impl StructureAnimator {
             }
         } else {
             // Size changed.
-            // If the pending action allows size-change animation, initialize
-            // sidechain starts at their CA (collapsed) so CollapseExpand can
-            // animate them expanding outward. Otherwise snap to target.
+            // If the pending transition allows size-change animation,
+            // initialize sidechain starts at their CA (collapsed)
+            // so CollapseExpand can animate them expanding outward.
+            // Otherwise snap to target.
             let allows_resize =
-                action.map(|a| a.allows_size_change()).unwrap_or(false);
+                transition.map(|t| t.allows_size_change).unwrap_or(false);
             if allows_resize {
                 // Start each sidechain atom at its residue's CA position
                 self.start_sidechain_positions = residue_indices
@@ -320,7 +292,7 @@ impl StructureAnimator {
 
         // Store sidechain change state for set_target() to use
         self.sidechains_changed = sidechains_changed;
-        self.pending_sidechain_action = action;
+        self.pending_sidechain_transition = transition.cloned();
     }
 
     /// Check if new sidechain positions differ from current target.
@@ -414,14 +386,15 @@ impl StructureAnimator {
             .collect()
     }
 
-    /// Snap sidechain and CA positions for entities NOT covered by any action.
+    /// Snap sidechain and CA positions for entities NOT covered by any
+    /// transition.
     ///
     /// For each entity range whose id is NOT in `active_entities`, sets
     /// `start = target` so those residues produce zero displacement during
     /// interpolation (they snap instantly).
     ///
-    /// Call this AFTER `set_sidechain_target_with_action` and `set_target` when
-    /// per-entity actions are in use.
+    /// Call this AFTER `set_sidechain_target_with_transition` and `set_target`
+    /// when per-entity transitions are in use.
     pub fn snap_entities_without_action<K: std::hash::Hash + Eq + Copy>(
         &mut self,
         entity_residue_ranges: &[(K, u32, u32)],
@@ -431,7 +404,7 @@ impl StructureAnimator {
             entity_residue_ranges
         {
             if active_entities.contains(entity_id) {
-                continue; // This entity has an action, let it animate
+                continue; // This entity has a transition, let it animate
             }
 
             let res_start = start_residue as usize;
@@ -469,7 +442,7 @@ impl StructureAnimator {
     /// their backbone `current = target` so they show no visual motion.
     ///
     /// Call this AFTER `set_target` (which creates the runner) and AFTER
-    /// `snap_entities_without_action` when per-entity actions are in use.
+    /// `snap_entities_without_action` when per-entity transitions are in use.
     pub fn remove_non_targeted_from_runner<K: std::hash::Hash + Eq + Copy>(
         &mut self,
         entity_residue_ranges: &[(K, u32, u32)],
@@ -591,7 +564,7 @@ mod tests {
     #[test]
     fn test_animator_first_target_snaps() {
         let mut animator = StructureAnimator::new();
-        animator.set_target(&make_backbone(0.0), AnimationAction::Wiggle);
+        animator.set_target(&make_backbone(0.0), &Transition::snap());
 
         assert!(!animator.is_animating());
         assert_eq!(animator.residue_count(), 2);
@@ -600,8 +573,8 @@ mod tests {
     #[test]
     fn test_animator_animates_on_change() {
         let mut animator = StructureAnimator::new();
-        animator.set_target(&make_backbone(0.0), AnimationAction::Wiggle);
-        animator.set_target(&make_backbone(10.0), AnimationAction::Wiggle);
+        animator.set_target(&make_backbone(0.0), &Transition::smooth());
+        animator.set_target(&make_backbone(10.0), &Transition::smooth());
 
         assert!(animator.is_animating());
     }
@@ -609,8 +582,8 @@ mod tests {
     #[test]
     fn test_animator_skip() {
         let mut animator = StructureAnimator::new();
-        animator.set_target(&make_backbone(0.0), AnimationAction::Wiggle);
-        animator.set_target(&make_backbone(10.0), AnimationAction::Wiggle);
+        animator.set_target(&make_backbone(0.0), &Transition::smooth());
+        animator.set_target(&make_backbone(10.0), &Transition::smooth());
 
         animator.skip();
 
@@ -622,8 +595,8 @@ mod tests {
     #[test]
     fn test_animator_completes() {
         let mut animator = StructureAnimator::new();
-        animator.set_target(&make_backbone(0.0), AnimationAction::Load);
-        animator.set_target(&make_backbone(10.0), AnimationAction::Wiggle);
+        animator.set_target(&make_backbone(0.0), &Transition::snap());
+        animator.set_target(&make_backbone(10.0), &Transition::smooth());
 
         let future = Instant::now() + Duration::from_secs(1);
         let still_animating = animator.update(future);
@@ -637,7 +610,7 @@ mod tests {
         let mut animator = StructureAnimator::new();
 
         // Set initial backbone
-        animator.set_target(&make_backbone(5.0), AnimationAction::Load);
+        animator.set_target(&make_backbone(5.0), &Transition::snap());
         assert!(!animator.is_animating(), "Initial backbone should snap");
 
         // Set initial sidechains
@@ -646,29 +619,29 @@ mod tests {
         let residue_indices = vec![0, 1];
         let ca_positions =
             vec![Vec3::new(1.0, 5.0, 0.0), Vec3::new(4.0, 5.0, 0.0)];
-        animator.set_sidechain_target_with_action(
+        animator.set_sidechain_target_with_transition(
             &sidechain_pos,
             &residue_indices,
             &ca_positions,
-            Some(AnimationAction::Shake),
+            Some(&Transition::smooth()),
         );
 
         // Set same backbone again - should trigger animation due to sidechain
         // change
-        animator.set_target(&make_backbone(5.0), AnimationAction::Load);
+        animator.set_target(&make_backbone(5.0), &Transition::snap());
 
         // Now change sidechains with same backbone
         let new_sidechain_pos =
             vec![Vec3::new(1.0, 5.0, 2.0), Vec3::new(2.0, 5.0, 2.0)];
-        animator.set_sidechain_target_with_action(
+        animator.set_sidechain_target_with_transition(
             &new_sidechain_pos,
             &residue_indices,
             &ca_positions,
-            Some(AnimationAction::Shake),
+            Some(&Transition::smooth()),
         );
 
         // Set same backbone - should animate because sidechains changed
-        animator.set_target(&make_backbone(5.0), AnimationAction::Load);
+        animator.set_target(&make_backbone(5.0), &Transition::snap());
         assert!(
             animator.is_animating(),
             "Sidechain-only change should trigger animation"

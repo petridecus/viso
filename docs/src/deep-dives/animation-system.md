@@ -1,47 +1,39 @@
 # Animation System
 
-Viso's animation system manages smooth visual transitions when protein structures change. It uses a three-layer architecture that separates *what triggered the change* from *how it should look*.
+Viso's animation system manages smooth visual transitions when protein structures change. It uses a two-layer architecture that separates *how to animate* from the application's *why*.
 
-## Three-Layer Architecture
+## Two-Layer Architecture
 
 ```
-AnimationAction    →    AnimationPreferences    →    AnimationBehavior
-  (what happened)         (action→behavior map)       (how to animate)
+Transition              →    AnimationBehavior
+  (behavior + flags)          (how to animate)
 ```
 
-1. **Action** -- an enum describing what triggered the update (Wiggle, Mutation, Diffusion, etc.)
-2. **Preferences** -- a configurable mapping from actions to behaviors
-3. **Behavior** -- a trait implementation that defines interpolation curves, timing, and visual effects
+1. **Transition** -- a struct bundling a behavior with metadata flags (size-change permission, sidechain suppression)
+2. **Behavior** -- a trait implementation that defines interpolation curves, timing, and visual effects
 
-This separation means you can change how mutations animate without touching any Rosetta code, and vice versa.
+The consumer constructs `Transition` values directly, choosing the appropriate behavior for each update. Viso only cares about *how* to interpolate, not *why*.
 
-## Animation Actions
+## Transition
 
 ```rust
-pub enum AnimationAction {
-    Wiggle,            // Rosetta energy minimization
-    Shake,             // Rosetta rotamer packing
-    Mutation,          // User-triggered residue mutation
-    Diffusion,         // ML diffusion intermediate
-    DiffusionFinalize, // Final ML result (backbone-only → full-atom)
-    Reveal,            // Instant prediction reveal
-    Load,              // Loading a new structure
+pub struct Transition {
+    pub behavior: SharedBehavior,
+    pub allows_size_change: bool,
+    pub suppress_initial_sidechains: bool,
 }
+
+// Convenience constructors
+Transition::snap()     // Instant, allows resize
+Transition::smooth()   // 300ms cubic hermite ease-out
+Transition::with_behavior(CollapseExpand::default())  // Custom behavior
+Transition::default()  // Same as smooth()
+
+// Builder methods
+Transition::with_behavior(BackboneThenExpand::new(...))
+    .allowing_size_change()
+    .suppressing_initial_sidechains()
 ```
-
-Each action maps to a behavior through `AnimationPreferences`.
-
-## Default Behavior Mapping
-
-| Action | Behavior | Duration | Notes |
-|--------|----------|----------|-------|
-| `Wiggle` | `SmoothInterpolation` | 300ms | Cubic hermite ease-out |
-| `Shake` | `SmoothInterpolation` | 300ms | Same as Wiggle |
-| `Mutation` | `CollapseExpand` | ~600ms | Two-phase collapse/expand |
-| `Diffusion` | `SmoothInterpolation` | 100ms | Linear, no distortion for ML intermediates |
-| `DiffusionFinalize` | `BackboneThenExpand` | 400ms + 600ms | Backbone lerps first, then sidechains expand |
-| `Reveal` | `Cascade` | ~2s | Dramatic cascading reveal |
-| `Load` | `Snap` | 0ms | Instant, no animation |
 
 ## Built-in Behaviors
 
@@ -54,12 +46,12 @@ Instant transition. Duration is zero. Used for initial loads where animation wou
 Standard eased lerp between start and target:
 
 ```rust
-SmoothInterpolation::rosetta_default()  // 300ms, cubic hermite ease-out
-SmoothInterpolation::fast()             // 100ms, quadratic out
-SmoothInterpolation::linear(duration)   // No easing
+SmoothInterpolation::standard()        // 300ms, cubic hermite ease-out
+SmoothInterpolation::fast()            // 100ms, quadratic out
+SmoothInterpolation::linear(duration)  // No easing
 ```
 
-Good for incremental changes where start and target are close (like Rosetta minimization cycles).
+Good for incremental changes where start and target are close.
 
 ### Cascade
 
@@ -92,7 +84,7 @@ This provides clear visual feedback that a mutation occurred, even when the back
 
 ### BackboneThenExpand
 
-Two-phase animation for diffusion finalization:
+Two-phase animation for transitions where sidechains should appear after backbone settles:
 
 1. **Backbone phase** -- backbone atoms lerp to final positions while sidechains are hidden
 2. **Expand phase** -- sidechain atoms expand from collapsed (at CA) to final positions
@@ -148,7 +140,7 @@ pub enum PreemptionStrategy {
 }
 ```
 
-`Restart` is the most common -- it provides responsive feedback during rapid Rosetta cycles. The current visual state becomes the new start state, and the timer resets.
+`Restart` is the most common -- it provides responsive feedback during rapid update cycles. The current visual state becomes the new start state, and the timer resets.
 
 ## ResidueVisualState
 
@@ -185,7 +177,7 @@ The top-level animator that applications interact with:
 let mut animator = StructureAnimator::new();
 
 // Set animation target
-animator.set_target(&new_backbone_chains, AnimationAction::Wiggle);
+animator.set_target(&new_backbone_chains, &Transition::smooth());
 
 // Each frame:
 let still_animating = animator.update(Instant::now());
@@ -201,14 +193,14 @@ let context = animator.interpolation_context();
 When some groups should animate and others should snap:
 
 ```rust
-// Set sidechain targets with action (call BEFORE set_target)
-animator.set_sidechain_target_with_action(
+// Set sidechain targets with transition (call BEFORE set_target)
+animator.set_sidechain_target_with_transition(
     &positions, &residue_indices, &ca_positions,
-    Some(AnimationAction::DiffusionFinalize),
+    Some(&my_transition),
 );
 
 // Set backbone target
-animator.set_target(&backbone_chains, AnimationAction::DiffusionFinalize);
+animator.set_target(&backbone_chains, &my_transition);
 
 // Snap non-targeted entities
 animator.snap_entities_without_action(&entity_residue_ranges, &active_entities);
@@ -221,32 +213,18 @@ animator.remove_non_targeted_from_runner(&entity_residue_ranges, &active_entitie
 
 Sidechain animation tracks positions separately from backbone and supports specialized behaviors:
 
-- **Standard lerp** -- for Wiggle/Shake, sidechains lerp alongside backbone
+- **Standard lerp** -- for smooth transitions, sidechains lerp alongside backbone
 - **Collapse toward CA** -- for mutations, atoms collapse to the CA position then expand to new positions
-- **Hidden during backbone phase** -- for DiffusionFinalize, sidechains are invisible while backbone lerps
+- **Hidden during backbone phase** -- for multi-phase transitions, sidechains are invisible while backbone lerps
 
 The animator stores start and target sidechain positions and uses the behavior's `interpolate_position` method, which receives a `collapse_point` (the CA position) for behaviors that need it.
 
-## Customizing Animation
-
-Create custom preferences:
+## Disabling Animation
 
 ```rust
-let mut prefs = AnimationPreferences::default();
+// Disable all animation (instant snap)
+animator.set_enabled(false);
 
-// Make mutations snap instead of collapse/expand
-prefs.set(AnimationAction::Mutation, shared(Snap));
-
-// Make wiggle faster
-prefs.set(AnimationAction::Wiggle,
-    shared(SmoothInterpolation::fast()));
-
-let controller = AnimationController::with_preferences(prefs);
-let animator = StructureAnimator::with_controller(controller);
-```
-
-Or disable all animation:
-
-```rust
-let prefs = AnimationPreferences::disabled(); // All actions use Snap
+// Or use Transition::snap() for individual updates
+engine.sync_scene_to_renderers(Some(Transition::snap()));
 ```

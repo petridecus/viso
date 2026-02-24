@@ -10,7 +10,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::{
-    animation::AnimationAction,
+    animation::Transition,
     renderer::molecular::{
         band::BandRenderInfo, capsule_sidechain::SidechainData,
         pull::PullRenderInfo,
@@ -240,7 +240,7 @@ impl ProteinRenderEngine {
         let ids = self.scene.add_entities(entities);
         if fit_camera {
             // Sync immediately so entity data is available for camera fit
-            self.sync_scene_to_renderers(Some(AnimationAction::Load));
+            self.sync_scene_to_renderers(Some(Transition::snap()));
             let positions = self.scene.all_positions();
             if !positions.is_empty() {
                 self.camera_controller.fit_to_positions(&positions);
