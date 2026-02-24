@@ -80,7 +80,39 @@ pub fn register_stats_listener(mut stats_sig: Signal<Option<Value>>) {
     on_stats.forget();
 }
 
+/// Register a listener for panel pinned state changes from the native
+/// engine.
+pub fn register_panel_listener(mut pinned_sig: Signal<bool>) {
+    let on_pinned = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(val_str) = evt.detail().as_string() {
+                pinned_sig.set(val_str == "true");
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-panel-pinned",
+            on_pinned.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-panel-pinned listener");
+    on_pinned.forget();
+}
+
 // ── Outbound actions ─────────────────────────────────────────────────────
+
+/// Send a `toggle_panel` action to the native engine.
+pub fn send_toggle_panel() {
+    let msg = serde_json::json!({ "action": "toggle_panel" });
+    post_message(&msg.to_string());
+}
+
+/// Send a `resize_panel` action to the native engine.
+pub fn send_resize_panel(width: u32) {
+    let msg = serde_json::json!({ "action": "resize_panel", "width": width });
+    post_message(&msg.to_string());
+}
 
 /// Send a `set_option` action to the native engine.
 pub fn send_set_option(path: &str, field: &str, value: &Value) {

@@ -12,7 +12,10 @@
 //!     .unwrap();
 //! ```
 
-use std::{sync::Arc, time::Instant, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     application::ApplicationHandler,
@@ -117,6 +120,12 @@ impl Viewer {
             action_rx: None,
             #[cfg(feature = "gui")]
             last_stats_push: Instant::now(),
+            #[cfg(feature = "gui")]
+            panel_pinned: true,
+            #[cfg(feature = "gui")]
+            panel_peek: false,
+            #[cfg(feature = "gui")]
+            panel_width: crate::gui::webview::PANEL_WIDTH,
         };
 
         event_loop
@@ -141,21 +150,31 @@ struct ViewerApp {
     action_rx: Option<std::sync::mpsc::Receiver<crate::gui::webview::UiAction>>,
     #[cfg(feature = "gui")]
     last_stats_push: Instant,
+    /// Whether the options panel is pinned open (visible).
+    #[cfg(feature = "gui")]
+    panel_pinned: bool,
+    /// Whether the panel is temporarily revealed by a mouse hover.
+    #[cfg(feature = "gui")]
+    panel_peek: bool,
+    /// Current panel width in physical pixels.
+    #[cfg(feature = "gui")]
+    panel_width: u32,
 }
 
-/// Compute the wgpu surface size, reserving panel width when gui is
-/// enabled.
+
+/// Compute the wgpu surface size — always the full window dimensions.
+///
+/// The webview options panel overlays the right edge of the window;
+/// the surface must cover the entire window to avoid stretching.
 fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
-    #[cfg(feature = "gui")]
-    {
-        let panel_w = crate::gui::webview::PANEL_WIDTH;
-        let vp_w = inner.width.saturating_sub(panel_w);
-        (vp_w.max(1), inner.height.max(1))
-    }
-    #[cfg(not(feature = "gui"))]
-    {
-        (inner.width.max(1), inner.height.max(1))
-    }
+    (inner.width.max(1), inner.height.max(1))
+}
+
+/// Results from draining IPC actions.
+#[cfg(feature = "gui")]
+struct UiActionResult {
+    toggle_panel: bool,
+    resize_width: Option<u32>,
 }
 
 /// Drain IPC actions from the webview and apply to the engine.
@@ -163,9 +182,13 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
 fn drain_ui_actions(
     rx: &std::sync::mpsc::Receiver<crate::gui::webview::UiAction>,
     engine: &mut ProteinRenderEngine,
-) {
+) -> UiActionResult {
     use crate::gui::webview::UiAction;
 
+    let mut result = UiActionResult {
+        toggle_panel: false,
+        resize_width: None,
+    };
     while let Ok(action) = rx.try_recv() {
         match action {
             UiAction::SetOption { path, field, value } => {
@@ -185,6 +208,93 @@ fn drain_ui_actions(
                 log::info!("load_file action: {path}");
                 // TODO: implement runtime file loading
             }
+            UiAction::TogglePanel => {
+                result.toggle_panel = true;
+            }
+            UiAction::ResizePanel { width } => {
+                result.resize_width = Some(width);
+            }
+        }
+    }
+    result
+}
+
+#[cfg(feature = "gui")]
+impl ViewerApp {
+    /// Margin around the panel when floating (not pinned).
+    const PANEL_MARGIN: u32 = 10;
+    /// Min/max panel width for resize.
+    const MIN_PANEL_WIDTH: u32 = 220;
+    const MAX_PANEL_WIDTH: u32 = 700;
+
+    /// Toggle the options panel open/closed.
+    fn toggle_panel(&mut self) {
+        self.panel_pinned = !self.panel_pinned;
+        self.panel_peek = false;
+        self.apply_panel_layout();
+    }
+
+    /// Show or hide the webview panel. The engine surface always covers the
+    /// full window — the panel overlays the right edge.
+    fn apply_panel_layout(&mut self) {
+        let visible = self.panel_pinned || self.panel_peek;
+        let Some(ref window) = self.window else { return };
+        let inner = window.inner_size();
+
+        if let Some(ref wv) = self.webview {
+            if visible {
+                let bounds = if self.panel_pinned {
+                    crate::gui::webview::panel_bounds(
+                        inner.width,
+                        inner.height,
+                        self.panel_width,
+                    )
+                } else {
+                    crate::gui::webview::panel_bounds_floating(
+                        inner.width,
+                        inner.height,
+                        self.panel_width,
+                        Self::PANEL_MARGIN,
+                    )
+                };
+                let _ = wv.set_bounds(bounds);
+            } else {
+                // Park off-screen to the right
+                use wry::dpi;
+                let _ = wv.set_bounds(wry::Rect {
+                    position: dpi::Position::Physical(
+                        dpi::PhysicalPosition::new(inner.width as i32, 0),
+                    ),
+                    size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                        self.panel_width,
+                        inner.height,
+                    )),
+                });
+            }
+        }
+    }
+
+    /// Check if mouse is near the right edge and temporarily reveal the
+    /// panel.
+    fn update_panel_peek(&mut self, mouse_x: f32) {
+        if self.panel_pinned {
+            return;
+        }
+        let Some(ref window) = self.window else { return };
+        let inner = window.inner_size();
+        let edge_zone = 6.0;
+
+        let near_edge = mouse_x >= (inner.width as f32 - edge_zone);
+        let in_panel = mouse_x
+            >= (inner.width as f32
+                - self.panel_width as f32
+                - Self::PANEL_MARGIN as f32);
+
+        let should_peek = near_edge || (self.panel_peek && in_panel);
+
+        if should_peek != self.panel_peek {
+            self.panel_peek = should_peek;
+            self.apply_panel_layout();
         }
     }
 }
@@ -264,9 +374,14 @@ impl ApplicationHandler for ViewerApp {
                 window.as_ref(),
                 inner.width,
                 inner.height,
+                self.panel_width,
             ) {
                 Ok((wv, rx)) => {
                     crate::gui::webview::push_schema(&wv, engine.options());
+                    crate::gui::webview::push_panel_pinned(
+                        &wv,
+                        self.panel_pinned,
+                    );
                     self.webview = Some(wv);
                     self.action_rx = Some(rx);
                 }
@@ -305,12 +420,7 @@ impl ApplicationHandler for ViewerApp {
                     engine.resize(vp_w, vp_h);
                 }
                 #[cfg(feature = "gui")]
-                if let Some(ref wv) = self.webview {
-                    let _ = wv.set_bounds(crate::gui::webview::panel_bounds(
-                        event_size.width,
-                        event_size.height,
-                    ));
-                }
+                self.apply_panel_layout();
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -328,10 +438,34 @@ impl ApplicationHandler for ViewerApp {
 
             WindowEvent::RedrawRequested => {
                 #[cfg(feature = "gui")]
-                if let (Some(rx), Some(engine)) =
-                    (&self.action_rx, &mut self.engine)
                 {
-                    drain_ui_actions(rx, engine);
+                    let mut result = UiActionResult {
+                        toggle_panel: false,
+                        resize_width: None,
+                    };
+                    if let (Some(rx), Some(engine)) =
+                        (&self.action_rx, &mut self.engine)
+                    {
+                        result = drain_ui_actions(rx, engine);
+                    }
+                    if result.toggle_panel {
+                        self.toggle_panel();
+                        if let Some(ref wv) = self.webview {
+                            crate::gui::webview::push_panel_pinned(
+                                wv,
+                                self.panel_pinned,
+                            );
+                        }
+                    }
+                    if let Some(w) = result.resize_width {
+                        let clamped = w
+                            .max(Self::MIN_PANEL_WIDTH)
+                            .min(Self::MAX_PANEL_WIDTH);
+                        if clamped != self.panel_width {
+                            self.panel_width = clamped;
+                            self.apply_panel_layout();
+                        }
+                    }
                 }
 
                 let now = Instant::now();
@@ -394,6 +528,11 @@ impl ApplicationHandler for ViewerApp {
                         y: position.y as f32,
                     });
                 }
+
+                // Peek panel on hover near right edge
+                #[cfg(feature = "gui")]
+                self.update_panel_peek(position.x as f32);
+
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
@@ -431,6 +570,20 @@ impl ApplicationHandler for ViewerApp {
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+
+                // Toggle options panel with backslash key
+                #[cfg(feature = "gui")]
+                if code == winit::keyboard::KeyCode::Backslash {
+                    self.toggle_panel();
+                    if let Some(ref wv) = self.webview {
+                        crate::gui::webview::push_panel_pinned(
+                            wv,
+                            self.panel_pinned,
+                        );
+                    }
+                    return;
+                }
+
                 let key_str = format!("{code:?}");
                 if let Some(engine) = &mut self.engine {
                     if let Some(action) =

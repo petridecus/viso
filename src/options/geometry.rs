@@ -49,7 +49,8 @@ pub struct GeometryOptions {
     /// Spline segments per residue (higher = smoother curves, more GPU cost).
     #[schemars(title = "Spline Detail", range(min = 4, max = 32), extend("step" = 4))]
     pub segments_per_residue: usize,
-    /// Vertices per cross-section ring (higher = rounder tubes, more GPU cost).
+    /// Vertices per cross-section ring (higher = rounder tubes, more GPU
+    /// cost).
     #[schemars(title = "Cross-Section Detail", range(min = 4, max = 16), extend("step" = 2))]
     pub cross_section_verts: usize,
 
@@ -62,6 +63,106 @@ pub struct GeometryOptions {
     /// Ligand bond cylinder radius.
     #[schemars(skip)]
     pub ligand_bond_radius: f32,
+}
+
+impl GeometryOptions {
+    /// Return a copy with detail scaled down for the given LOD tier.
+    ///
+    /// The user's `segments_per_residue` and `cross_section_verts` are treated
+    /// as the maximum detail (tier 0). Higher tiers scale down aggressively:
+    /// - Tier 0: 100% of user settings
+    /// - Tier 1: 50%
+    /// - Tier 2: 25%
+    pub fn with_lod_tier(&self, tier: u8) -> Self {
+        if tier == 0 {
+            return self.clone();
+        }
+        let (spr, csv) = lod_scaled(
+            self.segments_per_residue,
+            self.cross_section_verts,
+            tier,
+        );
+        Self {
+            segments_per_residue: spr,
+            cross_section_verts: csv,
+            ..self.clone()
+        }
+    }
+
+    /// Clamp detail so the estimated vertex buffer stays under the wgpu 256 MB
+    /// max buffer size. Returns `self` unchanged for small structures.
+    pub fn clamped_for_residues(&self, total_residues: usize) -> Self {
+        const MAX_BUFFER_BYTES: usize = 256 * 1024 * 1024;
+        const VERTEX_BYTES: usize = 52; // size_of::<BackboneVertex>()
+        const OVERHEAD: f64 = 1.15;
+
+        let est = |spr: usize, csv: usize| -> usize {
+            (total_residues as f64 * spr as f64 * csv as f64 * OVERHEAD)
+                as usize
+                * VERTEX_BYTES
+        };
+
+        // Try current settings first
+        if est(self.segments_per_residue, self.cross_section_verts)
+            <= MAX_BUFFER_BYTES
+        {
+            return self.clone();
+        }
+
+        // Progressively reduce until it fits
+        for tier in 1..=2u8 {
+            let (spr, csv) = lod_scaled(
+                self.segments_per_residue,
+                self.cross_section_verts,
+                tier,
+            );
+            if est(spr, csv) <= MAX_BUFFER_BYTES {
+                return self.with_lod_tier(tier);
+            }
+        }
+        self.with_lod_tier(2)
+    }
+}
+
+/// Scale user detail settings down for an LOD tier.
+///
+/// - Tier 0: 100% (unchanged)
+/// - Tier 1: 50% (min 4 each)
+/// - Tier 2: 25% (min 4 each)
+pub fn lod_scaled(max_spr: usize, max_csv: usize, tier: u8) -> (usize, usize) {
+    match tier {
+        0 => (max_spr, max_csv),
+        1 => ((max_spr / 2).max(4), (max_csv / 2).max(4)),
+        _ => ((max_spr / 4).max(4), (max_csv / 4).max(4)),
+    }
+}
+
+/// Convenience: LOD tier params from defaults (for backward compat).
+pub fn lod_params(tier: u8) -> (usize, usize) {
+    let defaults = GeometryOptions::default();
+    lod_scaled(
+        defaults.segments_per_residue,
+        defaults.cross_section_verts,
+        tier,
+    )
+}
+
+/// Select LOD tier based on absolute camera distance in angstroms.
+///
+/// Uses absolute distance thresholds — screen-space occupancy is what
+/// matters, not relative bounding-radius ratios.
+///
+/// - Close (< 50 A): tier 0 (full detail)
+/// - Medium (50 – 150 A): tier 1 (half detail)
+/// - Far (> 150 A): tier 2 (quarter detail)
+pub fn select_lod_tier(camera_distance: f32, _bounding_radius: f32) -> u8 {
+    if camera_distance < 50.0 {
+        0
+    } else if camera_distance < 150.0 {
+        1
+    } else {
+        2
+    }
 }
 
 impl Default for GeometryOptions {
@@ -79,8 +180,8 @@ impl Default for GeometryOptions {
             na_width: 1.2,
             na_thickness: 0.25,
             na_roundness: 0.0,
-            segments_per_residue: 16,
-            cross_section_verts: 8,
+            segments_per_residue: 32,
+            cross_section_verts: 16,
             solvent_radius: 0.15,
             ligand_sphere_radius: 0.3,
             ligand_bond_radius: 0.12,

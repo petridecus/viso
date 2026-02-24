@@ -170,11 +170,8 @@ impl ProteinRenderEngine {
         self.sc.cached_ss_types = ss_types.to_vec();
         self.backbone_renderer
             .set_ss_override(Some(ss_types.to_vec()));
-        self.backbone_renderer.regenerate(
-            &self.context.device,
-            &self.context.queue,
-            &self.options.geometry,
-        );
+        let lod_tier = self.backbone_renderer.current_lod_tier();
+        self.submit_lod_remesh(lod_tier);
     }
 
     /// Compute secondary structure types for all residues across all chains

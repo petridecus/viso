@@ -184,8 +184,7 @@ pub(crate) fn compute_frenet_frames(points: &mut [SplinePoint]) {
             points[i].normal = normal;
             points[i].binormal = binormal;
         } else {
-            let arbitrary =
-                if t.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+            let arbitrary = if t.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
             let normal = t.cross(arbitrary).normalize();
             let binormal = t.cross(normal).normalize();
             points[i].normal = normal;

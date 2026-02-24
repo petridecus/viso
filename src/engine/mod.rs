@@ -8,11 +8,9 @@ mod scene_sync;
 
 use std::time::Instant;
 
-use foldit_conv::{
-    coords::{
-        split_into_entities, structure_file_to_coords, MoleculeEntity,
-        MoleculeType, RenderCoords,
-    },
+use foldit_conv::coords::{
+    split_into_entities, structure_file_to_coords, MoleculeEntity,
+    MoleculeType, RenderCoords,
 };
 use glam::{Mat4, Vec3};
 
@@ -138,6 +136,10 @@ pub struct ProteinRenderEngine {
     /// Last cursor position for computing deltas in
     /// [`handle_input`](Self::handle_input).
     last_cursor_pos: Option<(f32, f32)>,
+
+    /// DPI scale factor for mapping mouse coordinates (logical/CSS pixels)
+    /// to the picking texture (physical pixels). Default 1.0.
+    dpi_scale: f32,
 }
 
 // =============================================================================
@@ -175,7 +177,7 @@ impl ProteinRenderEngine {
             context.render_scale = 2;
         }
 
-        Self::init_with_context(context, cif_path)
+        Self::init_with_context(context, scale_factor, cif_path)
     }
 
     /// Engine from a pre-built [`RenderContext`] (for embedding in dioxus,
@@ -192,12 +194,13 @@ impl ProteinRenderEngine {
             context.render_scale = 2;
         }
 
-        Self::init_with_context(context, cif_path)
+        Self::init_with_context(context, scale_factor, cif_path)
     }
 
     /// Shared construction logic for both windowed and headless modes.
     fn init_with_context(
         context: RenderContext,
+        scale_factor: f64,
         cif_path: &str,
     ) -> Result<Self, crate::error::VisoError> {
         let mut shader_composer = ShaderComposer::new();
@@ -308,7 +311,6 @@ impl ProteinRenderEngine {
             &residue_color_buffer.layout,
             &render_coords.backbone_chains,
             &na_chains,
-            &options.geometry,
             &mut shader_composer,
         );
 
@@ -499,6 +501,7 @@ impl ProteinRenderEngine {
             selection_buffer,
             residue_color_buffer,
             last_cursor_pos: None,
+            dpi_scale: scale_factor as f32,
         })
     }
 
@@ -546,6 +549,14 @@ impl ProteinRenderEngine {
             fog_start,
             fog_density,
         );
+
+        // LOD tier selection — submit background remesh when tier changes
+        let lod_tier =
+            crate::options::select_lod_tier(distance, bounding_radius);
+        if lod_tier != self.backbone_renderer.current_lod_tier() {
+            self.backbone_renderer.set_lod_tier(lod_tier);
+            self.submit_lod_remesh(lod_tier);
+        }
 
         // Update selection buffer (from GPU picking)
         self.selection_buffer
@@ -635,8 +646,11 @@ impl ProteinRenderEngine {
                 color: Some(&self.residue_color_buffer.bind_group),
             };
 
-            // Backbone: unified renderer (tube + ribbon passes)
-            self.backbone_renderer.draw(&mut rp, &bind_groups);
+            // Backbone: unified renderer (tube + ribbon passes) with frustum
+            // culling
+            let frustum = self.camera_controller.frustum();
+            self.backbone_renderer
+                .draw_culled(&mut rp, &bind_groups, &frustum);
 
             if self.options.display.show_sidechains {
                 self.sidechain_renderer.draw(&mut rp, &bind_groups);

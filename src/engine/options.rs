@@ -19,12 +19,11 @@ impl ProteinRenderEngine {
         self.apply_debug();
         self.refresh_ball_and_stick();
 
-        // Regenerate backbone mesh with updated geometry options
-        self.backbone_renderer.regenerate(
-            &self.context.device,
-            &self.context.queue,
-            &self.options.geometry,
-        );
+        // Regenerate backbone mesh with updated geometry options (on
+        // background thread to avoid blocking the main thread / exceeding
+        // the 256 MB buffer limit with synchronous allocation).
+        let lod_tier = self.backbone_renderer.current_lod_tier();
+        self.submit_lod_remesh(lod_tier);
 
         // Recompute backbone colors (handles backbone_color_mode changes)
         let chains = self.backbone_renderer.cached_chains().to_vec();

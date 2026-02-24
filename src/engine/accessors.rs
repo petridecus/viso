@@ -118,6 +118,15 @@ impl ProteinRenderEngine {
     pub fn set_render_scale(&mut self, scale: u32) {
         self.context.render_scale = scale;
     }
+
+    /// Set the DPI scale factor for picking coordinate conversion.
+    ///
+    /// Call this with the window's `scale_factor()` when mouse events come
+    /// from a webview (CSS/logical pixels) while the picking texture is
+    /// in physical pixels.
+    pub fn set_dpi_scale(&mut self, scale: f64) {
+        self.dpi_scale = scale as f32;
+    }
 }
 
 // ── Visualization (bands, pulls) ──

@@ -24,7 +24,7 @@ use crate::{
     animation::AnimationAction,
     options::{ColorOptions, DisplayOptions, GeometryOptions},
     renderer::molecular::{
-        backbone::BackboneRenderer,
+        backbone::{BackboneRenderer, ChainRange},
         ball_and_stick::BallAndStickRenderer,
         capsule_sidechain::CapsuleSidechainRenderer,
         nucleic_acid::NucleicAcidRenderer,
@@ -100,6 +100,8 @@ pub struct PreparedScene {
     pub backbone_ribbon_index_count: u32,
     /// Per-residue sheet normal offsets for sidechain adjustment.
     pub sheet_offsets: Vec<(u32, Vec3)>,
+    /// Per-chain index ranges and bounding spheres for frustum culling.
+    pub backbone_chain_ranges: Vec<ChainRange>,
 
     /// Sidechain capsule instance bytes.
     pub sidechain_instances: Vec<u8>,
@@ -176,6 +178,8 @@ pub struct PreparedAnimationFrame {
     pub backbone_ribbon_index_count: u32,
     /// Per-residue sheet normal offsets.
     pub sheet_offsets: Vec<(u32, Vec3)>,
+    /// Per-chain index ranges and bounding spheres for frustum culling.
+    pub backbone_chain_ranges: Vec<ChainRange>,
     /// Optional sidechain capsule instance bytes.
     pub sidechain_instances: Option<Vec<u8>>,
     /// Number of sidechain capsule instances.
@@ -195,6 +199,7 @@ struct CachedEntityMesh {
     backbone_ribbon_inds: Vec<u32>,
     backbone_vert_count: u32,
     sheet_offsets: Vec<(u32, Vec3)>,
+    backbone_chain_ranges: Vec<ChainRange>,
     // Sidechain capsules
     sidechain_instances: Vec<u8>,
     sidechain_instance_count: u32,
@@ -316,6 +321,24 @@ impl SceneProcessor {
                     colors,
                     geometry,
                 } => {
+                    // Clamp geometry detail so the concatenated vertex
+                    // buffer stays under the wgpu 256 MB max.
+                    let total_residues: usize = entities
+                        .iter()
+                        .map(|e| {
+                            e.backbone_chains
+                                .iter()
+                                .map(|c| c.len() / 3)
+                                .sum::<usize>()
+                                + e.nucleic_acid_chains
+                                    .iter()
+                                    .map(|c| c.len())
+                                    .sum::<usize>()
+                        })
+                        .sum();
+                    let geometry =
+                        geometry.clamped_for_residues(total_residues);
+
                     // Clear cache if global settings changed
                     let settings_changed = last_display.as_ref()
                         != Some(&display)
@@ -412,16 +435,22 @@ impl SceneProcessor {
         };
 
         // --- Backbone mesh (protein + nucleic acid, unified) ---
-        let (backbone_verts_typed, backbone_tube_inds, backbone_ribbon_inds, sheet_offsets) =
-            BackboneRenderer::generate_mesh_colored(
-                &g.backbone_chains,
-                &g.nucleic_acid_chains,
-                g.ss_override.as_deref(),
-                per_residue_colors.as_deref(),
-                geometry,
-            );
+        let (
+            backbone_verts_typed,
+            backbone_tube_inds,
+            backbone_ribbon_inds,
+            sheet_offsets,
+            backbone_chain_ranges,
+        ) = BackboneRenderer::generate_mesh_colored(
+            &g.backbone_chains,
+            &g.nucleic_acid_chains,
+            g.ss_override.as_deref(),
+            per_residue_colors.as_deref(),
+            geometry,
+        );
         let backbone_vert_count = backbone_verts_typed.len() as u32;
-        let backbone_verts = bytemuck::cast_slice(&backbone_verts_typed).to_vec();
+        let backbone_verts =
+            bytemuck::cast_slice(&backbone_verts_typed).to_vec();
 
         // --- Sidechain capsules ---
         let sidechain_positions: Vec<Vec3> =
@@ -493,6 +522,7 @@ impl SceneProcessor {
             backbone_ribbon_inds,
             backbone_vert_count,
             sheet_offsets,
+            backbone_chain_ranges,
             sidechain_instances,
             sidechain_instance_count,
             bns_sphere_instances,
@@ -561,6 +591,7 @@ impl SceneProcessor {
         let mut all_backbone_ribbon_inds: Vec<u32> = Vec::new();
         let mut backbone_vert_offset: u32 = 0;
         let mut all_sheet_offsets: Vec<(u32, Vec3)> = Vec::new();
+        let mut all_chain_ranges: Vec<ChainRange> = Vec::new();
 
         // --- Sidechain ---
         let mut all_sidechain: Vec<u8> = Vec::new();
@@ -623,6 +654,22 @@ impl SceneProcessor {
             for &(res_idx, offset) in &mesh.sheet_offsets {
                 all_sheet_offsets
                     .push((res_idx + global_residue_offset, offset));
+            }
+            // Chain ranges: offset index ranges into the global buffers
+            let tube_idx_offset = all_backbone_tube_inds.len() as u32
+                - mesh.backbone_tube_inds.len() as u32;
+            let ribbon_idx_offset = all_backbone_ribbon_inds.len() as u32
+                - mesh.backbone_ribbon_inds.len() as u32;
+            for r in &mesh.backbone_chain_ranges {
+                all_chain_ranges.push(ChainRange {
+                    tube_index_start: r.tube_index_start + tube_idx_offset,
+                    tube_index_end: r.tube_index_end + tube_idx_offset,
+                    ribbon_index_start: r.ribbon_index_start
+                        + ribbon_idx_offset,
+                    ribbon_index_end: r.ribbon_index_end + ribbon_idx_offset,
+                    bounding_center: r.bounding_center,
+                    bounding_radius: r.bounding_radius,
+                });
             }
             backbone_vert_offset += mesh.backbone_vert_count;
 
@@ -731,8 +778,10 @@ impl SceneProcessor {
 
         PreparedScene {
             backbone_vertices: all_backbone_verts,
-            backbone_tube_indices: bytemuck::cast_slice(&all_backbone_tube_inds)
-                .to_vec(),
+            backbone_tube_indices: bytemuck::cast_slice(
+                &all_backbone_tube_inds,
+            )
+            .to_vec(),
             backbone_tube_index_count: all_backbone_tube_inds.len() as u32,
             backbone_ribbon_indices: bytemuck::cast_slice(
                 &all_backbone_ribbon_inds,
@@ -740,6 +789,7 @@ impl SceneProcessor {
             .to_vec(),
             backbone_ribbon_index_count: all_backbone_ribbon_inds.len() as u32,
             sheet_offsets: all_sheet_offsets,
+            backbone_chain_ranges: all_chain_ranges,
             sidechain_instances: all_sidechain,
             sidechain_instance_count: total_sidechain_count,
             bns_sphere_instances: all_bns_spheres,
@@ -783,19 +833,22 @@ impl SceneProcessor {
         geometry: &GeometryOptions,
     ) -> PreparedAnimationFrame {
         // --- Backbone mesh (protein + nucleic acid, unified) ---
-        let (verts, tube_inds, ribbon_inds, sheet_offsets) =
+        let total_residues: usize =
+            backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
+                + na_chains.iter().map(|c| c.len()).sum::<usize>();
+        let safe_geo = geometry.clamped_for_residues(total_residues);
+        let (verts, tube_inds, ribbon_inds, sheet_offsets, chain_ranges) =
             BackboneRenderer::generate_mesh_colored(
                 &backbone_chains,
                 &na_chains,
                 ss_types.as_deref(),
                 per_residue_colors.as_deref(),
-                geometry,
+                &safe_geo,
             );
         let backbone_tube_index_count = tube_inds.len() as u32;
         let backbone_ribbon_index_count = ribbon_inds.len() as u32;
         let backbone_vertices = bytemuck::cast_slice(&verts).to_vec();
-        let backbone_tube_indices =
-            bytemuck::cast_slice(&tube_inds).to_vec();
+        let backbone_tube_indices = bytemuck::cast_slice(&tube_inds).to_vec();
         let backbone_ribbon_indices =
             bytemuck::cast_slice(&ribbon_inds).to_vec();
 
@@ -836,6 +889,7 @@ impl SceneProcessor {
             backbone_ribbon_indices,
             backbone_ribbon_index_count,
             sheet_offsets,
+            backbone_chain_ranges: chain_ranges,
             sidechain_instances,
             sidechain_instance_count,
         }

@@ -6,8 +6,7 @@
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 
-use super::spline::SplinePoint;
-use super::BackboneVertex;
+use super::{spline::SplinePoint, BackboneVertex};
 use crate::options::GeometryOptions;
 
 // ==================== CROSS-SECTION PROFILE ====================
@@ -27,10 +26,8 @@ impl CrossSectionProfile {
     pub fn lerp(&self, other: &Self, t: f32) -> Self {
         Self {
             width: self.width + (other.width - self.width) * t,
-            thickness: self.thickness
-                + (other.thickness - self.thickness) * t,
-            roundness: self.roundness
-                + (other.roundness - self.roundness) * t,
+            thickness: self.thickness + (other.thickness - self.thickness) * t,
+            roundness: self.roundness + (other.roundness - self.roundness) * t,
             radial_blend: self.radial_blend
                 + (other.radial_blend - self.radial_blend) * t,
             color: [
@@ -68,12 +65,9 @@ pub(crate) fn resolve_profile(
             geo.sheet_roundness,
             0.0,
         ),
-        SSType::Coil => (
-            geo.coil_width,
-            geo.coil_thickness,
-            geo.coil_roundness,
-            0.0,
-        ),
+        SSType::Coil => {
+            (geo.coil_width, geo.coil_thickness, geo.coil_roundness, 0.0)
+        }
     };
     CrossSectionProfile {
         width,
@@ -149,8 +143,8 @@ pub(crate) fn extrude_cross_section(
     vertices: &mut Vec<BackboneVertex>,
 ) {
     for k in 0..cross_section_verts {
-        let angle = (k as f32 / cross_section_verts as f32)
-            * std::f32::consts::TAU;
+        let angle =
+            (k as f32 / cross_section_verts as f32) * std::f32::consts::TAU;
         let cos_a = angle.cos();
         let sin_a = angle.sin();
 
@@ -170,8 +164,7 @@ pub(crate) fn extrude_cross_section(
         let pos = frame.pos + offset;
 
         // Surface normal from the elliptical gradient: (cos/hw, sin/ht).
-        let grad =
-            frame.binormal * (cos_a / hw) + frame.normal * (sin_a / ht);
+        let grad = frame.binormal * (cos_a / hw) + frame.normal * (sin_a / ht);
         let mut surface_normal = grad.normalize_or_zero();
 
         // Ensure the normal points outward (same hemisphere as offset).
@@ -200,8 +193,7 @@ pub(crate) fn cap_offset(
     cross_section_verts: usize,
     k: usize,
 ) -> Vec3 {
-    let angle = (k as f32 / cross_section_verts as f32)
-        * std::f32::consts::TAU;
+    let angle = (k as f32 / cross_section_verts as f32) * std::f32::consts::TAU;
     let cos_a = angle.cos();
     let sin_a = angle.sin();
 
@@ -218,8 +210,9 @@ pub(crate) fn cap_offset(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use glam::Vec3;
+
+    use super::*;
 
     fn make_frame(pos: Vec3, tangent: Vec3, normal: Vec3) -> SplinePoint {
         let binormal = tangent.cross(normal).normalize();
@@ -240,7 +233,14 @@ mod tests {
         let csv = 8;
         let mut verts = Vec::new();
         extrude_cross_section(
-            &frame, hw, ht, 1.0, [1.0, 0.0, 0.0], 0, csv, &mut verts,
+            &frame,
+            hw,
+            ht,
+            1.0,
+            [1.0, 0.0, 0.0],
+            0,
+            csv,
+            &mut verts,
         );
         assert_eq!(verts.len(), csv);
 
@@ -254,23 +254,30 @@ mod tests {
             assert!(
                 (dist - hw).abs() < 1e-5,
                 "k={}: position dist {} != hw {}",
-                k, dist, hw,
+                k,
+                dist,
+                hw,
             );
 
-            // Normal should be the radial direction (unit vector from origin to pos)
+            // Normal should be the radial direction (unit vector from origin to
+            // pos)
             let expected_normal = pos.normalize();
             let dot = nrm.dot(expected_normal);
             assert!(
                 dot > 0.9999,
                 "k={}: normal {:?} not radial (dot with expected {:?} = {})",
-                k, nrm, expected_normal, dot,
+                k,
+                nrm,
+                expected_normal,
+                dot,
             );
 
             // center_pos should equal frame.pos (origin) for circles
             assert!(
                 cp.length() < 1e-5,
                 "k={}: center_pos {:?} should be ~origin for circle",
-                k, cp,
+                k,
+                cp,
             );
         }
     }
@@ -284,7 +291,14 @@ mod tests {
         let csv = 8;
         let mut verts = Vec::new();
         extrude_cross_section(
-            &frame, hw, ht, 1.0, [1.0, 0.0, 0.0], 0, csv, &mut verts,
+            &frame,
+            hw,
+            ht,
+            1.0,
+            [1.0, 0.0, 0.0],
+            0,
+            csv,
+            &mut verts,
         );
 
         // At 45 degrees, elliptical gradient normal should differ from radial
@@ -314,9 +328,11 @@ mod tests {
         let recon_dot = reconstructed.dot(nrm);
         assert!(
             recon_dot > 0.999,
-            "center_pos reconstruction should match stored normal \
-             (dot={}, stored={:?}, reconstructed={:?})",
-            recon_dot, nrm, reconstructed,
+            "center_pos reconstruction should match stored normal (dot={}, \
+             stored={:?}, reconstructed={:?})",
+            recon_dot,
+            nrm,
+            reconstructed,
         );
     }
 
@@ -340,14 +356,20 @@ mod tests {
         };
 
         for &(hw, ht, roundness) in &[
-            (0.2, 0.2, 1.0),   // circle
-            (0.4, 0.1, 1.0),   // wide ellipse
-            (0.1, 0.3, 1.0),   // tall ellipse
-            (0.2, 0.2, 0.5),   // half-round circle
+            (0.2, 0.2, 1.0), // circle
+            (0.4, 0.1, 1.0), // wide ellipse
+            (0.1, 0.3, 1.0), // tall ellipse
+            (0.2, 0.2, 0.5), // half-round circle
         ] {
             let mut verts = Vec::new();
             extrude_cross_section(
-                &frame, hw, ht, roundness, [1.0, 0.0, 0.0], 0, 8,
+                &frame,
+                hw,
+                ht,
+                roundness,
+                [1.0, 0.0, 0.0],
+                0,
+                8,
                 &mut verts,
             );
 
@@ -366,7 +388,13 @@ mod tests {
                     dot > 0.999,
                     "hw={} ht={} r={} k={}: reconstruction mismatch \
                      (dot={:.6}, stored={:?}, reconstructed={:?})",
-                    hw, ht, roundness, k, dot, nrm, reconstructed,
+                    hw,
+                    ht,
+                    roundness,
+                    k,
+                    dot,
+                    nrm,
+                    reconstructed,
                 );
             }
         }

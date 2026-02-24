@@ -494,21 +494,14 @@ impl Picking {
             // buffer)
             render_pass.set_pipeline(&self.tube_pipeline);
             render_pass.set_bind_group(0, camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(
-                0,
-                backbone_vertex_buffer.slice(..),
-            );
+            render_pass.set_vertex_buffer(0, backbone_vertex_buffer.slice(..));
 
             if backbone_tube_index_count > 0 {
                 render_pass.set_index_buffer(
                     backbone_tube_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                render_pass.draw_indexed(
-                    0..backbone_tube_index_count,
-                    0,
-                    0..1,
-                );
+                render_pass.draw_indexed(0..backbone_tube_index_count, 0, 0..1);
             }
 
             if backbone_ribbon_index_count > 0 {

@@ -4,35 +4,56 @@
 use foldit_conv::secondary_structure::{resolve, DetectionInput, SSType};
 use glam::Vec3;
 
-use super::spline::{
-    SplinePoint, catmull_rom, compute_frenet_frames,
-    compute_helix_axis_points, compute_rmf, cubic_bspline,
+use super::{
+    profile::{
+        cap_offset, extrude_cross_section, interpolate_profiles,
+        resolve_na_profile, resolve_profile, CrossSectionProfile,
+    },
+    sheet::{compute_sheet_geometry, interpolate_per_residue_normals},
+    spline::{
+        catmull_rom, compute_frenet_frames, compute_helix_axis_points,
+        compute_rmf, cubic_bspline, SplinePoint,
+    },
+    BackboneVertex,
 };
-use super::profile::{
-    CrossSectionProfile, cap_offset, extrude_cross_section,
-    interpolate_profiles, resolve_na_profile, resolve_profile,
-};
-use super::sheet::{compute_sheet_geometry, interpolate_per_residue_normals};
-use super::BackboneVertex;
 use crate::options::GeometryOptions;
+
+/// Per-chain index range and bounding sphere for frustum culling.
+#[derive(Clone, Debug)]
+pub struct ChainRange {
+    pub tube_index_start: u32,
+    pub tube_index_end: u32,
+    pub ribbon_index_start: u32,
+    pub ribbon_index_end: u32,
+    pub bounding_center: Vec3,
+    pub bounding_radius: f32,
+}
 
 /// Default nucleic acid backbone color (light blue-violet).
 const NA_COLOR: [f32; 3] = [0.45, 0.55, 0.85];
 
 /// Generate unified backbone mesh from protein and nucleic acid chains.
 ///
-/// Returns `(vertices, tube_indices, ribbon_indices, sheet_offsets)`.
+/// Returns `(vertices, tube_indices, ribbon_indices, sheet_offsets,
+/// chain_ranges)`.
 pub(crate) fn generate_mesh_colored(
     protein_chains: &[Vec<Vec3>],
     na_chains: &[Vec<Vec3>],
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
-) -> (Vec<BackboneVertex>, Vec<u32>, Vec<u32>, Vec<(u32, Vec3)>) {
+) -> (
+    Vec<BackboneVertex>,
+    Vec<u32>,
+    Vec<u32>,
+    Vec<(u32, Vec3)>,
+    Vec<ChainRange>,
+) {
     let mut all_vertices: Vec<BackboneVertex> = Vec::new();
     let mut all_tube_indices: Vec<u32> = Vec::new();
     let mut all_ribbon_indices: Vec<u32> = Vec::new();
     let mut all_sheet_offsets: Vec<(u32, Vec3)> = Vec::new();
+    let mut all_chain_ranges: Vec<ChainRange> = Vec::new();
     let mut global_residue_idx: u32 = 0;
 
     let spr = geo.segments_per_residue;
@@ -59,10 +80,8 @@ pub(crate) fn generate_mesh_colored(
             let end = (start + n_residues).min(o.len());
             (start < o.len()).then(|| &o[start..end])
         });
-        let ss_types = resolve(
-            chain_override,
-            DetectionInput::CaPositions(&ca_positions),
-        );
+        let ss_types =
+            resolve(chain_override, DetectionInput::CaPositions(&ca_positions));
 
         let n_positions: Vec<Vec3> = chain
             .iter()
@@ -93,6 +112,9 @@ pub(crate) fn generate_mesh_colored(
             })
             .collect();
 
+        let tube_start = all_tube_indices.len() as u32;
+        let ribbon_start = all_ribbon_indices.len() as u32;
+
         let base_vertex = all_vertices.len() as u32;
         let (verts, tube_inds, ribbon_inds, offsets) =
             generate_protein_chain_mesh(
@@ -111,6 +133,17 @@ pub(crate) fn generate_mesh_colored(
         all_tube_indices.extend(tube_inds);
         all_ribbon_indices.extend(ribbon_inds);
         all_sheet_offsets.extend(offsets);
+
+        let (center, radius) = bounding_sphere(&ca_positions);
+        all_chain_ranges.push(ChainRange {
+            tube_index_start: tube_start,
+            tube_index_end: all_tube_indices.len() as u32,
+            ribbon_index_start: ribbon_start,
+            ribbon_index_end: all_ribbon_indices.len() as u32,
+            bounding_center: center,
+            bounding_radius: radius,
+        });
+
         global_residue_idx += n_residues as u32;
     }
 
@@ -125,26 +158,31 @@ pub(crate) fn generate_mesh_colored(
         let n_residues = chain.len();
         let profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {
-                resolve_na_profile(
-                    global_residue_idx + i as u32,
-                    NA_COLOR,
-                    geo,
-                )
+                resolve_na_profile(global_residue_idx + i as u32, NA_COLOR, geo)
             })
             .collect();
 
+        let tube_start = all_tube_indices.len() as u32;
+        let ribbon_start = all_ribbon_indices.len() as u32;
+
         let base_vertex = all_vertices.len() as u32;
-        let (verts, tube_inds, ribbon_inds) = generate_na_chain_mesh(
-            chain,
-            &profiles,
-            base_vertex,
-            spr,
-            csv,
-        );
+        let (verts, tube_inds, ribbon_inds) =
+            generate_na_chain_mesh(chain, &profiles, base_vertex, spr, csv);
 
         all_vertices.extend(verts);
         all_tube_indices.extend(tube_inds);
         all_ribbon_indices.extend(ribbon_inds);
+
+        let (center, radius) = bounding_sphere(chain);
+        all_chain_ranges.push(ChainRange {
+            tube_index_start: tube_start,
+            tube_index_end: all_tube_indices.len() as u32,
+            ribbon_index_start: ribbon_start,
+            ribbon_index_end: all_ribbon_indices.len() as u32,
+            bounding_center: center,
+            bounding_radius: radius,
+        });
+
         global_residue_idx += n_residues as u32;
     }
 
@@ -153,7 +191,22 @@ pub(crate) fn generate_mesh_colored(
         all_tube_indices,
         all_ribbon_indices,
         all_sheet_offsets,
+        all_chain_ranges,
     )
+}
+
+/// Compute bounding sphere (centroid + max distance) from a set of positions.
+fn bounding_sphere(positions: &[Vec3]) -> (Vec3, f32) {
+    if positions.is_empty() {
+        return (Vec3::ZERO, 0.0);
+    }
+    let center =
+        positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
+    let radius = positions
+        .iter()
+        .map(|p| (*p - center).length())
+        .fold(0.0f32, f32::max);
+    (center, radius)
 }
 
 // ==================== PROTEIN CHAIN MESH ====================
@@ -308,12 +361,21 @@ fn extrude_and_index(
     let mut tube_indices = Vec::new();
     let mut ribbon_indices = Vec::new();
     generate_partitioned_indices(
-        frames, profiles, base_vertex, csv, &mut tube_indices,
+        frames,
+        profiles,
+        base_vertex,
+        csv,
+        &mut tube_indices,
         &mut ribbon_indices,
     );
     generate_end_caps(
-        frames, profiles, base_vertex, csv, &mut vertices,
-        &mut tube_indices, &mut ribbon_indices,
+        frames,
+        profiles,
+        base_vertex,
+        csv,
+        &mut vertices,
+        &mut tube_indices,
+        &mut ribbon_indices,
     );
 
     (vertices, tube_indices, ribbon_indices)
@@ -341,9 +403,8 @@ fn compute_final_frames(
         } else {
             0.0
         };
-        let residue_idx =
-            ((residue_frac * (n_residues - 1) as f32) as usize)
-                .min(n_residues - 1);
+        let residue_idx = ((residue_frac * (n_residues - 1) as f32) as usize)
+            .min(n_residues - 1);
         let ss = ss_types[residue_idx];
 
         let tangent = frame.tangent;
@@ -352,9 +413,8 @@ fn compute_final_frames(
         let radial_normal = if profile.radial_blend > 0.01 {
             let ci = i.min(helix_centers.len().saturating_sub(1));
             let to_surface = frame.pos - helix_centers[ci];
-            let radial = (to_surface
-                - tangent * tangent.dot(to_surface))
-            .normalize_or_zero();
+            let radial = (to_surface - tangent * tangent.dot(to_surface))
+                .normalize_or_zero();
             if radial.length_squared() > 0.01 {
                 radial
             } else {
@@ -365,8 +425,7 @@ fn compute_final_frames(
         };
 
         let sheet_n = sheet_normals[i];
-        let has_sheet =
-            ss == SSType::Sheet && sheet_n.length_squared() > 0.01;
+        let has_sheet = ss == SSType::Sheet && sheet_n.length_squared() > 0.01;
 
         let normal = if has_sheet {
             let proj = sheet_n - tangent * sheet_n.dot(tangent);
@@ -513,7 +572,11 @@ fn emit_cap(
         });
     }
 
-    let target = if is_tube { tube_indices } else { ribbon_indices };
+    let target = if is_tube {
+        tube_indices
+    } else {
+        ribbon_indices
+    };
     for k in 0..csv {
         let k_next = (k + 1) % csv;
         if forward {

@@ -17,11 +17,13 @@ fn app() -> Element {
     let schema: Signal<Option<Value>> = use_signal(|| None);
     let options: Signal<Option<Value>> = use_signal(|| None);
     let stats: Signal<Option<Value>> = use_signal(|| None);
+    let panel_pinned: Signal<bool> = use_signal(|| true);
 
     // Register IPC listeners once on mount.
     use_effect(move || {
         bridge::register_listeners(schema, options);
         bridge::register_stats_listener(stats);
+        bridge::register_panel_listener(panel_pinned);
     });
 
     let schema_val = schema.read();
@@ -33,6 +35,7 @@ fn app() -> Element {
                 schema: s.clone(),
                 options: o.clone(),
                 stats_sig: stats,
+                panel_pinned: panel_pinned,
             }
         },
         _ => rsx! {

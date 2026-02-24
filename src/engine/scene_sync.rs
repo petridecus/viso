@@ -263,6 +263,7 @@ impl ProteinRenderEngine {
                     tube_index_count: prepared.backbone_tube_index_count,
                     ribbon_index_count: prepared.backbone_ribbon_index_count,
                     sheet_offsets: prepared.sheet_offsets.clone(),
+                    chain_ranges: prepared.backbone_chain_ranges.clone(),
                     cached_chains: prepared.backbone_chains.clone(),
                     cached_na_chains: prepared.na_chains.clone(),
                     ss_override: prepared.ss_types.clone(),
@@ -614,6 +615,27 @@ impl ProteinRenderEngine {
         });
     }
 
+    /// Submit a backbone-only remesh at the given LOD tier to the background
+    /// thread. No sidechains — they don't change with LOD.
+    pub(crate) fn submit_lod_remesh(&mut self, lod_tier: u8) {
+        let lod_geo = self.options.geometry.with_lod_tier(lod_tier);
+
+        let ss_types = if self.sc.cached_ss_types.is_empty() {
+            None
+        } else {
+            Some(self.sc.cached_ss_types.clone())
+        };
+
+        self.scene_processor.submit(SceneRequest::AnimationFrame {
+            backbone_chains: self.backbone_renderer.cached_chains().to_vec(),
+            na_chains: self.backbone_renderer.cached_na_chains().to_vec(),
+            sidechains: None,
+            ss_types,
+            per_residue_colors: self.sc.cached_per_residue_colors.clone(),
+            geometry: lod_geo,
+        });
+    }
+
     /// Apply any pending animation frame from the background thread.
     pub(crate) fn apply_pending_animation(&mut self) {
         let prepared = match self.scene_processor.try_recv_animation() {
@@ -630,6 +652,7 @@ impl ProteinRenderEngine {
             prepared.backbone_tube_index_count,
             prepared.backbone_ribbon_index_count,
             prepared.sheet_offsets,
+            prepared.backbone_chain_ranges,
         );
 
         if let Some(ref instances) = prepared.sidechain_instances {

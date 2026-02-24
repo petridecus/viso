@@ -40,6 +40,13 @@ pub enum UiAction {
         /// Filesystem path to the `.cif` or `.pdb` file.
         path: String,
     },
+    /// Toggle the panel between pinned and unpinned.
+    TogglePanel,
+    /// Resize the panel to a new width.
+    ResizePanel {
+        /// New panel width in physical pixels.
+        width: u32,
+    },
 }
 
 /// Create the wry webview as a child of the given window.
@@ -50,13 +57,15 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     window: &W,
     window_width: u32,
     window_height: u32,
+    panel_width: u32,
 ) -> Result<(WebView, mpsc::Receiver<UiAction>), wry::Error> {
     let (tx, rx) = mpsc::channel();
 
-    let bounds = panel_bounds(window_width, window_height);
+    let bounds = panel_bounds(window_width, window_height, panel_width);
 
     let webview = WebViewBuilder::new()
         .with_bounds(bounds)
+        .with_transparent(true)
         .with_custom_protocol("viso".into(), |_id, request| {
             let path = request.uri().path();
             // Default to index.html for the root path.
@@ -99,17 +108,43 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     Ok((webview, rx))
 }
 
-/// Compute the [`Rect`] for the panel at the right edge of the window.
+/// Compute the [`Rect`] for the pinned panel at the right edge of the
+/// window.
 #[must_use]
-pub fn panel_bounds(window_width: u32, window_height: u32) -> Rect {
-    let x = window_width.saturating_sub(PANEL_WIDTH);
+pub fn panel_bounds(
+    window_width: u32,
+    window_height: u32,
+    panel_width: u32,
+) -> Rect {
+    let x = window_width.saturating_sub(panel_width);
     Rect {
         position: dpi::Position::Physical(dpi::PhysicalPosition::new(
             x as i32, 0,
         )),
         size: dpi::Size::Physical(dpi::PhysicalSize::new(
-            PANEL_WIDTH.min(window_width),
+            panel_width.min(window_width),
             window_height,
+        )),
+    }
+}
+
+/// Compute the [`Rect`] for the floating (unpinned) panel, inset by
+/// `margin` on all sides.
+#[must_use]
+pub fn panel_bounds_floating(
+    window_width: u32,
+    window_height: u32,
+    panel_width: u32,
+    margin: u32,
+) -> Rect {
+    let x = window_width.saturating_sub(panel_width + margin);
+    Rect {
+        position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+            x as i32, margin as i32,
+        )),
+        size: dpi::Size::Physical(dpi::PhysicalSize::new(
+            panel_width.min(window_width),
+            window_height.saturating_sub(margin * 2),
         )),
     }
 }
@@ -137,7 +172,16 @@ pub fn push_options(webview: &WebView, options: &Options) {
 pub fn push_stats(webview: &WebView, fps: f32) {
     let json = serde_json::json!({ "fps": fps });
     let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
-    let _ = webview.evaluate_script(&format!("window.__viso_push_stats('{s}')"));
+    let _ =
+        webview.evaluate_script(&format!("window.__viso_push_stats('{s}')"));
+}
+
+/// Push the panel pinned state to the webview.
+pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
+    let _ = webview.evaluate_script(&format!(
+        "window.__viso_push_panel_pinned('{}')",
+        if pinned { "true" } else { "false" }
+    ));
 }
 
 // ── Internals ────────────────────────────────────────────────────────────
@@ -149,7 +193,7 @@ pub fn push_stats(webview: &WebView, fps: f32) {
 /// buffered. When a listener attaches it replays any pending data.
 const BRIDGE_JS: &str = r#"
 (function() {
-    var pending = { schema: null, options: null, stats: null };
+    var pending = { schema: null, options: null, stats: null, panel_pinned: null };
 
     function dispatch(name, json) {
         window.dispatchEvent(new CustomEvent(name, { detail: json }));
@@ -167,6 +211,10 @@ const BRIDGE_JS: &str = r#"
         pending.stats = json;
         dispatch('viso-stats', json);
     };
+    window.__viso_push_panel_pinned = function(val) {
+        pending.panel_pinned = val;
+        dispatch('viso-panel-pinned', val);
+    };
 
     // When the WASM app adds a listener, replay buffered data.
     var origAdd = EventTarget.prototype.addEventListener;
@@ -180,6 +228,9 @@ const BRIDGE_JS: &str = r#"
         }
         if (this === window && type === 'viso-stats' && pending.stats) {
             dispatch('viso-stats', pending.stats);
+        }
+        if (this === window && type === 'viso-panel-pinned' && pending.panel_pinned !== null) {
+            dispatch('viso-panel-pinned', pending.panel_pinned);
         }
     };
 })();
@@ -198,6 +249,11 @@ fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         "load_file" => {
             let path = msg.get("path")?.as_str()?.to_owned();
             Some(UiAction::LoadFile { path })
+        }
+        "toggle_panel" => Some(UiAction::TogglePanel),
+        "resize_panel" => {
+            let width = msg.get("width")?.as_u64()? as u32;
+            Some(UiAction::ResizePanel { width })
         }
         _ => None,
     }

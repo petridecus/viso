@@ -53,6 +53,7 @@ pub fn SchemaPanel(
     schema: Value,
     options: Value,
     stats_sig: Signal<Option<Value>>,
+    panel_pinned: Signal<bool>,
 ) -> Element {
     let properties = schema.pointer("/properties").and_then(Value::as_object);
 
@@ -60,8 +61,102 @@ pub fn SchemaPanel(
         return rsx! { p { "No schema loaded" } };
     };
 
+    let pinned = *panel_pinned.read();
+    let panel_class = if pinned { "side-panel" } else { "side-panel floating" };
+
+    // Resize drag state: (start_screen_x, start_body_width)
+    let mut drag = use_signal::<Option<(f64, f64)>>(|| None);
+
     rsx! {
-        div { class: "side-panel",
+        div { class: "{panel_class}",
+            div {
+                class: "resize-handle",
+                onpointerdown: move |evt: PointerEvent| {
+                    let sx = evt.screen_coordinates().x;
+                    let w = web_sys::window()
+                        .and_then(|w| w.document())
+                        .and_then(|d| d.body())
+                        .map(|b| b.client_width() as f64)
+                        .unwrap_or(350.0);
+                    drag.set(Some((sx, w)));
+                    // Set pointer capture so we keep getting events
+                    // even when the cursor moves outside the webview.
+                    let id = evt.pointer_id();
+                    let js = format!(
+                        "document.querySelector('.resize-handle')\
+                         .setPointerCapture({})",
+                        id
+                    );
+                    let _ = js_sys::eval(&js);
+                },
+                onpointermove: move |evt: PointerEvent| {
+                    if let Some((start_x, start_w)) = *drag.read() {
+                        let delta = start_x - evt.screen_coordinates().x;
+                        let new_w = (start_w + delta).max(220.0).min(700.0);
+                        bridge::send_resize_panel(new_w as u32);
+                    }
+                },
+                onpointerup: move |evt: PointerEvent| {
+                    if drag.read().is_some() {
+                        drag.set(None);
+                        let id = evt.pointer_id();
+                        let js = format!(
+                            "document.querySelector('.resize-handle')\
+                             .releasePointerCapture({})",
+                            id
+                        );
+                        let _ = js_sys::eval(&js);
+                    }
+                },
+            }
+            div { class: "panel-header",
+                span { class: "panel-title", "Options" }
+                button {
+                    class: "panel-toggle-btn",
+                    title: if pinned { "Unpin sidebar" } else { "Pin sidebar" },
+                    onclick: move |_| {
+                        bridge::send_toggle_panel();
+                    },
+                    svg {
+                        width: "16",
+                        height: "16",
+                        view_box: "0 0 16 16",
+                        fill: "none",
+                        // Sidebar icon: rectangle with vertical divider
+                        rect {
+                            x: "1",
+                            y: "2",
+                            width: "14",
+                            height: "12",
+                            rx: "2",
+                            stroke: "currentColor",
+                            stroke_width: "1.5",
+                            fill: "none",
+                        }
+                        // Vertical divider line
+                        line {
+                            x1: "10",
+                            y1: "2",
+                            x2: "10",
+                            y2: "14",
+                            stroke: "currentColor",
+                            stroke_width: "1.5",
+                        }
+                        // Fill the sidebar portion when pinned
+                        if pinned {
+                            rect {
+                                x: "10",
+                                y: "2",
+                                width: "5",
+                                height: "12",
+                                rx: "0",
+                                fill: "currentColor",
+                                opacity: "0.4",
+                            }
+                        }
+                    }
+                }
+            }
             for (section_key, section_schema) in props.iter() {
                 {render_section(
                     section_key,

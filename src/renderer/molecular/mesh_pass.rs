@@ -26,8 +26,7 @@ pub(crate) fn create_mesh_pipeline(
     vertex_layout: wgpu::VertexBufferLayout<'static>,
     shader_composer: &mut ShaderComposer,
 ) -> wgpu::RenderPipeline {
-    let shader =
-        shader_composer.compose(&context.device, label, shader_path);
+    let shader = shader_composer.compose(&context.device, label, shader_path);
 
     let pipeline_layout = context.device.create_pipeline_layout(
         &wgpu::PipelineLayoutDescriptor {
@@ -123,6 +122,27 @@ impl MeshPass {
             wgpu::IndexFormat::Uint32,
         );
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+    }
+
+    /// Draw a sub-range of the index buffer (for frustum culling).
+    ///
+    /// Caller must set bind groups before calling this.
+    pub fn draw_indexed_range<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        vertex_buffer: &'a wgpu::Buffer,
+        index_range: std::ops::Range<u32>,
+    ) {
+        if index_range.is_empty() {
+            return;
+        }
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        render_pass.set_index_buffer(
+            self.index_buffer.buffer().slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(index_range, 0, 0..1);
     }
 
     /// Write typed index data.

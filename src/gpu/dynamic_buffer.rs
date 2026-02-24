@@ -82,8 +82,13 @@ impl DynamicBuffer {
         let needed = data_bytes.len();
 
         let reallocated = if needed > self.capacity {
-            // 2x growth, minimum 1KB
-            let new_capacity = (needed * 2).max(self.capacity + 1024);
+            // Cap the growth factor so we don't exceed the wgpu 256 MB
+            // max buffer size.
+            const MAX_BUFFER: usize = 256 * 1024 * 1024;
+            let new_capacity = (needed * 2)
+                .max(self.capacity + 1024)
+                .min(MAX_BUFFER)
+                .max(needed);
 
             self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&self.label),
@@ -118,7 +123,13 @@ impl DynamicBuffer {
         let needed = data.len();
 
         let reallocated = if needed > self.capacity {
-            let new_capacity = (needed * 2).max(self.capacity + 1024);
+            // Cap the growth factor so we don't exceed the wgpu 256 MB
+            // max buffer size.
+            const MAX_BUFFER: usize = 256 * 1024 * 1024;
+            let new_capacity = (needed * 2)
+                .max(self.capacity + 1024)
+                .min(MAX_BUFFER)
+                .max(needed);
 
             self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&self.label),
