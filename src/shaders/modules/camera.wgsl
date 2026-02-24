@@ -7,4 +7,5 @@ struct CameraUniform {
     forward: vec3<f32>,
     fovy: f32,
     hovered_residue: i32,
+    debug_mode: u32,
 };

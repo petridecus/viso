@@ -26,10 +26,34 @@ fn display_name(s: &str) -> String {
         .join(" ")
 }
 
+/// Leaf component that reads the stats signal. Only this component
+/// re-renders when FPS updates, leaving the rest of the panel untouched.
+#[component]
+fn FpsLabel(stats_sig: Signal<Option<Value>>) -> Element {
+    let stats = stats_sig.read();
+    let fps_text = stats
+        .as_ref()
+        .and_then(|s| s.get("fps"))
+        .and_then(Value::as_f64)
+        .map(|f| format!("{:.0}", f))
+        .unwrap_or_else(|| "--".to_string());
+
+    rsx! {
+        div { class: "field-row",
+            label { class: "field-label", "FPS" }
+            span { class: "fps-value", "{fps_text}" }
+        }
+    }
+}
+
 /// Top-level component: renders collapsible sections for each schema
 /// property group.
 #[component]
-pub fn SchemaPanel(schema: Value, options: Value) -> Element {
+pub fn SchemaPanel(
+    schema: Value,
+    options: Value,
+    stats_sig: Signal<Option<Value>>,
+) -> Element {
     let properties = schema.pointer("/properties").and_then(Value::as_object);
 
     let Some(props) = properties else {
@@ -44,6 +68,7 @@ pub fn SchemaPanel(schema: Value, options: Value) -> Element {
                     section_schema,
                     options.get(section_key),
                     &schema,
+                    if section_key == "debug" { Some(stats_sig) } else { None },
                 )}
             }
         }
@@ -51,11 +76,15 @@ pub fn SchemaPanel(schema: Value, options: Value) -> Element {
 }
 
 /// Render a collapsible section (one top-level Options field).
+///
+/// When `stats_sig` is provided (for the Debug section), an `FpsLabel`
+/// component is rendered at the top of the section body.
 fn render_section(
     key: &str,
     schema: &Value,
     current: Option<&Value>,
     root: &Value,
+    stats_sig: Option<Signal<Option<Value>>>,
 ) -> Element {
     let title = schema
         .get("title")
@@ -74,6 +103,9 @@ fn render_section(
                 "{title}"
             }
             div { class: "section-body",
+                if let Some(sig) = stats_sig {
+                    FpsLabel { stats_sig: sig }
+                }
                 if let Some(props) = properties {
                     for (field_key, field_schema) in props.iter() {
                         {render_field(

@@ -12,7 +12,7 @@
 //!     .unwrap();
 //! ```
 
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant, time::Duration};
 
 use winit::{
     application::ApplicationHandler,
@@ -115,6 +115,8 @@ impl Viewer {
             webview: None,
             #[cfg(feature = "gui")]
             action_rx: None,
+            #[cfg(feature = "gui")]
+            last_stats_push: Instant::now(),
         };
 
         event_loop
@@ -137,6 +139,8 @@ struct ViewerApp {
     webview: Option<wry::WebView>,
     #[cfg(feature = "gui")]
     action_rx: Option<std::sync::mpsc::Receiver<crate::gui::webview::UiAction>>,
+    #[cfg(feature = "gui")]
+    last_stats_push: Instant,
 }
 
 /// Compute the wgpu surface size, reserving panel width when gui is
@@ -350,6 +354,20 @@ impl ApplicationHandler for ViewerApp {
                         }
                         Err(e) => {
                             log::error!("render error: {:?}", e);
+                        }
+                    }
+
+                    // Push FPS stats to webview at ~4 Hz
+                    #[cfg(feature = "gui")]
+                    if let Some(ref wv) = self.webview {
+                        if now.duration_since(self.last_stats_push)
+                            >= Duration::from_millis(250)
+                        {
+                            crate::gui::webview::push_stats(
+                                wv,
+                                engine.frame_timing.fps(),
+                            );
+                            self.last_stats_push = now;
                         }
                     }
                 }

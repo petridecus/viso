@@ -35,8 +35,10 @@ pub struct CameraUniform {
     pub fovy: f32,
     /// Currently hovered residue index (-1 if none).
     pub hovered_residue: i32,
+    /// Debug visualization mode (0 = off, 1 = show normals).
+    pub debug_mode: u32,
     /// Padding for GPU alignment.
-    pub _pad: [f32; 3],
+    pub _pad: [f32; 2],
 }
 
 impl Camera {
@@ -83,7 +85,8 @@ impl CameraUniform {
             forward: [0.0, 0.0, -1.0],
             fovy: 45.0,
             hovered_residue: -1,
-            _pad: [0.0; 3],
+            debug_mode: 0,
+            _pad: [0.0; 2],
         }
     }
 

@@ -58,6 +58,28 @@ pub fn register_listeners(
     on_options.forget();
 }
 
+/// Register a listener for stats updates (FPS, etc.) from the native
+/// engine.
+pub fn register_stats_listener(mut stats_sig: Signal<Option<Value>>) {
+    let on_stats = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(json_str) = evt.detail().as_string() {
+                if let Ok(val) = serde_json::from_str::<Value>(&json_str) {
+                    stats_sig.set(Some(val));
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-stats",
+            on_stats.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-stats listener");
+    on_stats.forget();
+}
+
 // ── Outbound actions ─────────────────────────────────────────────────────
 
 /// Send a `set_option` action to the native engine.

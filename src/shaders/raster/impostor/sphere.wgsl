@@ -220,7 +220,11 @@ fn fs_main(in: VertexOutput) -> FragOut {
 
     var out: FragOut;
     out.depth = ndc_depth;
-    out.color = vec4<f32>(final_color, alpha);
+    if (camera.debug_mode == 1u) {
+        out.color = vec4<f32>(normal * 0.5 + 0.5, alpha);
+    } else {
+        out.color = vec4<f32>(final_color, alpha);
+    }
     out.normal = vec4<f32>(normal, ambient_ratio);
     return out;
 }

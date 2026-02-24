@@ -158,42 +158,36 @@ pub(crate) fn extrude_cross_section(
         let rect_x = cos_a.signum() * hw;
         let rect_y = sin_a.signum() * ht;
 
-        // Circular position
+        // Elliptical position
         let circ_x = cos_a * hw;
         let circ_y = sin_a * ht;
 
-        // Blend between rectangular and circular
+        // Blend between rectangular and elliptical
         let x = rect_x + (circ_x - rect_x) * roundness;
         let y = rect_y + (circ_y - rect_y) * roundness;
 
         let offset = frame.binormal * x + frame.normal * y;
         let pos = frame.pos + offset;
 
-        if roundness > 0.5 {
-            // Round: smooth cylindrical normals via center_pos encoding
-            let smooth_normal = offset.normalize_or_zero();
-            vertices.push(BackboneVertex {
-                position: pos.into(),
-                normal: smooth_normal.into(),
-                color,
-                residue_idx,
-                center_pos: frame.pos.into(),
-            });
-        } else {
-            // Flat: face normals via center_pos for shader reconstruction
-            let face_normal = if sin_a.abs() > cos_a.abs() {
-                frame.normal * sin_a.signum()
-            } else {
-                frame.binormal * cos_a.signum()
-            };
-            vertices.push(BackboneVertex {
-                position: pos.into(),
-                normal: face_normal.into(),
-                color,
-                residue_idx,
-                center_pos: (pos - face_normal).into(),
-            });
+        // Surface normal from the elliptical gradient: (cos/hw, sin/ht).
+        let grad =
+            frame.binormal * (cos_a / hw) + frame.normal * (sin_a / ht);
+        let mut surface_normal = grad.normalize_or_zero();
+
+        // Ensure the normal points outward (same hemisphere as offset).
+        if surface_normal.dot(offset) < 0.0 {
+            surface_normal = -surface_normal;
         }
+
+        let r = offset.length();
+
+        vertices.push(BackboneVertex {
+            position: pos.into(),
+            normal: surface_normal.into(),
+            color,
+            residue_idx,
+            center_pos: (pos - surface_normal * r).into(),
+        });
     }
 }
 
@@ -220,4 +214,161 @@ pub(crate) fn cap_offset(
     let y = rect_y + (circ_y - rect_y) * roundness;
 
     frame.binormal * x + frame.normal * y
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+
+    fn make_frame(pos: Vec3, tangent: Vec3, normal: Vec3) -> SplinePoint {
+        let binormal = tangent.cross(normal).normalize();
+        SplinePoint {
+            pos,
+            tangent,
+            normal,
+            binormal,
+        }
+    }
+
+    /// Circular tube: verify normals are radial and center_pos == frame.pos.
+    #[test]
+    fn circular_tube_normals_are_radial() {
+        let frame = make_frame(Vec3::ZERO, Vec3::Z, Vec3::Y);
+        let hw = 0.2_f32;
+        let ht = 0.2_f32;
+        let csv = 8;
+        let mut verts = Vec::new();
+        extrude_cross_section(
+            &frame, hw, ht, 1.0, [1.0, 0.0, 0.0], 0, csv, &mut verts,
+        );
+        assert_eq!(verts.len(), csv);
+
+        for (k, v) in verts.iter().enumerate() {
+            let pos = Vec3::from(v.position);
+            let nrm = Vec3::from(v.normal);
+            let cp = Vec3::from(v.center_pos);
+
+            // Position should be on a circle of radius hw in XY plane
+            let dist = pos.length();
+            assert!(
+                (dist - hw).abs() < 1e-5,
+                "k={}: position dist {} != hw {}",
+                k, dist, hw,
+            );
+
+            // Normal should be the radial direction (unit vector from origin to pos)
+            let expected_normal = pos.normalize();
+            let dot = nrm.dot(expected_normal);
+            assert!(
+                dot > 0.9999,
+                "k={}: normal {:?} not radial (dot with expected {:?} = {})",
+                k, nrm, expected_normal, dot,
+            );
+
+            // center_pos should equal frame.pos (origin) for circles
+            assert!(
+                cp.length() < 1e-5,
+                "k={}: center_pos {:?} should be ~origin for circle",
+                k, cp,
+            );
+        }
+    }
+
+    /// Elliptical cross-section: verify gradient normals differ from radial.
+    #[test]
+    fn elliptical_normals_differ_from_radial() {
+        let frame = make_frame(Vec3::ZERO, Vec3::Z, Vec3::Y);
+        let hw = 0.4_f32; // wide
+        let ht = 0.1_f32; // thin
+        let csv = 8;
+        let mut verts = Vec::new();
+        extrude_cross_section(
+            &frame, hw, ht, 1.0, [1.0, 0.0, 0.0], 0, csv, &mut verts,
+        );
+
+        // At 45 degrees, elliptical gradient normal should differ from radial
+        let v = &verts[1]; // k=1, angle=π/4
+        let pos = Vec3::from(v.position);
+        let nrm = Vec3::from(v.normal);
+        let radial = pos.normalize();
+
+        // For hw >> ht, the gradient normal tilts toward the short axis
+        let dot = nrm.dot(radial);
+        assert!(
+            dot < 0.999,
+            "ellipse normal should differ from radial (dot={})",
+            dot,
+        );
+
+        // Verify it's a unit vector
+        assert!(
+            (nrm.length() - 1.0).abs() < 1e-5,
+            "normal should be unit: len={}",
+            nrm.length(),
+        );
+
+        // Verify center_pos reconstruction gives same normal as stored
+        let cp = Vec3::from(v.center_pos);
+        let reconstructed = (pos - cp).normalize();
+        let recon_dot = reconstructed.dot(nrm);
+        assert!(
+            recon_dot > 0.999,
+            "center_pos reconstruction should match stored normal \
+             (dot={}, stored={:?}, reconstructed={:?})",
+            recon_dot, nrm, reconstructed,
+        );
+    }
+
+    /// Verify center_pos reconstruction matches stored normal for all vertices.
+    #[test]
+    fn center_pos_reconstruction_matches_stored_normal() {
+        let frame = make_frame(
+            Vec3::new(5.0, 3.0, -2.0),
+            Vec3::new(0.0, 0.3, 0.95).normalize(),
+            Vec3::Y,
+        );
+        // Re-orthogonalize normal to tangent
+        let t = frame.tangent;
+        let n = (Vec3::Y - t * t.dot(Vec3::Y)).normalize();
+        let b = t.cross(n).normalize();
+        let frame = SplinePoint {
+            pos: frame.pos,
+            tangent: t,
+            normal: n,
+            binormal: b,
+        };
+
+        for &(hw, ht, roundness) in &[
+            (0.2, 0.2, 1.0),   // circle
+            (0.4, 0.1, 1.0),   // wide ellipse
+            (0.1, 0.3, 1.0),   // tall ellipse
+            (0.2, 0.2, 0.5),   // half-round circle
+        ] {
+            let mut verts = Vec::new();
+            extrude_cross_section(
+                &frame, hw, ht, roundness, [1.0, 0.0, 0.0], 0, 8,
+                &mut verts,
+            );
+
+            for (k, v) in verts.iter().enumerate() {
+                let pos = Vec3::from(v.position);
+                let nrm = Vec3::from(v.normal);
+                let cp = Vec3::from(v.center_pos);
+
+                let diff = pos - cp;
+                if diff.length() < 1e-6 {
+                    continue; // degenerate case
+                }
+                let reconstructed = diff.normalize();
+                let dot = reconstructed.dot(nrm);
+                assert!(
+                    dot > 0.999,
+                    "hw={} ht={} r={} k={}: reconstruction mismatch \
+                     (dot={:.6}, stored={:?}, reconstructed={:?})",
+                    hw, ht, roundness, k, dot, nrm, reconstructed,
+                );
+            }
+        }
+    }
 }

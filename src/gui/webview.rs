@@ -133,6 +133,13 @@ pub fn push_options(webview: &WebView, options: &Options) {
         .evaluate_script(&format!("window.__viso_push_options('{escaped}')"));
 }
 
+/// Push stats (e.g. FPS) to the webview.
+pub fn push_stats(webview: &WebView, fps: f32) {
+    let json = serde_json::json!({ "fps": fps });
+    let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
+    let _ = webview.evaluate_script(&format!("window.__viso_push_stats('{s}')"));
+}
+
 // ── Internals ────────────────────────────────────────────────────────────
 
 /// JavaScript injected before page load. Defines the bridge functions that
@@ -142,7 +149,7 @@ pub fn push_options(webview: &WebView, options: &Options) {
 /// buffered. When a listener attaches it replays any pending data.
 const BRIDGE_JS: &str = r#"
 (function() {
-    var pending = { schema: null, options: null };
+    var pending = { schema: null, options: null, stats: null };
 
     function dispatch(name, json) {
         window.dispatchEvent(new CustomEvent(name, { detail: json }));
@@ -156,6 +163,10 @@ const BRIDGE_JS: &str = r#"
         pending.options = json;
         dispatch('viso-options', json);
     };
+    window.__viso_push_stats = function(json) {
+        pending.stats = json;
+        dispatch('viso-stats', json);
+    };
 
     // When the WASM app adds a listener, replay buffered data.
     var origAdd = EventTarget.prototype.addEventListener;
@@ -166,6 +177,9 @@ const BRIDGE_JS: &str = r#"
         }
         if (this === window && type === 'viso-options' && pending.options) {
             dispatch('viso-options', pending.options);
+        }
+        if (this === window && type === 'viso-stats' && pending.stats) {
+            dispatch('viso-stats', pending.stats);
         }
     };
 })();

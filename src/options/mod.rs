@@ -6,6 +6,7 @@
 
 mod camera;
 mod colors;
+mod debug;
 mod display;
 mod geometry;
 mod keybindings;
@@ -16,6 +17,7 @@ use std::path::Path;
 
 pub use camera::CameraOptions;
 pub use colors::ColorOptions;
+pub use debug::DebugOptions;
 pub use display::{
     BackboneColorMode, DisplayOptions, LipidMode, NaColorMode,
     SidechainColorMode,
@@ -52,6 +54,8 @@ pub struct Options {
     /// Keyboard binding options.
     #[schemars(skip)]
     pub keybindings: KeybindingOptions,
+    /// Debug visualization options.
+    pub debug: DebugOptions,
 }
 
 impl Options {
@@ -157,8 +161,9 @@ shininess = 80.0
         assert!(!props.contains_key("colors"));
         assert!(!props.contains_key("keybindings"));
 
-        // Geometry should be present (exposed in UI)
+        // Geometry and debug should be present (exposed in UI)
         assert!(props.contains_key("geometry"));
+        assert!(props.contains_key("debug"));
 
         // Lighting should have exposed fields but not skipped ones
         let lighting = &props["lighting"]["properties"];

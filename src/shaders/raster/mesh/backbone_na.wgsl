@@ -161,7 +161,11 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);
 
     var out: FragOutput;
-    out.color = vec4<f32>(final_color, 1.0);
+    if (camera.debug_mode == 1u) {
+        out.color = vec4<f32>(normal * 0.5 + 0.5, 1.0);
+    } else {
+        out.color = vec4<f32>(final_color, 1.0);
+    }
     out.normal = vec4<f32>(normal, ambient_ratio);
     return out;
 }

@@ -431,8 +431,8 @@ fn generate_partitioned_indices(
             } else {
                 &mut *ribbon_indices
             };
-            target.extend_from_slice(&[v0, v1, v2]);
-            target.extend_from_slice(&[v1, v3, v2]);
+            target.extend_from_slice(&[v0, v2, v1]);
+            target.extend_from_slice(&[v1, v2, v3]);
         }
     }
 }

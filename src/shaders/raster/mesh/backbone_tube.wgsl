@@ -21,7 +21,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) center_pos: vec3<f32>,
+    @location(0) world_normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) vertex_color: vec3<f32>,
     @location(3) @interpolate(flat) residue_idx: u32,
@@ -54,7 +54,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
-    out.center_pos = in.center_pos;
+    out.world_normal = in.normal;
     out.world_position = position;
     out.vertex_color = lookup_residue_color(in.residue_idx);
     out.residue_idx = in.residue_idx;
@@ -68,8 +68,7 @@ struct FragOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
-    // Per-pixel cylindrical normal: exact outward direction from tube centerline
-    let normal = normalize(in.world_position - in.center_pos);
+    let normal = normalize(in.world_normal);
     let view_dir = normalize(camera.position - in.world_position);
 
     let NdotV = max(dot(normal, view_dir), 0.0);
@@ -169,7 +168,11 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);
 
     var out: FragOutput;
-    out.color = vec4<f32>(final_color, 1.0);
+    if (camera.debug_mode == 1u) {
+        out.color = vec4<f32>(normal * 0.5 + 0.5, 1.0);
+    } else {
+        out.color = vec4<f32>(final_color, 1.0);
+    }
     out.normal = vec4<f32>(normal, ambient_ratio);
     return out;
 }

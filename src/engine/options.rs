@@ -16,7 +16,15 @@ impl ProteinRenderEngine {
         self.apply_lighting();
         self.apply_post_processing();
         self.apply_camera();
+        self.apply_debug();
         self.refresh_ball_and_stick();
+
+        // Regenerate backbone mesh with updated geometry options
+        self.backbone_renderer.regenerate(
+            &self.context.device,
+            &self.context.queue,
+            &self.options.geometry,
+        );
 
         // Recompute backbone colors (handles backbone_color_mode changes)
         let chains = self.backbone_renderer.cached_chains().to_vec();
@@ -58,6 +66,13 @@ impl ProteinRenderEngine {
         self.camera_controller.rotate_speed = co.rotate_speed * 0.02;
         self.camera_controller.pan_speed = co.pan_speed * 0.2;
         self.camera_controller.zoom_speed = co.zoom_speed * 0.5;
+    }
+
+    /// Push debug options to the camera uniform.
+    fn apply_debug(&mut self) {
+        self.camera_controller.uniform.debug_mode =
+            u32::from(self.options.debug.show_normals);
+        self.camera_controller.update_gpu(&self.context.queue);
     }
 
     /// Load a named view preset from the presets directory.
