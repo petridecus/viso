@@ -403,6 +403,15 @@ impl CapsuleSidechainRenderer {
     pub fn capsule_buffer(&self) -> &wgpu::Buffer {
         self.instance_buffer.buffer()
     }
+
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        vec![(
+            "Sidechain Capsules",
+            self.instance_buffer.len_bytes(),
+            self.instance_buffer.capacity_bytes(),
+        )]
+    }
 }
 
 impl super::MolecularRenderer for CapsuleSidechainRenderer {

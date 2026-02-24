@@ -22,7 +22,10 @@ pub use display::{
     BackboneColorMode, DisplayOptions, LipidMode, NaColorMode,
     SidechainColorMode,
 };
-pub use geometry::{lod_params, lod_scaled, select_lod_tier, GeometryOptions};
+pub use geometry::{
+    lod_params, lod_scaled, select_chain_lod_tier, select_lod_tier,
+    GeometryOptions,
+};
 pub use keybindings::KeybindingOptions;
 pub use lighting::LightingOptions;
 pub use post_processing::PostProcessingOptions;

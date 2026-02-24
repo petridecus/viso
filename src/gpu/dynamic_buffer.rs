@@ -272,4 +272,14 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     pub fn capacity(&self) -> usize {
         self.inner.capacity() / size_of::<T>()
     }
+
+    /// Returns the current data length in bytes.
+    pub fn len_bytes(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns the allocated capacity in bytes.
+    pub fn capacity_bytes(&self) -> usize {
+        self.inner.capacity()
+    }
 }

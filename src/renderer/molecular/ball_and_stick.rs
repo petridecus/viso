@@ -1047,6 +1047,27 @@ impl BallAndStickRenderer {
         self.picking_count
     }
 
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        vec![
+            (
+                "BnS Spheres",
+                self.sphere_buffer.len_bytes(),
+                self.sphere_buffer.capacity_bytes(),
+            ),
+            (
+                "BnS Bonds",
+                self.bond_buffer.len_bytes(),
+                self.bond_buffer.capacity_bytes(),
+            ),
+            (
+                "BnS Picking",
+                self.picking_buffer.len_bytes(),
+                self.picking_buffer.capacity_bytes(),
+            ),
+        ]
+    }
+
     /// Get all non-protein atom positions for camera fitting.
     pub fn collect_positions(
         entities: &[MoleculeEntity],

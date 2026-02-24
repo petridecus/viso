@@ -103,7 +103,7 @@ pub struct BackboneRenderer {
     ss_override: Option<Vec<SSType>>,
     sheet_offsets: Vec<(u32, Vec3)>,
     chain_ranges: Vec<ChainRange>,
-    current_lod_tier: u8,
+    cached_lod_tiers: Vec<u8>,
 }
 
 impl BackboneRenderer {
@@ -176,7 +176,7 @@ impl BackboneRenderer {
             ss_override: None,
             sheet_offsets: Vec::new(),
             chain_ranges: Vec::new(),
-            current_lod_tier: 0,
+            cached_lod_tiers: Vec::new(),
         }
     }
 
@@ -367,11 +367,11 @@ impl BackboneRenderer {
     pub fn chain_ranges(&self) -> &[ChainRange] {
         &self.chain_ranges
     }
-    pub fn current_lod_tier(&self) -> u8 {
-        self.current_lod_tier
+    pub fn cached_lod_tiers(&self) -> &[u8] {
+        &self.cached_lod_tiers
     }
-    pub fn set_lod_tier(&mut self, tier: u8) {
-        self.current_lod_tier = tier;
+    pub fn set_cached_lod_tiers(&mut self, tiers: Vec<u8>) {
+        self.cached_lod_tiers = tiers;
     }
     pub fn sheet_offsets(&self) -> &[(u32, Vec3)] {
         &self.sheet_offsets
@@ -398,6 +398,27 @@ impl BackboneRenderer {
         self.ribbon_pass.index_count
     }
 
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        vec![
+            (
+                "Backbone Vertex",
+                self.vertex_buffer.len(),
+                self.vertex_buffer.capacity(),
+            ),
+            (
+                "Backbone Tube Idx",
+                self.tube_pass.index_buffer_len(),
+                self.tube_pass.index_buffer_capacity(),
+            ),
+            (
+                "Backbone Ribbon Idx",
+                self.ribbon_pass.index_buffer_len(),
+                self.ribbon_pass.index_buffer_capacity(),
+            ),
+        ]
+    }
+
     // ── Static mesh generation ──
 
     pub(crate) fn generate_mesh(
@@ -418,6 +439,7 @@ impl BackboneRenderer {
             ss_override,
             None,
             geo,
+            None,
         )
     }
 
@@ -427,6 +449,7 @@ impl BackboneRenderer {
         ss_override: Option<&[SSType]>,
         per_residue_colors: Option<&[[f32; 3]]>,
         geo: &GeometryOptions,
+        per_chain_lod: Option<&[(usize, usize)]>,
     ) -> (
         Vec<BackboneVertex>,
         Vec<u32>,
@@ -440,6 +463,7 @@ impl BackboneRenderer {
             ss_override,
             per_residue_colors,
             geo,
+            per_chain_lod,
         )
     }
 

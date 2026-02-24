@@ -334,6 +334,22 @@ impl PullRenderer {
         self.cone_count = 0;
     }
 
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        vec![
+            (
+                "Pull Capsules",
+                self.capsule_buffer.len_bytes(),
+                self.capsule_buffer.capacity_bytes(),
+            ),
+            (
+                "Pull Cones",
+                self.cone_buffer.len_bytes(),
+                self.cone_buffer.capacity_bytes(),
+            ),
+        ]
+    }
+
     fn generate_instances(
         pull: &PullRenderInfo,
     ) -> (Vec<CapsuleInstance>, Vec<ConeInstance>) {

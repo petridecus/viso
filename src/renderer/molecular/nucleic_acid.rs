@@ -190,6 +190,22 @@ impl NucleicAcidRenderer {
                                   // doesn't skip
     }
 
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        vec![
+            (
+                "NA Vertex",
+                self.vertex_buffer.len(),
+                self.vertex_buffer.capacity(),
+            ),
+            (
+                "NA Index",
+                self.index_buffer.len(),
+                self.index_buffer.capacity(),
+            ),
+        ]
+    }
+
     // ── Pipeline ──
 
     fn create_pipeline(

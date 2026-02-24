@@ -42,6 +42,7 @@ pub(crate) fn generate_mesh_colored(
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
+    per_chain_lod: Option<&[(usize, usize)]>,
 ) -> (
     Vec<BackboneVertex>,
     Vec<u32>,
@@ -61,7 +62,7 @@ pub(crate) fn generate_mesh_colored(
 
     // ── Protein chains (N-CA-C triplets) ──
 
-    for chain in protein_chains {
+    for (chain_idx, chain) in protein_chains.iter().enumerate() {
         let ca_positions: Vec<Vec3> = chain
             .iter()
             .enumerate()
@@ -115,6 +116,9 @@ pub(crate) fn generate_mesh_colored(
         let tube_start = all_tube_indices.len() as u32;
         let ribbon_start = all_ribbon_indices.len() as u32;
 
+        let (chain_spr, chain_csv) =
+            per_chain_lod.map(|l| l[chain_idx]).unwrap_or((spr, csv));
+
         let base_vertex = all_vertices.len() as u32;
         let (verts, tube_inds, ribbon_inds, offsets) =
             generate_protein_chain_mesh(
@@ -125,8 +129,8 @@ pub(crate) fn generate_mesh_colored(
                 &profiles,
                 global_residue_idx,
                 base_vertex,
-                spr,
-                csv,
+                chain_spr,
+                chain_csv,
             );
 
         all_vertices.extend(verts);
@@ -149,7 +153,7 @@ pub(crate) fn generate_mesh_colored(
 
     // ── Nucleic acid chains (P-atom positions) ──
 
-    for chain in na_chains {
+    for (na_idx, chain) in na_chains.iter().enumerate() {
         if chain.len() < 2 {
             global_residue_idx += chain.len() as u32;
             continue;
@@ -165,9 +169,18 @@ pub(crate) fn generate_mesh_colored(
         let tube_start = all_tube_indices.len() as u32;
         let ribbon_start = all_ribbon_indices.len() as u32;
 
+        let (chain_spr, chain_csv) = per_chain_lod
+            .map(|l| l[protein_chains.len() + na_idx])
+            .unwrap_or((spr, csv));
+
         let base_vertex = all_vertices.len() as u32;
-        let (verts, tube_inds, ribbon_inds) =
-            generate_na_chain_mesh(chain, &profiles, base_vertex, spr, csv);
+        let (verts, tube_inds, ribbon_inds) = generate_na_chain_mesh(
+            chain,
+            &profiles,
+            base_vertex,
+            chain_spr,
+            chain_csv,
+        );
 
         all_vertices.extend(verts);
         all_tube_indices.extend(tube_inds);

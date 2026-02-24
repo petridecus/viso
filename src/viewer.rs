@@ -161,7 +161,6 @@ struct ViewerApp {
     panel_width: u32,
 }
 
-
 /// Compute the wgpu surface size — always the full window dimensions.
 ///
 /// The webview options panel overlays the right edge of the window;
@@ -238,7 +237,9 @@ impl ViewerApp {
     /// full window — the panel overlays the right edge.
     fn apply_panel_layout(&mut self) {
         let visible = self.panel_pinned || self.panel_peek;
-        let Some(ref window) = self.window else { return };
+        let Some(ref window) = self.window else {
+            return;
+        };
         let inner = window.inner_size();
 
         if let Some(ref wv) = self.webview {
@@ -280,7 +281,9 @@ impl ViewerApp {
         if self.panel_pinned {
             return;
         }
-        let Some(ref window) = self.window else { return };
+        let Some(ref window) = self.window else {
+            return;
+        };
         let inner = window.inner_size();
         let edge_zone = 6.0;
 
@@ -491,15 +494,17 @@ impl ApplicationHandler for ViewerApp {
                         }
                     }
 
-                    // Push FPS stats to webview at ~4 Hz
+                    // Push FPS + GPU buffer stats to webview at ~4 Hz
                     #[cfg(feature = "gui")]
                     if let Some(ref wv) = self.webview {
                         if now.duration_since(self.last_stats_push)
                             >= Duration::from_millis(250)
                         {
+                            let buffers = engine.gpu_buffer_stats();
                             crate::gui::webview::push_stats(
                                 wv,
                                 engine.frame_timing.fps(),
+                                &buffers,
                             );
                             self.last_stats_push = now;
                         }

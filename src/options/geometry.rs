@@ -1,3 +1,4 @@
+use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -69,10 +70,11 @@ impl GeometryOptions {
     /// Return a copy with detail scaled down for the given LOD tier.
     ///
     /// The user's `segments_per_residue` and `cross_section_verts` are treated
-    /// as the maximum detail (tier 0). Higher tiers scale down aggressively:
-    /// - Tier 0: 100% of user settings
-    /// - Tier 1: 50%
-    /// - Tier 2: 25%
+    /// as the maximum detail (tier 0). Higher tiers scale down:
+    /// - Tier 0: 100% of user settings (32 spr, 16 csv at defaults)
+    /// - Tier 1: 50% (16 spr, 8 csv)
+    /// - Tier 2: 25% (8 spr, 4 csv)
+    /// - Tier 3: 12.5% (4 spr, 4 csv)
     pub fn with_lod_tier(&self, tier: u8) -> Self {
         if tier == 0 {
             return self.clone();
@@ -110,7 +112,7 @@ impl GeometryOptions {
         }
 
         // Progressively reduce until it fits
-        for tier in 1..=2u8 {
+        for tier in 1..=3u8 {
             let (spr, csv) = lod_scaled(
                 self.segments_per_residue,
                 self.cross_section_verts,
@@ -120,21 +122,30 @@ impl GeometryOptions {
                 return self.with_lod_tier(tier);
             }
         }
-        self.with_lod_tier(2)
+        self.with_lod_tier(3)
     }
 }
 
 /// Scale user detail settings down for an LOD tier.
 ///
-/// - Tier 0: 100% (unchanged)
-/// - Tier 1: 50% (min 4 each)
-/// - Tier 2: 25% (min 4 each)
+/// Only `spr` (segments per residue) is reduced — `csv` (cross-section
+/// vertices) is kept at the user's setting. Reducing csv changes the
+/// cross-section shape and normals, making flat ribbons look rounded and
+/// incorrectly lit. Reducing spr only makes curves slightly less smooth,
+/// which is barely visible at distance.
+///
+/// - Tier 0: spr 100% (unchanged)
+/// - Tier 1: spr 50%
+/// - Tier 2: spr 25%
+/// - Tier 3: spr 12.5%
 pub fn lod_scaled(max_spr: usize, max_csv: usize, tier: u8) -> (usize, usize) {
-    match tier {
-        0 => (max_spr, max_csv),
-        1 => ((max_spr / 2).max(4), (max_csv / 2).max(4)),
-        _ => ((max_spr / 4).max(4), (max_csv / 4).max(4)),
-    }
+    let spr = match tier {
+        0 => max_spr,
+        1 => (max_spr / 2).max(4),
+        2 => (max_spr / 4).max(4),
+        _ => (max_spr / 8).max(4),
+    };
+    (spr, max_csv)
 }
 
 /// Convenience: LOD tier params from defaults (for backward compat).
@@ -152,17 +163,27 @@ pub fn lod_params(tier: u8) -> (usize, usize) {
 /// Uses absolute distance thresholds — screen-space occupancy is what
 /// matters, not relative bounding-radius ratios.
 ///
-/// - Close (< 50 A): tier 0 (full detail)
-/// - Medium (50 – 150 A): tier 1 (half detail)
-/// - Far (> 150 A): tier 2 (quarter detail)
+/// - Close (< 150 A):    tier 0 — 32 spr (full detail)
+/// - Medium (150–250 A): tier 1 — 16 spr (half detail)
+/// - Far (250–400 A):    tier 2 — 8 spr (quarter detail)
+/// - Very far (> 400 A): tier 3 — 4 spr (minimum detail)
 pub fn select_lod_tier(camera_distance: f32, _bounding_radius: f32) -> u8 {
-    if camera_distance < 50.0 {
+    if camera_distance < 150.0 {
         0
-    } else if camera_distance < 150.0 {
+    } else if camera_distance < 250.0 {
         1
-    } else {
+    } else if camera_distance < 400.0 {
         2
+    } else {
+        3
     }
+}
+
+/// Select LOD tier for a single chain based on its bounding center distance
+/// to the camera eye.
+pub fn select_chain_lod_tier(chain_center: Vec3, camera_eye: Vec3) -> u8 {
+    let distance = (chain_center - camera_eye).length();
+    select_lod_tier(distance, 0.0)
 }
 
 impl Default for GeometryOptions {

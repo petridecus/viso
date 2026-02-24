@@ -89,6 +89,22 @@ impl ProteinRenderEngine {
         &self.options
     }
 
+    /// GPU buffer sizes across all renderers.
+    ///
+    /// Each entry is `(label, used_bytes, allocated_bytes)`.
+    pub fn gpu_buffer_stats(&self) -> Vec<(&str, usize, usize)> {
+        let mut stats = Vec::new();
+        stats.extend(self.backbone_renderer.buffer_info());
+        stats.extend(self.sidechain_renderer.buffer_info());
+        stats.extend(self.ball_and_stick_renderer.buffer_info());
+        stats.extend(self.band_renderer.buffer_info());
+        stats.extend(self.pull_renderer.buffer_info());
+        stats.extend(self.nucleic_acid_renderer.buffer_info());
+        stats.extend(self.selection_buffer.buffer_info());
+        stats.extend(self.residue_color_buffer.buffer_info());
+        stats
+    }
+
     /// Unproject screen coordinates to a world-space point on a plane at
     /// the depth of `reference_point`.
     ///

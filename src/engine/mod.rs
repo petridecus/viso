@@ -550,12 +550,23 @@ impl ProteinRenderEngine {
             fog_density,
         );
 
-        // LOD tier selection — submit background remesh when tier changes
-        let lod_tier =
-            crate::options::select_lod_tier(distance, bounding_radius);
-        if lod_tier != self.backbone_renderer.current_lod_tier() {
-            self.backbone_renderer.set_lod_tier(lod_tier);
-            self.submit_lod_remesh(lod_tier);
+        // Per-chain LOD — submit background remesh when any chain's tier
+        // changes
+        let camera_eye = self.camera_controller.camera.eye;
+        let per_chain_tiers: Vec<u8> = self
+            .backbone_renderer
+            .chain_ranges()
+            .iter()
+            .map(|r| {
+                crate::options::select_chain_lod_tier(
+                    r.bounding_center,
+                    camera_eye,
+                )
+            })
+            .collect();
+        if per_chain_tiers != self.backbone_renderer.cached_lod_tiers() {
+            self.backbone_renderer.set_cached_lod_tiers(per_chain_tiers);
+            self.submit_per_chain_lod_remesh(camera_eye);
         }
 
         // Update selection buffer (from GPU picking)

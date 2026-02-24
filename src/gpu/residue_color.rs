@@ -212,4 +212,10 @@ impl ResidueColorBuffer {
         self.target_colors = data;
         self.transition_start = None;
     }
+
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        let bytes = self.capacity * 16; // [f32; 4] = 16 bytes per residue
+        vec![("Residue Color", bytes, bytes)]
+    }
 }

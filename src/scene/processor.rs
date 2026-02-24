@@ -80,6 +80,10 @@ pub enum SceneRequest {
         per_residue_colors: Option<Vec<[f32; 3]>>,
         /// Geometry options for mesh generation.
         geometry: GeometryOptions,
+        /// Per-chain (spr, csv) overrides for LOD. When `Some`, each
+        /// chain uses its own detail level instead of the global geo
+        /// settings.
+        per_chain_lod: Option<Vec<(usize, usize)>>,
     },
     /// Shut down the background thread.
     Shutdown,
@@ -397,6 +401,7 @@ impl SceneProcessor {
                     ss_types,
                     per_residue_colors,
                     geometry,
+                    per_chain_lod,
                 } => {
                     let prepared = Self::process_animation_frame(
                         backbone_chains,
@@ -405,6 +410,7 @@ impl SceneProcessor {
                         ss_types,
                         per_residue_colors,
                         &geometry,
+                        per_chain_lod,
                     );
                     anim_input.write(Some(prepared));
                 }
@@ -447,6 +453,7 @@ impl SceneProcessor {
             g.ss_override.as_deref(),
             per_residue_colors.as_deref(),
             geometry,
+            None,
         );
         let backbone_vert_count = backbone_verts_typed.len() as u32;
         let backbone_verts =
@@ -831,6 +838,7 @@ impl SceneProcessor {
         ss_types: Option<Vec<SSType>>,
         per_residue_colors: Option<Vec<[f32; 3]>>,
         geometry: &GeometryOptions,
+        per_chain_lod: Option<Vec<(usize, usize)>>,
     ) -> PreparedAnimationFrame {
         // --- Backbone mesh (protein + nucleic acid, unified) ---
         let total_residues: usize =
@@ -844,6 +852,7 @@ impl SceneProcessor {
                 ss_types.as_deref(),
                 per_residue_colors.as_deref(),
                 &safe_geo,
+                per_chain_lod.as_deref(),
             );
         let backbone_tube_index_count = tube_inds.len() as u32;
         let backbone_ribbon_index_count = ribbon_inds.len() as u32;

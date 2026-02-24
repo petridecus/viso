@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn main() {
     // Only needed when the gui feature is enabled.
@@ -9,12 +9,12 @@ fn main() {
     // Ensure the viso-ui dist directory exists so rust-embed compiles even
     // before `trunk build` has been run.  A placeholder index.html is
     // created when the real build output is absent.
-    let dist = Path::new("crates/viso-ui/dist");
+    let dist: &Path = Path::new("crates/viso-ui/dist");
     if !dist.exists() {
         std::fs::create_dir_all(dist).expect("failed to create dist dir");
     }
 
-    let index = dist.join("index.html");
+    let index: PathBuf = dist.join("index.html");
     if !index.exists() {
         std::fs::write(
             &index,

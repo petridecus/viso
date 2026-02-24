@@ -125,6 +125,12 @@ impl SelectionBuffer {
 
         self.capacity = new_capacity;
     }
+
+    /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
+    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+        let bytes = self.capacity.div_ceil(32).max(1) * 4;
+        vec![("Selection", bytes, bytes)]
+    }
 }
 
 /// Geometry buffers needed for the picking render pass.

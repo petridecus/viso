@@ -22,8 +22,8 @@ impl ProteinRenderEngine {
         // Regenerate backbone mesh with updated geometry options (on
         // background thread to avoid blocking the main thread / exceeding
         // the 256 MB buffer limit with synchronous allocation).
-        let lod_tier = self.backbone_renderer.current_lod_tier();
-        self.submit_lod_remesh(lod_tier);
+        let camera_eye = self.camera_controller.camera.eye;
+        self.submit_per_chain_lod_remesh(camera_eye);
 
         // Recompute backbone colors (handles backbone_color_mode changes)
         let chains = self.backbone_renderer.cached_chains().to_vec();

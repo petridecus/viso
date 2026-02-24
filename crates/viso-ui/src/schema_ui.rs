@@ -62,7 +62,11 @@ pub fn SchemaPanel(
     };
 
     let pinned = *panel_pinned.read();
-    let panel_class = if pinned { "side-panel" } else { "side-panel floating" };
+    let panel_class = if pinned {
+        "side-panel"
+    } else {
+        "side-panel floating"
+    };
 
     // Resize drag state: (start_screen_x, start_body_width)
     let mut drag = use_signal::<Option<(f64, f64)>>(|| None);

@@ -176,4 +176,14 @@ impl MeshPass {
     pub fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
     }
+
+    /// Current index data size in bytes.
+    pub fn index_buffer_len(&self) -> usize {
+        self.index_buffer.len()
+    }
+
+    /// Allocated index buffer capacity in bytes.
+    pub fn index_buffer_capacity(&self) -> usize {
+        self.index_buffer.capacity()
+    }
 }

@@ -612,13 +612,43 @@ impl ProteinRenderEngine {
             ss_types,
             per_residue_colors: self.sc.cached_per_residue_colors.clone(),
             geometry: self.options.geometry.clone(),
+            per_chain_lod: None,
         });
     }
 
-    /// Submit a backbone-only remesh at the given LOD tier to the background
-    /// thread. No sidechains — they don't change with LOD.
-    pub(crate) fn submit_lod_remesh(&mut self, lod_tier: u8) {
-        let lod_geo = self.options.geometry.with_lod_tier(lod_tier);
+    /// Submit a backbone-only remesh with per-chain LOD to the background
+    /// thread. Each chain gets its own `(spr, csv)` based on its distance
+    /// from the camera. No sidechains — they don't change with LOD.
+    pub(crate) fn submit_per_chain_lod_remesh(&mut self, camera_eye: Vec3) {
+        use crate::options::{lod_scaled, select_chain_lod_tier};
+
+        // Use clamped geometry as the base for LOD scaling
+        let total_residues: usize = self
+            .backbone_renderer
+            .cached_chains()
+            .iter()
+            .map(|c| c.len() / 3)
+            .sum::<usize>()
+            + self
+                .backbone_renderer
+                .cached_na_chains()
+                .iter()
+                .map(|c| c.len())
+                .sum::<usize>();
+        let base_geo =
+            self.options.geometry.clamped_for_residues(total_residues);
+        let max_spr = base_geo.segments_per_residue;
+        let max_csv = base_geo.cross_section_verts;
+
+        let per_chain_lod: Vec<(usize, usize)> = self
+            .backbone_renderer
+            .chain_ranges()
+            .iter()
+            .map(|r| {
+                let tier = select_chain_lod_tier(r.bounding_center, camera_eye);
+                lod_scaled(max_spr, max_csv, tier)
+            })
+            .collect();
 
         let ss_types = if self.sc.cached_ss_types.is_empty() {
             None
@@ -632,7 +662,8 @@ impl ProteinRenderEngine {
             sidechains: None,
             ss_types,
             per_residue_colors: self.sc.cached_per_residue_colors.clone(),
-            geometry: lod_geo,
+            geometry: base_geo,
+            per_chain_lod: Some(per_chain_lod),
         });
     }
 

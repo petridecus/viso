@@ -140,7 +140,8 @@ pub fn panel_bounds_floating(
     let x = window_width.saturating_sub(panel_width + margin);
     Rect {
         position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-            x as i32, margin as i32,
+            x as i32,
+            margin as i32,
         )),
         size: dpi::Size::Physical(dpi::PhysicalSize::new(
             panel_width.min(window_width),
@@ -168,9 +169,23 @@ pub fn push_options(webview: &WebView, options: &Options) {
         .evaluate_script(&format!("window.__viso_push_options('{escaped}')"));
 }
 
-/// Push stats (e.g. FPS) to the webview.
-pub fn push_stats(webview: &WebView, fps: f32) {
-    let json = serde_json::json!({ "fps": fps });
+/// Push stats (FPS + GPU buffer sizes) to the webview.
+pub fn push_stats(
+    webview: &WebView,
+    fps: f32,
+    buffers: &[(&str, usize, usize)],
+) {
+    let buffer_list: Vec<serde_json::Value> = buffers
+        .iter()
+        .map(|(name, used, alloc)| {
+            serde_json::json!({
+                "name": name,
+                "used": used,
+                "allocated": alloc,
+            })
+        })
+        .collect();
+    let json = serde_json::json!({ "fps": fps, "buffers": buffer_list });
     let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
     let _ =
         webview.evaluate_script(&format!("window.__viso_push_stats('{s}')"));
