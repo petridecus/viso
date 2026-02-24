@@ -11,8 +11,6 @@ pub mod backbone;
 pub mod ball_and_stick;
 /// Constraint band renderer (pulls, H-bonds, disulfides).
 pub mod band;
-/// Shared capsule instance layout for impostor rendering.
-pub mod capsule_instance;
 /// Capsule sidechain renderer.
 pub mod capsule_sidechain;
 /// Bind groups shared across all molecular draw calls.
@@ -21,6 +19,8 @@ pub mod draw_context;
 pub(crate) mod mesh_pass;
 /// Nucleic acid ring + stem renderer.
 pub mod nucleic_acid;
+/// Reusable impostor-pass primitives and instance types.
+pub mod primitives;
 /// Interactive pull arrow renderer.
 pub mod pull;
 

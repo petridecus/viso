@@ -96,7 +96,7 @@ pub fn SchemaPanel(
                 onpointermove: move |evt: PointerEvent| {
                     if let Some((start_x, start_w)) = *drag.read() {
                         let delta = start_x - evt.screen_coordinates().x;
-                        let new_w = (start_w + delta).max(220.0).min(700.0);
+                        let new_w = (start_w + delta).clamp(220.0, 700.0);
                         bridge::send_resize_panel(new_w as u32);
                     }
                 },

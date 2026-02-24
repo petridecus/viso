@@ -13,7 +13,7 @@ use crate::{
         ball_and_stick::PreparedBallAndStickData,
         capsule_sidechain::SidechainData,
     },
-    scene::processor::{AnimationSidechainData, PreparedScene, SceneRequest},
+    scene::{AnimationSidechainData, PreparedScene, SceneRequest},
     util::score_color,
 };
 
@@ -257,13 +257,13 @@ impl ProteinRenderEngine {
                 &self.context.device,
                 &self.context.queue,
                 PreparedBackboneData {
-                    vertices: &prepared.backbone_vertices,
-                    tube_indices: &prepared.backbone_tube_indices,
-                    ribbon_indices: &prepared.backbone_ribbon_indices,
-                    tube_index_count: prepared.backbone_tube_index_count,
-                    ribbon_index_count: prepared.backbone_ribbon_index_count,
-                    sheet_offsets: prepared.sheet_offsets.clone(),
-                    chain_ranges: prepared.backbone_chain_ranges.clone(),
+                    vertices: &prepared.backbone.vertices,
+                    tube_indices: &prepared.backbone.tube_indices,
+                    ribbon_indices: &prepared.backbone.ribbon_indices,
+                    tube_index_count: prepared.backbone.tube_index_count,
+                    ribbon_index_count: prepared.backbone.ribbon_index_count,
+                    sheet_offsets: prepared.backbone.sheet_offsets.clone(),
+                    chain_ranges: prepared.backbone.chain_ranges.clone(),
                     cached_chains: prepared.backbone_chains.clone(),
                     cached_na_chains: prepared.na_chains.clone(),
                     ss_override: prepared.ss_types.clone(),
@@ -285,24 +285,23 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.context.queue,
             &PreparedBallAndStickData {
-                sphere_bytes: &prepared.bns_sphere_instances,
-                sphere_count: prepared.bns_sphere_count,
-                capsule_bytes: &prepared.bns_capsule_instances,
-                capsule_count: prepared.bns_capsule_count,
-                picking_bytes: &prepared.bns_picking_capsules,
-                picking_count: prepared.bns_picking_count,
+                sphere_bytes: &prepared.bns.sphere_instances,
+                sphere_count: prepared.bns.sphere_count,
+                capsule_bytes: &prepared.bns.capsule_instances,
+                capsule_count: prepared.bns.capsule_count,
+                picking_bytes: &prepared.bns.picking_capsules,
+                picking_count: prepared.bns.picking_count,
             },
         );
 
-        if !prepared.na_vertices.is_empty() {
-            self.nucleic_acid_renderer.apply_prepared(
-                &self.context.device,
-                &self.context.queue,
-                &prepared.na_vertices,
-                &prepared.na_indices,
-                prepared.na_index_count,
-            );
-        }
+        self.nucleic_acid_renderer.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &prepared.na.stem_instances,
+            prepared.na.stem_count,
+            &prepared.na.ring_instances,
+            prepared.na.ring_count,
+        );
 
         // Recreate picking bind groups (buffers may have been reallocated)
         self.picking_groups.rebuild_all(
@@ -320,12 +319,12 @@ impl ProteinRenderEngine {
         transition: &Transition,
     ) {
         let new_backbone = &prepared.backbone_chains;
-        let sidechain_positions = &prepared.sidechain_positions;
-        let sidechain_bonds = &prepared.sidechain_bonds;
-        let sidechain_hydrophobicity = &prepared.sidechain_hydrophobicity;
-        let sidechain_residue_indices = &prepared.sidechain_residue_indices;
-        let sidechain_atom_names = &prepared.sidechain_atom_names;
-        let backbone_sidechain_bonds = &prepared.backbone_sidechain_bonds;
+        let sidechain_positions = &prepared.sidechain.positions;
+        let sidechain_bonds = &prepared.sidechain.bonds;
+        let sidechain_hydrophobicity = &prepared.sidechain.hydrophobicity;
+        let sidechain_residue_indices = &prepared.sidechain.residue_indices;
+        let sidechain_atom_names = &prepared.sidechain.atom_names;
+        let backbone_sidechain_bonds = &prepared.sidechain.backbone_bonds;
 
         // Capture current VISUAL positions as start (for smooth preemption)
         if self.sc.target_sidechain_positions.len() == sidechain_positions.len()
@@ -427,20 +426,20 @@ impl ProteinRenderEngine {
     /// Snap update from prepared scene data (no animation).
     fn snap_from_prepared(&mut self, prepared: &PreparedScene) {
         self.sc.target_sidechain_positions =
-            prepared.sidechain_positions.clone();
+            prepared.sidechain.positions.clone();
         self.sc.start_sidechain_positions =
-            prepared.sidechain_positions.clone();
+            prepared.sidechain.positions.clone();
         self.sc.target_backbone_sidechain_bonds =
-            prepared.backbone_sidechain_bonds.clone();
+            prepared.sidechain.backbone_bonds.clone();
         self.sc.start_backbone_sidechain_bonds =
-            prepared.backbone_sidechain_bonds.clone();
-        self.sc.cached_sidechain_bonds = prepared.sidechain_bonds.clone();
+            prepared.sidechain.backbone_bonds.clone();
+        self.sc.cached_sidechain_bonds = prepared.sidechain.bonds.clone();
         self.sc.cached_sidechain_hydrophobicity =
-            prepared.sidechain_hydrophobicity.clone();
+            prepared.sidechain.hydrophobicity.clone();
         self.sc.cached_sidechain_residue_indices =
-            prepared.sidechain_residue_indices.clone();
+            prepared.sidechain.residue_indices.clone();
         self.sc.cached_sidechain_atom_names =
-            prepared.sidechain_atom_names.clone();
+            prepared.sidechain.atom_names.clone();
 
         if let Some(ref ss) = prepared.ss_types {
             self.sc.cached_ss_types = ss.clone();
@@ -673,13 +672,13 @@ impl ProteinRenderEngine {
         self.backbone_renderer.apply_mesh(
             &self.context.device,
             &self.context.queue,
-            &prepared.backbone_vertices,
-            &prepared.backbone_tube_indices,
-            &prepared.backbone_ribbon_indices,
-            prepared.backbone_tube_index_count,
-            prepared.backbone_ribbon_index_count,
-            prepared.sheet_offsets,
-            prepared.backbone_chain_ranges,
+            &prepared.backbone.vertices,
+            &prepared.backbone.tube_indices,
+            &prepared.backbone.ribbon_indices,
+            prepared.backbone.tube_index_count,
+            prepared.backbone.ribbon_index_count,
+            prepared.backbone.sheet_offsets,
+            prepared.backbone.chain_ranges,
         );
 
         if let Some(ref instances) = prepared.sidechain_instances {

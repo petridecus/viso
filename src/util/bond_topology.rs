@@ -166,8 +166,6 @@ mod tests {
 
     #[test]
     fn test_phenylalanine_ring() {
-        let bonds = get_residue_bonds("PHE").unwrap();
-        // PHE should have 7 bonds in the sidechain
-        assert_eq!(bonds.len(), 7);
+        assert!(matches!(get_residue_bonds("PHE"), Some(b) if b.len() == 7));
     }
 }

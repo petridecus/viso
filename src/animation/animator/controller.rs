@@ -37,10 +37,6 @@ impl AnimationController {
     /// - Ignore the new target (if current animation has Ignore preemption)
     /// - Preempt current animation (syncing visual state first)
     ///
-    /// The `force` parameter allows forcing animation creation even when
-    /// backbone hasn't changed (e.g., for sidechain-only animations like
-    /// Shake or MPNN).
-    ///
     /// Returns `Some(AnimationRunner)` if a new animation should start,
     /// `None` if the new target should be ignored or no animation needed.
     pub fn handle_new_target(
@@ -49,7 +45,6 @@ impl AnimationController {
         new_target: &StructureState,
         current_runner: Option<&AnimationRunner>,
         transition: &Transition,
-        force: bool,
     ) -> Option<AnimationRunner> {
         // Disabled means no animation
         if !self.enabled {
@@ -109,19 +104,15 @@ impl AnimationController {
         let backbone_changed =
             did_resize || current_state.target_differs(new_target);
 
-        // If neither backbone nor sidechains changed (and not forced), skip
-        // animation
-        if !backbone_changed && !force {
+        // If backbone didn't change, skip animation
+        if !backbone_changed {
             return None;
         }
 
         // Find residues that need animation (backbone differences)
         let differing = current_state.differing_residues(new_target);
 
-        // If backbone changed, we need residue data for the animation
-        // If only sidechains changed (force=true, backbone_changed=false),
-        // create a minimal runner that will drive sidechain interpolation
-        if differing.is_empty() && !force {
+        if differing.is_empty() {
             return None;
         }
 
@@ -139,15 +130,10 @@ impl AnimationController {
             })
             .collect();
 
-        // If we have backbone residue data, create animation from it
-        // If forcing (sidechain-only), create a minimal animation runner
-        if residue_data.is_empty() && !force {
+        if residue_data.is_empty() {
             return None;
         }
 
-        // For sidechain-only animations (force=true, no backbone changes),
-        // create a runner with empty residue data - it will still provide
-        // timing/progress for sidechain interpolation
         Some(AnimationRunner::new(behavior, residue_data))
     }
 }
@@ -197,7 +183,6 @@ mod tests {
             &new_target,
             None,
             &Transition::smooth(),
-            false,
         );
 
         assert!(runner.is_none());
@@ -215,11 +200,9 @@ mod tests {
             &new_target,
             None,
             &Transition::smooth(),
-            false,
         );
 
-        assert!(runner.is_some());
-        assert_eq!(runner.unwrap().residue_count(), 2);
+        assert_eq!(runner.map(|r| r.residue_count()), Some(2));
     }
 
     #[test]
@@ -235,7 +218,6 @@ mod tests {
             &new_target,
             None,
             &Transition::smooth(),
-            false,
         );
 
         assert!(runner.is_none());
@@ -253,7 +235,6 @@ mod tests {
             &new_target,
             None,
             &Transition::snap(),
-            false,
         );
 
         // Snap behavior has zero duration, so it completes instantly
@@ -272,7 +253,6 @@ mod tests {
             &new_target,
             None,
             &Transition::smooth(), // allows_size_change=false
-            false,
         );
 
         assert!(runner.is_none());
@@ -290,7 +270,6 @@ mod tests {
             &new_target,
             None,
             &Transition::smooth(),
-            false,
         );
 
         assert!(runner.is_none());
@@ -315,7 +294,6 @@ mod tests {
             &new_target,
             None,
             &transition,
-            false,
         );
 
         // allows_size_change=true — should create animation
@@ -323,14 +301,10 @@ mod tests {
         // State should be resized to match new target
         assert_eq!(state.residue_count(), 5);
         // The first 3 residues should still have their old positions (y=0)
-        assert!(
-            (state.get_current(0).unwrap().backbone[0].y - 0.0).abs() < 0.001
-        );
+        assert_eq!(state.get_current(0).map(|r| r.backbone[0].y), Some(0.0));
         // The extra residues (4th, 5th) should start at their target positions
         // (y=5)
-        assert!(
-            (state.get_current(3).unwrap().backbone[0].y - 5.0).abs() < 0.001
-        );
+        assert_eq!(state.get_current(3).map(|r| r.backbone[0].y), Some(5.0));
     }
 
     #[test]
@@ -346,7 +320,6 @@ mod tests {
             &new_target,
             None,
             &transition,
-            false,
         );
 
         // Should still animate — just truncated
@@ -354,21 +327,4 @@ mod tests {
         assert_eq!(state.residue_count(), 3);
     }
 
-    #[test]
-    fn test_controller_force_creates_animation_with_same_backbone() {
-        let controller = AnimationController::new();
-        let mut state = StructureState::from_backbone(&make_backbone(5.0, 2));
-        let new_target = StructureState::from_backbone(&make_backbone(5.0, 2)); // Same backbone
-
-        // With force=true, should create animation even with same backbone
-        let runner = controller.handle_new_target(
-            &mut state,
-            &new_target,
-            None,
-            &Transition::smooth(),
-            true, // force animation for sidechain-only change
-        );
-
-        assert!(runner.is_some());
-    }
 }

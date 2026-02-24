@@ -12,10 +12,7 @@
 //!     .unwrap();
 //! ```
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Instant};
 
 use winit::{
     application::ApplicationHandler,
@@ -102,6 +99,11 @@ impl Viewer {
 
     /// Open the window and run the event loop. Blocks until the window is
     /// closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::Viewer`] if the event loop or render engine
+    /// fails to initialise.
     pub fn run(self) -> Result<(), VisoError> {
         let event_loop =
             EventLoop::new().map_err(|e| VisoError::Viewer(e.to_string()))?;
@@ -115,17 +117,7 @@ impl Viewer {
             options: self.options,
             title: self.title,
             #[cfg(feature = "gui")]
-            webview: None,
-            #[cfg(feature = "gui")]
-            action_rx: None,
-            #[cfg(feature = "gui")]
-            last_stats_push: Instant::now(),
-            #[cfg(feature = "gui")]
-            panel_pinned: true,
-            #[cfg(feature = "gui")]
-            panel_peek: false,
-            #[cfg(feature = "gui")]
-            panel_width: crate::gui::webview::PANEL_WIDTH,
+            panel: crate::gui::panel::PanelController::new(),
         };
 
         event_loop
@@ -145,20 +137,7 @@ struct ViewerApp {
     options: Option<Options>,
     title: String,
     #[cfg(feature = "gui")]
-    webview: Option<wry::WebView>,
-    #[cfg(feature = "gui")]
-    action_rx: Option<std::sync::mpsc::Receiver<crate::gui::webview::UiAction>>,
-    #[cfg(feature = "gui")]
-    last_stats_push: Instant,
-    /// Whether the options panel is pinned open (visible).
-    #[cfg(feature = "gui")]
-    panel_pinned: bool,
-    /// Whether the panel is temporarily revealed by a mouse hover.
-    #[cfg(feature = "gui")]
-    panel_peek: bool,
-    /// Current panel width in physical pixels.
-    #[cfg(feature = "gui")]
-    panel_width: u32,
+    panel: crate::gui::panel::PanelController,
 }
 
 /// Compute the wgpu surface size — always the full window dimensions.
@@ -169,135 +148,167 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
     (inner.width.max(1), inner.height.max(1))
 }
 
-/// Results from draining IPC actions.
-#[cfg(feature = "gui")]
-struct UiActionResult {
-    toggle_panel: bool,
-    resize_width: Option<u32>,
-}
-
-/// Drain IPC actions from the webview and apply to the engine.
-#[cfg(feature = "gui")]
-fn drain_ui_actions(
-    rx: &std::sync::mpsc::Receiver<crate::gui::webview::UiAction>,
-    engine: &mut ProteinRenderEngine,
-) -> UiActionResult {
-    use crate::gui::webview::UiAction;
-
-    let mut result = UiActionResult {
-        toggle_panel: false,
-        resize_width: None,
+/// Create a [`ProteinRenderEngine`], optionally loading a structure file.
+fn create_engine(
+    window: Arc<Window>,
+    size: (u32, u32),
+    scale: f64,
+    path: Option<&str>,
+) -> Result<ProteinRenderEngine, VisoError> {
+    let result = if let Some(path) = path {
+        pollster::block_on(ProteinRenderEngine::new_with_path(
+            window, size, scale, path,
+        ))
+    } else {
+        pollster::block_on(ProteinRenderEngine::new(window, size, scale))
     };
-    while let Ok(action) = rx.try_recv() {
-        match action {
-            UiAction::SetOption { path, field, value } => {
-                let mut opts = engine.options().clone();
-                let Ok(mut root) = serde_json::to_value(&opts) else {
-                    continue;
-                };
-                if let Some(section) = root.get_mut(&path) {
-                    section[&field] = value;
-                }
-                if let Ok(updated) = serde_json::from_value(root) {
-                    opts = updated;
-                }
-                engine.set_options(opts);
-            }
-            UiAction::LoadFile { path } => {
-                log::info!("load_file action: {path}");
-                // TODO: implement runtime file loading
-            }
-            UiAction::TogglePanel => {
-                result.toggle_panel = true;
-            }
-            UiAction::ResizePanel { width } => {
-                result.resize_width = Some(width);
-            }
-        }
-    }
-    result
+    result.map_err(|e| VisoError::Viewer(e.to_string()))
 }
 
-#[cfg(feature = "gui")]
 impl ViewerApp {
-    /// Margin around the panel when floating (not pinned).
-    const PANEL_MARGIN: u32 = 10;
-    /// Min/max panel width for resize.
-    const MIN_PANEL_WIDTH: u32 = 220;
-    const MAX_PANEL_WIDTH: u32 = 700;
-
-    /// Toggle the options panel open/closed.
-    fn toggle_panel(&mut self) {
-        self.panel_pinned = !self.panel_pinned;
-        self.panel_peek = false;
-        self.apply_panel_layout();
-    }
-
-    /// Show or hide the webview panel. The engine surface always covers the
-    /// full window — the panel overlays the right edge.
-    fn apply_panel_layout(&mut self) {
-        let visible = self.panel_pinned || self.panel_peek;
-        let Some(ref window) = self.window else {
+    fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        let (vp_w, vp_h) = viewport_size(size);
+        let Some(engine) = &mut self.engine else {
             return;
         };
-        let inner = window.inner_size();
+        engine.resize(vp_w, vp_h);
+        let Some(window) = &self.window else { return };
+        #[cfg(feature = "gui")]
+        self.panel.apply_layout(window);
+    }
 
-        if let Some(ref wv) = self.webview {
-            if visible {
-                let bounds = if self.panel_pinned {
-                    crate::gui::webview::panel_bounds(
-                        inner.width,
-                        inner.height,
-                        self.panel_width,
-                    )
-                } else {
-                    crate::gui::webview::panel_bounds_floating(
-                        inner.width,
-                        inner.height,
-                        self.panel_width,
-                        Self::PANEL_MARGIN,
-                    )
-                };
-                let _ = wv.set_bounds(bounds);
-            } else {
-                // Park off-screen to the right
-                use wry::dpi;
-                let _ = wv.set_bounds(wry::Rect {
-                    position: dpi::Position::Physical(
-                        dpi::PhysicalPosition::new(inner.width as i32, 0),
-                    ),
-                    size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                        self.panel_width,
-                        inner.height,
-                    )),
-                });
+    fn handle_scale_factor_changed(&mut self, scale_factor: f64) {
+        let Some(window) = &self.window else { return };
+        let inner = window.inner_size();
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let render_scale = if scale_factor < 2.0 { 2 } else { 1 };
+        engine.set_render_scale(render_scale);
+        let (vp_w, vp_h) = viewport_size(inner);
+        engine.resize(vp_w, vp_h);
+    }
+
+    /// Drain GUI actions, update, render, and push stats.
+    fn handle_redraw(&mut self) {
+        #[cfg(feature = "gui")]
+        if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
+            self.panel.drain_and_apply(engine, window);
+        }
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+
+        engine.update(dt);
+
+        match engine.render() {
+            Ok(()) => {}
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                let Some(w) = &self.window else { return };
+                let inner = w.inner_size();
+                let (vp_w, vp_h) = viewport_size(inner);
+                engine.resize(vp_w, vp_h);
+            }
+            Err(e) => {
+                log::error!("render error: {e:?}");
             }
         }
+
+        #[cfg(feature = "gui")]
+        self.panel.push_stats_if_due(now, engine);
+
+        let Some(w) = &self.window else { return };
+        w.request_redraw();
     }
 
-    /// Check if mouse is near the right edge and temporarily reveal the
-    /// panel.
-    fn update_panel_peek(&mut self, mouse_x: f32) {
-        if self.panel_pinned {
-            return;
-        }
-        let Some(ref window) = self.window else {
+    fn handle_mouse_input(
+        &mut self,
+        button: winit::event::MouseButton,
+        state: ElementState,
+    ) {
+        let Some(engine) = &mut self.engine else {
             return;
         };
-        let inner = window.inner_size();
-        let edge_zone = 6.0;
+        let pressed = state == ElementState::Pressed;
+        let _ = engine.handle_input(InputEvent::MouseButton {
+            button: MouseButton::from(button),
+            pressed,
+        });
+    }
 
-        let near_edge = mouse_x >= (inner.width as f32 - edge_zone);
-        let in_panel = mouse_x
-            >= (inner.width as f32
-                - self.panel_width as f32
-                - Self::PANEL_MARGIN as f32);
+    fn handle_cursor_moved(
+        &mut self,
+        position: winit::dpi::PhysicalPosition<f64>,
+    ) {
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let _ = engine.handle_input(InputEvent::CursorMoved {
+            x: position.x as f32,
+            y: position.y as f32,
+        });
 
-        let should_peek = near_edge || (self.panel_peek && in_panel);
+        let Some(window) = &self.window else { return };
+        #[cfg(feature = "gui")]
+        self.panel.update_peek(position.x as f32, window);
+        window.request_redraw();
+    }
 
-        if should_peek != self.panel_peek {
-            self.panel_peek = should_peek;
-            self.apply_panel_layout();
+    fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        #[allow(clippy::cast_possible_truncation)]
+        let scroll_delta = match delta {
+            MouseScrollDelta::LineDelta(_, y) => y,
+            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
+        };
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        let _ = engine.handle_input(InputEvent::Scroll {
+            delta: scroll_delta,
+        });
+        let Some(w) = &self.window else { return };
+        w.request_redraw();
+    }
+
+    fn handle_modifiers_changed(&mut self, modifiers: winit::event::Modifiers) {
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        let _ = engine.handle_input(InputEvent::ModifiersChanged {
+            shift: modifiers.state().shift_key(),
+        });
+    }
+
+    fn handle_keyboard_input(&mut self, event: &winit::event::KeyEvent) {
+        if event.state != ElementState::Pressed {
+            return;
+        }
+        use winit::keyboard::PhysicalKey;
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return;
+        };
+
+        #[cfg(feature = "gui")]
+        if code == winit::keyboard::KeyCode::Backslash {
+            self.panel.toggle();
+            let Some(window) = &self.window else { return };
+            self.panel.apply_layout(window);
+            return;
+        }
+
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        let key_str = format!("{code:?}");
+        if let Some(action) = engine.options().keybindings.lookup(&key_str) {
+            action.execute(engine);
         }
     }
 }
@@ -340,22 +351,12 @@ impl ApplicationHandler for ViewerApp {
         let scale = window.scale_factor();
         let (vp_w, vp_h) = viewport_size(inner);
 
-        let engine_result = if let Some(ref path) = self.path {
-            pollster::block_on(ProteinRenderEngine::new_with_path(
-                window.clone(),
-                (vp_w, vp_h),
-                scale,
-                path,
-            ))
-        } else {
-            pollster::block_on(ProteinRenderEngine::new(
-                window.clone(),
-                (vp_w, vp_h),
-                scale,
-            ))
-        };
-
-        let mut engine = match engine_result {
+        let mut engine = match create_engine(
+            window.clone(),
+            (vp_w, vp_h),
+            scale,
+            self.path.as_deref(),
+        ) {
             Ok(e) => e,
             Err(e) => {
                 log::error!("Failed to initialize engine: {e}");
@@ -370,30 +371,13 @@ impl ApplicationHandler for ViewerApp {
 
         engine.sync_scene_to_renderers(None);
 
-        // Create the wry webview panel (gui feature only)
         #[cfg(feature = "gui")]
-        {
-            match crate::gui::webview::create_webview(
-                window.as_ref(),
-                inner.width,
-                inner.height,
-                self.panel_width,
-            ) {
-                Ok((wv, rx)) => {
-                    crate::gui::webview::push_schema(&wv, engine.options());
-                    crate::gui::webview::push_panel_pinned(
-                        &wv,
-                        self.panel_pinned,
-                    );
-                    self.webview = Some(wv);
-                    self.action_rx = Some(rx);
-                }
-                Err(e) => {
-                    log::error!("Failed to create webview: {e}");
-                    // Continue without GUI panel
-                }
-            }
-        }
+        self.panel.init_webview(
+            window.as_ref(),
+            inner.width,
+            inner.height,
+            &engine,
+        );
 
         window.request_redraw();
         self.window = Some(window);
@@ -417,188 +401,26 @@ impl ApplicationHandler for ViewerApp {
         }
 
         match event {
-            WindowEvent::Resized(event_size) => {
-                let (vp_w, vp_h) = viewport_size(event_size);
-                if let Some(engine) = &mut self.engine {
-                    engine.resize(vp_w, vp_h);
-                }
-                #[cfg(feature = "gui")]
-                self.apply_panel_layout();
-            }
-
+            WindowEvent::Resized(size) => self.handle_resize(size),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                #[allow(clippy::cast_possible_truncation)]
-                let render_scale = if scale_factor < 2.0 { 2 } else { 1 };
-                let inner = self.window.as_ref().map(|w| w.inner_size());
-                if let Some(engine) = &mut self.engine {
-                    engine.set_render_scale(render_scale);
-                    if let Some(inner) = inner {
-                        let (vp_w, vp_h) = viewport_size(inner);
-                        engine.resize(vp_w, vp_h);
-                    }
-                }
+                self.handle_scale_factor_changed(scale_factor);
             }
-
-            WindowEvent::RedrawRequested => {
-                #[cfg(feature = "gui")]
-                {
-                    let mut result = UiActionResult {
-                        toggle_panel: false,
-                        resize_width: None,
-                    };
-                    if let (Some(rx), Some(engine)) =
-                        (&self.action_rx, &mut self.engine)
-                    {
-                        result = drain_ui_actions(rx, engine);
-                    }
-                    if result.toggle_panel {
-                        self.toggle_panel();
-                        if let Some(ref wv) = self.webview {
-                            crate::gui::webview::push_panel_pinned(
-                                wv,
-                                self.panel_pinned,
-                            );
-                        }
-                    }
-                    if let Some(w) = result.resize_width {
-                        let clamped = w
-                            .max(Self::MIN_PANEL_WIDTH)
-                            .min(Self::MAX_PANEL_WIDTH);
-                        if clamped != self.panel_width {
-                            self.panel_width = clamped;
-                            self.apply_panel_layout();
-                        }
-                    }
-                }
-
-                let now = Instant::now();
-                let dt = now.duration_since(self.last_frame_time).as_secs_f32();
-                self.last_frame_time = now;
-
-                if let Some(engine) = &mut self.engine {
-                    engine.update(dt);
-                    match engine.render() {
-                        Ok(()) => {}
-                        Err(
-                            wgpu::SurfaceError::Outdated
-                            | wgpu::SurfaceError::Lost,
-                        ) => {
-                            if let Some(w) = &self.window {
-                                let inner = w.inner_size();
-                                let (vp_w, vp_h) = viewport_size(inner);
-                                engine.resize(vp_w, vp_h);
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("render error: {e:?}");
-                        }
-                    }
-
-                    // Push FPS + GPU buffer stats to webview at ~4 Hz
-                    #[cfg(feature = "gui")]
-                    if let Some(ref wv) = self.webview {
-                        if now.duration_since(self.last_stats_push)
-                            >= Duration::from_millis(250)
-                        {
-                            let buffers = engine.gpu_buffer_stats();
-                            crate::gui::webview::push_stats(
-                                wv,
-                                engine.frame_timing.fps(),
-                                &buffers,
-                            );
-                            self.last_stats_push = now;
-                        }
-                    }
-                }
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
-            }
-
+            WindowEvent::RedrawRequested => self.handle_redraw(),
             WindowEvent::MouseInput { button, state, .. } => {
-                let pressed = state == ElementState::Pressed;
-                if let Some(engine) = &mut self.engine {
-                    let _ = engine.handle_input(InputEvent::MouseButton {
-                        button: MouseButton::from(button),
-                        pressed,
-                    });
-                }
+                self.handle_mouse_input(button, state);
             }
-
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(engine) = &mut self.engine {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let _ = engine.handle_input(InputEvent::CursorMoved {
-                        x: position.x as f32,
-                        y: position.y as f32,
-                    });
-                }
-
-                // Peek panel on hover near right edge
-                #[cfg(feature = "gui")]
-                self.update_panel_peek(position.x as f32);
-
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.handle_cursor_moved(position);
             }
-
             WindowEvent::MouseWheel { delta, .. } => {
-                #[allow(clippy::cast_possible_truncation)]
-                let scroll_delta = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
-                };
-                if let Some(engine) = &mut self.engine {
-                    let _ = engine.handle_input(InputEvent::Scroll {
-                        delta: scroll_delta,
-                    });
-                }
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.handle_mouse_wheel(delta);
             }
-
             WindowEvent::ModifiersChanged(modifiers) => {
-                if let Some(engine) = &mut self.engine {
-                    let _ = engine.handle_input(InputEvent::ModifiersChanged {
-                        shift: modifiers.state().shift_key(),
-                    });
-                }
+                self.handle_modifiers_changed(modifiers);
             }
-
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed {
-                    return;
-                }
-                use winit::keyboard::PhysicalKey;
-                let PhysicalKey::Code(code) = event.physical_key else {
-                    return;
-                };
-
-                // Toggle options panel with backslash key
-                #[cfg(feature = "gui")]
-                if code == winit::keyboard::KeyCode::Backslash {
-                    self.toggle_panel();
-                    if let Some(ref wv) = self.webview {
-                        crate::gui::webview::push_panel_pinned(
-                            wv,
-                            self.panel_pinned,
-                        );
-                    }
-                    return;
-                }
-
-                let key_str = format!("{code:?}");
-                if let Some(engine) = &mut self.engine {
-                    if let Some(action) =
-                        engine.options().keybindings.lookup(&key_str)
-                    {
-                        action.execute(engine);
-                    }
-                }
+                self.handle_keyboard_input(&event);
             }
-
             _ => (),
         }
     }

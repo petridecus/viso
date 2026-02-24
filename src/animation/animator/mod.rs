@@ -95,12 +95,9 @@ impl StructureAnimator {
     ) {
         let new_target = StructureState::from_backbone(backbone_chains);
 
-        // Check if we have pending sidechain changes that should force
-        // animation
-        let force_animation = self.sidechains_changed;
-        let effective_transition = if force_animation {
-            // Use the pending sidechain transition if available, otherwise use
-            // the provided transition
+        // Use the pending sidechain transition if sidechains changed,
+        // otherwise use the provided transition
+        let effective_transition = if self.sidechains_changed {
             self.pending_sidechain_transition
                 .take()
                 .unwrap_or_else(|| transition.clone())
@@ -108,17 +105,24 @@ impl StructureAnimator {
             transition.clone()
         };
 
-        // Let controller decide what to do
+        // Let controller decide about backbone animation
         let maybe_runner = self.controller.handle_new_target(
             &mut self.state,
             &new_target,
             self.runner.as_ref(),
             &effective_transition,
-            force_animation,
         );
 
         if let Some(runner) = maybe_runner {
             self.runner = Some(runner);
+        } else if self.sidechains_changed {
+            // Sidechain-only change: create a timing-only runner
+            // (empty residue data — just provides progress/behavior for
+            // sidechain interpolation)
+            self.runner = Some(AnimationRunner::new(
+                effective_transition.behavior.clone(),
+                vec![],
+            ));
         }
 
         // Reset sidechain change flag after processing
@@ -235,54 +239,47 @@ impl StructureAnimator {
         // Check if sidechains actually changed
         let sidechains_changed = self.sidechains_differ(positions);
 
-        // If sizes match, capture current VISUAL state as new start (for smooth
-        // preemption)
-        if self.target_sidechain_positions.len() == positions.len() {
-            if self.is_animating()
-                && !self.target_sidechain_positions.is_empty()
-            {
-                // Animation in progress - sync to current interpolated
-                // positions This prevents sidechains from
-                // jumping during rapid updates (like pulls)
-                self.start_sidechain_positions = self.get_sidechain_positions();
-                // Also sync CA positions using same progress
-                let ctx = self.interpolation_context();
-                self.start_ca_positions = self
-                    .start_ca_positions
-                    .iter()
-                    .zip(self.target_ca_positions.iter())
-                    .map(|(start, target)| {
-                        *start + (*target - *start) * ctx.eased_t
-                    })
-                    .collect();
-            } else {
-                // No animation - use previous target as new start
-                self.start_sidechain_positions =
-                    self.target_sidechain_positions.clone();
-                self.start_ca_positions = self.target_ca_positions.clone();
-            }
+        // Capture current visual state as the new animation start.
+        // Three cases: animating (sync to interpolated), static (use
+        // previous target), or size-changed (collapse or snap).
+        let sizes_match =
+            self.target_sidechain_positions.len() == positions.len();
+
+        if sizes_match
+            && self.is_animating()
+            && !self.target_sidechain_positions.is_empty()
+        {
+            // Animation in progress — sync to current interpolated
+            // positions to prevent jumps during rapid updates (pulls).
+            self.start_sidechain_positions = self.get_sidechain_positions();
+            let ctx = self.interpolation_context();
+            self.start_ca_positions = self
+                .start_ca_positions
+                .iter()
+                .zip(self.target_ca_positions.iter())
+                .map(|(start, target)| {
+                    *start + (*target - *start) * ctx.eased_t
+                })
+                .collect();
+        } else if sizes_match {
+            // No animation — use previous target as new start.
+            self.start_sidechain_positions =
+                self.target_sidechain_positions.clone();
+            self.start_ca_positions = self.target_ca_positions.clone();
+        } else if transition.is_some_and(|t| t.allows_size_change) {
+            // Size changed with resize-capable transition — start each
+            // sidechain atom at its residue's CA (collapsed) so
+            // CollapseExpand can animate them expanding outward.
+            self.start_sidechain_positions = residue_indices
+                .iter()
+                .map(|&ri| {
+                    ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO)
+                })
+                .collect();
+            self.start_ca_positions = ca_positions.to_vec();
         } else {
-            // Size changed.
-            // If the pending transition allows size-change animation,
-            // initialize sidechain starts at their CA (collapsed)
-            // so CollapseExpand can animate them expanding outward.
-            // Otherwise snap to target.
-            let allows_resize =
-                transition.is_some_and(|t| t.allows_size_change);
-            if allows_resize {
-                // Start each sidechain atom at its residue's CA position
-                self.start_sidechain_positions = residue_indices
-                    .iter()
-                    .map(|&ri| {
-                        ca_positions
-                            .get(ri as usize)
-                            .copied()
-                            .unwrap_or(Vec3::ZERO)
-                    })
-                    .collect();
-            } else {
-                self.start_sidechain_positions = positions.to_vec();
-            }
+            // Size changed, no resize animation — snap to target.
+            self.start_sidechain_positions = positions.to_vec();
             self.start_ca_positions = ca_positions.to_vec();
         }
 
@@ -423,13 +420,14 @@ impl StructureAnimator {
                 self.sidechain_residue_indices.iter().enumerate()
             {
                 let r = res_idx as usize;
-                if r >= res_start && r < res_end {
-                    if let Some(target) = self.target_sidechain_positions.get(i)
-                    {
-                        if i < self.start_sidechain_positions.len() {
-                            self.start_sidechain_positions[i] = *target;
-                        }
-                    }
+                if !(res_start..res_end).contains(&r) {
+                    continue;
+                }
+                if let (Some(target), Some(start)) = (
+                    self.target_sidechain_positions.get(i),
+                    self.start_sidechain_positions.get_mut(i),
+                ) {
+                    *start = *target;
                 }
             }
         }
@@ -490,12 +488,9 @@ impl StructureAnimator {
     /// the backbone-lerp phase so new atoms don't flash at their final
     /// positions.
     pub fn should_include_sidechains(&self) -> bool {
-        match self.runner.as_ref() {
-            Some(runner) => {
-                runner.behavior().should_include_sidechains(self.progress())
-            }
-            None => true,
-        }
+        self.runner.as_ref().is_none_or(|r| {
+            r.behavior().should_include_sidechains(self.progress())
+        })
     }
 
     /// Get the CA position of a residue by index.
@@ -532,7 +527,7 @@ impl std::fmt::Debug for StructureAnimator {
             .field("residue_count", &self.state.residue_count())
             .field("is_animating", &self.runner.is_some())
             .field("controller", &self.controller)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

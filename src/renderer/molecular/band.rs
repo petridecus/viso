@@ -16,14 +16,10 @@
 
 use glam::Vec3;
 
-use super::capsule_instance::CapsuleInstance;
+use super::primitives::{capsule::CapsuleInstance, ImpostorPass};
 use crate::{
-    gpu::{
-        dynamic_buffer::TypedBuffer, render_context::RenderContext,
-        shader_composer::ShaderComposer,
-    },
+    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
     options::ColorOptions,
-    renderer::pipeline_util,
 };
 
 // Foldit color constants for bands
@@ -116,11 +112,7 @@ impl Default for BandRenderInfo {
 
 /// Renders constraint bands between atoms as capsule impostors.
 pub struct BandRenderer {
-    pipeline: wgpu::RenderPipeline,
-    instance_buffer: TypedBuffer<CapsuleInstance>,
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
-    instance_count: u32,
+    pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BandRenderer {
@@ -132,125 +124,16 @@ impl BandRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
-        // Start with empty buffer
-        let instances: Vec<CapsuleInstance> = Vec::new();
-
-        let instance_buffer = TypedBuffer::with_capacity(
-            &context.device,
-            "Band Instance Buffer",
-            64, // Initial capacity for ~64 bands
-            wgpu::BufferUsages::STORAGE,
-        );
-
-        let bind_group_layout = Self::create_bind_group_layout(&context.device);
-        let bind_group = Self::create_bind_group(
-            &context.device,
-            &bind_group_layout,
-            &instance_buffer,
-        );
-        let pipeline = Self::create_pipeline(
+        let pass = ImpostorPass::new(
             context,
-            &bind_group_layout,
-            camera_layout,
-            lighting_layout,
-            selection_layout,
+            "Band",
+            "raster/impostor/capsule.wgsl",
+            [camera_layout, lighting_layout, selection_layout],
+            6,
             shader_composer,
         );
 
-        Self {
-            pipeline,
-            instance_buffer,
-            bind_group_layout,
-            bind_group,
-            instance_count: instances.len() as u32,
-        }
-    }
-
-    fn create_bind_group_layout(
-        device: &wgpu::Device,
-    ) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Band Renderer Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX
-                    | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        })
-    }
-
-    fn create_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        instance_buffer: &TypedBuffer<CapsuleInstance>,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: instance_buffer.buffer().as_entire_binding(),
-            }],
-            label: Some("Band Renderer Bind Group"),
-        })
-    }
-
-    fn create_pipeline(
-        context: &RenderContext,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
-        shader_composer: &mut ShaderComposer,
-    ) -> wgpu::RenderPipeline {
-        // Reuse the same capsule impostor shader
-        let shader = shader_composer.compose(
-            &context.device,
-            "Band Renderer Shader",
-            "raster/impostor/capsule.wgsl",
-        );
-
-        let pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Band Renderer Pipeline Layout"),
-                bind_group_layouts: &[
-                    bind_group_layout,
-                    camera_layout,
-                    lighting_layout,
-                    selection_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
-
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Band Renderer Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &pipeline_util::hdr_fragment_targets(),
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(pipeline_util::depth_stencil_state()),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
+        Self { pass }
     }
 
     /// Compute band radius based on strength (matches Foldit)
@@ -423,32 +306,17 @@ impl BandRenderer {
         colors: Option<&ColorOptions>,
     ) {
         let instances = Self::generate_instances(bands, colors);
-
-        let reallocated = self.instance_buffer.write(device, queue, &instances);
-
-        if reallocated {
-            self.bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.instance_buffer,
-            );
-        }
-
-        self.instance_count = instances.len() as u32;
+        let _ = self.pass.write_instances(device, queue, &instances);
     }
 
     /// Clear all bands
     pub fn clear(&mut self) {
-        self.instance_count = 0;
+        self.pass.instance_count = 0;
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
     pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
-        vec![(
-            "Band Capsules",
-            self.instance_buffer.len_bytes(),
-            self.instance_buffer.capacity_bytes(),
-        )]
+        vec![self.pass.buffer_info("Band Capsules")]
     }
 
     /// Draw band capsules into the given render pass.
@@ -457,23 +325,12 @@ impl BandRenderer {
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
-        if self.instance_count == 0 {
-            return;
-        }
-
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_bind_group(1, bind_groups.camera, &[]);
-        render_pass.set_bind_group(2, bind_groups.lighting, &[]);
-        render_pass.set_bind_group(3, bind_groups.selection, &[]);
-
-        // 6 vertices per quad, one quad per capsule
-        render_pass.draw(0..6, 0..self.instance_count);
+        self.pass.draw(render_pass, bind_groups);
     }
 
     /// Get band count for debugging
     pub fn band_count(&self) -> u32 {
-        self.instance_count
+        self.pass.instance_count
     }
 }
 

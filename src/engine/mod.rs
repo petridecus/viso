@@ -722,7 +722,7 @@ impl ProteinRenderEngine {
                     .capsule_picking_bind_group
                     .as_ref(),
                 capsule_count: if self.options.display.show_sidechains {
-                    self.sidechain_renderer.instance_count
+                    self.sidechain_renderer.instance_count()
                 } else {
                     0
                 },

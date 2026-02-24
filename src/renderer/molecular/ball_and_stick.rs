@@ -4,21 +4,18 @@
 //! Uses distance-based bond inference from
 //! `foldit_conv::coords::bond_inference`.
 
-use bytemuck::Zeroable;
 use foldit_conv::coords::{
     infer_bonds, types::Element, BondOrder, InferredBond, MoleculeEntity,
     MoleculeType, DEFAULT_TOLERANCE,
 };
 use glam::Vec3;
 
-use super::capsule_instance::CapsuleInstance;
+use super::primitives::{
+    capsule::CapsuleInstance, sphere::SphereInstance, ImpostorPass,
+};
 use crate::{
-    gpu::{
-        dynamic_buffer::TypedBuffer, render_context::RenderContext,
-        shader_composer::ShaderComposer,
-    },
+    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
     options::{ColorOptions, DisplayOptions},
-    renderer::pipeline_util,
 };
 
 /// Radius for bond capsules (thinner than protein sidechains)
@@ -67,17 +64,6 @@ pub enum LipidDisplayMode {
     BallAndStick,
 }
 
-/// Per-instance data for sphere impostor.
-/// Must match the WGSL SphereInstance struct layout.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct SphereInstance {
-    /// xyz = position, w = radius
-    pub(crate) center: [f32; 4],
-    /// xyz = RGB color, w = entity_id (packed as float)
-    pub(crate) color: [f32; 4],
-}
-
 /// Pre-computed instance data for GPU upload.
 pub struct PreparedBallAndStickData<'a> {
     /// Raw bytes for sphere instance data.
@@ -96,25 +82,9 @@ pub struct PreparedBallAndStickData<'a> {
 
 /// Renders small molecules as ray-cast sphere + capsule impostors.
 pub struct BallAndStickRenderer {
-    // Atom spheres
-    sphere_pipeline: wgpu::RenderPipeline,
-    sphere_buffer: TypedBuffer<SphereInstance>,
-    sphere_bind_group_layout: wgpu::BindGroupLayout,
-    sphere_bind_group: wgpu::BindGroup,
-    sphere_count: u32,
-
-    // Bonds (reuses capsule_impostor.wgsl)
-    bond_pipeline: wgpu::RenderPipeline,
-    bond_buffer: TypedBuffer<CapsuleInstance>,
-    bond_bind_group_layout: wgpu::BindGroupLayout,
-    bond_bind_group: wgpu::BindGroup,
-    bond_count: u32,
-
-    // Picking (degenerate capsules for spheres + normal capsules for bonds)
-    picking_buffer: TypedBuffer<CapsuleInstance>,
-    picking_bind_group_layout: wgpu::BindGroupLayout,
-    picking_bind_group: wgpu::BindGroup,
-    picking_count: u32,
+    sphere_pass: ImpostorPass<SphereInstance>,
+    bond_pass: ImpostorPass<CapsuleInstance>,
+    picking_pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BallAndStickRenderer {
@@ -126,231 +96,40 @@ impl BallAndStickRenderer {
         selection_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
-        // Create sphere pipeline
-        let sphere_buffer = TypedBuffer::new_with_data(
-            &context.device,
-            "Ball-and-Stick Sphere Buffer",
-            &[SphereInstance::zeroed()],
-            wgpu::BufferUsages::STORAGE,
-        );
+        let layouts = [camera_layout, lighting_layout, selection_layout];
 
-        let sphere_bind_group_layout =
-            Self::create_storage_layout(&context.device, "Sphere");
-        let sphere_bind_group = Self::create_storage_bind_group(
-            &context.device,
-            &sphere_bind_group_layout,
-            &sphere_buffer,
-            "Sphere",
-        );
-        let sphere_pipeline = Self::create_sphere_pipeline(
+        let sphere_pass = ImpostorPass::new(
             context,
-            &sphere_bind_group_layout,
-            camera_layout,
-            lighting_layout,
-            selection_layout,
+            "BnS Sphere",
+            "raster/impostor/sphere.wgsl",
+            layouts,
+            6,
             shader_composer,
         );
 
-        // Create bond pipeline (reuses capsule_impostor.wgsl)
-        let bond_buffer = TypedBuffer::new_with_data(
-            &context.device,
-            "Ball-and-Stick Bond Buffer",
-            &[CapsuleInstance::zeroed()],
-            wgpu::BufferUsages::STORAGE,
-        );
-
-        let bond_bind_group_layout =
-            Self::create_storage_layout(&context.device, "Bond");
-        let bond_bind_group = Self::create_storage_bind_group(
-            &context.device,
-            &bond_bind_group_layout,
-            &bond_buffer,
-            "Bond",
-        );
-        let bond_pipeline = Self::create_bond_pipeline(
+        let bond_pass = ImpostorPass::new(
             context,
-            &bond_bind_group_layout,
-            camera_layout,
-            lighting_layout,
-            selection_layout,
+            "BnS Bond",
+            "raster/impostor/capsule.wgsl",
+            layouts,
+            6,
             shader_composer,
         );
 
-        // Create picking buffer (degenerate capsules)
-        let picking_buffer = TypedBuffer::new_with_data(
-            &context.device,
-            "Ball-and-Stick Picking Buffer",
-            &[CapsuleInstance::zeroed()],
-            wgpu::BufferUsages::STORAGE,
-        );
-        let picking_bind_group_layout =
-            Self::create_storage_layout(&context.device, "BnS Picking");
-        let picking_bind_group = Self::create_storage_bind_group(
-            &context.device,
-            &picking_bind_group_layout,
-            &picking_buffer,
+        let picking_pass = ImpostorPass::new(
+            context,
             "BnS Picking",
+            "raster/impostor/capsule.wgsl",
+            layouts,
+            6,
+            shader_composer,
         );
 
         Self {
-            sphere_pipeline,
-            sphere_buffer,
-            sphere_bind_group_layout,
-            sphere_bind_group,
-            sphere_count: 0,
-
-            bond_pipeline,
-            bond_buffer,
-            bond_bind_group_layout,
-            bond_bind_group,
-            bond_count: 0,
-
-            picking_buffer,
-            picking_bind_group_layout,
-            picking_bind_group,
-            picking_count: 0,
+            sphere_pass,
+            bond_pass,
+            picking_pass,
         }
-    }
-
-    fn create_storage_layout(
-        device: &wgpu::Device,
-        label: &str,
-    ) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("Ball-and-Stick {label} Layout")),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX
-                    | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        })
-    }
-
-    fn create_storage_bind_group<T: bytemuck::Pod>(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        buffer: &TypedBuffer<T>,
-        label: &str,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.buffer().as_entire_binding(),
-            }],
-            label: Some(&format!("Ball-and-Stick {label} Bind Group")),
-        })
-    }
-
-    fn create_sphere_pipeline(
-        context: &RenderContext,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
-        shader_composer: &mut ShaderComposer,
-    ) -> wgpu::RenderPipeline {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Sphere Impostor Shader",
-            "raster/impostor/sphere.wgsl",
-        );
-
-        let pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Sphere Impostor Pipeline Layout"),
-                bind_group_layouts: &[
-                    bind_group_layout,
-                    camera_layout,
-                    lighting_layout,
-                    selection_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
-
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Sphere Impostor Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &pipeline_util::hdr_fragment_targets(),
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(pipeline_util::depth_stencil_state()),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-    }
-
-    fn create_bond_pipeline(
-        context: &RenderContext,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
-        shader_composer: &mut ShaderComposer,
-    ) -> wgpu::RenderPipeline {
-        // Reuse capsule_impostor.wgsl for bonds
-        let shader = shader_composer.compose(
-            &context.device,
-            "Ball-and-Stick Bond Shader",
-            "raster/impostor/capsule.wgsl",
-        );
-
-        let pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Ball-and-Stick Bond Pipeline Layout"),
-                bind_group_layouts: &[
-                    bind_group_layout,
-                    camera_layout,
-                    lighting_layout,
-                    selection_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
-
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Ball-and-Stick Bond Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &pipeline_util::hdr_fragment_targets(),
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(pipeline_util::depth_stencil_state()),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
     }
 
     /// Generate all instances from entity data (pure CPU, no GPU access
@@ -475,78 +254,17 @@ impl BallAndStickRenderer {
     ) {
         let (sphere_instances, bond_instances, picking_instances) =
             Self::generate_all_instances(entities, display, colors);
-        self.apply_instances(
+        let _ =
+            self.sphere_pass
+                .write_instances(device, queue, &sphere_instances);
+        let _ = self
+            .bond_pass
+            .write_instances(device, queue, &bond_instances);
+        let _ = self.picking_pass.write_instances(
             device,
             queue,
-            &sphere_instances,
-            &bond_instances,
             &picking_instances,
         );
-    }
-
-    /// Upload pre-computed instances to GPU buffers, recreating bind groups if
-    /// reallocated.
-    fn apply_instances(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        sphere_instances: &[SphereInstance],
-        bond_instances: &[CapsuleInstance],
-        picking_instances: &[CapsuleInstance],
-    ) {
-        // Update sphere buffer
-        let sphere_reallocated = if sphere_instances.is_empty() {
-            self.sphere_buffer
-                .write(device, queue, &[SphereInstance::zeroed()])
-        } else {
-            self.sphere_buffer.write(device, queue, sphere_instances)
-        };
-        if sphere_reallocated {
-            self.sphere_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.sphere_bind_group_layout,
-                &self.sphere_buffer,
-                "Sphere",
-            );
-        }
-        self.sphere_count = sphere_instances.len() as u32;
-
-        // Update bond buffer
-        let bond_reallocated = if bond_instances.is_empty() {
-            self.bond_buffer
-                .write(device, queue, &[CapsuleInstance::zeroed()])
-        } else {
-            self.bond_buffer.write(device, queue, bond_instances)
-        };
-        if bond_reallocated {
-            self.bond_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.bond_bind_group_layout,
-                &self.bond_buffer,
-                "Bond",
-            );
-        }
-        self.bond_count = bond_instances.len() as u32;
-
-        // Update picking buffer
-        let picking_reallocated = if picking_instances.is_empty() {
-            self.picking_buffer.write(
-                device,
-                queue,
-                &[CapsuleInstance::zeroed()],
-            )
-        } else {
-            self.picking_buffer.write(device, queue, picking_instances)
-        };
-        if picking_reallocated {
-            self.picking_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.picking_bind_group_layout,
-                &self.picking_buffer,
-                "BnS Picking",
-            );
-        }
-        self.picking_count = picking_instances.len() as u32;
     }
 
     /// Generate ball-and-stick instances for a small molecule entity.
@@ -937,72 +655,24 @@ impl BallAndStickRenderer {
         queue: &wgpu::Queue,
         data: &PreparedBallAndStickData,
     ) {
-        let PreparedBallAndStickData {
-            sphere_bytes,
-            sphere_count,
-            capsule_bytes,
-            capsule_count,
-            picking_bytes,
-            picking_count,
-        } = *data;
-        // Zeroed fallbacks for empty buffers (wgpu requires non-zero bind group
-        // buffers)
-        let sphere_zero = SphereInstance::zeroed();
-        let capsule_zero = CapsuleInstance::zeroed();
-
-        // Update sphere buffer
-        let sphere_data = if sphere_bytes.is_empty() {
-            bytemuck::bytes_of(&sphere_zero)
-        } else {
-            sphere_bytes
-        };
-        let sphere_reallocated =
-            self.sphere_buffer.write_bytes(device, queue, sphere_data);
-        if sphere_reallocated {
-            self.sphere_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.sphere_bind_group_layout,
-                &self.sphere_buffer,
-                "Sphere",
-            );
-        }
-        self.sphere_count = sphere_count;
-
-        // Update bond buffer
-        let bond_data = if capsule_bytes.is_empty() {
-            bytemuck::bytes_of(&capsule_zero)
-        } else {
-            capsule_bytes
-        };
-        let bond_reallocated =
-            self.bond_buffer.write_bytes(device, queue, bond_data);
-        if bond_reallocated {
-            self.bond_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.bond_bind_group_layout,
-                &self.bond_buffer,
-                "Bond",
-            );
-        }
-        self.bond_count = capsule_count;
-
-        // Update picking buffer
-        let picking_data = if picking_bytes.is_empty() {
-            bytemuck::bytes_of(&capsule_zero)
-        } else {
-            picking_bytes
-        };
-        let picking_reallocated =
-            self.picking_buffer.write_bytes(device, queue, picking_data);
-        if picking_reallocated {
-            self.picking_bind_group = Self::create_storage_bind_group(
-                device,
-                &self.picking_bind_group_layout,
-                &self.picking_buffer,
-                "BnS Picking",
-            );
-        }
-        self.picking_count = picking_count;
+        let _ = self.sphere_pass.write_bytes(
+            device,
+            queue,
+            data.sphere_bytes,
+            data.sphere_count,
+        );
+        let _ = self.bond_pass.write_bytes(
+            device,
+            queue,
+            data.capsule_bytes,
+            data.capsule_count,
+        );
+        let _ = self.picking_pass.write_bytes(
+            device,
+            queue,
+            data.picking_bytes,
+            data.picking_count,
+        );
     }
 
     /// Draw both spheres and bonds in a single render pass.
@@ -1011,55 +681,26 @@ impl BallAndStickRenderer {
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &super::draw_context::DrawBindGroups<'a>,
     ) {
-        // Draw atom spheres
-        if self.sphere_count > 0 {
-            render_pass.set_pipeline(&self.sphere_pipeline);
-            render_pass.set_bind_group(0, &self.sphere_bind_group, &[]);
-            render_pass.set_bind_group(1, bind_groups.camera, &[]);
-            render_pass.set_bind_group(2, bind_groups.lighting, &[]);
-            render_pass.set_bind_group(3, bind_groups.selection, &[]);
-            render_pass.draw(0..6, 0..self.sphere_count);
-        }
-
-        // Draw bonds
-        if self.bond_count > 0 {
-            render_pass.set_pipeline(&self.bond_pipeline);
-            render_pass.set_bind_group(0, &self.bond_bind_group, &[]);
-            render_pass.set_bind_group(1, bind_groups.camera, &[]);
-            render_pass.set_bind_group(2, bind_groups.lighting, &[]);
-            render_pass.set_bind_group(3, bind_groups.selection, &[]);
-            render_pass.draw(0..6, 0..self.bond_count);
-        }
+        self.sphere_pass.draw(render_pass, bind_groups);
+        self.bond_pass.draw(render_pass, bind_groups);
     }
 
     /// Get the picking buffer for the picking pass.
     pub fn picking_buffer(&self) -> &wgpu::Buffer {
-        self.picking_buffer.buffer()
+        self.picking_pass.buffer()
     }
 
     /// Get the picking instance count.
     pub fn picking_count(&self) -> u32 {
-        self.picking_count
+        self.picking_pass.instance_count
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
     pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
-            (
-                "BnS Spheres",
-                self.sphere_buffer.len_bytes(),
-                self.sphere_buffer.capacity_bytes(),
-            ),
-            (
-                "BnS Bonds",
-                self.bond_buffer.len_bytes(),
-                self.bond_buffer.capacity_bytes(),
-            ),
-            (
-                "BnS Picking",
-                self.picking_buffer.len_bytes(),
-                self.picking_buffer.capacity_bytes(),
-            ),
+            self.sphere_pass.buffer_info("BnS Spheres"),
+            self.bond_pass.buffer_info("BnS Bonds"),
+            self.picking_pass.buffer_info("BnS Picking"),
         ]
     }
 

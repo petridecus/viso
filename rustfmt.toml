@@ -14,3 +14,4 @@ format_code_in_doc_comments = true
 format_strings = true
 wrap_comments = true
 error_on_line_overflow = true
+brace_style = "SameLineWhere"

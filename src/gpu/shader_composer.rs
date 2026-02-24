@@ -114,6 +114,10 @@ impl ShaderComposer {
                 "raster/impostor/cone.wgsl",
                 include_str!("../shaders/raster/impostor/cone.wgsl"),
             ),
+            (
+                "raster/impostor/polygon.wgsl",
+                include_str!("../shaders/raster/impostor/polygon.wgsl"),
+            ),
             // Utility
             (
                 "utility/picking_mesh.wgsl",
