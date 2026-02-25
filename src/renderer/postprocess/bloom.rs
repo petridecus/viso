@@ -194,8 +194,7 @@ fn create_threshold_buffer(
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Bloom Threshold Buffer"),
         contents: bytemuck::cast_slice(&[threshold]),
-        usage: wgpu::BufferUsages::UNIFORM
-            | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     })
 }
 

@@ -5,8 +5,8 @@
 //! - **Relative** (`score_relative`): Normalizes within the current structure
 //!   using 5th/95th percentile bounds.
 //!
-//! Both modes use a [`ColorRamp`] to map the normalized value to a color.
-//! Default ramp: green (good) → yellow (neutral) → red (bad).
+//! Both modes use a [`ColorRamp`](score_color::ColorRamp) to map the normalized
+//! value to a color. Default ramp: green (good) → yellow (neutral) → red (bad).
 
 /// Absolute energy thresholds in REU.
 const GOOD_THRESHOLD: f64 = -4.0;

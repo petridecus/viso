@@ -1,9 +1,10 @@
 //! Authoritative scene: flat entity storage, focus cycling, per-entity
 //! render data.
 //!
-//! Everything is a [`MoleculeEntity`]. Each entity is wrapped in a
-//! [`SceneEntity`] that pairs the core data with rendering metadata
-//! (visibility, name, SS override, score cache, mesh version).
+//! Everything is a
+//! [`MoleculeEntity`](foldit_conv::types::entity::MoleculeEntity). Each entity
+//! is wrapped in a [`SceneEntity`] that pairs the core data with rendering
+//! metadata (visibility, name, SS override, score cache, mesh version).
 
 mod entity;
 mod entity_data;

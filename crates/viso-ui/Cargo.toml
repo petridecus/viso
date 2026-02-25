@@ -30,5 +30,6 @@ web-sys = { version = "0.3", features = [
     "Document",
 ] }
 
-# Logging
-log = "0.4"
+
+[package.metadata.cargo-machete]
+ignored = ["serde"]

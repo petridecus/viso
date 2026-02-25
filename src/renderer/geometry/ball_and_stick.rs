@@ -186,13 +186,9 @@ impl BallAndStickRenderer {
     ) {
         match entity.molecule_type {
             MoleculeType::Ligand | MoleculeType::Cofactor => {
-                let tint = (entity.molecule_type
-                    == MoleculeType::Cofactor)
+                let tint = (entity.molecule_type == MoleculeType::Cofactor)
                     .then(|| {
-                        Self::resolve_cofactor_tint(
-                            &entity.coords,
-                            colors,
-                        )
+                        Self::resolve_cofactor_tint(&entity.coords, colors)
                     });
                 Self::generate_ligand_instances(
                     &entity.coords,

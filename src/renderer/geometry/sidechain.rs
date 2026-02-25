@@ -28,7 +28,7 @@ const CAPSULE_RADIUS: f32 = 0.3;
 /// Borrowed view of sidechain geometry data for GPU rendering.
 ///
 /// This is the renderer's input type — a set of borrowed slices that travel
-/// together. For the owned counterpart, see [`SidechainAtoms`] in foldit-conv.
+/// together. For the owned counterpart, see `SidechainAtoms` in foldit-conv.
 pub struct SidechainView<'a> {
     /// World-space atom positions.
     pub positions: &'a [Vec3],

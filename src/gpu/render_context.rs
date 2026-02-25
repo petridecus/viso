@@ -61,7 +61,7 @@ impl RenderContext {
     ///
     /// # Errors
     ///
-    /// Returns [`RenderContextError`] if surface creation, adapter request,
+    /// Returns `RenderContextError` if surface creation, adapter request,
     /// device request, or surface configuration fails.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,

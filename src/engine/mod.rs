@@ -18,9 +18,9 @@ use glam::{Mat4, Vec3};
 use self::picking_system::PickingSystem;
 use self::renderers::Renderers;
 use crate::animation::animator::StructureAnimator;
-use crate::error::VisoError;
 use crate::animation::sidechain_state::SidechainAnimationState;
 use crate::camera::controller::CameraController;
+use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::residue_color::ResidueColorBuffer;
 use crate::gpu::shader_composer::ShaderComposer;
@@ -129,9 +129,7 @@ const TARGET_FPS: u32 = 300;
 ///
 /// Each frame, call [`render`](Self::render) to draw and present. Call
 /// [`resize`](Self::resize) when the window size changes. Input is forwarded
-/// via [`handle_mouse_move`](Self::handle_mouse_move),
-/// [`handle_mouse_button`](Self::handle_mouse_button), and
-/// [`handle_input`](Self::handle_input).
+/// via [`handle_input`](Self::handle_input).
 ///
 /// # Scene management
 ///
@@ -142,7 +140,7 @@ const TARGET_FPS: u32 = 300;
 ///
 /// # Animation
 ///
-/// Structural changes are animated via the [`StructureAnimator`].
+/// Structural changes are animated via the `StructureAnimator`.
 /// Control the animation style per-update by passing a
 /// [`Transition`](crate::animation::transition::Transition).
 pub struct ProteinRenderEngine {
@@ -192,7 +190,7 @@ impl ProteinRenderEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`VisoError`](crate::error::VisoError) if GPU initialization
+    /// Returns [`VisoError`] if GPU initialization
     /// or structure loading fails.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
@@ -212,7 +210,7 @@ impl ProteinRenderEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`VisoError`](crate::error::VisoError) if GPU initialization
+    /// Returns [`VisoError`] if GPU initialization
     /// or structure loading fails.
     pub async fn new_with_path(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
@@ -239,7 +237,7 @@ impl ProteinRenderEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`VisoError`](crate::error::VisoError) if structure loading
+    /// Returns [`VisoError`] if structure loading
     /// fails.
     pub fn new_from_context(
         mut context: RenderContext,
@@ -266,8 +264,7 @@ impl ProteinRenderEngine {
         let (scene, render_coords) = load_scene_from_file(cif_path)?;
         let n = render_coords.residue_count().max(1);
         let selection = SelectionBuffer::new(&context.device, n);
-        let residue_colors =
-            ResidueColorBuffer::new(&context.device, n);
+        let residue_colors = ResidueColorBuffer::new(&context.device, n);
         let layouts = PipelineLayouts {
             camera: camera_controller.layout.clone(),
             lighting: lighting.layout.clone(),
@@ -296,8 +293,7 @@ impl ProteinRenderEngine {
         );
         let post_process =
             PostProcessStack::new(&context, &mut shader_composer)?;
-        let positions =
-            collect_all_positions(&render_coords, &scene, &options);
+        let positions = collect_all_positions(&render_coords, &scene, &options);
         camera_controller.fit_to_positions(&positions);
         Ok(Self {
             context,

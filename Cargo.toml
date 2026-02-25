@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 description = "GPU-accelerated 3D protein visualization engine"
 authors = ["Andreas Petrides <apetrides32@gmail.com>"]
-license-file = "LICENSE.md"
+license = "AGPL-3.0-only"
 repository = "https://github.com/petridecus/viso"
 readme = "README.md"
 keywords = ["protein", "visualization", "molecular", "wgpu", "3d"]
@@ -48,8 +48,8 @@ wry = { version = "0.50", optional = true }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
-# Time utilities
-instant = "0.1"
+# Time utilities (wasm-compatible std::time replacement)
+web-time = "1"
 
 # Lock-free triple buffering for scene processor results
 triple_buffer = "8"
@@ -67,8 +67,3 @@ path = "src/main.rs"
 required-features = ["binary"]
 
 [dev-dependencies]
-criterion = "0.5"
-
-[[bench]]
-name = "animation_bench"
-harness = false

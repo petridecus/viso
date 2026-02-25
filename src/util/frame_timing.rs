@@ -1,4 +1,4 @@
-use instant::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 /// Frame timing with FPS calculation and optional frame limiting
 pub struct FrameTiming {

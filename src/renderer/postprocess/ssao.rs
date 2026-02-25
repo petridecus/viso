@@ -165,8 +165,7 @@ fn create_ssao_textures(
 ) -> SsaoTextures {
     let ssao = SsaoRenderer::create_ssao_texture(context, width, height);
     let ssao_view = ssao.create_view(&Default::default());
-    let blurred =
-        SsaoRenderer::create_ssao_texture(context, width, height);
+    let blurred = SsaoRenderer::create_ssao_texture(context, width, height);
     let blurred_view = blurred.create_view(&Default::default());
     SsaoTextures {
         ssao,

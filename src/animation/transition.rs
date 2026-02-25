@@ -10,8 +10,9 @@ use super::behaviors::{
 ///
 /// Consumers construct transitions with the desired behavior and flags.
 /// Viso provides built-in behaviors ([`SmoothInterpolation`],
-/// [`super::CollapseExpand`], [`super::BackboneThenExpand`],
-/// [`super::Cascade`], [`Snap`]) or consumers can
+/// [`CollapseExpand`](super::behaviors::CollapseExpand),
+/// [`BackboneThenExpand`](super::behaviors::BackboneThenExpand),
+/// [`Cascade`](super::behaviors::Cascade), [`Snap`]) or consumers can
 /// implement [`AnimationBehavior`] for custom strategies.
 #[derive(Clone)]
 pub struct Transition {

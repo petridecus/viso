@@ -1,6 +1,6 @@
 //! GUI panel controller — owns the wry webview and its state.
 //!
-//! Extracted from `viewer.rs` so that [`crate::viewer::ViewerApp`] holds a
+//! Extracted from `viewer.rs` so that `ViewerApp` holds a
 //! single `PanelController` field instead of six `#[cfg(feature = "gui")]`
 //! fields.
 

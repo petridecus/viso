@@ -307,8 +307,10 @@ impl Picking {
         let shader =
             shader_composer.compose(&context.device, Shader::PickingCapsule)?;
 
-        let bind_group_layout =
-            capsule_storage_bind_group_layout(&context.device);
+        let bind_group_layout = storage_bind_group_layout(
+            &context.device,
+            "Picking Capsule Bind Group Layout",
+        );
 
         let layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -364,8 +366,10 @@ impl Picking {
         let shader =
             shader_composer.compose(&context.device, Shader::PickingSphere)?;
 
-        let bind_group_layout =
-            sphere_storage_bind_group_layout(&context.device);
+        let bind_group_layout = storage_bind_group_layout(
+            &context.device,
+            "Picking Sphere Bind Group Layout",
+        );
 
         let layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -690,30 +694,12 @@ impl Picking {
     }
 }
 
-fn capsule_storage_bind_group_layout(
+fn storage_bind_group_layout(
     device: &wgpu::Device,
+    label: &str,
 ) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Picking Capsule Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX
-                | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    })
-}
-
-fn sphere_storage_bind_group_layout(
-    device: &wgpu::Device,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Picking Sphere Bind Group Layout"),
+        label: Some(label),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX
