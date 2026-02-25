@@ -1,19 +1,17 @@
 use std::collections::HashMap;
 
-use foldit_conv::{
-    coords::{entity::NucleotideRing, MoleculeEntity},
-    secondary_structure::SSType,
-};
+use foldit_conv::render::sidechain::{SidechainAtomData, SidechainAtoms};
+use foldit_conv::secondary_structure::SSType;
+use foldit_conv::types::entity::{MoleculeEntity, NucleotideRing};
 use glam::Vec3;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedEntityMesh,
-    NucleicAcidInstances, PreparedScene, SidechainCpuData,
-    FALLBACK_RESIDUE_COLOR,
+    NucleicAcidInstances, PreparedScene, FALLBACK_RESIDUE_COLOR,
 };
-use crate::{
-    animation::transition::Transition, renderer::geometry::backbone::ChainRange,
-};
+use super::EntityResidueRange;
+use crate::animation::transition::Transition;
+use crate::renderer::geometry::backbone::ChainRange;
 
 /// Offset the `residue_idx` field embedded in raw vertex bytes.
 ///
@@ -78,11 +76,8 @@ pub fn concatenate_meshes(
 
     // --- Passthrough ---
     let mut all_backbone_chains: Vec<Vec<Vec3>> = Vec::new();
-    let mut all_sidechain_positions: Vec<Vec3> = Vec::new();
+    let mut all_sidechain_atoms: Vec<SidechainAtomData> = Vec::new();
     let mut all_sidechain_bonds: Vec<(u32, u32)> = Vec::new();
-    let mut all_sidechain_hydrophobicity: Vec<bool> = Vec::new();
-    let mut all_sidechain_residue_indices: Vec<u32> = Vec::new();
-    let mut all_sidechain_atom_names: Vec<String> = Vec::new();
     let mut all_backbone_sidechain_bonds: Vec<(Vec3, u32)> = Vec::new();
     let mut all_non_protein: Vec<MoleculeEntity> = Vec::new();
     let mut all_na_chains: Vec<Vec<Vec3>> = Vec::new();
@@ -99,10 +94,10 @@ pub fn concatenate_meshes(
     let mut all_per_residue_colors: Vec<[f32; 3]> = Vec::new();
 
     // Track where each entity's residues land in the flat arrays
-    let mut entity_residue_ranges: Vec<(u32, u32, u32)> = Vec::new();
+    let mut entity_residue_ranges: Vec<EntityResidueRange> = Vec::new();
 
     for (entity_id, mesh) in entity_meshes {
-        let sc_atom_offset = all_sidechain_positions.len() as u32;
+        let sc_atom_offset = all_sidechain_atoms.len() as u32;
 
         // Backbone: offset vertex residue_idx and indices
         offset_vertex_residue_idx(
@@ -160,21 +155,23 @@ pub fn concatenate_meshes(
             all_backbone_chains.push(chain.clone());
             all_positions.extend(chain);
         }
-        all_sidechain_positions.extend(&mesh.sidechain.positions);
+        // Sidechain atoms: offset residue indices during concatenation
+        for atom in &mesh.sidechain.atoms {
+            all_positions.push(atom.position);
+            all_sidechain_atoms.push(SidechainAtomData {
+                position: atom.position,
+                residue_idx: atom.residue_idx + global_residue_offset,
+                atom_name: atom.atom_name.clone(),
+                is_hydrophobic: atom.is_hydrophobic,
+            });
+        }
         for &(a, b) in &mesh.sidechain.bonds {
             all_sidechain_bonds.push((a + sc_atom_offset, b + sc_atom_offset));
         }
-        all_sidechain_hydrophobicity.extend(&mesh.sidechain.hydrophobicity);
-        for &ri in &mesh.sidechain.residue_indices {
-            all_sidechain_residue_indices.push(ri + global_residue_offset);
-        }
-        all_sidechain_atom_names
-            .extend(mesh.sidechain.atom_names.iter().cloned());
         for &(ca_pos, cb_idx) in &mesh.sidechain.backbone_bonds {
             all_backbone_sidechain_bonds
                 .push((ca_pos, cb_idx + sc_atom_offset));
         }
-        all_positions.extend(&mesh.sidechain.positions);
         all_non_protein.extend(mesh.non_protein_entities.iter().cloned());
         for chain in &mesh.nucleic_acid_chains {
             all_na_chains.push(chain.clone());
@@ -205,34 +202,18 @@ pub fn concatenate_meshes(
         }
 
         // Track entity residue range
-        entity_residue_ranges.push((
-            *entity_id,
-            global_residue_offset,
-            mesh.residue_count,
-        ));
+        entity_residue_ranges.push(EntityResidueRange {
+            entity_id: *entity_id,
+            start: global_residue_offset,
+            count: mesh.residue_count,
+        });
 
         global_residue_offset += mesh.residue_count;
     }
 
     // Build flat ss_types
-    let ss_types = if has_any_ss {
-        let total = global_residue_offset as usize;
-        let mut ss = vec![SSType::Coil; total];
-        for (offset, ss_override, count) in &ss_parts {
-            if let Some(overrides) = ss_override {
-                let start = *offset as usize;
-                let end = (start + *count as usize).min(total);
-                for (i, &s) in overrides.iter().enumerate() {
-                    if start + i < end {
-                        ss[start + i] = s;
-                    }
-                }
-            }
-        }
-        Some(ss)
-    } else {
-        None
-    };
+    let ss_types =
+        build_ss_types(has_any_ss, &ss_parts, global_residue_offset as usize);
 
     PreparedScene {
         backbone: BackboneMeshData {
@@ -264,13 +245,10 @@ pub fn concatenate_meshes(
         },
         backbone_chains: all_backbone_chains,
         na_chains: all_na_chains,
-        sidechain: SidechainCpuData {
-            positions: all_sidechain_positions,
+        sidechain: SidechainAtoms {
+            atoms: all_sidechain_atoms,
             bonds: all_sidechain_bonds,
             backbone_bonds: all_backbone_sidechain_bonds,
-            hydrophobicity: all_sidechain_hydrophobicity,
-            residue_indices: all_sidechain_residue_indices,
-            atom_names: all_sidechain_atom_names,
         },
         ss_types,
         per_residue_colors: if has_any_colors {
@@ -284,4 +262,29 @@ pub fn concatenate_meshes(
         non_protein_entities: all_non_protein,
         nucleic_acid_rings: all_na_rings,
     }
+}
+
+/// Build a flat `SSType` array from per-entity overrides, or `None` if no
+/// entity provided secondary-structure data.
+fn build_ss_types(
+    has_any_ss: bool,
+    ss_parts: &[(u32, Option<Vec<SSType>>, u32)],
+    total: usize,
+) -> Option<Vec<SSType>> {
+    if !has_any_ss {
+        return None;
+    }
+    let mut ss = vec![SSType::Coil; total];
+    for (offset, ss_override, count) in ss_parts {
+        let Some(overrides) = ss_override else {
+            continue;
+        };
+        let start = *offset as usize;
+        let end = (start + *count as usize).min(total);
+        let n = end.saturating_sub(start);
+        for (i, &s) in overrides.iter().enumerate().take(n) {
+            ss[start + i] = s;
+        }
+    }
+    Some(ss)
 }

@@ -8,10 +8,8 @@
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::mpsc,
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc;
 
 use super::prepared::{
     CachedEntityMesh, PreparedAnimationFrame, PreparedScene, SceneRequest,
@@ -28,6 +26,10 @@ pub struct SceneProcessor {
 
 impl SceneProcessor {
     /// Spawn the background scene processing thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::io::Error`] if the background thread fails to spawn.
     pub fn new() -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel::<SceneRequest>();
         let (scene_input, scene_output) = triple_buffer::triple_buffer(&None);
@@ -73,16 +75,13 @@ impl SceneProcessor {
     }
 
     /// Background thread main loop with per-group mesh caching.
+    #[allow(clippy::needless_pass_by_value)]
     fn thread_loop(
         request_rx: mpsc::Receiver<SceneRequest>,
         mut scene_input: triple_buffer::Input<Option<PreparedScene>>,
         mut anim_input: triple_buffer::Input<Option<PreparedAnimationFrame>>,
     ) {
-        let mut mesh_cache: HashMap<u32, (u64, CachedEntityMesh)> =
-            HashMap::new();
-        let mut last_display: Option<DisplayOptions> = None;
-        let mut last_colors: Option<ColorOptions> = None;
-        let mut last_geometry: Option<GeometryOptions> = None;
+        let mut cache = MeshCache::new();
 
         while let Ok(request) = request_rx.recv() {
             let latest = drain_latest(request, &request_rx);
@@ -96,69 +95,8 @@ impl SceneProcessor {
                     colors,
                     geometry,
                 } => {
-                    // Clamp geometry detail so the concatenated vertex
-                    // buffer stays under the wgpu 256 MB max.
-                    let total_residues: usize = entities
-                        .iter()
-                        .map(|e| {
-                            e.backbone_chains
-                                .iter()
-                                .map(|c| c.len() / 3)
-                                .sum::<usize>()
-                                + e.nucleic_acid_chains
-                                    .iter()
-                                    .map(Vec::len)
-                                    .sum::<usize>()
-                        })
-                        .sum();
-                    let geometry =
-                        geometry.clamped_for_residues(total_residues);
-
-                    // Clear cache if global settings changed
-                    let settings_changed = last_display.as_ref()
-                        != Some(&display)
-                        || last_colors.as_ref() != Some(&colors)
-                        || last_geometry.as_ref() != Some(&geometry);
-
-                    if settings_changed {
-                        mesh_cache.clear();
-                        last_display = Some(display.clone());
-                        last_colors = Some(colors.clone());
-                        last_geometry = Some(geometry.clone());
-                    }
-
-                    // Generate or reuse per-entity meshes
-                    for e in &entities {
-                        let needs_regen = match mesh_cache.get(&e.id) {
-                            Some((cached_version, _)) => {
-                                *cached_version != e.mesh_version
-                            }
-                            None => true,
-                        };
-
-                        if needs_regen {
-                            let mesh = super::mesh_gen::generate_entity_mesh(
-                                e, &display, &colors, &geometry,
-                            );
-                            let _ =
-                                mesh_cache.insert(e.id, (e.mesh_version, mesh));
-                        }
-                    }
-
-                    // Evict removed entities
-                    let active_ids: HashSet<u32> =
-                        entities.iter().map(|e| e.id).collect();
-                    mesh_cache.retain(|id, _| active_ids.contains(id));
-
-                    // Collect references in entity order
-                    let entity_meshes: Vec<(u32, &CachedEntityMesh)> = entities
-                        .iter()
-                        .filter_map(|e| {
-                            mesh_cache.get(&e.id).map(|(_, mesh)| (e.id, mesh))
-                        })
-                        .collect();
-
-                    // Concatenate into PreparedScene
+                    let entity_meshes =
+                        cache.update(&entities, &display, &colors, &geometry);
                     let prepared = super::mesh_concat::concatenate_meshes(
                         &entity_meshes,
                         entity_transitions,
@@ -175,13 +113,13 @@ impl SceneProcessor {
                     per_chain_lod,
                 } => {
                     let prepared = super::mesh_gen::process_animation_frame(
-                        backbone_chains,
-                        na_chains,
-                        sidechains,
-                        ss_types,
-                        per_residue_colors,
+                        &backbone_chains,
+                        &na_chains,
+                        sidechains.as_ref(),
+                        ss_types.as_deref(),
+                        per_residue_colors.as_deref(),
                         &geometry,
-                        per_chain_lod,
+                        per_chain_lod.as_deref(),
                     );
                     anim_input.write(Some(prepared));
                 }
@@ -193,6 +131,84 @@ impl SceneProcessor {
 impl Drop for SceneProcessor {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Per-entity mesh cache with settings-based invalidation.
+struct MeshCache {
+    meshes: HashMap<u32, (u64, CachedEntityMesh)>,
+    last_display: Option<DisplayOptions>,
+    last_colors: Option<ColorOptions>,
+    last_geometry: Option<GeometryOptions>,
+}
+
+impl MeshCache {
+    fn new() -> Self {
+        Self {
+            meshes: HashMap::new(),
+            last_display: None,
+            last_colors: None,
+            last_geometry: None,
+        }
+    }
+
+    /// Update cached meshes and return entity-ordered references for
+    /// concatenation.
+    fn update(
+        &mut self,
+        entities: &[super::entity_data::PerEntityData],
+        display: &DisplayOptions,
+        colors: &ColorOptions,
+        geometry: &GeometryOptions,
+    ) -> Vec<(u32, &CachedEntityMesh)> {
+        // Clamp geometry detail so the concatenated vertex
+        // buffer stays under the wgpu 256 MB max.
+        let total_residues: usize = entities
+            .iter()
+            .map(|e| {
+                e.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
+                    + e.nucleic_acid_chains.iter().map(Vec::len).sum::<usize>()
+            })
+            .sum();
+        let geometry = geometry.clamped_for_residues(total_residues);
+
+        // Clear cache if global settings changed
+        let settings_changed = self.last_display.as_ref() != Some(display)
+            || self.last_colors.as_ref() != Some(colors)
+            || self.last_geometry.as_ref() != Some(&geometry);
+
+        if settings_changed {
+            self.meshes.clear();
+            self.last_display = Some(display.clone());
+            self.last_colors = Some(colors.clone());
+            self.last_geometry = Some(geometry.clone());
+        }
+
+        // Generate or reuse per-entity meshes
+        for e in entities {
+            let needs_regen = self
+                .meshes
+                .get(&e.id)
+                .is_none_or(|(v, _)| *v != e.mesh_version);
+            if needs_regen {
+                let mesh = super::mesh_gen::generate_entity_mesh(
+                    e, display, colors, &geometry,
+                );
+                drop(self.meshes.insert(e.id, (e.mesh_version, mesh)));
+            }
+        }
+
+        // Evict removed entities
+        let active_ids: HashSet<u32> = entities.iter().map(|e| e.id).collect();
+        self.meshes.retain(|id, _| active_ids.contains(id));
+
+        // Collect references in entity order
+        entities
+            .iter()
+            .filter_map(|e| {
+                self.meshes.get(&e.id).map(|(_, mesh)| (e.id, mesh))
+            })
+            .collect()
     }
 }
 

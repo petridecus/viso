@@ -1,28 +1,22 @@
 use std::collections::HashMap;
 
+use foldit_conv::render::sidechain::SidechainAtoms;
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 
-use super::{
-    prepared::{
-        AnimationSidechainData, BackboneMeshData, BallAndStickInstances,
-        CachedBackbone, CachedEntityMesh, NucleicAcidInstances,
-        PreparedAnimationFrame, SidechainCpuData,
-    },
-    PerEntityData,
+use super::prepared::{
+    BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
+    NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::{
-    options::{ColorOptions, DisplayOptions, GeometryOptions},
-    renderer::geometry::{
-        backbone::{BackboneRenderer, ChainPair},
-        ball_and_stick::BallAndStickRenderer,
-        nucleic_acid::NucleicAcidRenderer,
-        sidechain::{SidechainData, SidechainRenderer},
-    },
-    util::{
-        score_color,
-        sheet_adjust::{adjust_bonds_for_sheet, adjust_sidechains_for_sheet},
-    },
+use super::PerEntityData;
+use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
+use crate::renderer::geometry::backbone::{BackboneRenderer, ChainPair};
+use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
+use crate::renderer::geometry::nucleic_acid::NucleicAcidRenderer;
+use crate::renderer::geometry::sidechain::{SidechainRenderer, SidechainView};
+use crate::util::score_color;
+use crate::util::sheet_adjust::{
+    adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
 
 /// Generate mesh for a single entity.
@@ -49,13 +43,7 @@ pub fn generate_entity_mesh(
     };
 
     // --- Backbone mesh (protein + nucleic acid, unified) ---
-    let (
-        backbone_verts_typed,
-        backbone_tube_inds,
-        backbone_ribbon_inds,
-        sheet_offsets,
-        backbone_chain_ranges,
-    ) = BackboneRenderer::generate_mesh_colored(
+    let backbone_mesh = BackboneRenderer::generate_mesh_colored(
         &ChainPair {
             protein: &g.backbone_chains,
             na: &g.nucleic_acid_chains,
@@ -65,32 +53,29 @@ pub fn generate_entity_mesh(
         geometry,
         None,
     );
-    let backbone_vert_count = backbone_verts_typed.len() as u32;
-    let backbone_verts = bytemuck::cast_slice(&backbone_verts_typed).to_vec();
+    let backbone_vert_count = backbone_mesh.vertices.len() as u32;
+    let backbone_verts = bytemuck::cast_slice(&backbone_mesh.vertices).to_vec();
 
     // --- Sidechain capsules ---
-    let sidechain_positions: Vec<Vec3> =
-        g.sidechain_atoms.iter().map(|a| a.position).collect();
-    let sidechain_hydrophobicity: Vec<bool> =
-        g.sidechain_atoms.iter().map(|a| a.is_hydrophobic).collect();
-    let sidechain_residue_indices: Vec<u32> =
-        g.sidechain_atoms.iter().map(|a| a.residue_idx).collect();
+    let sidechain_positions = g.sidechains.positions();
+    let sidechain_hydrophobicity = g.sidechains.hydrophobicity();
+    let sidechain_residue_indices = g.sidechains.residue_indices();
 
     let offset_map: HashMap<u32, Vec3> =
-        sheet_offsets.iter().copied().collect();
+        backbone_mesh.sheet_offsets.iter().copied().collect();
     let adjusted_positions = adjust_sidechains_for_sheet(
         &sidechain_positions,
         &sidechain_residue_indices,
         &offset_map,
     );
     let adjusted_bonds = adjust_bonds_for_sheet(
-        &g.backbone_sidechain_bonds,
+        &g.sidechains.backbone_bonds,
         &sidechain_residue_indices,
         &offset_map,
     );
-    let sd = SidechainData {
+    let sd = SidechainView {
         positions: &adjusted_positions,
-        bonds: &g.sidechain_bonds,
+        bonds: &g.sidechains.bonds,
         backbone_bonds: &adjusted_bonds,
         hydrophobicity: &sidechain_hydrophobicity,
         residue_indices: &sidechain_residue_indices,
@@ -128,21 +113,14 @@ pub fn generate_entity_mesh(
     let na_ring_count = na_rings.len() as u32;
     let na_ring_instances = bytemuck::cast_slice(&na_rings).to_vec();
 
-    // --- Passthrough data ---
-    let sidechain_atom_names: Vec<String> = g
-        .sidechain_atoms
-        .iter()
-        .map(|a| a.atom_name.clone())
-        .collect();
-
     CachedEntityMesh {
         backbone: CachedBackbone {
             verts: backbone_verts,
-            tube_inds: backbone_tube_inds,
-            ribbon_inds: backbone_ribbon_inds,
+            tube_inds: backbone_mesh.tube_indices,
+            ribbon_inds: backbone_mesh.ribbon_indices,
             vert_count: backbone_vert_count,
-            sheet_offsets,
-            chain_ranges: backbone_chain_ranges,
+            sheet_offsets: backbone_mesh.sheet_offsets,
+            chain_ranges: backbone_mesh.chain_ranges,
         },
         sidechain_instances,
         sidechain_instance_count,
@@ -163,14 +141,7 @@ pub fn generate_entity_mesh(
         residue_count: g.residue_count,
         backbone_chains: g.backbone_chains.clone(),
         nucleic_acid_chains: g.nucleic_acid_chains.clone(),
-        sidechain: SidechainCpuData {
-            positions: sidechain_positions,
-            bonds: g.sidechain_bonds.clone(),
-            backbone_bonds: g.backbone_sidechain_bonds.clone(),
-            hydrophobicity: sidechain_hydrophobicity,
-            residue_indices: sidechain_residue_indices,
-            atom_names: sidechain_atom_names,
-        },
+        sidechain: g.sidechains.clone(),
         ss_override: g.ss_override.clone(),
         per_residue_colors,
         non_protein_entities: g.non_protein_entities.clone(),
@@ -180,64 +151,67 @@ pub fn generate_entity_mesh(
 
 /// Generate backbone + optional sidechain mesh for an animation frame.
 pub fn process_animation_frame(
-    backbone_chains: Vec<Vec<Vec3>>,
-    na_chains: Vec<Vec<Vec3>>,
-    sidechains: Option<AnimationSidechainData>,
-    ss_types: Option<Vec<SSType>>,
-    per_residue_colors: Option<Vec<[f32; 3]>>,
+    backbone_chains: &[Vec<Vec3>],
+    na_chains: &[Vec<Vec3>],
+    sidechains: Option<&SidechainAtoms>,
+    ss_types: Option<&[SSType]>,
+    per_residue_colors: Option<&[[f32; 3]]>,
     geometry: &GeometryOptions,
-    per_chain_lod: Option<Vec<(usize, usize)>>,
+    per_chain_lod: Option<&[(usize, usize)]>,
 ) -> PreparedAnimationFrame {
     // --- Backbone mesh (protein + nucleic acid, unified) ---
     let total_residues: usize =
         backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
             + na_chains.iter().map(Vec::len).sum::<usize>();
     let safe_geo = geometry.clamped_for_residues(total_residues);
-    let (verts, tube_inds, ribbon_inds, sheet_offsets, chain_ranges) =
-        BackboneRenderer::generate_mesh_colored(
-            &ChainPair {
-                protein: &backbone_chains,
-                na: &na_chains,
-            },
-            ss_types.as_deref(),
-            per_residue_colors.as_deref(),
-            &safe_geo,
-            per_chain_lod.as_deref(),
-        );
-    let backbone_tube_index_count = tube_inds.len() as u32;
-    let backbone_ribbon_index_count = ribbon_inds.len() as u32;
-    let backbone_vertices = bytemuck::cast_slice(&verts).to_vec();
-    let backbone_tube_indices = bytemuck::cast_slice(&tube_inds).to_vec();
-    let backbone_ribbon_indices = bytemuck::cast_slice(&ribbon_inds).to_vec();
+    let backbone_mesh = BackboneRenderer::generate_mesh_colored(
+        &ChainPair {
+            protein: backbone_chains,
+            na: na_chains,
+        },
+        ss_types,
+        per_residue_colors,
+        &safe_geo,
+        per_chain_lod,
+    );
+    let backbone_tube_index_count = backbone_mesh.tube_indices.len() as u32;
+    let backbone_ribbon_index_count = backbone_mesh.ribbon_indices.len() as u32;
+    let backbone_vertices =
+        bytemuck::cast_slice(&backbone_mesh.vertices).to_vec();
+    let backbone_tube_indices =
+        bytemuck::cast_slice(&backbone_mesh.tube_indices).to_vec();
+    let backbone_ribbon_indices =
+        bytemuck::cast_slice(&backbone_mesh.ribbon_indices).to_vec();
 
     // --- Optional sidechain capsules ---
     let (sidechain_instances, sidechain_instance_count) =
-        if let Some(sc) = sidechains {
+        sidechains.map_or((None, 0), |sc| {
+            let positions = sc.positions();
+            let hydrophobicity = sc.hydrophobicity();
+            let residue_indices = sc.residue_indices();
             let offset_map: HashMap<u32, Vec3> =
-                sheet_offsets.iter().copied().collect();
+                backbone_mesh.sheet_offsets.iter().copied().collect();
             let adjusted_positions = adjust_sidechains_for_sheet(
-                &sc.sidechain_positions,
-                &sc.sidechain_residue_indices,
+                &positions,
+                &residue_indices,
                 &offset_map,
             );
             let adjusted_bonds = adjust_bonds_for_sheet(
-                &sc.backbone_sidechain_bonds,
-                &sc.sidechain_residue_indices,
+                &sc.backbone_bonds,
+                &residue_indices,
                 &offset_map,
             );
-            let sd = SidechainData {
+            let sd = SidechainView {
                 positions: &adjusted_positions,
-                bonds: &sc.sidechain_bonds,
+                bonds: &sc.bonds,
                 backbone_bonds: &adjusted_bonds,
-                hydrophobicity: &sc.sidechain_hydrophobicity,
-                residue_indices: &sc.sidechain_residue_indices,
+                hydrophobicity: &hydrophobicity,
+                residue_indices: &residue_indices,
             };
             let insts = SidechainRenderer::generate_instances(&sd, None, None);
             let count = insts.len() as u32;
             (Some(bytemuck::cast_slice(&insts).to_vec()), count)
-        } else {
-            (None, 0)
-        };
+        });
 
     PreparedAnimationFrame {
         backbone: BackboneMeshData {
@@ -246,8 +220,8 @@ pub fn process_animation_frame(
             tube_index_count: backbone_tube_index_count,
             ribbon_indices: backbone_ribbon_indices,
             ribbon_index_count: backbone_ribbon_index_count,
-            sheet_offsets,
-            chain_ranges,
+            sheet_offsets: backbone_mesh.sheet_offsets,
+            chain_ranges: backbone_mesh.chain_ranges,
         },
         sidechain_instances,
         sidechain_instance_count,

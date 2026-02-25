@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 
-use foldit_conv::{
-    coords::{entity::NucleotideRing, MoleculeEntity},
-    secondary_structure::SSType,
-};
+use foldit_conv::render::sidechain::SidechainAtoms;
+use foldit_conv::secondary_structure::SSType;
+use foldit_conv::types::entity::{MoleculeEntity, NucleotideRing};
 use glam::Vec3;
 
-use super::PerEntityData;
-use crate::{
-    animation::transition::Transition,
-    options::{ColorOptions, DisplayOptions, GeometryOptions},
-    renderer::geometry::backbone::ChainRange,
-};
+use super::{EntityResidueRange, PerEntityData};
+use crate::animation::transition::Transition;
+use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
+use crate::renderer::geometry::backbone::ChainRange;
 
 /// Fallback color for residues without score data (neutral gray).
 pub const FALLBACK_RESIDUE_COLOR: [f32; 3] = [0.7, 0.7, 0.7];
@@ -69,23 +66,6 @@ pub struct NucleicAcidInstances {
     pub ring_count: u32,
 }
 
-/// CPU-side sidechain atom data for animation and interaction.
-#[derive(Clone)]
-pub struct SidechainCpuData {
-    /// Sidechain atom positions.
-    pub positions: Vec<Vec3>,
-    /// Intra-residue bonds as (atom_idx, atom_idx) pairs.
-    pub bonds: Vec<(u32, u32)>,
-    /// Backbone-to-sidechain bonds as (CA position, atom idx).
-    pub backbone_bonds: Vec<(Vec3, u32)>,
-    /// Hydrophobicity flag per sidechain atom.
-    pub hydrophobicity: Vec<bool>,
-    /// Residue index per sidechain atom.
-    pub residue_indices: Vec<u32>,
-    /// PDB atom names per sidechain atom.
-    pub atom_names: Vec<String>,
-}
-
 // ---------------------------------------------------------------------------
 // CachedEntityMesh sub-struct
 // ---------------------------------------------------------------------------
@@ -98,24 +78,6 @@ pub(super) struct CachedBackbone {
     pub vert_count: u32,
     pub sheet_offsets: Vec<(u32, Vec3)>,
     pub chain_ranges: Vec<ChainRange>,
-}
-
-// ---------------------------------------------------------------------------
-// Existing types
-// ---------------------------------------------------------------------------
-
-/// Sidechain data bundled for animation frame processing.
-pub struct AnimationSidechainData {
-    /// Sidechain atom positions in world space.
-    pub sidechain_positions: Vec<Vec3>,
-    /// Intra-residue bonds as (atom_idx, atom_idx) pairs.
-    pub sidechain_bonds: Vec<(u32, u32)>,
-    /// Backbone-to-sidechain bonds as (CA position, atom idx).
-    pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
-    /// Hydrophobicity flag per sidechain atom.
-    pub sidechain_hydrophobicity: Vec<bool>,
-    /// Residue index per sidechain atom.
-    pub sidechain_residue_indices: Vec<u32>,
 }
 
 /// Request sent from main thread to scene processor.
@@ -142,7 +104,7 @@ pub enum SceneRequest {
         /// Nucleic acid P-atom chains for backbone rendering.
         na_chains: Vec<Vec<Vec3>>,
         /// Optional interpolated sidechain data.
-        sidechains: Option<AnimationSidechainData>,
+        sidechains: Option<SidechainAtoms>,
         /// Secondary structure types for the current frame.
         ss_types: Option<Vec<SSType>>,
         /// Per-residue colors for the current frame.
@@ -176,7 +138,7 @@ pub struct PreparedScene {
     /// Nucleic acid P-atom chains.
     pub na_chains: Vec<Vec<Vec3>>,
     /// CPU-side sidechain data.
-    pub sidechain: SidechainCpuData,
+    pub sidechain: SidechainAtoms,
     /// Flat secondary structure types.
     pub ss_types: Option<Vec<SSType>>,
     /// Concatenated per-residue colors (derived from scores, cached for
@@ -187,9 +149,8 @@ pub struct PreparedScene {
     /// Per-entity transitions. Entities in the map animate; others snap.
     /// Empty map = snap all (no animation).
     pub entity_transitions: HashMap<u32, Transition>,
-    /// Where each entity's residues land in the flat concatenated arrays:
-    /// `(entity_id, global_residue_start, residue_count)`.
-    pub entity_residue_ranges: Vec<(u32, u32, u32)>,
+    /// Where each entity's residues land in the flat concatenated arrays.
+    pub entity_residue_ranges: Vec<EntityResidueRange>,
     /// Non-protein entities for ball-and-stick rendering.
     pub non_protein_entities: Vec<MoleculeEntity>,
     /// Base ring geometry from DNA/RNA entities.
@@ -231,7 +192,7 @@ pub(super) struct CachedEntityMesh {
     /// Nucleic acid chains (passthrough).
     pub nucleic_acid_chains: Vec<Vec<Vec3>>,
     /// CPU-side sidechain data.
-    pub sidechain: SidechainCpuData,
+    pub sidechain: SidechainAtoms,
     /// Secondary structure override.
     pub ss_override: Option<Vec<SSType>>,
     /// Per-residue colors derived from scores (cached to avoid recomputation).

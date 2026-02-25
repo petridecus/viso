@@ -1,32 +1,13 @@
-use foldit_conv::{
-    coords::{
-        entity::{merge_entities, MoleculeEntity, MoleculeType},
-        protein_only,
-        render::extract_sequences,
-        types::Coords,
-        RenderCoords,
-    },
-    secondary_structure::SSType,
-    types::assembly::protein_coords as assembly_protein_coords,
+use foldit_conv::render::sidechain::SidechainAtoms;
+use foldit_conv::secondary_structure::SSType;
+use foldit_conv::types::assembly::protein_coords as assembly_protein_coords;
+use foldit_conv::types::coords::Coords;
+use foldit_conv::types::entity::{
+    merge_entities, MoleculeEntity, MoleculeType,
 };
 
-use super::{PerEntityData, SidechainAtom};
+use super::PerEntityData;
 use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
-
-// ---------------------------------------------------------------------------
-// Cached per-entity rendering data
-// ---------------------------------------------------------------------------
-
-/// Cached rendering data for a single entity's protein content.
-#[derive(Debug, Clone)]
-pub struct EntityRenderData {
-    /// Extracted backbone and sidechain coordinates for rendering.
-    pub render_coords: RenderCoords,
-    /// Full amino acid sequence string.
-    pub sequence: String,
-    /// Per-chain sequences as (chain_id, sequence) pairs.
-    pub chain_sequences: Vec<(u8, String)>,
-}
 
 // ---------------------------------------------------------------------------
 // SceneEntity
@@ -47,7 +28,6 @@ pub struct SceneEntity {
     /// Cached per-residue energy scores from Rosetta (raw data for viz).
     pub per_residue_scores: Option<Vec<f64>>,
     pub(super) mesh_version: u64,
-    pub(super) render_cache: Option<EntityRenderData>,
 }
 
 impl SceneEntity {
@@ -63,14 +43,34 @@ impl SceneEntity {
         &self.entity
     }
 
+    /// Whether this entity is a protein.
+    #[must_use]
+    pub fn is_protein(&self) -> bool {
+        self.entity.molecule_type == MoleculeType::Protein
+    }
+
+    /// Whether this entity is a nucleic acid (DNA or RNA).
+    #[must_use]
+    pub fn is_nucleic_acid(&self) -> bool {
+        matches!(
+            self.entity.molecule_type,
+            MoleculeType::DNA | MoleculeType::RNA
+        )
+    }
+
+    /// Whether this entity is a ligand (not protein, DNA, or RNA).
+    #[must_use]
+    pub fn is_ligand(&self) -> bool {
+        !self.is_protein() && !self.is_nucleic_acid()
+    }
+
     /// Replace the underlying entity data. Preserves the scene-assigned
-    /// entity ID. Bumps mesh version and invalidates the render cache.
+    /// entity ID. Bumps mesh version.
     pub fn set_entity(&mut self, entity: MoleculeEntity) {
         let id = self.entity.entity_id; // preserve scene-assigned ID
         self.entity = entity;
         self.entity.entity_id = id;
         self.mesh_version += 1;
-        self.render_cache = None;
     }
 
     /// Current mesh version (cache key for scene processor).
@@ -79,17 +79,8 @@ impl SceneEntity {
         self.mesh_version
     }
 
-    /// Derive (or return cached) render data from protein content.
-    pub fn render_data(&mut self) -> Option<&EntityRenderData> {
-        if self.render_cache.is_none() {
-            self.render_cache = self.compute_render_data();
-        }
-        self.render_cache.as_ref()
-    }
-
-    /// Invalidate cached render data (call after coord changes).
+    /// Invalidate (bump mesh version after coord changes).
     pub fn invalidate_render_cache(&mut self) {
-        self.render_cache = None;
         self.mesh_version += 1;
     }
 
@@ -130,7 +121,8 @@ impl SceneEntity {
     }
 
     /// Build [`PerEntityData`] from this entity's current state.
-    pub fn to_per_entity_data(&mut self) -> Option<PerEntityData> {
+    #[must_use]
+    pub fn to_per_entity_data(&self) -> Option<PerEntityData> {
         match self.entity.molecule_type {
             MoleculeType::Protein => self.per_entity_data_protein(),
             MoleculeType::DNA | MoleculeType::RNA => {
@@ -141,42 +133,25 @@ impl SceneEntity {
     }
 
     /// Render data for a protein entity.
-    fn per_entity_data_protein(&mut self) -> Option<PerEntityData> {
-        let id = self.entity.entity_id;
-        let mesh_version = self.mesh_version;
-        let ss_override = self.ss_override.clone();
-        let per_residue_scores = self.per_residue_scores.clone();
-
-        let render_data = self.render_data()?;
-        let rc = &render_data.render_coords;
-        let res_count: u32 = rc
-            .backbone_chains
-            .iter()
-            .map(|c| (c.len() / 3) as u32)
-            .sum();
-
-        let sc_atoms: Vec<SidechainAtom> = rc
-            .sidechain_atoms
-            .iter()
-            .map(|a| SidechainAtom {
-                position: a.position,
-                is_hydrophobic: a.is_hydrophobic,
-                residue_idx: a.residue_idx,
-                atom_name: a.atom_name.clone(),
-            })
-            .collect();
+    fn per_entity_data_protein(&self) -> Option<PerEntityData> {
+        let backbone = self.entity.extract_backbone();
+        if backbone.chains.is_empty() {
+            return None;
+        }
+        let res_count = backbone.residue_count() as u32;
+        let sidechains =
+            self.entity.extract_sidechains(is_hydrophobic, |name| {
+                get_residue_bonds(name).map(<[(&str, &str)]>::to_vec)
+            });
 
         Some(PerEntityData {
-            id,
-            mesh_version,
-            backbone_chains: rc.backbone_chains.clone(),
-            backbone_chain_ids: rc.backbone_chain_ids.clone(),
-            backbone_residue_chains: rc.backbone_residue_chains.clone(),
-            sidechain_atoms: sc_atoms,
-            sidechain_bonds: rc.sidechain_bonds.clone(),
-            backbone_sidechain_bonds: rc.backbone_sidechain_bonds.clone(),
-            ss_override,
-            per_residue_scores,
+            id: self.entity.entity_id,
+            mesh_version: self.mesh_version,
+            backbone_chain_ids: backbone.chain_ids.clone(),
+            backbone_chains: backbone.into_chain_vecs(),
+            sidechains,
+            ss_override: self.ss_override.clone(),
+            per_residue_scores: self.per_residue_scores.clone(),
             non_protein_entities: vec![],
             nucleic_acid_chains: vec![],
             nucleic_acid_rings: vec![],
@@ -196,10 +171,7 @@ impl SceneEntity {
             mesh_version: self.mesh_version,
             backbone_chains: vec![],
             backbone_chain_ids: vec![],
-            backbone_residue_chains: vec![],
-            sidechain_atoms: vec![],
-            sidechain_bonds: vec![],
-            backbone_sidechain_bonds: vec![],
+            sidechains: SidechainAtoms::default(),
             ss_override: None,
             per_residue_scores: None,
             non_protein_entities: vec![self.entity.clone()],
@@ -219,38 +191,13 @@ impl SceneEntity {
             mesh_version: self.mesh_version,
             backbone_chains: vec![],
             backbone_chain_ids: vec![],
-            backbone_residue_chains: vec![],
-            sidechain_atoms: vec![],
-            sidechain_bonds: vec![],
-            backbone_sidechain_bonds: vec![],
+            sidechains: SidechainAtoms::default(),
             ss_override: None,
             per_residue_scores: None,
             non_protein_entities: vec![self.entity.clone()],
             nucleic_acid_chains: vec![],
             nucleic_acid_rings: vec![],
             residue_count: 0,
-        })
-    }
-
-    fn compute_render_data(&self) -> Option<EntityRenderData> {
-        let protein_coords = self.protein_coords()?;
-        let coords = protein_only(&protein_coords);
-        if coords.num_atoms == 0 {
-            return None;
-        }
-
-        let render_coords = RenderCoords::from_coords_with_topology(
-            &coords,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
-        );
-
-        let (sequence, chain_sequences) = extract_sequences(&coords);
-
-        Some(EntityRenderData {
-            render_coords,
-            sequence,
-            chain_sequences,
         })
     }
 }

@@ -1,24 +1,7 @@
-use foldit_conv::{
-    coords::{
-        entity::{MoleculeEntity, NucleotideRing},
-        RenderBackboneResidue,
-    },
-    secondary_structure::SSType,
-};
+use foldit_conv::render::sidechain::SidechainAtoms;
+use foldit_conv::secondary_structure::SSType;
+use foldit_conv::types::entity::{MoleculeEntity, NucleotideRing};
 use glam::Vec3;
-
-/// Sidechain atom data for a single entity (local indices).
-#[derive(Debug, Clone)]
-pub struct SidechainAtom {
-    /// Atom position in world space.
-    pub position: Vec3,
-    /// Whether this atom is hydrophobic.
-    pub is_hydrophobic: bool,
-    /// Local residue index within the entity.
-    pub residue_idx: u32,
-    /// PDB atom name (e.g. "CB", "CG").
-    pub atom_name: String,
-}
 
 /// All render data for a single entity, ready for the scene processor.
 /// Indices are LOCAL (0-based within the entity).
@@ -32,14 +15,8 @@ pub struct PerEntityData {
     pub backbone_chains: Vec<Vec<Vec3>>,
     /// Chain IDs for each backbone chain.
     pub backbone_chain_ids: Vec<u8>,
-    /// Per-chain backbone residue data.
-    pub backbone_residue_chains: Vec<Vec<RenderBackboneResidue>>,
-    /// Sidechain atom data (local residue indices).
-    pub sidechain_atoms: Vec<SidechainAtom>,
-    /// Sidechain intra-residue bonds as (atom_idx, atom_idx) pairs.
-    pub sidechain_bonds: Vec<(u32, u32)>,
-    /// Backbone-to-sidechain bonds as (CA position, sidechain atom idx).
-    pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    /// Sidechain atom data with topology (positions, bonds, backbone bonds).
+    pub sidechains: SidechainAtoms,
     /// Pre-computed secondary structure assignments.
     pub ss_override: Option<Vec<SSType>>,
     /// Per-residue energy scores for color derivation.
@@ -52,4 +29,32 @@ pub struct PerEntityData {
     pub nucleic_acid_rings: Vec<NucleotideRing>,
     /// Total residue count in this entity.
     pub residue_count: u32,
+}
+
+/// A contiguous range of residues belonging to a single entity.
+///
+/// Used to track which global residue indices map back to which entity
+/// during animation and scene processing.
+#[derive(Debug, Clone, Copy)]
+pub struct EntityResidueRange {
+    /// Entity identifier.
+    pub entity_id: u32,
+    /// First global residue index owned by this entity.
+    pub start: u32,
+    /// Number of residues in this entity.
+    pub count: u32,
+}
+
+impl EntityResidueRange {
+    /// One-past-the-end global residue index.
+    #[must_use]
+    pub fn end(&self) -> u32 {
+        self.start + self.count
+    }
+
+    /// Whether the given global residue index falls within this range.
+    #[must_use]
+    pub fn contains(&self, residue_idx: u32) -> bool {
+        residue_idx >= self.start && residue_idx < self.end()
+    }
 }

@@ -14,14 +14,11 @@ pub mod processor;
 
 pub use entity::*;
 pub use entity_data::*;
-use foldit_conv::{
-    coords::{entity::MoleculeEntity, types::Coords},
-    types::assembly::update_protein_entities,
-};
+use foldit_conv::types::assembly::update_protein_entities;
+use foldit_conv::types::coords::Coords;
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
-pub use prepared::{
-    AnimationSidechainData, PreparedAnimationFrame, PreparedScene, SceneRequest,
-};
+pub use prepared::{PreparedAnimationFrame, PreparedScene, SceneRequest};
 
 // ---------------------------------------------------------------------------
 // Focus
@@ -107,7 +104,6 @@ impl Scene {
                 ss_override: None,
                 per_residue_scores: None,
                 mesh_version: 0,
-                render_cache: None,
             });
             ids.push(id);
         }
@@ -246,12 +242,47 @@ impl Scene {
         }
     }
 
+    // -- Filtered entity access --
+
+    /// Visible entities only.
+    #[must_use]
+    pub fn visible_entities(&self) -> Vec<&SceneEntity> {
+        self.entities.iter().filter(|e| e.visible).collect()
+    }
+
+    /// Visible protein entities.
+    #[must_use]
+    pub fn protein_entities(&self) -> Vec<&SceneEntity> {
+        self.entities
+            .iter()
+            .filter(|e| e.visible && e.is_protein())
+            .collect()
+    }
+
+    /// Visible nucleic acid (DNA/RNA) entities.
+    #[must_use]
+    pub fn nucleic_acid_entities(&self) -> Vec<&SceneEntity> {
+        self.entities
+            .iter()
+            .filter(|e| e.visible && e.is_nucleic_acid())
+            .collect()
+    }
+
+    /// Visible ligand entities (not protein, not nucleic acid).
+    #[must_use]
+    pub fn ligand_entities(&self) -> Vec<&SceneEntity> {
+        self.entities
+            .iter()
+            .filter(|e| e.visible && e.is_ligand())
+            .collect()
+    }
+
     // -- Per-entity data for scene processor --
 
     /// Collect per-entity render data for all visible entities.
-    pub fn per_entity_data(&mut self) -> Vec<PerEntityData> {
+    pub fn per_entity_data(&self) -> Vec<PerEntityData> {
         self.entities
-            .iter_mut()
+            .iter()
             .filter(|e| e.visible)
             .filter_map(SceneEntity::to_per_entity_data)
             .collect()
