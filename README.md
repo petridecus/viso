@@ -98,12 +98,6 @@ Viso uses `env_logger`. Set the `RUST_LOG` environment variable to control log o
 RUST_LOG=info cargo run --release -- 1ubq
 ```
 
-### Benchmarks
-
-```bash
-cargo bench
-```
-
 ## Repository Structure
 
 ```
@@ -182,11 +176,8 @@ assets/
     compute/                    Compute shaders
     utility/                    GPU picking shaders
   models/                       Cached downloaded structures (not checked in)
-
-benches/
-  animation_bench.rs            Animation performance benchmarks
 ```
 
 ## License
 
-Copyright (c) 2026 Andreas Petrides. See [LICENSE.md](LICENSE.md) for details.
+Licensed under the [GNU Affero General Public License v3.0](LICENSE).
