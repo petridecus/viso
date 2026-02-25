@@ -13,7 +13,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::molecular::backbone::backbone_vertex_buffer_layout,
+    renderer::geometry::backbone::backbone_vertex_buffer_layout,
 };
 
 /// Selection buffer for GPU - stores selection state as a bit array

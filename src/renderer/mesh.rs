@@ -16,17 +16,24 @@ use crate::{
     renderer::pipeline_util,
 };
 
+/// Description of an indexed-mesh render pipeline.
+pub(crate) struct MeshPipelineDef<'a> {
+    pub label: &'a str,
+    pub shader_path: &'a str,
+    pub cull_mode: Option<wgpu::Face>,
+    pub vertex_layout: wgpu::VertexBufferLayout<'static>,
+}
+
 /// Create a standard indexed-mesh render pipeline.
 pub(crate) fn create_mesh_pipeline(
     context: &RenderContext,
-    label: &str,
-    shader_path: &str,
-    cull_mode: Option<wgpu::Face>,
+    def: &MeshPipelineDef<'_>,
     bind_group_layouts: &[&wgpu::BindGroupLayout],
-    vertex_layout: wgpu::VertexBufferLayout<'static>,
     shader_composer: &mut ShaderComposer,
 ) -> wgpu::RenderPipeline {
-    let shader = shader_composer.compose(&context.device, label, shader_path);
+    let label = def.label;
+    let shader =
+        shader_composer.compose(&context.device, label, def.shader_path);
 
     let pipeline_layout = context.device.create_pipeline_layout(
         &wgpu::PipelineLayoutDescriptor {
@@ -44,7 +51,7 @@ pub(crate) fn create_mesh_pipeline(
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
+                buffers: std::slice::from_ref(&def.vertex_layout),
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -55,7 +62,7 @@ pub(crate) fn create_mesh_pipeline(
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode,
+                cull_mode: def.cull_mode,
                 ..Default::default()
             },
             depth_stencil: Some(pipeline_util::depth_stencil_state()),

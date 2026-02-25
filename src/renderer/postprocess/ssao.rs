@@ -61,6 +61,7 @@ pub struct SsaoRenderer {
     pub params_buffer: wgpu::Buffer,
 
     /// Random rotation noise texture.
+    #[allow(dead_code)] // must stay alive to back noise_view
     pub noise_texture: wgpu::Texture,
     /// View into the noise texture.
     pub noise_view: wgpu::TextureView,
@@ -688,19 +689,16 @@ impl SsaoRenderer {
     pub fn update_matrices(
         &self,
         queue: &wgpu::Queue,
-        proj: Mat4,
-        view: Mat4,
-        near: f32,
-        far: f32,
+        camera: &super::post_process::PostProcessCamera,
     ) {
-        let inv_proj = proj.inverse();
+        let inv_proj = camera.proj.inverse();
         let params = SsaoParams {
             inv_proj: inv_proj.to_cols_array_2d(),
-            proj: proj.to_cols_array_2d(),
-            view: view.to_cols_array_2d(),
+            proj: camera.proj.to_cols_array_2d(),
+            view: camera.view_matrix.to_cols_array_2d(),
             screen_size: [self.width as f32, self.height as f32],
-            near,
-            far,
+            near: camera.znear,
+            far: camera.zfar,
             radius: self.radius,
             bias: self.bias,
             power: self.power,
@@ -783,10 +781,6 @@ impl SsaoRenderer {
 }
 
 impl ScreenPass for SsaoRenderer {
-    fn label(&self) -> &'static str {
-        "SSAO"
-    }
-
     fn render(&self, encoder: &mut wgpu::CommandEncoder) {
         self.render_ssao(encoder);
     }

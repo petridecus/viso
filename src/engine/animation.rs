@@ -7,7 +7,7 @@ use glam::Vec3;
 use super::ProteinRenderEngine;
 use crate::{
     animation::transition::Transition,
-    renderer::molecular::capsule_sidechain::SidechainData, scene::SceneEntity,
+    renderer::geometry::sidechain::SidechainData, scene::SceneEntity,
     util::trajectory::TrajectoryPlayer,
 };
 

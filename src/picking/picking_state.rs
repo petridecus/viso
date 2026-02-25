@@ -1,8 +1,7 @@
 use crate::{
     picking::Picking,
-    renderer::molecular::{
-        ball_and_stick::BallAndStickRenderer,
-        capsule_sidechain::CapsuleSidechainRenderer,
+    renderer::geometry::{
+        ball_and_stick::BallAndStickRenderer, sidechain::SidechainRenderer,
     },
 };
 
@@ -27,7 +26,7 @@ impl PickingState {
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,
-        sidechain_renderer: &CapsuleSidechainRenderer,
+        sidechain_renderer: &SidechainRenderer,
     ) {
         self.capsule_picking_bind_group =
             Some(picking.create_capsule_bind_group(
@@ -58,7 +57,7 @@ impl PickingState {
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,
-        sidechain_renderer: &CapsuleSidechainRenderer,
+        sidechain_renderer: &SidechainRenderer,
         bns_renderer: &BallAndStickRenderer,
     ) {
         self.rebuild_capsule(picking, device, sidechain_renderer);

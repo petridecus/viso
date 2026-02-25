@@ -49,5 +49,84 @@ setup:
     git config commit.template .gitmessage
     @echo "Done. Hooks and commit template activated."
 
+# Count clippy errors
+errors:
+    cargo clippy --all-targets --all-features 2>&1 | rg '^error' | wc -l
+
+# Count clippy warnings
+warnings:
+    cargo clippy --all-targets --all-features 2>&1 | rg '^warning' | wc -l
+
+# Clippy violations per-rule, per-module (optionally filter by dir)
+# Usage: just lint [dir]
+# Examples: just lint              (all modules)
+#           just lint renderer     (only src/renderer/)
+#           just lint engine       (only src/engine/)
+lint dir="":
+    #!/usr/bin/env bash
+    cargo clippy --all-targets --all-features --message-format=json 2>/dev/null \
+    | python3 -c "
+    import sys, json
+    filt = '{{dir}}'
+    seen = set()
+    rows = []
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get('reason') != 'compiler-message':
+            continue
+        m = msg['message']
+        code = m.get('code')
+        if not code or not code.get('code'):
+            continue
+        rule = code['code']
+        spans = m.get('spans', [])
+        primary = next((s for s in spans if s.get('is_primary')), None)
+        if not primary:
+            continue
+        f = primary['file_name']
+        # skip non-source files (Cargo.toml metadata lints, etc.)
+        if not f.startswith('src/'):
+            continue
+        if filt and not f.startswith('src/' + filt):
+            continue
+        # deduplicate across targets (lib vs test emit the same diagnostic)
+        key = (f, primary.get('line_start'), rule)
+        if key in seen:
+            continue
+        seen.add(key)
+        # module = first two path components under src/
+        parts = f.split('/')
+        if len(parts) >= 3:
+            mod_name = parts[1] + '/' + parts[2].replace('.rs', '')
+        elif len(parts) == 2:
+            mod_name = parts[1].replace('.rs', '')
+        else:
+            mod_name = f
+        rows.append((mod_name, rule))
+    if not rows:
+        print('No violations found.')
+        sys.exit(0)
+    # Count per (module, rule)
+    from collections import Counter
+    counts = Counter(rows)
+    by_mod = {}
+    for (mod_name, rule), n in counts.items():
+        by_mod.setdefault(mod_name, []).append((rule, n))
+    total = sum(counts.values())
+    for mod_name in sorted(by_mod):
+        rules = sorted(by_mod[mod_name], key=lambda x: -x[1])
+        mod_total = sum(n for _, n in rules)
+        print(f'\n  {mod_name} ({mod_total})')
+        for rule, n in rules:
+            print(f'    {n:3d}  {rule}')
+    print(f'\n  total: {total}')
+    "
+
 # Run everything including optional tools
 check-all: check deny machete file-lengths

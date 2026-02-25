@@ -19,12 +19,6 @@ pub struct ColorRamp {
 }
 
 impl ColorRamp {
-    /// Create a color ramp from a list of evenly-spaced color stops.
-    pub fn new(stops: Vec<[f32; 3]>) -> Self {
-        assert!(stops.len() >= 2, "ColorRamp needs at least 2 stops");
-        Self { stops }
-    }
-
     /// Interpolate the ramp at position `t` in [0, 1].
     pub fn sample(&self, t: f32) -> [f32; 3] {
         let t = t.clamp(0.0, 1.0);

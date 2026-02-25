@@ -126,8 +126,8 @@ pub use gpu::texture::RenderTarget;
 pub use gui::webview::UiAction;
 pub use input::{InputEvent, KeyAction, MouseButton};
 // Renderer data types needed by consumers for band/pull updates
-pub use renderer::molecular::band::BandRenderInfo;
-pub use renderer::molecular::pull::PullRenderInfo;
+pub use renderer::geometry::band::BandRenderInfo;
+pub use renderer::geometry::pull::PullRenderInfo;
 pub use scene::{Focus, Scene, SceneEntity};
 pub use util::easing::EasingFunction;
 #[cfg(feature = "viewer")]

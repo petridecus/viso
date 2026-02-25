@@ -53,27 +53,9 @@ impl StructureState {
         self.current.get(idx)
     }
 
-    /// Get mutable current visual state for a residue.
-    pub fn get_current_mut(
-        &mut self,
-        idx: usize,
-    ) -> Option<&mut ResidueVisualState> {
-        self.current.get_mut(idx)
-    }
-
     /// Get target state for a residue.
     pub fn get_target(&self, idx: usize) -> Option<&ResidueVisualState> {
         self.target.get(idx)
-    }
-
-    /// Get all current states.
-    pub fn current_states(&self) -> &[ResidueVisualState] {
-        &self.current
-    }
-
-    /// Get all target states.
-    pub fn target_states(&self) -> &[ResidueVisualState] {
-        &self.target
     }
 
     /// Number of residues.
@@ -229,8 +211,8 @@ impl StructureState {
         }
 
         // Update target and chain_lengths to match the new target
-        self.target = new_target.target.clone();
-        self.chain_lengths = new_target.chain_lengths.clone();
+        self.target.clone_from(&new_target.target);
+        self.chain_lengths.clone_from(&new_target.chain_lengths);
     }
 
     /// Convert backbone chains to per-residue visual states.

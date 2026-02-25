@@ -4,8 +4,11 @@ use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
     options::Options,
     renderer::postprocess::{
-        bloom::BloomPass, composite::CompositePass, fxaa::FxaaPass,
-        screen_pass::ScreenPass, ssao::SsaoRenderer,
+        bloom::BloomPass,
+        composite::{CompositeInputs, CompositePass},
+        fxaa::FxaaPass,
+        screen_pass::ScreenPass,
+        ssao::SsaoRenderer,
     },
 };
 
@@ -53,10 +56,12 @@ impl PostProcessStack {
 
         let mut composite_pass = CompositePass::new(
             context,
-            ssao_renderer.get_ssao_view(),
-            &depth_view,
-            &normal_view,
-            bloom_pass.get_output_view(),
+            &CompositeInputs {
+                ssao: ssao_renderer.get_ssao_view(),
+                depth: &depth_view,
+                normal: &normal_view,
+                bloom: bloom_pass.get_output_view(),
+            },
             shader_composer,
         );
 
@@ -127,13 +132,7 @@ impl PostProcessStack {
         final_view: wgpu::TextureView,
     ) {
         // SSAO pass
-        self.ssao_renderer.update_matrices(
-            queue,
-            camera.proj,
-            camera.view_matrix,
-            camera.znear,
-            camera.zfar,
-        );
+        self.ssao_renderer.update_matrices(queue, camera);
         self.ssao_renderer.render_ssao(encoder);
 
         // Bloom pass

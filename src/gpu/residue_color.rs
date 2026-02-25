@@ -171,11 +171,6 @@ impl ResidueColorBuffer {
         true
     }
 
-    /// Returns `true` if a color transition is currently active.
-    pub fn is_transitioning(&self) -> bool {
-        self.transition_start.is_some()
-    }
-
     /// Ensure the buffer has capacity for at least `required` residues.
     ///
     /// Recreates the buffer and bind_group if current capacity is insufficient.

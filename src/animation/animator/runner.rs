@@ -45,6 +45,7 @@ impl AnimationRunner {
     }
 
     /// Create with explicit start time (for testing).
+    #[allow(dead_code)]
     pub fn with_start_time(
         start_time: Instant,
         behavior: SharedBehavior,
@@ -63,6 +64,7 @@ impl AnimationRunner {
     }
 
     /// Get the total animation duration.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn duration(&self) -> Duration {
         self.behavior.duration()
     }
@@ -80,6 +82,7 @@ impl AnimationRunner {
     }
 
     /// Whether the animation has reached completion.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn is_complete(&self, now: Instant) -> bool {
         self.progress(now) >= 1.0
     }
@@ -102,16 +105,6 @@ impl AnimationRunner {
         }
     }
 
-    /// Get the per-residue animation data.
-    pub fn residues(&self) -> &[ResidueAnimationData] {
-        &self.residues
-    }
-
-    /// Number of residues being animated.
-    pub fn residue_count(&self) -> usize {
-        self.residues.len()
-    }
-
     /// Remove residues whose global index falls within any of the given ranges.
     /// Used to exclude non-targeted entity residues from animation.
     pub fn remove_residue_ranges(&mut self, ranges: &[(usize, usize)]) {
@@ -129,7 +122,7 @@ impl std::fmt::Debug for AnimationRunner {
             .field("behavior", &self.behavior.name())
             .field("residue_count", &self.residues.len())
             .field("duration", &self.behavior.duration())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

@@ -12,11 +12,11 @@
 
 use glam::Vec3;
 
-use super::primitives::{
-    capsule::CapsuleInstance, cone::ConeInstance, ImpostorPass,
-};
-use crate::gpu::{
-    render_context::RenderContext, shader_composer::ShaderComposer,
+use crate::{
+    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    renderer::impostor::{
+        capsule::CapsuleInstance, cone::ConeInstance, ImpostorPass, ShaderDef,
+    },
 };
 
 // Pull visual constants - match band defaults
@@ -46,17 +46,15 @@ impl PullRenderer {
     /// Create a new pull renderer with empty instance buffers.
     pub fn new(
         context: &RenderContext,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
+        layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
-        let layouts = [camera_layout, lighting_layout, selection_layout];
-
         let capsule_pass = ImpostorPass::new(
             context,
-            "Pull Capsule",
-            "raster/impostor/capsule.wgsl",
+            &ShaderDef {
+                label: "Pull Capsule",
+                path: "raster/impostor/capsule.wgsl",
+            },
             layouts,
             6,
             shader_composer,
@@ -64,8 +62,10 @@ impl PullRenderer {
 
         let cone_pass = ImpostorPass::new(
             context,
-            "Pull Cone",
-            "raster/impostor/cone.wgsl",
+            &ShaderDef {
+                label: "Pull Cone",
+                path: "raster/impostor/cone.wgsl",
+            },
             layouts,
             6,
             shader_composer,
@@ -174,7 +174,7 @@ impl PullRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+        bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
     ) {
         self.capsule_pass.draw(render_pass, bind_groups);
         self.cone_pass.draw(render_pass, bind_groups);
@@ -184,15 +184,5 @@ impl PullRenderer {
     pub fn is_active(&self) -> bool {
         self.capsule_pass.instance_count > 0
             || self.cone_pass.instance_count > 0
-    }
-}
-
-impl super::MolecularRenderer for PullRenderer {
-    fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
-    ) {
-        self.draw(render_pass, bind_groups);
     }
 }

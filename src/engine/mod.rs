@@ -27,16 +27,17 @@ use crate::{
     options::Options,
     picking::{picking_state::PickingState, Picking, SelectionBuffer},
     renderer::{
-        molecular::{
-            backbone::BackboneRenderer,
+        draw_context::DrawBindGroups,
+        geometry::{
+            backbone::{BackboneRenderer, ChainPair},
             ball_and_stick::BallAndStickRenderer,
             band::BandRenderer,
-            capsule_sidechain::{CapsuleSidechainRenderer, SidechainData},
-            draw_context::DrawBindGroups,
             nucleic_acid::NucleicAcidRenderer,
             pull::PullRenderer,
+            sidechain::{SidechainData, SidechainRenderer},
         },
         postprocess::post_process::PostProcessStack,
+        PipelineLayouts,
     },
     scene::{processor::SceneProcessor, Focus, Scene},
     util::{
@@ -118,7 +119,7 @@ pub struct ProteinRenderEngine {
     /// Unified backbone renderer (protein + nucleic acid).
     pub backbone_renderer: BackboneRenderer,
     /// Capsule-based sidechain renderer.
-    pub sidechain_renderer: CapsuleSidechainRenderer,
+    pub sidechain_renderer: SidechainRenderer,
     /// Constraint band renderer.
     pub band_renderer: BandRenderer,
     /// Interactive pull arrow renderer.
@@ -308,14 +309,20 @@ impl ProteinRenderEngine {
 
         let options = Options::default();
 
+        let layouts = PipelineLayouts {
+            camera: camera_controller.layout.clone(),
+            lighting: lighting.layout.clone(),
+            selection: selection_buffer.layout.clone(),
+        };
+
         let backbone_renderer = BackboneRenderer::new(
             &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
+            &layouts,
             &residue_color_buffer.layout,
-            &render_coords.backbone_chains,
-            &na_chains,
+            &ChainPair {
+                protein: &render_coords.backbone_chains,
+                na: &na_chains,
+            },
             &mut shader_composer,
         );
 
@@ -325,11 +332,9 @@ impl ProteinRenderEngine {
         let sidechain_residue_indices =
             render_coords.sidechain_residue_indices();
 
-        let sidechain_renderer = CapsuleSidechainRenderer::new(
+        let sidechain_renderer = SidechainRenderer::new(
             &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
+            &layouts,
             &SidechainData {
                 positions: &sidechain_positions,
                 bonds: &render_coords.sidechain_bonds,
@@ -341,22 +346,12 @@ impl ProteinRenderEngine {
         );
 
         // Create band renderer (starts empty)
-        let band_renderer = BandRenderer::new(
-            &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
-            &mut shader_composer,
-        );
+        let band_renderer =
+            BandRenderer::new(&context, &layouts, &mut shader_composer);
 
         // Create pull renderer (starts empty, only one pull at a time)
-        let pull_renderer = PullRenderer::new(
-            &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
-            &mut shader_composer,
-        );
+        let pull_renderer =
+            PullRenderer::new(&context, &layouts, &mut shader_composer);
 
         // Create the full post-processing stack (depth/normal textures, SSAO,
         // bloom, composite, FXAA)
@@ -382,13 +377,8 @@ impl ProteinRenderEngine {
         );
 
         // Create ball-and-stick renderer for non-protein entities
-        let mut ball_and_stick_renderer = BallAndStickRenderer::new(
-            &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
-            &mut shader_composer,
-        );
+        let mut ball_and_stick_renderer =
+            BallAndStickRenderer::new(&context, &layouts, &mut shader_composer);
 
         // Compute initial per-residue colors so the first frame isn't gray
         {
@@ -453,9 +443,7 @@ impl ProteinRenderEngine {
             .collect();
         let nucleic_acid_renderer = NucleicAcidRenderer::new(
             &context,
-            &camera_controller.layout,
-            &lighting.layout,
-            &selection_buffer.layout,
+            &layouts,
             &na_chains,
             &na_rings,
             &mut shader_composer,

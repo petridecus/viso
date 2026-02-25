@@ -134,14 +134,15 @@ pub(crate) fn interpolate_profiles(
 /// Extrude a cross-section ring at a single spline point.
 pub(crate) fn extrude_cross_section(
     frame: &SplinePoint,
-    hw: f32,
-    ht: f32,
-    roundness: f32,
-    color: [f32; 3],
-    residue_idx: u32,
+    profile: &CrossSectionProfile,
     cross_section_verts: usize,
     vertices: &mut Vec<BackboneVertex>,
 ) {
+    let hw = profile.width * 0.5;
+    let ht = profile.thickness * 0.5;
+    let roundness = profile.roundness;
+    let color = profile.color;
+    let residue_idx = profile.residue_idx;
     for k in 0..cross_section_verts {
         let angle =
             (k as f32 / cross_section_verts as f32) * std::f32::consts::TAU;
@@ -187,12 +188,13 @@ pub(crate) fn extrude_cross_section(
 /// Compute a cross-section offset for end cap vertices.
 pub(crate) fn cap_offset(
     frame: &SplinePoint,
-    hw: f32,
-    ht: f32,
-    roundness: f32,
+    profile: &CrossSectionProfile,
     cross_section_verts: usize,
     k: usize,
 ) -> Vec3 {
+    let hw = profile.width * 0.5;
+    let ht = profile.thickness * 0.5;
+    let roundness = profile.roundness;
     let angle = (k as f32 / cross_section_verts as f32) * std::f32::consts::TAU;
     let cos_a = angle.cos();
     let sin_a = angle.sin();
@@ -229,19 +231,17 @@ mod tests {
     fn circular_tube_normals_are_radial() {
         let frame = make_frame(Vec3::ZERO, Vec3::Z, Vec3::Y);
         let hw = 0.2_f32;
-        let ht = 0.2_f32;
         let csv = 8;
+        let profile = CrossSectionProfile {
+            width: hw * 2.0,
+            thickness: hw * 2.0,
+            roundness: 1.0,
+            radial_blend: 0.0,
+            color: [1.0, 0.0, 0.0],
+            residue_idx: 0,
+        };
         let mut verts = Vec::new();
-        extrude_cross_section(
-            &frame,
-            hw,
-            ht,
-            1.0,
-            [1.0, 0.0, 0.0],
-            0,
-            csv,
-            &mut verts,
-        );
+        extrude_cross_section(&frame, &profile, csv, &mut verts);
         assert_eq!(verts.len(), csv);
 
         for (k, v) in verts.iter().enumerate() {
@@ -278,20 +278,17 @@ mod tests {
     #[test]
     fn elliptical_normals_differ_from_radial() {
         let frame = make_frame(Vec3::ZERO, Vec3::Z, Vec3::Y);
-        let hw = 0.4_f32; // wide
-        let ht = 0.1_f32; // thin
         let csv = 8;
+        let profile = CrossSectionProfile {
+            width: 0.8,
+            thickness: 0.2,
+            roundness: 1.0,
+            radial_blend: 0.0,
+            color: [1.0, 0.0, 0.0],
+            residue_idx: 0,
+        };
         let mut verts = Vec::new();
-        extrude_cross_section(
-            &frame,
-            hw,
-            ht,
-            1.0,
-            [1.0, 0.0, 0.0],
-            0,
-            csv,
-            &mut verts,
-        );
+        extrude_cross_section(&frame, &profile, csv, &mut verts);
 
         // At 45 degrees, elliptical gradient normal should differ from radial
         let v = &verts[1]; // k=1, angle=π/4
@@ -350,17 +347,16 @@ mod tests {
             (0.1, 0.3, 1.0), // tall ellipse
             (0.2, 0.2, 0.5), // half-round circle
         ] {
-            let mut verts = Vec::new();
-            extrude_cross_section(
-                &frame,
-                hw,
-                ht,
+            let profile = CrossSectionProfile {
+                width: hw * 2.0,
+                thickness: ht * 2.0,
                 roundness,
-                [1.0, 0.0, 0.0],
-                0,
-                8,
-                &mut verts,
-            );
+                radial_blend: 0.0,
+                color: [1.0, 0.0, 0.0],
+                residue_idx: 0,
+            };
+            let mut verts = Vec::new();
+            extrude_cross_section(&frame, &profile, 8, &mut verts);
 
             for (k, v) in verts.iter().enumerate() {
                 let pos = Vec3::from(v.position);

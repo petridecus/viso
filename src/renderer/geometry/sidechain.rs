@@ -10,10 +10,10 @@
 
 use glam::Vec3;
 
-use super::primitives::{capsule::CapsuleInstance, ImpostorPass};
 use crate::{
     camera::frustum::Frustum,
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    renderer::impostor::{capsule::CapsuleInstance, ImpostorPass, ShaderDef},
 };
 
 /// Radius used for frustum culling (capsule bounding sphere)
@@ -39,40 +39,32 @@ pub struct SidechainData<'a> {
 }
 
 /// Renders sidechains as capsule chains (cylinders with hemispherical caps).
-pub struct CapsuleSidechainRenderer {
+pub struct SidechainRenderer {
     pass: ImpostorPass<CapsuleInstance>,
 }
 
-impl CapsuleSidechainRenderer {
+impl SidechainRenderer {
     /// `sidechain.backbone_bonds`: CA-CB bonds as (ca_position,
     /// cb_sidechain_index) tuples.
     pub fn new(
         context: &RenderContext,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
+        layouts: &crate::renderer::PipelineLayouts,
         sidechain: &SidechainData,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
         let mut pass = ImpostorPass::new(
             context,
-            "Capsule Sidechain",
-            "raster/impostor/capsule.wgsl",
-            [camera_layout, lighting_layout, selection_layout],
+            &ShaderDef {
+                label: "Capsule Sidechain",
+                path: "raster/impostor/capsule.wgsl",
+            },
+            layouts,
             6,
             shader_composer,
         );
 
         // No frustum culling on initial creation
-        let instances = Self::generate_instances(
-            sidechain.positions,
-            sidechain.bonds,
-            sidechain.backbone_bonds,
-            sidechain.hydrophobicity,
-            sidechain.residue_indices,
-            None,
-            None,
-        );
+        let instances = Self::generate_instances(sidechain, None, None);
 
         let _ =
             pass.write_instances(&context.device, &context.queue, &instances);
@@ -81,21 +73,15 @@ impl CapsuleSidechainRenderer {
     }
 
     /// Generate capsule instances from sidechain data.
-    /// - `backbone_sidechain_bonds`: CA-CB bonds as (ca_position,
-    ///   cb_sidechain_index) tuples
     /// - `frustum`: Optional frustum for culling (None = no culling)
     /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
     pub(crate) fn generate_instances(
-        sidechain_positions: &[Vec3],
-        sidechain_bonds: &[(u32, u32)],
-        backbone_sidechain_bonds: &[(Vec3, u32)],
-        hydrophobicity: &[bool],
-        residue_indices: &[u32],
+        sidechain: &SidechainData,
         frustum: Option<&Frustum>,
         sidechain_colors: Option<([f32; 3], [f32; 3])>,
     ) -> Vec<CapsuleInstance> {
         let mut instances = Vec::with_capacity(
-            sidechain_bonds.len() + backbone_sidechain_bonds.len(),
+            sidechain.bonds.len() + sidechain.backbone_bonds.len(),
         );
 
         let (hydrophobic_color, hydrophilic_color) =
@@ -103,7 +89,7 @@ impl CapsuleSidechainRenderer {
 
         // Helper to get color for an atom index
         let get_color = |idx: usize| -> [f32; 3] {
-            if hydrophobicity.get(idx).copied().unwrap_or(false) {
+            if sidechain.hydrophobicity.get(idx).copied().unwrap_or(false) {
                 hydrophobic_color
             } else {
                 hydrophilic_color
@@ -112,7 +98,7 @@ impl CapsuleSidechainRenderer {
 
         // Helper to get residue index for an atom
         let get_residue_idx = |idx: usize| -> f32 {
-            residue_indices.get(idx).copied().unwrap_or(0) as f32
+            sidechain.residue_indices.get(idx).copied().unwrap_or(0) as f32
         };
 
         // Helper to check if a capsule is visible (either endpoint in frustum)
@@ -128,17 +114,17 @@ impl CapsuleSidechainRenderer {
         };
 
         // Sidechain-sidechain bonds
-        for &(a, b) in sidechain_bonds {
+        for &(a, b) in sidechain.bonds {
             let a_idx = a as usize;
             let b_idx = b as usize;
-            if a_idx >= sidechain_positions.len()
-                || b_idx >= sidechain_positions.len()
+            if a_idx >= sidechain.positions.len()
+                || b_idx >= sidechain.positions.len()
             {
                 continue;
             }
 
-            let pos_a = sidechain_positions[a_idx];
-            let pos_b = sidechain_positions[b_idx];
+            let pos_a = sidechain.positions[a_idx];
+            let pos_b = sidechain.positions[b_idx];
 
             // Frustum cull
             if !is_visible(pos_a, pos_b) {
@@ -160,13 +146,13 @@ impl CapsuleSidechainRenderer {
         }
 
         // Backbone-sidechain bonds (CA to CB)
-        for &(ca_pos, cb_idx) in backbone_sidechain_bonds {
+        for &(ca_pos, cb_idx) in sidechain.backbone_bonds {
             let cb_idx = cb_idx as usize;
-            if cb_idx >= sidechain_positions.len() {
+            if cb_idx >= sidechain.positions.len() {
                 continue;
             }
 
-            let cb_pos = sidechain_positions[cb_idx];
+            let cb_pos = sidechain.positions[cb_idx];
 
             // Frustum cull
             if !is_visible(ca_pos, cb_pos) {
@@ -206,15 +192,7 @@ impl CapsuleSidechainRenderer {
         sidechain: &SidechainData,
         frustum: Option<&Frustum>,
     ) {
-        let instances = Self::generate_instances(
-            sidechain.positions,
-            sidechain.bonds,
-            sidechain.backbone_bonds,
-            sidechain.hydrophobicity,
-            sidechain.residue_indices,
-            frustum,
-            None,
-        );
+        let instances = Self::generate_instances(sidechain, frustum, None);
 
         let _ = self.pass.write_instances(device, queue, &instances);
     }
@@ -223,7 +201,7 @@ impl CapsuleSidechainRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+        bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
     ) {
         self.pass.draw(render_pass, bind_groups);
     }
@@ -256,15 +234,5 @@ impl CapsuleSidechainRenderer {
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
     pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![self.pass.buffer_info("Sidechain Capsules")]
-    }
-}
-
-impl super::MolecularRenderer for CapsuleSidechainRenderer {
-    fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
-    ) {
-        self.draw(render_pass, bind_groups);
     }
 }

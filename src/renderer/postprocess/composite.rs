@@ -11,6 +11,14 @@ use crate::gpu::{
     render_context::RenderContext, shader_composer::ShaderComposer,
 };
 
+/// External texture view inputs for creating a composite pass.
+pub struct CompositeInputs<'a> {
+    pub ssao: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+    pub normal: &'a wgpu::TextureView,
+    pub bloom: &'a wgpu::TextureView,
+}
+
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -117,10 +125,7 @@ impl CompositePass {
     /// Create a new composite pass with all textures, samplers, and pipeline.
     pub fn new(
         context: &RenderContext,
-        ssao_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
-        normal_view: &wgpu::TextureView,
-        bloom_view: &wgpu::TextureView,
+        inputs: &CompositeInputs,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
         let width = context.render_width();
@@ -276,10 +281,10 @@ impl CompositePass {
             &bind_group_layout,
             &CompositeViews {
                 color: &color_view,
-                ssao: ssao_view,
-                depth: depth_view,
-                normal: normal_view,
-                bloom: bloom_view,
+                ssao: inputs.ssao,
+                depth: inputs.depth,
+                normal: inputs.normal,
+                bloom: inputs.bloom,
                 sampler: &sampler,
                 depth_sampler: &depth_sampler,
                 params_buffer: &params_buffer,
@@ -340,10 +345,10 @@ impl CompositePass {
             color_texture,
             color_view,
             output_view: None,
-            ssao_view: ssao_view.clone(),
-            depth_view: depth_view.clone(),
-            normal_view: normal_view.clone(),
-            bloom_view: bloom_view.clone(),
+            ssao_view: inputs.ssao.clone(),
+            depth_view: inputs.depth.clone(),
+            normal_view: inputs.normal.clone(),
+            bloom_view: inputs.bloom.clone(),
             params,
             params_buffer,
             width,
@@ -485,10 +490,6 @@ impl CompositePass {
 }
 
 impl ScreenPass for CompositePass {
-    fn label(&self) -> &'static str {
-        "Composite"
-    }
-
     fn render(&self, encoder: &mut wgpu::CommandEncoder) {
         let Some(output_view) = &self.output_view else {
             return;

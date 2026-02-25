@@ -12,8 +12,7 @@ use super::prepared::{
     FALLBACK_RESIDUE_COLOR,
 };
 use crate::{
-    animation::transition::Transition,
-    renderer::molecular::backbone::ChainRange,
+    animation::transition::Transition, renderer::geometry::backbone::ChainRange,
 };
 
 /// Offset the `residue_idx` field embedded in raw vertex bytes.

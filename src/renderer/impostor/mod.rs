@@ -17,8 +17,14 @@ use crate::{
         dynamic_buffer::TypedBuffer, render_context::RenderContext,
         shader_composer::ShaderComposer,
     },
-    renderer::pipeline_util,
+    renderer::{pipeline_util, PipelineLayouts},
 };
+
+/// Shader identity: label + path, always passed together.
+pub struct ShaderDef<'a> {
+    pub label: &'a str,
+    pub path: &'a str,
+}
 
 /// A single impostor draw pass: pipeline + typed storage buffer + bind group.
 ///
@@ -38,16 +44,14 @@ pub struct ImpostorPass<T: Pod + Zeroable> {
 
 impl<T: Pod + Zeroable> ImpostorPass<T> {
     /// Create a new impostor pass with the given shader.
-    ///
-    /// `layouts` must be `[camera, lighting, selection]` in that order.
     pub fn new(
         context: &RenderContext,
-        label: &str,
-        shader_path: &str,
-        layouts: [&wgpu::BindGroupLayout; 3],
+        shader: &ShaderDef,
+        layouts: &PipelineLayouts,
         vertices_per_instance: u32,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
+        let label = shader.label;
         let instance_buffer = TypedBuffer::new_with_data(
             &context.device,
             &format!("{label} Buffer"),
@@ -65,8 +69,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
         );
         let pipeline = Self::create_pipeline(
             context,
-            label,
-            shader_path,
+            shader,
             &bind_group_layout,
             layouts,
             shader_composer,
@@ -120,16 +123,16 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
 
     fn create_pipeline(
         context: &RenderContext,
-        label: &str,
-        shader_path: &str,
+        shader_def: &ShaderDef,
         bind_group_layout: &wgpu::BindGroupLayout,
-        layouts: [&wgpu::BindGroupLayout; 3],
+        layouts: &PipelineLayouts,
         shader_composer: &mut ShaderComposer,
     ) -> wgpu::RenderPipeline {
+        let label = shader_def.label;
         let shader = shader_composer.compose(
             &context.device,
             &format!("{label} Shader"),
-            shader_path,
+            shader_def.path,
         );
 
         let pipeline_layout = context.device.create_pipeline_layout(
@@ -137,9 +140,9 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
                 label: Some(&format!("{label} Pipeline Layout")),
                 bind_group_layouts: &[
                     bind_group_layout,
-                    layouts[0], // camera
-                    layouts[1], // lighting
-                    layouts[2], // selection
+                    &layouts.camera,
+                    &layouts.lighting,
+                    &layouts.selection,
                 ],
                 push_constant_ranges: &[],
             },

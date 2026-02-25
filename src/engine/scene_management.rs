@@ -11,9 +11,8 @@ use glam::Vec3;
 use super::ProteinRenderEngine;
 use crate::{
     animation::transition::Transition,
-    renderer::molecular::{
-        band::BandRenderInfo, capsule_sidechain::SidechainData,
-        pull::PullRenderInfo,
+    renderer::geometry::{
+        band::BandRenderInfo, pull::PullRenderInfo, sidechain::SidechainData,
     },
 };
 

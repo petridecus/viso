@@ -47,19 +47,6 @@ pub struct Frustum {
     pub planes: [Plane; 6],
 }
 
-/// Index of the left clipping plane.
-pub const PLANE_LEFT: usize = 0;
-/// Index of the right clipping plane.
-pub const PLANE_RIGHT: usize = 1;
-/// Index of the bottom clipping plane.
-pub const PLANE_BOTTOM: usize = 2;
-/// Index of the top clipping plane.
-pub const PLANE_TOP: usize = 3;
-/// Index of the near clipping plane.
-pub const PLANE_NEAR: usize = 4;
-/// Index of the far clipping plane.
-pub const PLANE_FAR: usize = 5;
-
 impl Frustum {
     /// Extract frustum planes from a view-projection matrix.
     /// Uses the Gribb/Hartmann method for plane extraction.

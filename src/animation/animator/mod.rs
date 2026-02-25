@@ -65,6 +65,7 @@ impl StructureAnimator {
     }
 
     /// Enable or disable animations.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn set_enabled(&mut self, enabled: bool) {
         self.controller.set_enabled(enabled);
         if !enabled {
@@ -73,6 +74,7 @@ impl StructureAnimator {
     }
 
     /// Whether animations are enabled.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn is_enabled(&self) -> bool {
         self.controller.is_enabled()
     }
@@ -157,6 +159,7 @@ impl StructureAnimator {
     }
 
     /// Skip current animation to end state.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn skip(&mut self) {
         self.current_frame_progress = 1.0;
         self.state.snap_to_target();
@@ -164,6 +167,7 @@ impl StructureAnimator {
     }
 
     /// Cancel current animation, staying at current visual position.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn cancel(&mut self) {
         self.runner = None;
     }
@@ -179,11 +183,13 @@ impl StructureAnimator {
     }
 
     /// Get the current structure state.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn state(&self) -> &StructureState {
         &self.state
     }
 
     /// Get the active animation runner, if any.
+    #[allow(dead_code)] // public API, not yet called internally
     pub fn runner(&self) -> Option<&AnimationRunner> {
         self.runner.as_ref()
     }
@@ -198,25 +204,6 @@ impl StructureAnimator {
             }
             _ => InterpolationContext::identity(),
         }
-    }
-
-    /// Set sidechain target positions for animation.
-    ///
-    /// Call this alongside `set_target` when sidechain data changes.
-    /// The residue_indices map each sidechain atom to its residue for collapse
-    /// animation.
-    pub fn set_sidechain_target(
-        &mut self,
-        positions: &[Vec3],
-        residue_indices: &[u32],
-        ca_positions: &[Vec3],
-    ) {
-        self.set_sidechain_target_with_transition(
-            positions,
-            residue_indices,
-            ca_positions,
-            None,
-        );
     }
 
     /// Set sidechain target positions with an explicit transition for
@@ -651,10 +638,11 @@ mod tests {
         let sidechain_pos = vec![Vec3::new(1.0, 2.0, 3.0)];
         let residue_indices = vec![0];
         let ca_positions = vec![Vec3::ZERO];
-        animator.set_sidechain_target(
+        animator.set_sidechain_target_with_transition(
             &sidechain_pos,
             &residue_indices,
             &ca_positions,
+            None,
         );
 
         // Same positions should not differ

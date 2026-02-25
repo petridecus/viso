@@ -8,10 +8,9 @@ use glam::Vec3;
 use super::ProteinRenderEngine;
 use crate::{
     animation::transition::Transition,
-    renderer::molecular::{
+    renderer::geometry::{
         backbone::PreparedBackboneData,
-        ball_and_stick::PreparedBallAndStickData,
-        capsule_sidechain::SidechainData,
+        ball_and_stick::PreparedBallAndStickData, sidechain::SidechainData,
     },
     scene::{AnimationSidechainData, PreparedScene, SceneRequest},
     util::score_color,
@@ -297,10 +296,7 @@ impl ProteinRenderEngine {
         self.nucleic_acid_renderer.apply_prepared(
             &self.context.device,
             &self.context.queue,
-            &prepared.na.stem_instances,
-            prepared.na.stem_count,
-            &prepared.na.ring_instances,
-            prepared.na.ring_count,
+            &prepared.na,
         );
 
         // Recreate picking bind groups (buffers may have been reallocated)
@@ -347,10 +343,12 @@ impl ProteinRenderEngine {
                     })
                     .collect();
             } else {
-                self.sc.start_sidechain_positions =
-                    self.sc.target_sidechain_positions.clone();
-                self.sc.start_backbone_sidechain_bonds =
-                    self.sc.target_backbone_sidechain_bonds.clone();
+                self.sc
+                    .start_sidechain_positions
+                    .clone_from(&self.sc.target_sidechain_positions);
+                self.sc
+                    .start_backbone_sidechain_bonds
+                    .clone_from(&self.sc.target_backbone_sidechain_bonds);
             }
         } else {
             let ca_positions: Vec<Vec3> = new_backbone
@@ -365,30 +363,40 @@ impl ProteinRenderEngine {
                     ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO)
                 })
                 .collect();
-            self.sc.start_backbone_sidechain_bonds =
-                backbone_sidechain_bonds.clone();
+            self.sc
+                .start_backbone_sidechain_bonds
+                .clone_from(backbone_sidechain_bonds);
         }
 
         // Set new targets and cached data
-        self.sc.target_sidechain_positions = sidechain_positions.clone();
-        self.sc.target_backbone_sidechain_bonds =
-            backbone_sidechain_bonds.clone();
-        self.sc.cached_sidechain_bonds = sidechain_bonds.clone();
-        self.sc.cached_sidechain_hydrophobicity =
-            sidechain_hydrophobicity.clone();
-        self.sc.cached_sidechain_residue_indices =
-            sidechain_residue_indices.clone();
-        self.sc.cached_sidechain_atom_names = sidechain_atom_names.clone();
+        self.sc
+            .target_sidechain_positions
+            .clone_from(sidechain_positions);
+        self.sc
+            .target_backbone_sidechain_bonds
+            .clone_from(backbone_sidechain_bonds);
+        self.sc.cached_sidechain_bonds.clone_from(sidechain_bonds);
+        self.sc
+            .cached_sidechain_hydrophobicity
+            .clone_from(sidechain_hydrophobicity);
+        self.sc
+            .cached_sidechain_residue_indices
+            .clone_from(sidechain_residue_indices);
+        self.sc
+            .cached_sidechain_atom_names
+            .clone_from(sidechain_atom_names);
 
         // Cache secondary structure types
         if let Some(ref ss) = prepared.ss_types {
-            self.sc.cached_ss_types = ss.clone();
+            self.sc.cached_ss_types.clone_from(ss);
         } else {
             self.sc.cached_ss_types = self.compute_ss_types(new_backbone);
         }
 
         // Cache per-residue colors (derived from scores by scene processor)
-        self.sc.cached_per_residue_colors = prepared.per_residue_colors.clone();
+        self.sc
+            .cached_per_residue_colors
+            .clone_from(&prepared.per_residue_colors);
 
         // Extract CA positions for sidechain collapse animation
         let ca_positions: Vec<Vec3> = new_backbone
@@ -425,30 +433,41 @@ impl ProteinRenderEngine {
 
     /// Snap update from prepared scene data (no animation).
     fn snap_from_prepared(&mut self, prepared: &PreparedScene) {
-        self.sc.target_sidechain_positions =
-            prepared.sidechain.positions.clone();
-        self.sc.start_sidechain_positions =
-            prepared.sidechain.positions.clone();
-        self.sc.target_backbone_sidechain_bonds =
-            prepared.sidechain.backbone_bonds.clone();
-        self.sc.start_backbone_sidechain_bonds =
-            prepared.sidechain.backbone_bonds.clone();
-        self.sc.cached_sidechain_bonds = prepared.sidechain.bonds.clone();
-        self.sc.cached_sidechain_hydrophobicity =
-            prepared.sidechain.hydrophobicity.clone();
-        self.sc.cached_sidechain_residue_indices =
-            prepared.sidechain.residue_indices.clone();
-        self.sc.cached_sidechain_atom_names =
-            prepared.sidechain.atom_names.clone();
+        self.sc
+            .target_sidechain_positions
+            .clone_from(&prepared.sidechain.positions);
+        self.sc
+            .start_sidechain_positions
+            .clone_from(&prepared.sidechain.positions);
+        self.sc
+            .target_backbone_sidechain_bonds
+            .clone_from(&prepared.sidechain.backbone_bonds);
+        self.sc
+            .start_backbone_sidechain_bonds
+            .clone_from(&prepared.sidechain.backbone_bonds);
+        self.sc
+            .cached_sidechain_bonds
+            .clone_from(&prepared.sidechain.bonds);
+        self.sc
+            .cached_sidechain_hydrophobicity
+            .clone_from(&prepared.sidechain.hydrophobicity);
+        self.sc
+            .cached_sidechain_residue_indices
+            .clone_from(&prepared.sidechain.residue_indices);
+        self.sc
+            .cached_sidechain_atom_names
+            .clone_from(&prepared.sidechain.atom_names);
 
         if let Some(ref ss) = prepared.ss_types {
-            self.sc.cached_ss_types = ss.clone();
+            self.sc.cached_ss_types.clone_from(ss);
         } else {
             self.sc.cached_ss_types =
                 self.compute_ss_types(&prepared.backbone_chains);
         }
 
-        self.sc.cached_per_residue_colors = prepared.per_residue_colors.clone();
+        self.sc
+            .cached_per_residue_colors
+            .clone_from(&prepared.per_residue_colors);
 
         let total_residues: usize =
             prepared.backbone_chains.iter().map(|c| c.len() / 3).sum();
@@ -672,13 +691,7 @@ impl ProteinRenderEngine {
         self.backbone_renderer.apply_mesh(
             &self.context.device,
             &self.context.queue,
-            &prepared.backbone.vertices,
-            &prepared.backbone.tube_indices,
-            &prepared.backbone.ribbon_indices,
-            prepared.backbone.tube_index_count,
-            prepared.backbone.ribbon_index_count,
-            prepared.backbone.sheet_offsets,
-            prepared.backbone.chain_ranges,
+            prepared.backbone,
         );
 
         if let Some(ref instances) = prepared.sidechain_instances {

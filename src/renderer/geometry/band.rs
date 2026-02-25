@@ -16,10 +16,10 @@
 
 use glam::Vec3;
 
-use super::primitives::{capsule::CapsuleInstance, ImpostorPass};
 use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
     options::ColorOptions,
+    renderer::impostor::{capsule::CapsuleInstance, ImpostorPass, ShaderDef},
 };
 
 // Foldit color constants for bands
@@ -119,16 +119,16 @@ impl BandRenderer {
     /// Create a new band renderer with empty instance buffer.
     pub fn new(
         context: &RenderContext,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
+        layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
         let pass = ImpostorPass::new(
             context,
-            "Band",
-            "raster/impostor/capsule.wgsl",
-            [camera_layout, lighting_layout, selection_layout],
+            &ShaderDef {
+                label: "Band",
+                path: "raster/impostor/capsule.wgsl",
+            },
+            layouts,
             6,
             shader_composer,
         );
@@ -323,7 +323,7 @@ impl BandRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+        bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
     ) {
         self.pass.draw(render_pass, bind_groups);
     }
@@ -331,15 +331,5 @@ impl BandRenderer {
     /// Get band count for debugging
     pub fn band_count(&self) -> u32 {
         self.pass.instance_count
-    }
-}
-
-impl super::MolecularRenderer for BandRenderer {
-    fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
-    ) {
-        self.draw(render_pass, bind_groups);
     }
 }

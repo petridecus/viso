@@ -10,7 +10,7 @@ use super::PerEntityData;
 use crate::{
     animation::transition::Transition,
     options::{ColorOptions, DisplayOptions, GeometryOptions},
-    renderer::molecular::backbone::ChainRange,
+    renderer::geometry::backbone::ChainRange,
 };
 
 /// Fallback color for residues without score data (neutral gray).

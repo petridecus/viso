@@ -13,10 +13,11 @@ use super::{
 };
 use crate::{
     options::{ColorOptions, DisplayOptions, GeometryOptions},
-    renderer::molecular::{
-        backbone::BackboneRenderer, ball_and_stick::BallAndStickRenderer,
-        capsule_sidechain::CapsuleSidechainRenderer,
+    renderer::geometry::{
+        backbone::{BackboneRenderer, ChainPair},
+        ball_and_stick::BallAndStickRenderer,
         nucleic_acid::NucleicAcidRenderer,
+        sidechain::{SidechainData, SidechainRenderer},
     },
     util::{
         score_color,
@@ -55,8 +56,10 @@ pub fn generate_entity_mesh(
         sheet_offsets,
         backbone_chain_ranges,
     ) = BackboneRenderer::generate_mesh_colored(
-        &g.backbone_chains,
-        &g.nucleic_acid_chains,
+        &ChainPair {
+            protein: &g.backbone_chains,
+            na: &g.nucleic_acid_chains,
+        },
         g.ss_override.as_deref(),
         per_residue_colors.as_deref(),
         geometry,
@@ -85,12 +88,15 @@ pub fn generate_entity_mesh(
         &sidechain_residue_indices,
         &offset_map,
     );
-    let sidechain_insts = CapsuleSidechainRenderer::generate_instances(
-        &adjusted_positions,
-        &g.sidechain_bonds,
-        &adjusted_bonds,
-        &sidechain_hydrophobicity,
-        &sidechain_residue_indices,
+    let sd = SidechainData {
+        positions: &adjusted_positions,
+        bonds: &g.sidechain_bonds,
+        backbone_bonds: &adjusted_bonds,
+        hydrophobicity: &sidechain_hydrophobicity,
+        residue_indices: &sidechain_residue_indices,
+    };
+    let sidechain_insts = SidechainRenderer::generate_instances(
+        &sd,
         None,
         Some((colors.hydrophobic_sidechain, colors.hydrophilic_sidechain)),
     );
@@ -189,8 +195,10 @@ pub fn process_animation_frame(
     let safe_geo = geometry.clamped_for_residues(total_residues);
     let (verts, tube_inds, ribbon_inds, sheet_offsets, chain_ranges) =
         BackboneRenderer::generate_mesh_colored(
-            &backbone_chains,
-            &na_chains,
+            &ChainPair {
+                protein: &backbone_chains,
+                na: &na_chains,
+            },
             ss_types.as_deref(),
             per_residue_colors.as_deref(),
             &safe_geo,
@@ -217,15 +225,14 @@ pub fn process_animation_frame(
                 &sc.sidechain_residue_indices,
                 &offset_map,
             );
-            let insts = CapsuleSidechainRenderer::generate_instances(
-                &adjusted_positions,
-                &sc.sidechain_bonds,
-                &adjusted_bonds,
-                &sc.sidechain_hydrophobicity,
-                &sc.sidechain_residue_indices,
-                None,
-                None,
-            );
+            let sd = SidechainData {
+                positions: &adjusted_positions,
+                bonds: &sc.sidechain_bonds,
+                backbone_bonds: &adjusted_bonds,
+                hydrophobicity: &sc.sidechain_hydrophobicity,
+                residue_indices: &sc.sidechain_residue_indices,
+            };
+            let insts = SidechainRenderer::generate_instances(&sd, None, None);
             let count = insts.len() as u32;
             (Some(bytemuck::cast_slice(&insts).to_vec()), count)
         } else {

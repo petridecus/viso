@@ -232,10 +232,6 @@ impl FxaaPass {
 }
 
 impl ScreenPass for FxaaPass {
-    fn label(&self) -> &'static str {
-        "FXAA"
-    }
-
     fn render(&self, encoder: &mut wgpu::CommandEncoder) {
         let Some(output_view) = &self.output_view else {
             return;

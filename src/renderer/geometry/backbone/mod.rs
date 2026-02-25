@@ -5,18 +5,14 @@
 //! - **Ribbon pass** (no culling): flat cross-sections
 
 pub(crate) mod mesh;
+pub(crate) mod path;
 pub(crate) mod profile;
-pub(crate) mod sheet;
 pub(crate) mod spline;
 
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 pub(crate) use mesh::ChainRange;
 
-use super::{
-    draw_context::DrawBindGroups,
-    mesh_pass::{create_mesh_pipeline, MeshPass},
-};
 use crate::{
     camera::frustum::Frustum,
     gpu::{
@@ -24,6 +20,10 @@ use crate::{
         shader_composer::ShaderComposer,
     },
     options::GeometryOptions,
+    renderer::{
+        draw_context::DrawBindGroups,
+        mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef},
+    },
     util::hash::hash_vec3_slices,
 };
 
@@ -74,6 +74,14 @@ pub fn backbone_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+// ==================== INPUT DATA ====================
+
+/// Paired backbone chain input (protein CA/N/C triples + nucleic acid P atoms).
+pub struct ChainPair<'a> {
+    pub protein: &'a [Vec<Vec3>],
+    pub na: &'a [Vec<Vec3>],
+}
+
 // ==================== PREPARED DATA ====================
 
 /// Pre-computed backbone mesh for GPU upload (from scene processor).
@@ -109,12 +117,9 @@ pub struct BackboneRenderer {
 impl BackboneRenderer {
     pub fn new(
         context: &RenderContext,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
+        layouts: &crate::renderer::PipelineLayouts,
         color_layout: &wgpu::BindGroupLayout,
-        protein_chains: &[Vec<Vec3>],
-        na_chains: &[Vec<Vec3>],
+        chains: &ChainPair,
         shader_composer: &mut ShaderComposer,
     ) -> Self {
         // No mesh generation here — the scene processor background thread
@@ -130,30 +135,34 @@ impl BackboneRenderer {
             wgpu::BufferUsages::VERTEX,
         );
 
-        let layouts = &[
-            camera_layout,
-            lighting_layout,
-            selection_layout,
+        let mesh_layouts = &[
+            &layouts.camera,
+            &layouts.lighting,
+            &layouts.selection,
             color_layout,
         ];
         let vl = backbone_vertex_buffer_layout();
 
         let tube_pipeline = create_mesh_pipeline(
             context,
-            "Backbone Tube",
-            "raster/mesh/backbone_tube.wgsl",
-            Some(wgpu::Face::Back),
-            layouts,
-            vl.clone(),
+            &MeshPipelineDef {
+                label: "Backbone Tube",
+                shader_path: "raster/mesh/backbone_tube.wgsl",
+                cull_mode: Some(wgpu::Face::Back),
+                vertex_layout: vl.clone(),
+            },
+            mesh_layouts,
             shader_composer,
         );
         let ribbon_pipeline = create_mesh_pipeline(
             context,
-            "Backbone Ribbon",
-            "raster/mesh/backbone_tube.wgsl",
-            None,
-            layouts,
-            vl,
+            &MeshPipelineDef {
+                label: "Backbone Ribbon",
+                shader_path: "raster/mesh/backbone_tube.wgsl",
+                cull_mode: None,
+                vertex_layout: vl,
+            },
+            mesh_layouts,
             shader_composer,
         );
 
@@ -170,9 +179,9 @@ impl BackboneRenderer {
             tube_pass,
             ribbon_pass,
             vertex_buffer,
-            last_hash: combined_hash(protein_chains, na_chains),
-            cached_chains: protein_chains.to_vec(),
-            cached_na_chains: na_chains.to_vec(),
+            last_hash: combined_hash(chains.protein, chains.na),
+            cached_chains: chains.protein.to_vec(),
+            cached_na_chains: chains.na.to_vec(),
             ss_override: None,
             sheet_offsets: Vec::new(),
             chain_ranges: Vec::new(),
@@ -335,31 +344,27 @@ impl BackboneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        vertices: &[u8],
-        tube_indices: &[u8],
-        ribbon_indices: &[u8],
-        tube_index_count: u32,
-        ribbon_index_count: u32,
-        sheet_offsets: Vec<(u32, Vec3)>,
-        chain_ranges: Vec<ChainRange>,
+        mesh: crate::scene::prepared::BackboneMeshData,
     ) {
-        if !vertices.is_empty() {
-            let _ = self.vertex_buffer.write_bytes(device, queue, vertices);
+        if !mesh.vertices.is_empty() {
+            let _ =
+                self.vertex_buffer
+                    .write_bytes(device, queue, &mesh.vertices);
             self.tube_pass.write_indices_bytes(
                 device,
                 queue,
-                tube_indices,
-                tube_index_count,
+                &mesh.tube_indices,
+                mesh.tube_index_count,
             );
             self.ribbon_pass.write_indices_bytes(
                 device,
                 queue,
-                ribbon_indices,
-                ribbon_index_count,
+                &mesh.ribbon_indices,
+                mesh.ribbon_index_count,
             );
         }
-        self.sheet_offsets = sheet_offsets;
-        self.chain_ranges = chain_ranges;
+        self.sheet_offsets = mesh.sheet_offsets;
+        self.chain_ranges = mesh.chain_ranges;
     }
 
     // ── Accessors ──
@@ -422,8 +427,7 @@ impl BackboneRenderer {
     // ── Static mesh generation ──
 
     pub(crate) fn generate_mesh(
-        protein_chains: &[Vec<Vec3>],
-        na_chains: &[Vec<Vec3>],
+        chains: &ChainPair,
         ss_override: Option<&[SSType]>,
         geo: &GeometryOptions,
     ) -> (
@@ -433,19 +437,11 @@ impl BackboneRenderer {
         Vec<(u32, Vec3)>,
         Vec<ChainRange>,
     ) {
-        mesh::generate_mesh_colored(
-            protein_chains,
-            na_chains,
-            ss_override,
-            None,
-            geo,
-            None,
-        )
+        mesh::generate_mesh_colored(chains, ss_override, None, geo, None)
     }
 
     pub(crate) fn generate_mesh_colored(
-        protein_chains: &[Vec<Vec3>],
-        na_chains: &[Vec<Vec3>],
+        chains: &ChainPair,
         ss_override: Option<&[SSType]>,
         per_residue_colors: Option<&[[f32; 3]]>,
         geo: &GeometryOptions,
@@ -458,8 +454,7 @@ impl BackboneRenderer {
         Vec<ChainRange>,
     ) {
         mesh::generate_mesh_colored(
-            protein_chains,
-            na_chains,
+            chains,
             ss_override,
             per_residue_colors,
             geo,
@@ -475,12 +470,12 @@ impl BackboneRenderer {
         queue: &wgpu::Queue,
         geo: &GeometryOptions,
     ) {
-        let (verts, t_idx, r_idx, offsets, ranges) = Self::generate_mesh(
-            &self.cached_chains,
-            &self.cached_na_chains,
-            self.ss_override.as_deref(),
-            geo,
-        );
+        let chains = ChainPair {
+            protein: &self.cached_chains,
+            na: &self.cached_na_chains,
+        };
+        let (verts, t_idx, r_idx, offsets, ranges) =
+            Self::generate_mesh(&chains, self.ss_override.as_deref(), geo);
         if verts.is_empty() {
             self.tube_pass.index_count = 0;
             self.ribbon_pass.index_count = 0;
@@ -492,16 +487,6 @@ impl BackboneRenderer {
         self.ribbon_pass.write_indices(device, queue, &r_idx);
         self.sheet_offsets = offsets;
         self.chain_ranges = ranges;
-    }
-}
-
-impl super::MolecularRenderer for BackboneRenderer {
-    fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &DrawBindGroups<'a>,
-    ) {
-        self.draw(render_pass, bind_groups);
     }
 }
 

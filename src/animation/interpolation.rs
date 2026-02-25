@@ -1,7 +1,5 @@
 //! Centralized interpolation utilities for animation.
 
-use glam::Vec3;
-
 /// Per-frame interpolation context computed once from behavior + raw progress,
 /// then shared across all interpolation to prevent backbone/sidechain desync.
 #[derive(Debug, Clone, Copy)]
@@ -71,24 +69,6 @@ impl Default for InterpolationContext {
     }
 }
 
-/// Lerp two positions using the context's unified progress.
-#[inline]
-pub fn lerp_position(
-    ctx: &InterpolationContext,
-    start: Vec3,
-    end: Vec3,
-) -> Vec3 {
-    let t = ctx.unified_t();
-    start + (end - start) * t
-}
-
-/// Lerp two f32 values using the context's unified progress.
-#[inline]
-pub fn lerp_f32(ctx: &InterpolationContext, start: f32, end: f32) -> f32 {
-    let t = ctx.unified_t();
-    start + (end - start) * t
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,22 +87,6 @@ mod tests {
         assert_eq!(ctx.raw_t, 0.5);
         assert_eq!(ctx.eased_t, 0.7);
         assert_eq!(ctx.unified_t(), 0.7);
-    }
-
-    #[test]
-    fn test_lerp_position() {
-        let ctx = InterpolationContext::simple(0.5, 0.5);
-        let start = Vec3::ZERO;
-        let end = Vec3::new(10.0, 20.0, 30.0);
-        let result = lerp_position(&ctx, start, end);
-        assert!((result - Vec3::new(5.0, 10.0, 15.0)).length() < 0.001);
-    }
-
-    #[test]
-    fn test_lerp_f32() {
-        let ctx = InterpolationContext::simple(0.25, 0.25);
-        let result = lerp_f32(&ctx, 0.0, 100.0);
-        assert!((result - 25.0).abs() < 0.001);
     }
 
     #[test]

@@ -12,11 +12,12 @@ use std::{
 use foldit_conv::coords::entity::NucleotideRing;
 use glam::Vec3;
 
-use super::primitives::{
-    capsule::CapsuleInstance, polygon::ExtrudedPolygonInstance, ImpostorPass,
-};
 use crate::{
     gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
+    renderer::impostor::{
+        capsule::CapsuleInstance, polygon::ExtrudedPolygonInstance,
+        ImpostorPass, ShaderDef,
+    },
     util::hash::{hash_vec3, hash_vec3_slice_summary},
 };
 
@@ -41,19 +42,17 @@ impl NucleicAcidRenderer {
     /// Create a new nucleic acid renderer from phosphorus atom chains.
     pub fn new(
         context: &RenderContext,
-        camera_layout: &wgpu::BindGroupLayout,
-        lighting_layout: &wgpu::BindGroupLayout,
-        selection_layout: &wgpu::BindGroupLayout,
+        layouts: &crate::renderer::PipelineLayouts,
         na_chains: &[Vec<Vec3>],
         rings: &[NucleotideRing],
         shader_composer: &mut ShaderComposer,
     ) -> Self {
-        let layouts = [camera_layout, lighting_layout, selection_layout];
-
         let mut stem_pass = ImpostorPass::new(
             context,
-            "NA Stem",
-            "raster/impostor/capsule.wgsl",
+            &ShaderDef {
+                label: "NA Stem",
+                path: "raster/impostor/capsule.wgsl",
+            },
             layouts,
             6,
             shader_composer,
@@ -61,8 +60,10 @@ impl NucleicAcidRenderer {
 
         let mut ring_pass = ImpostorPass::new(
             context,
-            "NA Ring",
-            "raster/impostor/polygon.wgsl",
+            &ShaderDef {
+                label: "NA Ring",
+                path: "raster/impostor/polygon.wgsl",
+            },
             layouts,
             72,
             shader_composer,
@@ -114,7 +115,7 @@ impl NucleicAcidRenderer {
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
+        bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
     ) {
         self.stem_pass.draw(render_pass, bind_groups);
         self.ring_pass.draw(render_pass, bind_groups);
@@ -125,19 +126,21 @@ impl NucleicAcidRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        stem_bytes: &[u8],
-        stem_count: u32,
-        ring_bytes: &[u8],
-        ring_count: u32,
+        na: &crate::scene::prepared::NucleicAcidInstances,
     ) {
-        let _ = self
-            .stem_pass
-            .write_bytes(device, queue, stem_bytes, stem_count);
-        let _ = self
-            .ring_pass
-            .write_bytes(device, queue, ring_bytes, ring_count);
-        self.last_chain_hash = 0; // Invalidate hash so next synchronous update
-                                  // doesn't skip
+        let _ = self.stem_pass.write_bytes(
+            device,
+            queue,
+            &na.stem_instances,
+            na.stem_count,
+        );
+        let _ = self.ring_pass.write_bytes(
+            device,
+            queue,
+            &na.ring_instances,
+            na.ring_count,
+        );
+        self.last_chain_hash = 0;
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
@@ -236,16 +239,6 @@ impl NucleicAcidRenderer {
     }
 }
 
-impl super::MolecularRenderer for NucleicAcidRenderer {
-    fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &super::draw_context::DrawBindGroups<'a>,
-    ) {
-        self.draw(render_pass, bind_groups);
-    }
-}
-
 /// Build an `ExtrudedPolygonInstance` from a ring of 3–6 coplanar positions.
 fn make_polygon_instance(
     positions: &[Vec3],
@@ -254,7 +247,7 @@ fn make_polygon_instance(
     out: &mut Vec<ExtrudedPolygonInstance>,
 ) {
     let n = positions.len();
-    if n < 3 || n > 6 {
+    if !(3..=6).contains(&n) {
         return;
     }
 

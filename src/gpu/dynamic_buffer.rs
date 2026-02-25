@@ -162,11 +162,6 @@ impl DynamicBuffer {
         self.len
     }
 
-    /// Returns `true` if the buffer contains no data.
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// Returns the allocated capacity in bytes.
     pub fn capacity(&self) -> usize {
         self.capacity
@@ -183,35 +178,6 @@ pub struct TypedBuffer<T> {
 }
 
 impl<T: bytemuck::Pod> TypedBuffer<T> {
-    /// Default initial capacity: 1000 items.
-    pub fn new(
-        device: &wgpu::Device,
-        label: &str,
-        usage: wgpu::BufferUsages,
-    ) -> Self {
-        let initial_capacity = size_of::<T>() * 1000;
-        Self {
-            inner: DynamicBuffer::new(device, label, initial_capacity, usage),
-            count: 0,
-            _marker: std::marker::PhantomData,
-        }
-    }
-
-    /// Specified initial capacity (in items).
-    pub fn with_capacity(
-        device: &wgpu::Device,
-        label: &str,
-        capacity: usize,
-        usage: wgpu::BufferUsages,
-    ) -> Self {
-        let initial_capacity = size_of::<T>() * capacity;
-        Self {
-            inner: DynamicBuffer::new(device, label, initial_capacity, usage),
-            count: 0,
-            _marker: std::marker::PhantomData,
-        }
-    }
-
     /// Typed buffer initialized from existing data.
     pub fn new_with_data(
         device: &wgpu::Device,
@@ -256,21 +222,6 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     /// Returns a reference to the underlying `wgpu::Buffer`.
     pub fn buffer(&self) -> &wgpu::Buffer {
         self.inner.buffer()
-    }
-
-    /// Returns the number of `T` items currently stored.
-    pub fn count(&self) -> usize {
-        self.count
-    }
-
-    /// Returns `true` if the buffer contains no items.
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    /// Returns the allocated capacity in number of `T` items.
-    pub fn capacity(&self) -> usize {
-        self.inner.capacity() / size_of::<T>()
     }
 
     /// Returns the current data length in bytes.

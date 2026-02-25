@@ -766,10 +766,6 @@ impl BloomPass {
 }
 
 impl ScreenPass for BloomPass {
-    fn label(&self) -> &'static str {
-        "Bloom"
-    }
-
     fn render(&self, encoder: &mut wgpu::CommandEncoder) {
         self.render_bloom(encoder);
     }
