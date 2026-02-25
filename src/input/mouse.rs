@@ -113,8 +113,7 @@ impl InputState {
         }
 
         // Click on a target — same target on down and up
-        if !mouse_down_target.is_none()
-            && mouse_down_target == mouse_up_target
+        if !mouse_down_target.is_none() && mouse_down_target == mouse_up_target
         {
             // Check for multi-click on the same target
             if now.duration_since(self.last_click_time) < DOUBLE_CLICK_THRESHOLD

@@ -54,7 +54,7 @@ use crate::camera::frustum::Frustum;
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::DynamicBuffer;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::options::GeometryOptions;
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef};
@@ -113,6 +113,14 @@ pub fn backbone_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
 pub struct ChainPair<'a> {
     pub protein: &'a [Vec<Vec3>],
     pub na: &'a [Vec<Vec3>],
+}
+
+/// Input data for [`BackboneRenderer::update`].
+pub struct BackboneUpdateData<'a> {
+    pub protein_chains: &'a [Vec<Vec3>],
+    pub na_chains: &'a [Vec<Vec3>],
+    pub ss_types: Option<&'a [SSType]>,
+    pub geometry: &'a GeometryOptions,
 }
 
 // ==================== PREPARED DATA ====================
@@ -179,7 +187,7 @@ impl BackboneRenderer {
             context,
             &MeshPipelineDef {
                 label: "Backbone Tube",
-                shader_path: "raster/mesh/backbone_tube.wgsl",
+                shader: Shader::BackboneTube,
                 cull_mode: Some(wgpu::Face::Back),
                 vertex_layout: vl.clone(),
             },
@@ -190,7 +198,7 @@ impl BackboneRenderer {
             context,
             &MeshPipelineDef {
                 label: "Backbone Ribbon",
-                shader_path: "raster/mesh/backbone_tube.wgsl",
+                shader: Shader::BackboneTube,
                 cull_mode: None,
                 vertex_layout: vl,
             },
@@ -271,24 +279,20 @@ impl BackboneRenderer {
 
     pub fn update(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        protein_chains: &[Vec<Vec3>],
-        na_chains: &[Vec<Vec3>],
-        ss_types: Option<&[SSType]>,
-        geo: &GeometryOptions,
+        context: &RenderContext,
+        data: &BackboneUpdateData,
     ) {
-        let new_hash = combined_hash(protein_chains, na_chains);
-        if new_hash == self.last_hash && ss_types.is_none() {
+        let new_hash = combined_hash(data.protein_chains, data.na_chains);
+        if new_hash == self.last_hash && data.ss_types.is_none() {
             return;
         }
         self.last_hash = new_hash;
-        self.cached_chains = protein_chains.to_vec();
-        self.cached_na_chains = na_chains.to_vec();
-        if let Some(ss) = ss_types {
+        self.cached_chains = data.protein_chains.to_vec();
+        self.cached_na_chains = data.na_chains.to_vec();
+        if let Some(ss) = data.ss_types {
             self.ss_override = Some(ss.to_vec());
         }
-        self.write_mesh(device, queue, geo);
+        self.write_mesh(&context.device, &context.queue, data.geometry);
     }
 
     pub fn set_ss_override(&mut self, ss_types: Option<Vec<SSType>>) {

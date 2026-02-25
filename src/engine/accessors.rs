@@ -114,10 +114,8 @@ impl ProteinRenderEngine {
     ) -> Vec3 {
         let (w, h) = self.screen_size();
         self.camera_controller.screen_to_world_at_depth(
-            screen_x,
-            screen_y,
-            w,
-            h,
+            glam::Vec2::new(screen_x, screen_y),
+            glam::UVec2::new(w, h),
             reference_point,
         )
     }
@@ -130,7 +128,6 @@ impl ProteinRenderEngine {
     pub fn set_render_scale(&mut self, scale: u32) {
         self.context.render_scale = scale;
     }
-
 }
 
 // ── Visualization (bands, pulls) ──

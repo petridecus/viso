@@ -8,6 +8,7 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::animation::transition::Transition;
+use crate::renderer::geometry::backbone::BackboneUpdateData;
 use crate::renderer::geometry::band::BandRenderInfo;
 use crate::renderer::geometry::pull::PullRenderInfo;
 use crate::renderer::geometry::sidechain::SidechainView;
@@ -17,12 +18,13 @@ impl ProteinRenderEngine {
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
         self.renderers.backbone.update(
-            &self.context.device,
-            &self.context.queue,
-            backbone_chains,
-            &[], // NA chains unchanged
-            None,
-            &self.options.geometry,
+            &self.context,
+            &BackboneUpdateData {
+                protein_chains: backbone_chains,
+                na_chains: &[],
+                ss_types: None,
+                geometry: &self.options.geometry,
+            },
         );
     }
 
@@ -134,7 +136,8 @@ impl ProteinRenderEngine {
     /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
         self.sc.cached_ss_types = ss_types.to_vec();
-        self.renderers.backbone
+        self.renderers
+            .backbone
             .set_ss_override(Some(ss_types.to_vec()));
         let camera_eye = self.camera_controller.camera.eye;
         self.submit_per_chain_lod_remesh(camera_eye);
@@ -162,7 +165,8 @@ impl ProteinRenderEngine {
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.renderers.backbone
+        self.renderers
+            .backbone
             .sheet_offsets()
             .iter()
             .copied()

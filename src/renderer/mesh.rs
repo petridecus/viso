@@ -11,13 +11,13 @@
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::DynamicBuffer;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::pipeline_util;
 
 /// Description of an indexed-mesh render pipeline.
-pub(crate) struct MeshPipelineDef<'a> {
-    pub label: &'a str,
-    pub shader_path: &'a str,
+pub(crate) struct MeshPipelineDef {
+    pub label: &'static str,
+    pub shader: Shader,
     pub cull_mode: Option<wgpu::Face>,
     pub vertex_layout: wgpu::VertexBufferLayout<'static>,
 }
@@ -25,13 +25,12 @@ pub(crate) struct MeshPipelineDef<'a> {
 /// Create a standard indexed-mesh render pipeline.
 pub(crate) fn create_mesh_pipeline(
     context: &RenderContext,
-    def: &MeshPipelineDef<'_>,
+    def: &MeshPipelineDef,
     bind_group_layouts: &[&wgpu::BindGroupLayout],
     shader_composer: &mut ShaderComposer,
 ) -> Result<wgpu::RenderPipeline, VisoError> {
     let label = def.label;
-    let shader =
-        shader_composer.compose(&context.device, label, def.shader_path)?;
+    let shader = shader_composer.compose(&context.device, def.shader)?;
 
     let pipeline_layout = context.device.create_pipeline_layout(
         &wgpu::PipelineLayoutDescriptor {

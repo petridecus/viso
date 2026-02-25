@@ -18,7 +18,7 @@ use glam::Vec3;
 
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::options::ColorOptions;
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::{ImpostorPass, ShaderDef};
@@ -128,7 +128,7 @@ impl BandRenderer {
             context,
             &ShaderDef {
                 label: "Band",
-                path: "raster/impostor/capsule.wgsl",
+                shader: Shader::Capsule,
             },
             layouts,
             6,
@@ -329,5 +329,4 @@ impl BandRenderer {
     ) {
         self.pass.draw(render_pass, bind_groups);
     }
-
 }

@@ -11,9 +11,10 @@ use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
     create_screen_space_pipeline, depth_texture_2d, filtering_sampler,
     linear_sampler, non_filtering_sampler, texture_2d, uniform_buffer,
+    ScreenSpacePipelineDef,
 };
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 
 /// External texture view inputs for creating a composite pass.
 pub struct CompositeInputs<'a> {
@@ -237,18 +238,17 @@ impl CompositePass {
         shader_composer: &mut ShaderComposer,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Composite Shader",
-            "screen/composite.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::Composite)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "Composite",
-            &shader,
-            context.config.format,
-            None,
-            &[bind_group_layout],
+            &ScreenSpacePipelineDef {
+                label: "Composite",
+                shader: &shader,
+                format: context.config.format,
+                blend: None,
+                bind_group_layouts: &[bind_group_layout],
+            },
         ))
     }
 

@@ -12,7 +12,7 @@ use glam::Vec3;
 
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::polygon::ExtrudedPolygonInstance;
 use crate::renderer::impostor::{ImpostorPass, ShaderDef};
@@ -48,7 +48,7 @@ impl NucleicAcidRenderer {
             context,
             &ShaderDef {
                 label: "NA Stem",
-                path: "raster/impostor/capsule.wgsl",
+                shader: Shader::Capsule,
             },
             layouts,
             6,
@@ -59,7 +59,7 @@ impl NucleicAcidRenderer {
             context,
             &ShaderDef {
                 label: "NA Ring",
-                path: "raster/impostor/polygon.wgsl",
+                shader: Shader::Polygon,
             },
             layouts,
             72,

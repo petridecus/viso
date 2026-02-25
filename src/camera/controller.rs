@@ -1,4 +1,4 @@
-use glam::{Quat, Vec2, Vec3};
+use glam::{Quat, UVec2, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::camera::core::{Camera, CameraUniform};
@@ -51,30 +51,16 @@ pub struct CameraController {
 }
 
 impl CameraController {
-    /// Create a new camera controller with default orbital parameters and GPU
-    /// resources.
-    pub fn new(context: &RenderContext) -> Self {
-        let focus_point = Vec3::new(50.0, 50.0, 50.0);
-        let distance = 150.0;
-        let orientation = Quat::IDENTITY;
-
-        let camera = Camera {
-            eye: focus_point + Vec3::new(0.0, 0.0, distance),
-            target: focus_point,
-            up: Vec3::Y,
-            aspect: context.config.width as f32 / context.config.height as f32,
-            fovy: 45.0,
-            znear: 5.0,
-            zfar: 2000.0,
-        };
-
-        let mut uniform = CameraUniform::new();
-        uniform.update_view_proj(&camera);
-
+    /// Create the GPU buffer, bind group layout, and bind group for the camera
+    /// uniform.
+    fn create_gpu_resources(
+        context: &RenderContext,
+        uniform: &CameraUniform,
+    ) -> (wgpu::Buffer, wgpu::BindGroupLayout, wgpu::BindGroup) {
         let buffer = context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
-                contents: bytemuck::cast_slice(&[uniform]),
+                contents: bytemuck::cast_slice(&[*uniform]),
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST,
             },
@@ -108,6 +94,32 @@ impl CameraController {
                     }],
                     label: Some("Camera Bind Group"),
                 });
+
+        (buffer, layout, bind_group)
+    }
+
+    /// Create a new camera controller with default orbital parameters and GPU
+    /// resources.
+    pub fn new(context: &RenderContext) -> Self {
+        let focus_point = Vec3::new(50.0, 50.0, 50.0);
+        let distance = 150.0;
+        let orientation = Quat::IDENTITY;
+
+        let camera = Camera {
+            eye: focus_point + Vec3::new(0.0, 0.0, distance),
+            target: focus_point,
+            up: Vec3::Y,
+            aspect: context.config.width as f32 / context.config.height as f32,
+            fovy: 45.0,
+            znear: 5.0,
+            zfar: 2000.0,
+        };
+
+        let mut uniform = CameraUniform::new();
+        uniform.update_view_proj(&camera);
+
+        let (buffer, layout, bind_group) =
+            Self::create_gpu_resources(context, &uniform);
 
         Self {
             orientation,
@@ -415,15 +427,13 @@ impl CameraController {
     ///   parallel to the camera at this point's depth
     pub fn screen_to_world_at_depth(
         &self,
-        screen_x: f32,
-        screen_y: f32,
-        screen_width: u32,
-        screen_height: u32,
+        screen_pos: Vec2,
+        viewport_size: UVec2,
         world_point: Vec3,
     ) -> Vec3 {
         // Convert screen coords to NDC [-1, 1]
-        let ndc_x = (2.0 * screen_x / screen_width as f32) - 1.0;
-        let ndc_y = 1.0 - (2.0 * screen_y / screen_height as f32); // flip Y
+        let ndc_x = (2.0 * screen_pos.x / viewport_size.x as f32) - 1.0;
+        let ndc_y = 1.0 - (2.0 * screen_pos.y / viewport_size.y as f32); // flip Y
 
         // Calculate the depth of the world_point from camera
         let to_point = world_point - self.camera.eye;

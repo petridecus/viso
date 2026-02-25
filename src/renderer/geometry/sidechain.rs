@@ -13,7 +13,7 @@ use glam::Vec3;
 use crate::camera::frustum::Frustum;
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::{ImpostorPass, ShaderDef};
 
@@ -90,7 +90,7 @@ impl SidechainRenderer {
             context,
             &ShaderDef {
                 label: "Capsule Sidechain",
-                path: "raster/impostor/capsule.wgsl",
+                shader: Shader::Capsule,
             },
             layouts,
             6,
@@ -176,7 +176,25 @@ impl SidechainRenderer {
             });
         }
 
-        // Backbone-sidechain bonds (CA to CB)
+        Self::emit_backbone_bonds(
+            sidechain,
+            &get_color,
+            &get_residue_idx,
+            &is_visible,
+            &mut instances,
+        );
+
+        instances
+    }
+
+    /// Emit backbone-sidechain bonds (CA to CB) as capsule instances.
+    fn emit_backbone_bonds(
+        sidechain: &SidechainView,
+        get_color: &impl Fn(usize) -> [f32; 3],
+        get_residue_idx: &impl Fn(usize) -> f32,
+        is_visible: &impl Fn(Vec3, Vec3) -> bool,
+        instances: &mut Vec<CapsuleInstance>,
+    ) {
         for &(ca_pos, cb_idx) in sidechain.backbone_bonds {
             let cb_idx = cb_idx as usize;
             if cb_idx >= sidechain.positions.len() {
@@ -201,8 +219,6 @@ impl SidechainRenderer {
                 color_b: [cb_color[0], cb_color[1], cb_color[2], 0.0],
             });
         }
-
-        instances
     }
 
     /// Update sidechain geometry (no frustum culling).

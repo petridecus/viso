@@ -7,11 +7,23 @@ use glam::Vec3;
 
 use super::ProteinRenderEngine;
 use crate::animation::transition::Transition;
-use crate::renderer::geometry::backbone::PreparedBackboneData;
+use crate::renderer::geometry::backbone::{
+    BackboneUpdateData, PreparedBackboneData,
+};
 use crate::renderer::geometry::ball_and_stick::PreparedBallAndStickData;
 use crate::renderer::geometry::sidechain::SidechainView;
 use crate::scene::{PreparedScene, SceneRequest};
 use crate::util::score_color;
+
+/// Input data for [`ProteinRenderEngine::update_from_aggregated`].
+pub struct AggregatedSceneData<'a> {
+    pub backbone_chains: &'a [Vec<Vec3>],
+    pub sidechain: &'a SidechainView<'a>,
+    pub sidechain_atom_names: &'a [String],
+    pub all_positions: &'a [Vec3],
+    pub fit_camera: bool,
+    pub ss_types: Option<&'a [SSType]>,
+}
 
 impl ProteinRenderEngine {
     /// Update all renderers from aggregated scene data
@@ -19,40 +31,35 @@ impl ProteinRenderEngine {
     /// This is the main integration point for the Scene-based rendering model.
     /// Call this whenever structures are added, removed, or modified in the
     /// scene.
-    pub fn update_from_aggregated(
-        &mut self,
-        backbone_chains: &[Vec<Vec3>],
-        sidechain: &SidechainView,
-        sidechain_atom_names: &[String],
-        all_positions: &[Vec3],
-        fit_camera: bool,
-        ss_types: Option<&[SSType]>,
-    ) {
+    pub fn update_from_aggregated(&mut self, data: &AggregatedSceneData) {
         // Calculate total residues from backbone chains (3 atoms per residue:
         // N, CA, C)
-        let total_residues =
-            crate::util::sheet_adjust::backbone_residue_count(backbone_chains);
+        let total_residues = crate::util::sheet_adjust::backbone_residue_count(
+            data.backbone_chains,
+        );
 
         // Ensure selection buffer has capacity for all residues (including new
         // structures)
-        self.pick.selection
+        self.pick
+            .selection
             .ensure_capacity(&self.context.device, total_residues);
 
         // Update backbone renderer (protein + NA)
         self.renderers.backbone.update(
-            &self.context.device,
-            &self.context.queue,
-            backbone_chains,
-            &[], // NA chains not available in this path
-            ss_types,
-            &self.options.geometry,
+            &self.context,
+            &BackboneUpdateData {
+                protein_chains: data.backbone_chains,
+                na_chains: &[],
+                ss_types: data.ss_types,
+                geometry: &self.options.geometry,
+            },
         );
 
         // Translate sidechains onto sheet surface (whole sidechain, not just
         // CA-CB bond)
         let offset_map = self.sheet_offset_map();
         let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
-            sidechain,
+            data.sidechain,
             &offset_map,
         );
 
@@ -70,18 +77,19 @@ impl ProteinRenderEngine {
         );
 
         // Cache secondary structure types for double-click segment selection
-        self.sc.cached_ss_types = ss_types.map_or_else(
-            || Self::compute_ss_types(backbone_chains),
+        self.sc.cached_ss_types = data.ss_types.map_or_else(
+            || Self::compute_ss_types(data.backbone_chains),
             <[SSType]>::to_vec,
         );
 
         // Cache atom names for lookup by name (used for band tracking during
         // animation)
-        self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
+        self.sc.cached_sidechain_atom_names =
+            data.sidechain_atom_names.to_vec();
 
         // Fit camera if requested and we have positions
-        if fit_camera && !all_positions.is_empty() {
-            self.camera_controller.fit_to_positions(all_positions);
+        if data.fit_camera && !data.all_positions.is_empty() {
+            self.camera_controller.fit_to_positions(data.all_positions);
         }
     }
 
@@ -132,64 +140,13 @@ impl ProteinRenderEngine {
         });
     }
 
-    /// Apply any pending scene data from the background SceneProcessor.
-    ///
-    /// Called every frame from the main loop. If the background thread has
-    /// finished generating geometry, this uploads it to the GPU (<1ms) and
-    /// sets up animation.
-    pub fn apply_pending_scene(&mut self) {
-        let Some(prepared) = self.scene_processor.try_recv_scene() else {
-            return;
-        };
-
-        // Triple buffer automatically returns only the latest result,
-        // so no drain loop needed — stale intermediates are skipped.
-
-        // Animation target setup or snap update (fast: array copies + animator)
-        let dominant_transition = prepared.entity_transitions.values().next();
-        if prepared.entity_transitions.is_empty() {
-            self.snap_from_prepared(&prepared);
-        } else {
-            let transition = dominant_transition.cloned().unwrap_or_default();
-            self.setup_animation_targets_from_prepared(&prepared, &transition);
-
-            // Snap residues for entities NOT in entity_transitions
-            let active: HashSet<u32> =
-                prepared.entity_transitions.keys().copied().collect();
-            self.animator.snap_entities_without_action(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
-
-            // Remove non-targeted entity residues from the AnimationRunner
-            // so apply_to_state doesn't overwrite their snapped backbone state
-            self.animator.remove_non_targeted_from_runner(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
-
-            // Also snap engine-level sidechain start positions for non-targeted
-            // entities
-            self.snap_non_targeted_sidechains(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
-
-            // Immediately submit an animation frame so the background thread
-            // starts generating an interpolated mesh right away.  Since we skip
-            // vertex uploads from the FullRebuild during animation (to avoid a
-            // one-frame jump), this ensures the next render picks up a
-            // correctly interpolated mesh with minimal latency.
-            self.submit_animation_frame();
-        }
-
-        // GPU uploads — each is <0.2ms
-        // When animating, skip uploading vertex data for backbone renderers
-        // (tube + ribbon + sidechains) to avoid a one-frame jump to target
-        // positions. The animation frame path will provide interpolated meshes.
-        // We still update metadata (chains, SS types) so animation frames
-        // generate correct topology.
-        let animating = !prepared.entity_transitions.is_empty();
+    /// Upload prepared scene geometry to GPU renderers.
+    fn upload_prepared_to_gpu(
+        &mut self,
+        prepared: &PreparedScene,
+        animating: bool,
+        suppress_sidechains: bool,
+    ) {
         if animating {
             self.renderers.backbone.update_metadata(
                 prepared.backbone_chains.clone(),
@@ -213,8 +170,6 @@ impl ProteinRenderEngine {
                     ss_override: prepared.ss_types.clone(),
                 },
             );
-            let suppress_sidechains = dominant_transition
-                .is_some_and(|t| t.suppress_initial_sidechains);
             if !suppress_sidechains {
                 let _ = self.renderers.sidechain.apply_prepared(
                     &self.context.device,
@@ -252,6 +207,47 @@ impl ProteinRenderEngine {
             &self.renderers.sidechain,
             &self.renderers.ball_and_stick,
         );
+    }
+
+    /// Apply any pending scene data from the background SceneProcessor.
+    ///
+    /// Called every frame from the main loop. If the background thread has
+    /// finished generating geometry, this uploads it to the GPU (<1ms) and
+    /// sets up animation.
+    pub fn apply_pending_scene(&mut self) {
+        let Some(prepared) = self.scene_processor.try_recv_scene() else {
+            return;
+        };
+
+        let dominant_transition = prepared.entity_transitions.values().next();
+        let animating = !prepared.entity_transitions.is_empty();
+
+        if animating {
+            let transition = dominant_transition.cloned().unwrap_or_default();
+            self.setup_animation_targets_from_prepared(&prepared, &transition);
+
+            let active: HashSet<u32> =
+                prepared.entity_transitions.keys().copied().collect();
+            self.animator.snap_entities_without_action(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
+            self.animator.remove_non_targeted_from_runner(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
+            self.snap_non_targeted_sidechains(
+                &prepared.entity_residue_ranges,
+                &active,
+            );
+            self.submit_animation_frame();
+        } else {
+            self.snap_from_prepared(&prepared);
+        }
+
+        let suppress_sidechains =
+            dominant_transition.is_some_and(|t| t.suppress_initial_sidechains);
+        self.upload_prepared_to_gpu(&prepared, animating, suppress_sidechains);
     }
 
     /// Snap sidechain start positions to target for entities that are NOT
@@ -302,17 +298,12 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Set up animation targets from prepared scene data.
-    fn setup_animation_targets_from_prepared(
-        &mut self,
-        prepared: &PreparedScene,
-        transition: &Transition,
-    ) {
+    /// Capture sidechain start positions from prepared scene data.
+    fn capture_prepared_sidechain_start(&mut self, prepared: &PreparedScene) {
         let new_backbone = &prepared.backbone_chains;
         let sidechain_positions = prepared.sidechain.positions();
         let sidechain_residue_indices = prepared.sidechain.residue_indices();
 
-        // Capture current VISUAL positions as start (for smooth preemption)
         if self.sc.target_sidechain_positions.len() == sidechain_positions.len()
         {
             if self.animator.is_animating()
@@ -355,6 +346,17 @@ impl ProteinRenderEngine {
                 .start_backbone_sidechain_bonds
                 .clone_from(&prepared.sidechain.backbone_bonds);
         }
+    }
+
+    /// Set up animation targets from prepared scene data.
+    fn setup_animation_targets_from_prepared(
+        &mut self,
+        prepared: &PreparedScene,
+        transition: &Transition,
+    ) {
+        let new_backbone = &prepared.backbone_chains;
+
+        self.capture_prepared_sidechain_start(prepared);
 
         // Extract CA positions for sidechain collapse animation
         let ca_positions =
@@ -363,6 +365,8 @@ impl ProteinRenderEngine {
             );
 
         // Pass sidechain data to animator FIRST (before set_target)
+        let sidechain_positions = prepared.sidechain.positions();
+        let sidechain_residue_indices = prepared.sidechain.residue_indices();
         self.animator.set_sidechain_target_with_transition(
             &sidechain_positions,
             &sidechain_residue_indices,
@@ -392,9 +396,11 @@ impl ProteinRenderEngine {
         // Ensure selection/color buffers have capacity and update colors
         let total_residues =
             crate::util::sheet_adjust::backbone_residue_count(new_backbone);
-        self.pick.selection
+        self.pick
+            .selection
             .ensure_capacity(&self.context.device, total_residues);
-        self.pick.residue_colors
+        self.pick
+            .residue_colors
             .ensure_capacity(&self.context.device, total_residues);
 
         // Animate colors to new target
@@ -423,13 +429,16 @@ impl ProteinRenderEngine {
         let total_residues = crate::util::sheet_adjust::backbone_residue_count(
             &prepared.backbone_chains,
         );
-        self.pick.selection
+        self.pick
+            .selection
             .ensure_capacity(&self.context.device, total_residues);
-        self.pick.residue_colors
+        self.pick
+            .residue_colors
             .ensure_capacity(&self.context.device, total_residues);
 
         let colors = self.compute_per_residue_colors(&prepared.backbone_chains);
-        self.pick.residue_colors
+        self.pick
+            .residue_colors
             .set_colors_immediate(&self.context.queue, &colors);
         self.sc.cached_per_residue_colors = Some(colors);
     }
@@ -564,7 +573,8 @@ impl ProteinRenderEngine {
         let total_residues = crate::util::sheet_adjust::backbone_residue_count(
             self.renderers.backbone.cached_chains(),
         ) + self
-            .renderers.backbone
+            .renderers
+            .backbone
             .cached_na_chains()
             .iter()
             .map(Vec::len)
@@ -575,7 +585,8 @@ impl ProteinRenderEngine {
         let max_csv = base_geo.cross_section_verts;
 
         let per_chain_lod: Vec<(usize, usize)> = self
-            .renderers.backbone
+            .renderers
+            .backbone
             .chain_ranges()
             .iter()
             .map(|r| {

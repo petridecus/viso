@@ -15,13 +15,13 @@ use bytemuck::{Pod, Zeroable};
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::TypedBuffer;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::{pipeline_util, PipelineLayouts};
 
-/// Shader identity: label + path, always passed together.
-pub struct ShaderDef<'a> {
-    pub label: &'a str,
-    pub path: &'a str,
+/// Shader identity for an impostor pass.
+pub struct ShaderDef {
+    pub label: &'static str,
+    pub shader: Shader,
 }
 
 /// A single impostor draw pass: pipeline + typed storage buffer + bind group.
@@ -44,12 +44,12 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
     /// Create a new impostor pass with the given shader.
     pub fn new(
         context: &RenderContext,
-        shader: &ShaderDef,
+        shader_def: &ShaderDef,
         layouts: &PipelineLayouts,
         vertices_per_instance: u32,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, VisoError> {
-        let label = shader.label;
+        let label = shader_def.label;
         let instance_buffer = TypedBuffer::new_with_data(
             &context.device,
             &format!("{label} Buffer"),
@@ -67,7 +67,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
         );
         let pipeline = Self::create_pipeline(
             context,
-            shader,
+            shader_def,
             &bind_group_layout,
             layouts,
             shader_composer,
@@ -127,11 +127,8 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
         shader_composer: &mut ShaderComposer,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
         let label = shader_def.label;
-        let shader = shader_composer.compose(
-            &context.device,
-            &format!("{label} Shader"),
-            shader_def.path,
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, shader_def.shader)?;
 
         let pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {

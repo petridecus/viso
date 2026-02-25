@@ -13,7 +13,7 @@ use glam::Vec3;
 
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::options::{ColorOptions, DisplayOptions};
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::sphere::SphereInstance;
@@ -36,6 +36,13 @@ const DOUBLE_BOND_OFFSET: f32 = 0.2;
 
 /// Warm beige/tan carbon tint for lipid molecules.
 const LIPID_CARBON_TINT: [f32; 3] = [0.76, 0.70, 0.50];
+
+/// Bond context for coarse-grained bond emission.
+struct BondContext<'a> {
+    bonds: &'a [InferredBond],
+    positions: &'a [Vec3],
+    elements: &'a [Element],
+}
 
 /// Collect atom positions as `Vec3` from a `Coords` block.
 fn atom_positions(coords: &foldit_conv::types::coords::Coords) -> Vec<Vec3> {
@@ -112,7 +119,7 @@ impl BallAndStickRenderer {
             context,
             &ShaderDef {
                 label: "BnS Sphere",
-                path: "raster/impostor/sphere.wgsl",
+                shader: Shader::Sphere,
             },
             layouts,
             6,
@@ -123,7 +130,7 @@ impl BallAndStickRenderer {
             context,
             &ShaderDef {
                 label: "BnS Bond",
-                path: "raster/impostor/capsule.wgsl",
+                shader: Shader::Capsule,
             },
             layouts,
             6,
@@ -156,74 +163,84 @@ impl BallAndStickRenderer {
 
         for entity in entities {
             let entity_atom_count = entity.coords.num_atoms as u32;
-            match entity.molecule_type {
-                MoleculeType::Ligand => {
-                    Self::generate_ligand_instances(
-                        &entity.coords,
-                        None,
-                        atom_offset,
-                        &mut out,
-                    );
-                }
-                MoleculeType::Cofactor => {
-                    let tint =
-                        Self::resolve_cofactor_tint(&entity.coords, colors);
-                    Self::generate_ligand_instances(
-                        &entity.coords,
-                        Some(tint),
-                        atom_offset,
-                        &mut out,
-                    );
-                }
-                MoleculeType::Lipid => {
-                    let lipid_tint = colors
-                        .map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
-                    if display.lipid_ball_and_stick() {
-                        Self::generate_ligand_instances(
-                            &entity.coords,
-                            Some(lipid_tint),
-                            atom_offset,
-                            &mut out,
-                        );
-                    } else {
-                        Self::generate_coarse_lipid_instances(
-                            &entity.coords,
-                            lipid_tint,
-                            atom_offset,
-                            &mut out,
-                        );
-                    }
-                }
-                MoleculeType::Ion if display.show_ions => {
-                    Self::generate_ion_instances(
-                        &entity.coords,
-                        atom_offset,
-                        &mut out,
-                    );
-                }
-                MoleculeType::Water if display.show_waters => {
-                    Self::generate_water_instances(
-                        &entity.coords,
-                        atom_offset,
-                        &mut out,
-                    );
-                }
-                MoleculeType::Solvent if display.show_solvent => {
-                    let sc =
-                        colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
-                    Self::generate_solvent_instances(
-                        &entity.coords,
-                        sc,
-                        atom_offset,
-                        &mut out,
-                    );
-                }
-                _ => {}
-            }
+            Self::generate_entity_instances(
+                entity,
+                display,
+                colors,
+                atom_offset,
+                &mut out,
+            );
             atom_offset += entity_atom_count;
         }
 
         (out.spheres, out.bonds)
+    }
+
+    /// Generate instances for a single entity, dispatching by molecule type.
+    fn generate_entity_instances(
+        entity: &MoleculeEntity,
+        display: &DisplayOptions,
+        colors: Option<&ColorOptions>,
+        atom_offset: u32,
+        out: &mut InstanceCollector,
+    ) {
+        match entity.molecule_type {
+            MoleculeType::Ligand | MoleculeType::Cofactor => {
+                let tint = (entity.molecule_type
+                    == MoleculeType::Cofactor)
+                    .then(|| {
+                        Self::resolve_cofactor_tint(
+                            &entity.coords,
+                            colors,
+                        )
+                    });
+                Self::generate_ligand_instances(
+                    &entity.coords,
+                    tint,
+                    atom_offset,
+                    out,
+                );
+            }
+            MoleculeType::Lipid => {
+                let lipid_tint =
+                    colors.map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
+                if display.lipid_ball_and_stick() {
+                    Self::generate_ligand_instances(
+                        &entity.coords,
+                        Some(lipid_tint),
+                        atom_offset,
+                        out,
+                    );
+                } else {
+                    Self::generate_coarse_lipid_instances(
+                        &entity.coords,
+                        lipid_tint,
+                        atom_offset,
+                        out,
+                    );
+                }
+            }
+            MoleculeType::Ion if display.show_ions => {
+                Self::generate_ion_instances(&entity.coords, atom_offset, out);
+            }
+            MoleculeType::Water if display.show_waters => {
+                Self::generate_water_instances(
+                    &entity.coords,
+                    atom_offset,
+                    out,
+                );
+            }
+            MoleculeType::Solvent if display.show_solvent => {
+                let sc = colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
+                Self::generate_solvent_instances(
+                    &entity.coords,
+                    sc,
+                    atom_offset,
+                    out,
+                );
+            }
+            _ => {}
+        }
     }
 
     /// Regenerate all instances from entity data.
@@ -368,9 +385,11 @@ impl BallAndStickRenderer {
 
         let bonds = Self::infer_bonds_per_residue(coords);
         Self::emit_coarse_bonds(
-            &bonds,
-            &positions,
-            &coords.elements,
+            &BondContext {
+                bonds: &bonds,
+                positions: &positions,
+                elements: &coords.elements,
+            },
             Some(lipid_carbon_tint),
             atom_offset,
             out,
@@ -380,19 +399,19 @@ impl BallAndStickRenderer {
     /// Emit coarse-grained bond capsules from pre-inferred bonds, skipping
     /// hydrogen atoms and using thinner radii for C-C tail bonds.
     fn emit_coarse_bonds(
-        bonds: &[InferredBond],
-        positions: &[Vec3],
-        elements: &[Element],
+        ctx: &BondContext,
         carbon_tint: Option<[f32; 3]>,
         atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
-        for bond in bonds {
-            let elem_a = elements
+        for bond in ctx.bonds {
+            let elem_a = ctx
+                .elements
                 .get(bond.atom_a)
                 .copied()
                 .unwrap_or(Element::Unknown);
-            let elem_b = elements
+            let elem_b = ctx
+                .elements
                 .get(bond.atom_b)
                 .copied()
                 .unwrap_or(Element::Unknown);
@@ -400,8 +419,8 @@ impl BallAndStickRenderer {
                 continue;
             }
 
-            let pos_a = positions[bond.atom_a];
-            let pos_b = positions[bond.atom_b];
+            let pos_a = ctx.positions[bond.atom_a];
+            let pos_b = ctx.positions[bond.atom_b];
             let pick_id = atom_offset + bond.atom_a as u32;
 
             // C-C tail bonds thin, head-group bonds thicker

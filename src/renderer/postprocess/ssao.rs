@@ -7,10 +7,10 @@ use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
     create_screen_space_pipeline, depth_texture_2d, filtering_sampler,
     linear_sampler, non_filtering_sampler, texture_2d, texture_2d_unfilterable,
-    uniform_buffer,
+    uniform_buffer, ScreenSpacePipelineDef,
 };
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 
 /// SSAO parameters uniform - must match WGSL struct
 #[repr(C)]
@@ -47,6 +47,15 @@ struct SsaoViews<'a> {
     pub noise_sampler: &'a wgpu::Sampler,
     pub kernel_buffer: &'a wgpu::Buffer,
     pub params_buffer: &'a wgpu::Buffer,
+}
+
+/// Inputs for creating the SSAO blur bind group.
+struct SsaoBlurInputs<'a> {
+    ssao_view: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+    depth_view: &'a wgpu::TextureView,
+    normal_view: &'a wgpu::TextureView,
+    params_buffer: &'a wgpu::Buffer,
 }
 
 /// SSAO (Screen-Space Ambient Occlusion) renderer.
@@ -107,6 +116,66 @@ pub struct SsaoRenderer {
 const KERNEL_SIZE: usize = 32;
 const NOISE_SIZE: u32 = 4;
 
+/// Pipelines and their bind group layouts for the SSAO passes.
+struct SsaoPipelines {
+    ssao: wgpu::RenderPipeline,
+    ssao_layout: wgpu::BindGroupLayout,
+    blur: wgpu::RenderPipeline,
+    blur_layout: wgpu::BindGroupLayout,
+}
+
+/// Create both SSAO pipelines (main + blur) and their bind group layouts.
+fn create_ssao_pipelines(
+    context: &RenderContext,
+    shader_composer: &mut ShaderComposer,
+) -> Result<SsaoPipelines, VisoError> {
+    let ssao_layout = SsaoRenderer::create_ssao_bind_group_layout(context);
+    let ssao = SsaoRenderer::create_ssao_pipeline(
+        context,
+        shader_composer,
+        &ssao_layout,
+    )?;
+
+    let blur_layout = SsaoRenderer::create_blur_bind_group_layout(context);
+    let blur = SsaoRenderer::create_blur_pipeline(
+        context,
+        shader_composer,
+        &blur_layout,
+    )?;
+
+    Ok(SsaoPipelines {
+        ssao,
+        ssao_layout,
+        blur,
+        blur_layout,
+    })
+}
+
+struct SsaoTextures {
+    ssao: wgpu::Texture,
+    ssao_view: wgpu::TextureView,
+    blurred: wgpu::Texture,
+    blurred_view: wgpu::TextureView,
+}
+
+fn create_ssao_textures(
+    context: &RenderContext,
+    width: u32,
+    height: u32,
+) -> SsaoTextures {
+    let ssao = SsaoRenderer::create_ssao_texture(context, width, height);
+    let ssao_view = ssao.create_view(&Default::default());
+    let blurred =
+        SsaoRenderer::create_ssao_texture(context, width, height);
+    let blurred_view = blurred.create_view(&Default::default());
+    SsaoTextures {
+        ssao,
+        ssao_view,
+        blurred,
+        blurred_view,
+    }
+}
+
 impl SsaoRenderer {
     /// Create a new SSAO renderer with kernel, noise, and pipeline resources.
     pub fn new(
@@ -118,38 +187,16 @@ impl SsaoRenderer {
         let width = context.render_width();
         let height = context.render_height();
 
-        let ssao_texture = Self::create_ssao_texture(context, width, height);
-        let ssao_view = ssao_texture.create_view(&Default::default());
-        let ssao_blurred_texture =
-            Self::create_ssao_texture(context, width, height);
-        let ssao_blurred_view =
-            ssao_blurred_texture.create_view(&Default::default());
-
+        let tex = create_ssao_textures(context, width, height);
         let (kernel_buffer, params_buffer, radius, bias, power) =
             Self::create_buffers(context, width, height);
-
         let (noise_texture, noise_view) = Self::create_noise_texture(context);
         let (noise_sampler, ssao_sampler) = Self::create_samplers(context);
-
-        let ssao_bind_group_layout =
-            Self::create_ssao_bind_group_layout(context);
-        let ssao_pipeline = Self::create_ssao_pipeline(
-            context,
-            shader_composer,
-            &ssao_bind_group_layout,
-        )?;
-
-        let blur_bind_group_layout =
-            Self::create_blur_bind_group_layout(context);
-        let blur_pipeline = Self::create_blur_pipeline(
-            context,
-            shader_composer,
-            &blur_bind_group_layout,
-        )?;
+        let pipelines = create_ssao_pipelines(context, shader_composer)?;
 
         let ssao_bind_group = Self::create_ssao_bind_group(
             context,
-            &ssao_bind_group_layout,
+            &pipelines.ssao_layout,
             &SsaoViews {
                 depth: depth_view,
                 noise: &noise_view,
@@ -163,30 +210,32 @@ impl SsaoRenderer {
 
         let blur_bind_group = Self::create_blur_bind_group(
             context,
-            &blur_bind_group_layout,
-            &ssao_view,
-            &ssao_sampler,
-            depth_view,
-            normal_view,
-            &params_buffer,
+            &pipelines.blur_layout,
+            &SsaoBlurInputs {
+                ssao_view: &tex.ssao_view,
+                sampler: &ssao_sampler,
+                depth_view,
+                normal_view,
+                params_buffer: &params_buffer,
+            },
         );
 
         Ok(Self {
-            ssao_texture,
-            ssao_view,
-            ssao_blurred_texture,
-            ssao_blurred_view,
+            ssao_texture: tex.ssao,
+            ssao_view: tex.ssao_view,
+            ssao_blurred_texture: tex.blurred,
+            ssao_blurred_view: tex.blurred_view,
             kernel_buffer,
             params_buffer,
             noise_texture,
             noise_view,
             noise_sampler,
             ssao_sampler,
-            ssao_pipeline,
-            ssao_bind_group_layout,
+            ssao_pipeline: pipelines.ssao,
+            ssao_bind_group_layout: pipelines.ssao_layout,
             ssao_bind_group,
-            blur_pipeline,
-            blur_bind_group_layout,
+            blur_pipeline: pipelines.blur,
+            blur_bind_group_layout: pipelines.blur_layout,
             blur_bind_group,
             depth_view: depth_view.clone(),
             normal_view: normal_view.clone(),
@@ -279,18 +328,16 @@ impl SsaoRenderer {
         shader_composer: &mut ShaderComposer,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "SSAO Shader",
-            "screen/ssao.wgsl",
-        )?;
+        let shader = shader_composer.compose(&context.device, Shader::Ssao)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "SSAO",
-            &shader,
-            wgpu::TextureFormat::R8Unorm,
-            None,
-            &[bind_group_layout],
+            &ScreenSpacePipelineDef {
+                label: "SSAO",
+                shader: &shader,
+                format: wgpu::TextureFormat::R8Unorm,
+                blend: None,
+                bind_group_layouts: &[bind_group_layout],
+            },
         ))
     }
 
@@ -316,18 +363,17 @@ impl SsaoRenderer {
         shader_composer: &mut ShaderComposer,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "SSAO Blur Shader",
-            "screen/ssao_blur.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::SsaoBlur)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "SSAO Blur",
-            &shader,
-            wgpu::TextureFormat::R8Unorm,
-            None,
-            &[bind_group_layout],
+            &ScreenSpacePipelineDef {
+                label: "SSAO Blur",
+                shader: &shader,
+                format: wgpu::TextureFormat::R8Unorm,
+                blend: None,
+                bind_group_layouts: &[bind_group_layout],
+            },
         ))
     }
 
@@ -506,11 +552,7 @@ impl SsaoRenderer {
     fn create_blur_bind_group(
         context: &RenderContext,
         layout: &wgpu::BindGroupLayout,
-        ssao_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-        depth_view: &wgpu::TextureView,
-        normal_view: &wgpu::TextureView,
-        params_buffer: &wgpu::Buffer,
+        inputs: &SsaoBlurInputs,
     ) -> wgpu::BindGroup {
         context
             .device
@@ -520,27 +562,31 @@ impl SsaoRenderer {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(ssao_view),
+                        resource: wgpu::BindingResource::TextureView(
+                            inputs.ssao_view,
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: wgpu::BindingResource::Sampler(
+                            inputs.sampler,
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(
-                            depth_view,
+                            inputs.depth_view,
                         ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(
-                            normal_view,
+                            inputs.normal_view,
                         ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: params_buffer.as_entire_binding(),
+                        resource: inputs.params_buffer.as_entire_binding(),
                     },
                 ],
             })
@@ -681,11 +727,13 @@ impl ScreenPass for SsaoRenderer {
         self.blur_bind_group = Self::create_blur_bind_group(
             context,
             &self.blur_bind_group_layout,
-            &self.ssao_view,
-            &self.ssao_sampler,
-            &self.depth_view,
-            &self.normal_view,
-            &self.params_buffer,
+            &SsaoBlurInputs {
+                ssao_view: &self.ssao_view,
+                sampler: &self.ssao_sampler,
+                depth_view: &self.depth_view,
+                normal_view: &self.normal_view,
+                params_buffer: &self.params_buffer,
+            },
         );
     }
 }

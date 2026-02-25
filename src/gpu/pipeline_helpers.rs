@@ -76,16 +76,31 @@ pub fn uniform_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// Description of a full-screen screen-space render pipeline.
+pub struct ScreenSpacePipelineDef<'a> {
+    /// Debug label for wgpu.
+    pub label: &'a str,
+    /// Compiled shader module.
+    pub shader: &'a wgpu::ShaderModule,
+    /// Color target texture format.
+    pub format: wgpu::TextureFormat,
+    /// Optional blend state for the color target.
+    pub blend: Option<wgpu::BlendState>,
+    /// Bind group layouts for the pipeline layout.
+    pub bind_group_layouts: &'a [&'a wgpu::BindGroupLayout],
+}
+
 /// Create a full-screen render pipeline with `vs_main` / `fs_main` entry
 /// points, no vertex buffers, and a single color target.
 pub fn create_screen_space_pipeline(
     device: &wgpu::Device,
-    label: &str,
-    shader: &wgpu::ShaderModule,
-    format: wgpu::TextureFormat,
-    blend: Option<wgpu::BlendState>,
-    bind_group_layouts: &[&wgpu::BindGroupLayout],
+    def: &ScreenSpacePipelineDef<'_>,
 ) -> wgpu::RenderPipeline {
+    let label = def.label;
+    let shader = def.shader;
+    let format = def.format;
+    let blend = def.blend;
+    let bind_group_layouts = def.bind_group_layouts;
     let pipeline_layout =
         device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(&format!("{label} Pipeline Layout")),

@@ -15,16 +15,20 @@ use foldit_conv::render::RenderCoords;
 use foldit_conv::types::entity::split_into_entities;
 use glam::{Mat4, Vec3};
 
+use self::picking_system::PickingSystem;
+use self::renderers::Renderers;
 use crate::animation::animator::StructureAnimator;
+use crate::error::VisoError;
 use crate::animation::sidechain_state::SidechainAnimationState;
 use crate::camera::controller::CameraController;
 use crate::gpu::render_context::RenderContext;
+use crate::gpu::residue_color::ResidueColorBuffer;
 use crate::gpu::shader_composer::ShaderComposer;
 use crate::input::InputState;
 use crate::options::Options;
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::picking::PickTarget;
+use crate::renderer::picking::{PickTarget, SelectionBuffer};
 use crate::renderer::postprocess::post_process::PostProcessStack;
 use crate::renderer::PipelineLayouts;
 use crate::scene::processor::SceneProcessor;
@@ -34,16 +38,13 @@ use crate::util::frame_timing::FrameTiming;
 use crate::util::lighting::Lighting;
 use crate::util::trajectory::TrajectoryPlayer;
 
-use self::picking_system::PickingSystem;
-use self::renderers::Renderers;
-
 /// Load a structure file and split into entities, returning a populated Scene
 /// and the derived protein `RenderCoords`.
 fn load_scene_from_file(
     cif_path: &str,
-) -> Result<(Scene, RenderCoords), crate::error::VisoError> {
+) -> Result<(Scene, RenderCoords), VisoError> {
     let coords = structure_file_to_coords(std::path::Path::new(cif_path))
-        .map_err(|e| crate::error::VisoError::StructureLoad(e.to_string()))?;
+        .map_err(|e| VisoError::StructureLoad(e.to_string()))?;
 
     let entities = split_into_entities(&coords);
 
@@ -75,10 +76,7 @@ fn extract_render_coords(scene: &Scene, entity_ids: &[u32]) -> RenderCoords {
         log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
         let protein_coords =
             foldit_conv::ops::transform::protein_only(&protein_coords);
-        log::debug!(
-            "after protein_only: {} atoms",
-            protein_coords.num_atoms
-        );
+        log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
         let rc = RenderCoords::from_coords_with_topology(
             &protein_coords,
             is_hydrophobic,
@@ -178,8 +176,8 @@ pub struct ProteinRenderEngine {
     /// Multi-frame trajectory player, if loaded.
     pub trajectory_player: Option<TrajectoryPlayer>,
 
-    /// All geometry renderers (backbone, sidechain, band, pull, ball-and-stick,
-    /// nucleic acid).
+    /// All geometry renderers (backbone, sidechain, band, pull,
+    /// ball-and-stick, nucleic acid).
     pub(crate) renderers: Renderers,
     /// GPU picking, selection, and per-residue color buffers.
     pub(crate) pick: PickingSystem,
@@ -200,7 +198,7 @@ impl ProteinRenderEngine {
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
         scale_factor: f64,
-    ) -> Result<Self, crate::error::VisoError> {
+    ) -> Result<Self, VisoError> {
         Self::new_with_path(
             window,
             size,
@@ -221,7 +219,7 @@ impl ProteinRenderEngine {
         size: (u32, u32),
         scale_factor: f64,
         cif_path: &str,
-    ) -> Result<Self, crate::error::VisoError> {
+    ) -> Result<Self, VisoError> {
         let mut context = RenderContext::new(window, size).await?;
 
         // 2x supersampling on standard-DPI displays to compensate for low pixel
@@ -247,7 +245,7 @@ impl ProteinRenderEngine {
         mut context: RenderContext,
         scale_factor: f64,
         cif_path: &str,
-    ) -> Result<Self, crate::error::VisoError> {
+    ) -> Result<Self, VisoError> {
         if scale_factor < 2.0 {
             context.render_scale = 2;
         }
@@ -259,7 +257,7 @@ impl ProteinRenderEngine {
     fn init_with_context(
         context: RenderContext,
         cif_path: &str,
-    ) -> Result<Self, crate::error::VisoError> {
+    ) -> Result<Self, VisoError> {
         let mut shader_composer = ShaderComposer::new()?;
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
@@ -267,12 +265,9 @@ impl ProteinRenderEngine {
 
         let (scene, render_coords) = load_scene_from_file(cif_path)?;
         let n = render_coords.residue_count().max(1);
-        let selection = crate::renderer::picking::SelectionBuffer::new(
-            &context.device, n,
-        );
-        let residue_colors = crate::gpu::residue_color::ResidueColorBuffer::new(
-            &context.device, n,
-        );
+        let selection = SelectionBuffer::new(&context.device, n);
+        let residue_colors =
+            ResidueColorBuffer::new(&context.device, n);
         let layouts = PipelineLayouts {
             camera: camera_controller.layout.clone(),
             lighting: lighting.layout.clone(),
@@ -280,22 +275,30 @@ impl ProteinRenderEngine {
             color: residue_colors.layout.clone(),
         };
         let mut renderers = Renderers::new(
-            &context, &layouts, &render_coords, &scene, &mut shader_composer,
+            &context,
+            &layouts,
+            &render_coords,
+            &scene,
+            &mut shader_composer,
         )?;
         renderers.init_ball_and_stick_entities(&context, &scene, &options);
         let mut pick = PickingSystem::new(
-            &context, &camera_controller.layout,
-            selection, residue_colors, &mut shader_composer,
+            &context,
+            &camera_controller.layout,
+            selection,
+            residue_colors,
+            &mut shader_composer,
         )?;
         pick.init_colors_and_groups(
-            &context, &render_coords.backbone_chains, &renderers,
+            &context,
+            &render_coords.backbone_chains,
+            &renderers,
         );
-        let post_process = PostProcessStack::new(
-            &context, &mut shader_composer,
-        )?;
-        camera_controller.fit_to_positions(
-            &collect_all_positions(&render_coords, &scene, &options),
-        );
+        let post_process =
+            PostProcessStack::new(&context, &mut shader_composer)?;
+        let positions =
+            collect_all_positions(&render_coords, &scene, &options);
+        camera_controller.fit_to_positions(&positions);
         Ok(Self {
             context,
             _shader_composer: shader_composer,
@@ -306,7 +309,7 @@ impl ProteinRenderEngine {
             lighting,
             scene,
             scene_processor: SceneProcessor::new()
-                .map_err(crate::error::VisoError::ThreadSpawn)?,
+                .map_err(VisoError::ThreadSpawn)?,
             animator: StructureAnimator::new(),
             options,
             active_preset: None,
@@ -378,7 +381,9 @@ impl ProteinRenderEngine {
             })
             .collect();
         if per_chain_tiers != self.renderers.backbone.cached_lod_tiers() {
-            self.renderers.backbone.set_cached_lod_tiers(per_chain_tiers);
+            self.renderers
+                .backbone
+                .set_cached_lod_tiers(per_chain_tiers);
             self.submit_per_chain_lod_remesh(camera_eye);
         }
 
@@ -405,6 +410,100 @@ impl ProteinRenderEngine {
         self.update_frustum_culling();
     }
 
+    /// Encode the main geometry render pass.
+    fn encode_geometry_pass(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("main render pass"),
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    view: self.post_process.color_view(),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &self.post_process.normal_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+            ],
+            depth_stencil_attachment: Some(
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.post_process.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                },
+            ),
+            ..Default::default()
+        });
+
+        let bind_groups = DrawBindGroups {
+            camera: &self.camera_controller.bind_group,
+            lighting: &self.lighting.bind_group,
+            selection: &self.pick.selection.bind_group,
+            color: Some(&self.pick.residue_colors.bind_group),
+        };
+
+        let frustum = self.camera_controller.frustum();
+        self.renderers
+            .backbone
+            .draw_culled(&mut rp, &bind_groups, &frustum);
+
+        if self.options.display.show_sidechains {
+            self.renderers.sidechain.draw(&mut rp, &bind_groups);
+        }
+
+        self.renderers.ball_and_stick.draw(&mut rp, &bind_groups);
+        self.renderers.nucleic_acid.draw(&mut rp, &bind_groups);
+        self.renderers.band.draw(&mut rp, &bind_groups);
+        self.renderers.pull.draw(&mut rp, &bind_groups);
+    }
+
+    /// Build the picking geometry descriptor from current renderer state.
+    fn build_picking_geometry(
+        &self,
+    ) -> crate::renderer::picking::PickingGeometry<'_> {
+        crate::renderer::picking::PickingGeometry {
+            backbone_vertex_buffer: self.renderers.backbone.vertex_buffer(),
+            backbone_tube_index_buffer: self
+                .renderers
+                .backbone
+                .tube_index_buffer(),
+            backbone_tube_index_count: self
+                .renderers
+                .backbone
+                .tube_index_count(),
+            backbone_ribbon_index_buffer: self
+                .renderers
+                .backbone
+                .ribbon_index_buffer(),
+            backbone_ribbon_index_count: self
+                .renderers
+                .backbone
+                .ribbon_index_count(),
+            capsule_bind_group: self.pick.groups.capsule.as_ref(),
+            capsule_count: if self.options.display.show_sidechains {
+                self.renderers.sidechain.instance_count()
+            } else {
+                0
+            },
+            bns_capsule_bind_group: self.pick.groups.bns_bond.as_ref(),
+            bns_capsule_count: self.renderers.ball_and_stick.bond_count(),
+            bns_sphere_bind_group: self.pick.groups.bns_sphere.as_ref(),
+            bns_sphere_count: self.renderers.ball_and_stick.sphere_count(),
+        }
+    }
+
     /// Core render — geometry, post-process, picking — targeting the given
     /// view. Returns the encoder so the caller can submit it.
     fn render_to_view(
@@ -413,80 +512,7 @@ impl ProteinRenderEngine {
     ) -> wgpu::CommandEncoder {
         let mut encoder = self.context.create_encoder();
 
-        // Geometry pass — render to intermediate color/normal textures at
-        // render_scale resolution.
-        {
-            let mut rp =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("main render pass"),
-                    color_attachments: &[
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: self.post_process.color_view(),
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        }),
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &self.post_process.normal_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 0.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        }),
-                    ],
-                    depth_stencil_attachment: Some(
-                        wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.post_process.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        },
-                    ),
-                    ..Default::default()
-                });
-
-            // Render order: backbone (tube or ribbon) -> sidechains (all
-            // opaque)
-            let bind_groups = DrawBindGroups {
-                camera: &self.camera_controller.bind_group,
-                lighting: &self.lighting.bind_group,
-                selection: &self.pick.selection.bind_group,
-                color: Some(&self.pick.residue_colors.bind_group),
-            };
-
-            // Backbone: unified renderer (tube + ribbon passes) with frustum
-            // culling
-            let frustum = self.camera_controller.frustum();
-            self.renderers
-                .backbone
-                .draw_culled(&mut rp, &bind_groups, &frustum);
-
-            if self.options.display.show_sidechains {
-                self.renderers.sidechain.draw(&mut rp, &bind_groups);
-            }
-
-            self.renderers.ball_and_stick.draw(&mut rp, &bind_groups);
-            self.renderers.nucleic_acid.draw(&mut rp, &bind_groups);
-            self.renderers.band.draw(&mut rp, &bind_groups);
-            self.renderers.pull.draw(&mut rp, &bind_groups);
-        }
+        self.encode_geometry_pass(&mut encoder);
 
         // Post-processing: SSAO → bloom → composite → FXAA
         let proj = self.camera_controller.camera.build_projection();
@@ -507,47 +533,12 @@ impl ProteinRenderEngine {
             view.clone(),
         );
 
-        // GPU Picking pass — render residue IDs to picking buffer
-        // BackboneRenderer shares one vertex buffer for both tube and ribbon
-        // index buffers; the picking pass draws both.
+        // GPU Picking pass
+        let picking_geometry = self.build_picking_geometry();
         self.pick.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
-            &crate::renderer::picking::PickingGeometry {
-                backbone_vertex_buffer: self
-                    .renderers
-                    .backbone
-                    .vertex_buffer(),
-                backbone_tube_index_buffer: self
-                    .renderers
-                    .backbone
-                    .tube_index_buffer(),
-                backbone_tube_index_count: self
-                    .renderers
-                    .backbone
-                    .tube_index_count(),
-                backbone_ribbon_index_buffer: self
-                    .renderers
-                    .backbone
-                    .ribbon_index_buffer(),
-                backbone_ribbon_index_count: self
-                    .renderers
-                    .backbone
-                    .ribbon_index_count(),
-                capsule_bind_group: self.pick.groups.capsule.as_ref(),
-                capsule_count: if self.options.display.show_sidechains {
-                    self.renderers.sidechain.instance_count()
-                } else {
-                    0
-                },
-                bns_capsule_bind_group: self.pick.groups.bns_bond.as_ref(),
-                bns_capsule_count: self.renderers.ball_and_stick.bond_count(),
-                bns_sphere_bind_group: self.pick.groups.bns_sphere.as_ref(),
-                bns_sphere_count: self
-                    .renderers
-                    .ball_and_stick
-                    .sphere_count(),
-            },
+            &picking_geometry,
             (self.input.mouse_pos.0 as u32, self.input.mouse_pos.1 as u32),
         );
 

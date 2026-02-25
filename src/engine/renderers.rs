@@ -73,10 +73,19 @@ impl Renderers {
             .flat_map(|se| se.entity.extract_base_rings())
             .collect();
         let nucleic_acid = NucleicAcidRenderer::new(
-            context, layouts, &na_chains, &na_rings, shader_composer,
+            context,
+            layouts,
+            &na_chains,
+            &na_rings,
+            shader_composer,
         )?;
         Ok(Self {
-            backbone, sidechain, band, pull, ball_and_stick, nucleic_acid,
+            backbone,
+            sidechain,
+            band,
+            pull,
+            ball_and_stick,
+            nucleic_acid,
         })
     }
 

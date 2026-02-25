@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage,
@@ -8,133 +7,162 @@ use naga_oil::compose::{
 
 use crate::error::VisoError;
 
-/// Wraps `naga_oil::compose::Composer` to provide shader composition with
-/// `#import` support.
-///
-/// All WGSL shader sources are loaded at construction time from `src/shaders/`.
-/// Consuming code references shaders by their path relative to that directory
-/// (e.g. `"screen/fxaa.wgsl"`), eliminating duplicated file-system paths
-/// across the codebase.
-pub struct ShaderComposer {
-    composer: Composer,
-    sources: HashMap<&'static str, &'static str>,
+/// All composable (non-module) shaders in the engine.
+#[derive(Debug, Clone, Copy)]
+pub enum Shader {
+    BloomThreshold,
+    BloomBlur,
+    BloomUpsample,
+    Fxaa,
+    Composite,
+    Ssao,
+    SsaoBlur,
+    BackboneTube,
+    Capsule,
+    Sphere,
+    Cone,
+    Polygon,
+    PickingMesh,
+    PickingCapsule,
+    PickingSphere,
+}
+
+impl Shader {
+    /// Pipeline label for wgpu debug markers.
+    fn label(self) -> &'static str {
+        match self {
+            Self::BloomThreshold => "Bloom Threshold Shader",
+            Self::BloomBlur => "Bloom Blur Shader",
+            Self::BloomUpsample => "Bloom Upsample Shader",
+            Self::Fxaa => "FXAA Shader",
+            Self::Composite => "Composite Shader",
+            Self::Ssao => "SSAO Shader",
+            Self::SsaoBlur => "SSAO Blur Shader",
+            Self::BackboneTube => "Backbone Tube",
+            Self::Capsule => "Capsule Impostor",
+            Self::Sphere => "Sphere Impostor",
+            Self::Cone => "Cone Impostor",
+            Self::Polygon => "Polygon Impostor",
+            Self::PickingMesh => "Picking Tube Shader",
+            Self::PickingCapsule => "Picking Capsule Shader",
+            Self::PickingSphere => "Picking Sphere Shader",
+        }
+    }
+
+    /// Path relative to the shaders directory (internal).
+    fn path(self) -> &'static str {
+        match self {
+            Self::BloomThreshold => "screen/bloom_threshold.wgsl",
+            Self::BloomBlur => "screen/bloom_blur.wgsl",
+            Self::BloomUpsample => "screen/bloom_upsample.wgsl",
+            Self::Fxaa => "screen/fxaa.wgsl",
+            Self::Composite => "screen/composite.wgsl",
+            Self::Ssao => "screen/ssao.wgsl",
+            Self::SsaoBlur => "screen/ssao_blur.wgsl",
+            Self::BackboneTube => "raster/mesh/backbone_tube.wgsl",
+            Self::Capsule => "raster/impostor/capsule.wgsl",
+            Self::Sphere => "raster/impostor/sphere.wgsl",
+            Self::Cone => "raster/impostor/cone.wgsl",
+            Self::Polygon => "raster/impostor/polygon.wgsl",
+            Self::PickingMesh => "utility/picking_mesh.wgsl",
+            Self::PickingCapsule => "utility/picking_capsule.wgsl",
+            Self::PickingSphere => "utility/picking_sphere.wgsl",
+        }
+    }
+
+    /// Source code via `include_str!`.
+    fn source(self) -> &'static str {
+        match self {
+            Self::BloomThreshold => {
+                include_str!("../shaders/screen/bloom_threshold.wgsl")
+            }
+            Self::BloomBlur => {
+                include_str!("../shaders/screen/bloom_blur.wgsl")
+            }
+            Self::BloomUpsample => {
+                include_str!("../shaders/screen/bloom_upsample.wgsl")
+            }
+            Self::Fxaa => include_str!("../shaders/screen/fxaa.wgsl"),
+            Self::Composite => {
+                include_str!("../shaders/screen/composite.wgsl")
+            }
+            Self::Ssao => include_str!("../shaders/screen/ssao.wgsl"),
+            Self::SsaoBlur => {
+                include_str!("../shaders/screen/ssao_blur.wgsl")
+            }
+            Self::BackboneTube => {
+                include_str!("../shaders/raster/mesh/backbone_tube.wgsl")
+            }
+            Self::Capsule => {
+                include_str!("../shaders/raster/impostor/capsule.wgsl")
+            }
+            Self::Sphere => {
+                include_str!("../shaders/raster/impostor/sphere.wgsl")
+            }
+            Self::Cone => {
+                include_str!("../shaders/raster/impostor/cone.wgsl")
+            }
+            Self::Polygon => {
+                include_str!("../shaders/raster/impostor/polygon.wgsl")
+            }
+            Self::PickingMesh => {
+                include_str!("../shaders/utility/picking_mesh.wgsl")
+            }
+            Self::PickingCapsule => {
+                include_str!("../shaders/utility/picking_capsule.wgsl")
+            }
+            Self::PickingSphere => {
+                include_str!("../shaders/utility/picking_sphere.wgsl")
+            }
+        }
+    }
 }
 
 /// Paths of shared modules that are registered with naga_oil for `#import`
 /// support. Order matters — modules with no dependencies first.
-const MODULE_PATHS: &[&str] = &[
-    "modules/fullscreen.wgsl",
-    "modules/camera.wgsl",
-    "modules/lighting.wgsl",
-    "modules/sdf.wgsl",
-    "modules/raymarch.wgsl",
-    "modules/volume.wgsl",
+const MODULE_PATHS: &[(&str, &str)] = &[
+    (
+        "modules/fullscreen.wgsl",
+        include_str!("../shaders/modules/fullscreen.wgsl"),
+    ),
+    (
+        "modules/camera.wgsl",
+        include_str!("../shaders/modules/camera.wgsl"),
+    ),
+    (
+        "modules/lighting.wgsl",
+        include_str!("../shaders/modules/lighting.wgsl"),
+    ),
+    (
+        "modules/sdf.wgsl",
+        include_str!("../shaders/modules/sdf.wgsl"),
+    ),
+    (
+        "modules/raymarch.wgsl",
+        include_str!("../shaders/modules/raymarch.wgsl"),
+    ),
+    (
+        "modules/volume.wgsl",
+        include_str!("../shaders/modules/volume.wgsl"),
+    ),
 ];
 
-impl ShaderComposer {
-    /// Create a new composer with all shader sources loaded and shared modules
-    /// registered.
-    pub fn new() -> Result<Self, VisoError> {
-        let sources: HashMap<&'static str, &'static str> = HashMap::from([
-            // Shared modules
-            (
-                "modules/fullscreen.wgsl",
-                include_str!("../shaders/modules/fullscreen.wgsl"),
-            ),
-            (
-                "modules/camera.wgsl",
-                include_str!("../shaders/modules/camera.wgsl"),
-            ),
-            (
-                "modules/lighting.wgsl",
-                include_str!("../shaders/modules/lighting.wgsl"),
-            ),
-            (
-                "modules/sdf.wgsl",
-                include_str!("../shaders/modules/sdf.wgsl"),
-            ),
-            (
-                "modules/raymarch.wgsl",
-                include_str!("../shaders/modules/raymarch.wgsl"),
-            ),
-            (
-                "modules/volume.wgsl",
-                include_str!("../shaders/modules/volume.wgsl"),
-            ),
-            // Screen-space / post-processing
-            (
-                "screen/bloom_threshold.wgsl",
-                include_str!("../shaders/screen/bloom_threshold.wgsl"),
-            ),
-            (
-                "screen/bloom_blur.wgsl",
-                include_str!("../shaders/screen/bloom_blur.wgsl"),
-            ),
-            (
-                "screen/bloom_upsample.wgsl",
-                include_str!("../shaders/screen/bloom_upsample.wgsl"),
-            ),
-            (
-                "screen/fxaa.wgsl",
-                include_str!("../shaders/screen/fxaa.wgsl"),
-            ),
-            (
-                "screen/composite.wgsl",
-                include_str!("../shaders/screen/composite.wgsl"),
-            ),
-            (
-                "screen/ssao.wgsl",
-                include_str!("../shaders/screen/ssao.wgsl"),
-            ),
-            (
-                "screen/ssao_blur.wgsl",
-                include_str!("../shaders/screen/ssao_blur.wgsl"),
-            ),
-            // Raster geometry
-            (
-                "raster/mesh/backbone_tube.wgsl",
-                include_str!("../shaders/raster/mesh/backbone_tube.wgsl"),
-            ),
-            (
-                "raster/mesh/backbone_na.wgsl",
-                include_str!("../shaders/raster/mesh/backbone_na.wgsl"),
-            ),
-            (
-                "raster/impostor/capsule.wgsl",
-                include_str!("../shaders/raster/impostor/capsule.wgsl"),
-            ),
-            (
-                "raster/impostor/sphere.wgsl",
-                include_str!("../shaders/raster/impostor/sphere.wgsl"),
-            ),
-            (
-                "raster/impostor/cone.wgsl",
-                include_str!("../shaders/raster/impostor/cone.wgsl"),
-            ),
-            (
-                "raster/impostor/polygon.wgsl",
-                include_str!("../shaders/raster/impostor/polygon.wgsl"),
-            ),
-            // Utility
-            (
-                "utility/picking_mesh.wgsl",
-                include_str!("../shaders/utility/picking_mesh.wgsl"),
-            ),
-            (
-                "utility/picking_capsule.wgsl",
-                include_str!("../shaders/utility/picking_capsule.wgsl"),
-            ),
-            (
-                "utility/picking_sphere.wgsl",
-                include_str!("../shaders/utility/picking_sphere.wgsl"),
-            ),
-        ]);
+/// Wraps `naga_oil::compose::Composer` to provide shader composition with
+/// `#import` support.
+///
+/// All WGSL shader sources are compiled in at build time via `include_str!`.
+/// Consuming code references shaders by their [`Shader`] enum variant,
+/// eliminating fragile string paths across the codebase.
+pub struct ShaderComposer {
+    composer: Composer,
+}
 
+impl ShaderComposer {
+    /// Create a new composer with shared modules registered.
+    pub fn new() -> Result<Self, VisoError> {
         let mut composer = Composer::default();
 
-        // Register shared modules in dependency order.
-        for path in MODULE_PATHS {
-            let source = sources[path];
+        for (path, source) in MODULE_PATHS {
             let _ = composer
                 .add_composable_module(ComposableModuleDescriptor {
                     source,
@@ -149,23 +177,19 @@ impl ShaderComposer {
                 })?;
         }
 
-        Ok(Self { composer, sources })
+        Ok(Self { composer })
     }
 
     /// Compose a shader into a `wgpu::ShaderModule` ready for pipeline
     /// creation.
-    ///
-    /// `path` is relative to the shaders directory, e.g.
-    /// `"screen/fxaa.wgsl"`.
     pub fn compose(
         &mut self,
         device: &wgpu::Device,
-        label: &str,
-        path: &str,
+        shader: Shader,
     ) -> Result<wgpu::ShaderModule, VisoError> {
-        let source = self.sources.get(path).ok_or_else(|| {
-            VisoError::Shader(format!("unknown shader path: {path}"))
-        })?;
+        let label = shader.label();
+        let path = shader.path();
+        let source = shader.source();
 
         let naga_module = self
             .composer
@@ -193,11 +217,10 @@ impl ShaderComposer {
     #[cfg(test)]
     pub fn compose_naga(
         &mut self,
-        path: &str,
+        shader: Shader,
     ) -> Result<naga::Module, VisoError> {
-        let source = self.sources.get(path).ok_or_else(|| {
-            VisoError::Shader(format!("unknown shader path: {path}"))
-        })?;
+        let path = shader.path();
+        let source = shader.source();
 
         self.composer
             .make_naga_module(NagaModuleDescriptor {
@@ -219,32 +242,32 @@ impl ShaderComposer {
 mod tests {
     use super::*;
 
-    /// All composable (non-module) shader paths.
-    fn composable_shader_paths() -> Vec<&'static str> {
+    /// All composable (non-module) shaders.
+    fn composable_shaders() -> Vec<Shader> {
         vec![
-            "screen/bloom_threshold.wgsl",
-            "screen/bloom_blur.wgsl",
-            "screen/bloom_upsample.wgsl",
-            "screen/fxaa.wgsl",
-            "screen/composite.wgsl",
-            "screen/ssao.wgsl",
-            "screen/ssao_blur.wgsl",
-            "raster/mesh/backbone_tube.wgsl",
-            "raster/impostor/capsule.wgsl",
-            "raster/impostor/sphere.wgsl",
-            "raster/impostor/cone.wgsl",
-            "utility/picking_mesh.wgsl",
-            "utility/picking_capsule.wgsl",
-            "utility/picking_sphere.wgsl",
+            Shader::BloomThreshold,
+            Shader::BloomBlur,
+            Shader::BloomUpsample,
+            Shader::Fxaa,
+            Shader::Composite,
+            Shader::Ssao,
+            Shader::SsaoBlur,
+            Shader::BackboneTube,
+            Shader::Capsule,
+            Shader::Sphere,
+            Shader::Cone,
+            Shader::PickingMesh,
+            Shader::PickingCapsule,
+            Shader::PickingSphere,
         ]
     }
 
     #[test]
     fn test_all_shaders_compose() {
         let mut composer = ShaderComposer::new().expect("ShaderComposer::new");
-        for path in composable_shader_paths() {
-            let _ = composer.compose_naga(path).unwrap_or_else(|e| {
-                panic!("Shader '{path}' failed to compose: {e}")
+        for shader in composable_shaders() {
+            let _ = composer.compose_naga(shader).unwrap_or_else(|e| {
+                panic!("Shader '{shader:?}' failed to compose: {e}")
             });
         }
     }

@@ -14,7 +14,7 @@ use glam::Vec3;
 
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::cone::ConeInstance;
 use crate::renderer::impostor::{ImpostorPass, ShaderDef};
@@ -53,7 +53,7 @@ impl PullRenderer {
             context,
             &ShaderDef {
                 label: "Pull Capsule",
-                path: "raster/impostor/capsule.wgsl",
+                shader: Shader::Capsule,
             },
             layouts,
             6,
@@ -64,7 +64,7 @@ impl PullRenderer {
             context,
             &ShaderDef {
                 label: "Pull Cone",
-                path: "raster/impostor/cone.wgsl",
+                shader: Shader::Cone,
             },
             layouts,
             6,
@@ -179,5 +179,4 @@ impl PullRenderer {
         self.capsule_pass.draw(render_pass, bind_groups);
         self.cone_pass.draw(render_pass, bind_groups);
     }
-
 }

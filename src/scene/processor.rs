@@ -113,13 +113,15 @@ impl SceneProcessor {
                     per_chain_lod,
                 } => {
                     let prepared = super::mesh_gen::process_animation_frame(
-                        &backbone_chains,
-                        &na_chains,
-                        sidechains.as_ref(),
-                        ss_types.as_deref(),
-                        per_residue_colors.as_deref(),
-                        &geometry,
-                        per_chain_lod.as_deref(),
+                        &super::mesh_gen::AnimationFrameInput {
+                            backbone_chains: &backbone_chains,
+                            na_chains: &na_chains,
+                            sidechains: sidechains.as_ref(),
+                            ss_types: ss_types.as_deref(),
+                            per_residue_colors: per_residue_colors.as_deref(),
+                            geometry: &geometry,
+                            per_chain_lod: per_chain_lod.as_deref(),
+                        },
                     );
                     anim_input.write(Some(prepared));
                 }

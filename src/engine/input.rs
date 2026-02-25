@@ -102,10 +102,10 @@ impl ProteinRenderEngine {
 
         match self.input.process_mouse_up(hovered, shift_held) {
             ClickResult::NoAction => false,
-            ClickResult::SingleClick { target, shift_held } => {
-                self.pick.picking
-                    .handle_click(target.as_residue_i32(), shift_held)
-            }
+            ClickResult::SingleClick { target, shift_held } => self
+                .pick
+                .picking
+                .handle_click(target.as_residue_i32(), shift_held),
             ClickResult::DoubleClick { target, shift_held } => {
                 self.select_ss_segment(target.as_residue_i32(), shift_held)
             }

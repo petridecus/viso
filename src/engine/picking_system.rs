@@ -1,12 +1,11 @@
 use glam::Vec3;
 
+use super::renderers::Renderers;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::residue_color::ResidueColorBuffer;
 use crate::gpu::shader_composer::ShaderComposer;
 use crate::renderer::picking::state::PickingState;
 use crate::renderer::picking::{PickMap, PickTarget, Picking, SelectionBuffer};
-
-use super::renderers::Renderers;
 
 /// GPU picking, selection, and per-residue color buffers grouped together.
 pub(crate) struct PickingSystem {
@@ -46,20 +45,27 @@ impl PickingSystem {
         backbone_chains: &[Vec<Vec3>],
         renderers: &Renderers,
     ) {
-        let total_residues = backbone_chains
-            .iter()
-            .map(|c| c.len() / 3)
-            .sum::<usize>();
+        let total_residues =
+            backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>();
         let initial =
             super::initial_chain_colors(backbone_chains, total_residues);
         self.residue_colors
             .set_colors_immediate(&context.queue, &initial);
 
-        self.groups
-            .rebuild_capsule(&self.picking, &context.device, &renderers.sidechain);
-        self.groups
-            .rebuild_bns_bond(&self.picking, &context.device, &renderers.ball_and_stick);
-        self.groups
-            .rebuild_bns_sphere(&self.picking, &context.device, &renderers.ball_and_stick);
+        self.groups.rebuild_capsule(
+            &self.picking,
+            &context.device,
+            &renderers.sidechain,
+        );
+        self.groups.rebuild_bns_bond(
+            &self.picking,
+            &context.device,
+            &renderers.ball_and_stick,
+        );
+        self.groups.rebuild_bns_sphere(
+            &self.picking,
+            &context.device,
+            &renderers.ball_and_stick,
+        );
     }
 }

@@ -11,10 +11,10 @@ use super::screen_pass::ScreenPass;
 use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
     create_screen_space_pipeline, filtering_sampler, linear_sampler,
-    texture_2d, uniform_buffer,
+    texture_2d, uniform_buffer, ScreenSpacePipelineDef,
 };
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 
 /// FXAA (Fast Approximate Anti-Aliasing) post-process pass.
 pub struct FxaaPass {
@@ -107,18 +107,16 @@ impl FxaaPass {
         shader_composer: &mut ShaderComposer,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "FXAA Shader",
-            "screen/fxaa.wgsl",
-        )?;
+        let shader = shader_composer.compose(&context.device, Shader::Fxaa)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "FXAA",
-            &shader,
-            context.config.format,
-            None,
-            &[bind_group_layout],
+            &ScreenSpacePipelineDef {
+                label: "FXAA",
+                shader: &shader,
+                format: context.config.format,
+                blend: None,
+                bind_group_layouts: &[bind_group_layout],
+            },
         ))
     }
 

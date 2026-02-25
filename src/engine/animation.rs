@@ -111,27 +111,15 @@ impl ProteinRenderEngine {
         }
     }
 
-    /// Animate to new pose with sidechain data and explicit transition.
-    pub fn animate_to_full_pose(
-        &mut self,
-        new_backbone: &[Vec<Vec3>],
-        sidechain: &SidechainView,
-        sidechain_atom_names: &[String],
-        transition: &Transition,
-    ) {
-        // Capture current VISUAL positions as start (for smooth preemption)
-        // If animation is in progress, use interpolated positions, not old
-        // targets
+    /// Capture sidechain start positions for animation preemption.
+    fn capture_sidechain_start(&mut self, sidechain: &SidechainView) {
         if self.sc.target_sidechain_positions.len() == sidechain.positions.len()
         {
             if self.animator.is_animating()
                 && self.animator.has_sidechain_data()
             {
-                // Animation in progress - sync to current visual state (like
-                // backbone does)
                 self.sc.start_sidechain_positions =
                     self.animator.get_sidechain_positions();
-                // Also interpolate backbone-sidechain bonds
                 let ctx = self.animator.interpolation_context();
                 self.sc.start_backbone_sidechain_bonds = self
                     .sc
@@ -145,18 +133,27 @@ impl ProteinRenderEngine {
                     })
                     .collect();
             } else {
-                // No animation - use previous target as new start
                 self.sc.start_sidechain_positions =
                     self.sc.target_sidechain_positions.clone();
                 self.sc.start_backbone_sidechain_bonds =
                     self.sc.target_backbone_sidechain_bonds.clone();
             }
         } else {
-            // Size changed - snap to new positions
             self.sc.start_sidechain_positions = sidechain.positions.to_vec();
             self.sc.start_backbone_sidechain_bonds =
                 sidechain.backbone_bonds.to_vec();
         }
+    }
+
+    /// Animate to new pose with sidechain data and explicit transition.
+    pub fn animate_to_full_pose(
+        &mut self,
+        new_backbone: &[Vec<Vec3>],
+        sidechain: &SidechainView,
+        sidechain_atom_names: &[String],
+        transition: &Transition,
+    ) {
+        self.capture_sidechain_start(sidechain);
 
         // Set new targets and cached data
         self.sc.target_sidechain_positions = sidechain.positions.to_vec();

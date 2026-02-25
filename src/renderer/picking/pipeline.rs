@@ -11,7 +11,7 @@ use wgpu::util::DeviceExt;
 
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 use crate::renderer::geometry::backbone::backbone_vertex_buffer_layout;
 
 /// Selection buffer for GPU - stores selection state as a bit array
@@ -255,11 +255,8 @@ impl Picking {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Picking Tube Shader",
-            "utility/picking_mesh.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::PickingMesh)?;
 
         let layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -307,11 +304,8 @@ impl Picking {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Picking Capsule Shader",
-            "utility/picking_capsule.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::PickingCapsule)?;
 
         let bind_group_layout =
             capsule_storage_bind_group_layout(&context.device);
@@ -367,11 +361,8 @@ impl Picking {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Picking Sphere Shader",
-            "utility/picking_sphere.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::PickingSphere)?;
 
         let bind_group_layout =
             sphere_storage_bind_group_layout(&context.device);
@@ -572,9 +563,7 @@ impl Picking {
 
         draw_picking_geometry(
             &mut render_pass,
-            &self.tube_pipeline,
-            &self.capsule_pipeline,
-            &self.sphere_pipeline,
+            self,
             camera_bind_group,
             geometry,
         );
@@ -639,10 +628,7 @@ impl Picking {
     /// Try to complete the readback without blocking.
     /// Returns the raw pick ID if data was read, `None` if still pending.
     /// Uses previous frame's hover result until new data is ready.
-    pub fn complete_readback(
-        &mut self,
-        device: &wgpu::Device,
-    ) -> Option<u32> {
+    pub fn complete_readback(&mut self, device: &wgpu::Device) -> Option<u32> {
         if !self.readback_in_flight {
             return None;
         }
@@ -658,8 +644,7 @@ impl Picking {
         // Buffer is mapped - read the data
         let buffer_slice = self.staging_buffer.slice(..4);
         let data = buffer_slice.get_mapped_range();
-        let raw_id =
-            u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let raw_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         drop(data);
         self.staging_buffer.unmap();
         self.readback_in_flight = false;
@@ -755,14 +740,12 @@ fn picking_depth_stencil() -> wgpu::DepthStencilState {
 
 fn draw_picking_geometry(
     render_pass: &mut wgpu::RenderPass<'_>,
-    tube_pipeline: &wgpu::RenderPipeline,
-    capsule_pipeline: &wgpu::RenderPipeline,
-    sphere_pipeline: &wgpu::RenderPipeline,
+    picking: &Picking,
     camera_bind_group: &wgpu::BindGroup,
     geometry: &PickingGeometry,
 ) {
     // Draw backbone geometry (tube + ribbon share the same vertex buffer)
-    render_pass.set_pipeline(tube_pipeline);
+    render_pass.set_pipeline(&picking.tube_pipeline);
     render_pass.set_bind_group(0, camera_bind_group, &[]);
     render_pass.set_vertex_buffer(0, geometry.backbone_vertex_buffer.slice(..));
 
@@ -793,7 +776,7 @@ fn draw_picking_geometry(
     // Draw capsules (sidechains)
     if let Some(capsule_bg) = geometry.capsule_bind_group {
         if geometry.capsule_count > 0 {
-            render_pass.set_pipeline(capsule_pipeline);
+            render_pass.set_pipeline(&picking.capsule_pipeline);
             render_pass.set_bind_group(0, capsule_bg, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
             render_pass.draw(0..6, 0..geometry.capsule_count);
@@ -803,7 +786,7 @@ fn draw_picking_geometry(
     // Draw ball-and-stick bond capsules for picking
     if let Some(bns_bg) = geometry.bns_capsule_bind_group {
         if geometry.bns_capsule_count > 0 {
-            render_pass.set_pipeline(capsule_pipeline);
+            render_pass.set_pipeline(&picking.capsule_pipeline);
             render_pass.set_bind_group(0, bns_bg, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
             render_pass.draw(0..6, 0..geometry.bns_capsule_count);
@@ -813,7 +796,7 @@ fn draw_picking_geometry(
     // Draw ball-and-stick spheres for picking
     if let Some(bns_sphere_bg) = geometry.bns_sphere_bind_group {
         if geometry.bns_sphere_count > 0 {
-            render_pass.set_pipeline(sphere_pipeline);
+            render_pass.set_pipeline(&picking.sphere_pipeline);
             render_pass.set_bind_group(0, bns_sphere_bg, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
             render_pass.draw(0..6, 0..geometry.bns_sphere_count);

@@ -10,10 +10,10 @@ use super::screen_pass::ScreenPass;
 use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
     create_screen_space_pipeline, filtering_sampler, linear_sampler,
-    texture_2d, uniform_buffer,
+    texture_2d, uniform_buffer, ScreenSpacePipelineDef,
 };
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::shader_composer::{Shader, ShaderComposer};
 
 /// Blur direction params — must match WGSL struct
 #[repr(C)]
@@ -84,6 +84,121 @@ pub struct BloomPass {
     height: u32,
 }
 
+/// Configuration for creating blur resources across all mip levels.
+struct BlurChainConfig<'a> {
+    layout: &'a wgpu::BindGroupLayout,
+    mip_views: &'a [wgpu::TextureView],
+    ping_views: &'a [wgpu::TextureView],
+    sampler: &'a wgpu::Sampler,
+    width: u32,
+    height: u32,
+}
+
+/// Configuration for creating blur resources at a single mip level.
+struct BlurLevelConfig<'a> {
+    layout: &'a wgpu::BindGroupLayout,
+    mip_view: &'a wgpu::TextureView,
+    ping_view: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+    width: u32,
+    height: u32,
+    level: usize,
+}
+
+/// Pipelines and their bind group layouts for the bloom pass.
+struct BloomPipelines {
+    threshold: wgpu::RenderPipeline,
+    blur: wgpu::RenderPipeline,
+    upsample: wgpu::RenderPipeline,
+    threshold_layout: wgpu::BindGroupLayout,
+    blur_layout: wgpu::BindGroupLayout,
+    upsample_layout: wgpu::BindGroupLayout,
+}
+
+/// Create mip, ping, and output textures for the bloom pass.
+fn create_bloom_textures(
+    context: &RenderContext,
+    width: u32,
+    height: u32,
+) -> BloomTextures {
+    let (mip_textures, mip_views) =
+        BloomPass::create_mip_chain(context, width, height);
+    let (ping_textures, ping_views) =
+        BloomPass::create_mip_chain(context, width, height);
+    let (output_texture, output_view) = BloomPass::create_texture(
+        context,
+        (width / 2).max(1),
+        (height / 2).max(1),
+        "Bloom Output",
+    );
+    BloomTextures {
+        mip_textures,
+        mip_views,
+        ping_textures,
+        ping_views,
+        output_texture,
+        output_view,
+    }
+}
+
+struct BloomTextures {
+    mip_textures: Vec<wgpu::Texture>,
+    mip_views: Vec<wgpu::TextureView>,
+    ping_textures: Vec<wgpu::Texture>,
+    ping_views: Vec<wgpu::TextureView>,
+    output_texture: wgpu::Texture,
+    output_view: wgpu::TextureView,
+}
+
+/// Create all three bloom pipelines (threshold, blur, upsample) and their
+/// bind group layouts.
+fn create_bloom_pipelines(
+    context: &RenderContext,
+    shader_composer: &mut ShaderComposer,
+) -> Result<BloomPipelines, VisoError> {
+    let threshold_layout = BloomPass::create_threshold_layout(context);
+    let threshold = BloomPass::create_threshold_pipeline(
+        context,
+        shader_composer,
+        &threshold_layout,
+    )?;
+
+    let blur_layout = BloomPass::create_blur_layout(context);
+    let blur = BloomPass::create_blur_pipeline(
+        context,
+        shader_composer,
+        &blur_layout,
+    )?;
+
+    let upsample_layout = BloomPass::create_upsample_layout(context);
+    let upsample = BloomPass::create_upsample_pipeline(
+        context,
+        shader_composer,
+        &upsample_layout,
+    )?;
+
+    Ok(BloomPipelines {
+        threshold,
+        blur,
+        upsample,
+        threshold_layout,
+        blur_layout,
+        upsample_layout,
+    })
+}
+
+fn create_threshold_buffer(
+    device: &wgpu::Device,
+    threshold: f32,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Bloom Threshold Buffer"),
+        contents: bytemuck::cast_slice(&[threshold]),
+        usage: wgpu::BufferUsages::UNIFORM
+            | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
 impl BloomPass {
     /// Create a new bloom pass with threshold, blur chain, and upsample
     /// pipelines.
@@ -97,93 +212,55 @@ impl BloomPass {
 
         let sampler = linear_sampler(&context.device, "Bloom Sampler");
 
-        let threshold = 1.0f32;
-        let intensity = 0.0f32;
-        let threshold_buffer = context.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Bloom Threshold Buffer"),
-                contents: bytemuck::cast_slice(&[threshold]),
-                usage: wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::COPY_DST,
-            },
-        );
+        let (threshold, intensity) = (1.0f32, 0.0f32);
+        let threshold_buffer =
+            create_threshold_buffer(&context.device, threshold);
 
-        let (mip_textures, mip_views) =
-            Self::create_mip_chain(context, width, height);
-        let (ping_textures, ping_views) =
-            Self::create_mip_chain(context, width, height);
+        let tex = create_bloom_textures(context, width, height);
+        let pipelines = create_bloom_pipelines(context, shader_composer)?;
 
-        let (output_texture, output_view) = Self::create_texture(
-            context,
-            (width / 2).max(1),
-            (height / 2).max(1),
-            "Bloom Output",
-        );
-
-        let threshold_bind_group_layout =
-            Self::create_threshold_layout(context);
         let threshold_bind_group = Self::create_threshold_bind_group(
             context,
-            &threshold_bind_group_layout,
+            &pipelines.threshold_layout,
             color_view,
             &sampler,
             &threshold_buffer,
         );
-        let threshold_pipeline = Self::create_threshold_pipeline(
-            context,
-            shader_composer,
-            &threshold_bind_group_layout,
-        )?;
-
-        let blur_bind_group_layout = Self::create_blur_layout(context);
-        let blur_pipeline = Self::create_blur_pipeline(
-            context,
-            shader_composer,
-            &blur_bind_group_layout,
-        )?;
+        let blur_config = BlurChainConfig {
+            layout: &pipelines.blur_layout,
+            mip_views: &tex.mip_views,
+            ping_views: &tex.ping_views,
+            sampler: &sampler,
+            width,
+            height,
+        };
         let (blur_bind_groups, blur_params_buffers) =
-            Self::create_blur_resources(
-                context,
-                &blur_bind_group_layout,
-                &mip_views,
-                &ping_views,
-                &sampler,
-                width,
-                height,
-            );
-
-        let upsample_bind_group_layout =
-            Self::create_upsample_layout(context);
-        let upsample_pipeline = Self::create_upsample_pipeline(
-            context,
-            shader_composer,
-            &upsample_bind_group_layout,
-        )?;
+            Self::create_blur_resources(context, &blur_config);
         let upsample_bind_groups = Self::create_upsample_bind_groups(
             context,
-            &upsample_bind_group_layout,
-            &mip_views,
+            &pipelines.upsample_layout,
+            &tex.mip_views,
             &sampler,
         );
 
         Ok(Self {
-            threshold_pipeline,
-            threshold_bind_group_layout,
+            threshold_pipeline: pipelines.threshold,
+            threshold_bind_group_layout: pipelines.threshold_layout,
             threshold_bind_group,
             threshold_buffer,
-            blur_pipeline,
-            blur_bind_group_layout,
-            mip_textures,
-            mip_views,
-            ping_textures,
-            ping_views,
+            blur_pipeline: pipelines.blur,
+            blur_bind_group_layout: pipelines.blur_layout,
+            mip_textures: tex.mip_textures,
+            mip_views: tex.mip_views,
+            ping_textures: tex.ping_textures,
+            ping_views: tex.ping_views,
             blur_bind_groups,
             blur_params_buffers,
-            _upsample_pipeline: upsample_pipeline,
-            upsample_bind_group_layout,
+            _upsample_pipeline: pipelines.upsample,
+            upsample_bind_group_layout: pipelines.upsample_layout,
             upsample_bind_groups,
-            output_texture,
-            output_view,
+            output_texture: tex.output_texture,
+            output_view: tex.output_view,
             sampler,
             input_color_view: color_view.clone(),
             threshold,
@@ -241,18 +318,17 @@ impl BloomPass {
         shader_composer: &mut ShaderComposer,
         layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Bloom Threshold Shader",
-            "screen/bloom_threshold.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::BloomThreshold)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "Bloom Threshold",
-            &shader,
-            BLOOM_FORMAT,
-            None,
-            &[layout],
+            &ScreenSpacePipelineDef {
+                label: "Bloom Threshold",
+                shader: &shader,
+                format: BLOOM_FORMAT,
+                blend: None,
+                bind_group_layouts: &[layout],
+            },
         ))
     }
 
@@ -261,18 +337,17 @@ impl BloomPass {
         shader_composer: &mut ShaderComposer,
         layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Bloom Blur Shader",
-            "screen/bloom_blur.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::BloomBlur)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "Bloom Blur",
-            &shader,
-            BLOOM_FORMAT,
-            None,
-            &[layout],
+            &ScreenSpacePipelineDef {
+                label: "Bloom Blur",
+                shader: &shader,
+                format: BLOOM_FORMAT,
+                blend: None,
+                bind_group_layouts: &[layout],
+            },
         ))
     }
 
@@ -281,18 +356,17 @@ impl BloomPass {
         shader_composer: &mut ShaderComposer,
         layout: &wgpu::BindGroupLayout,
     ) -> Result<wgpu::RenderPipeline, VisoError> {
-        let shader = shader_composer.compose(
-            &context.device,
-            "Bloom Upsample Shader",
-            "screen/bloom_upsample.wgsl",
-        )?;
+        let shader =
+            shader_composer.compose(&context.device, Shader::BloomUpsample)?;
         Ok(create_screen_space_pipeline(
             &context.device,
-            "Bloom Upsample",
-            &shader,
-            BLOOM_FORMAT,
-            Some(ADDITIVE_BLEND),
-            &[layout],
+            &ScreenSpacePipelineDef {
+                label: "Bloom Upsample",
+                shader: &shader,
+                format: BLOOM_FORMAT,
+                blend: Some(ADDITIVE_BLEND),
+                bind_group_layouts: &[layout],
+            },
         ))
     }
 
@@ -380,31 +454,27 @@ impl BloomPass {
 
     fn create_blur_resources(
         context: &RenderContext,
-        layout: &wgpu::BindGroupLayout,
-        mip_views: &[wgpu::TextureView],
-        ping_views: &[wgpu::TextureView],
-        sampler: &wgpu::Sampler,
-        width: u32,
-        height: u32,
+        config: &BlurChainConfig,
     ) -> (Vec<[wgpu::BindGroup; 2]>, Vec<[wgpu::Buffer; 2]>) {
         let mut bind_groups = Vec::with_capacity(MIP_LEVELS);
         let mut buffers = Vec::with_capacity(MIP_LEVELS);
 
-        let mut w = width;
-        let mut h = height;
+        let mut w = config.width;
+        let mut h = config.height;
         for i in 0..MIP_LEVELS {
             w = (w / 2).max(1);
             h = (h / 2).max(1);
-            let (bg, buf) = Self::create_blur_level_resources(
-                context,
-                layout,
-                &mip_views[i],
-                &ping_views[i],
-                sampler,
-                w,
-                h,
-                i,
-            );
+            let level_cfg = BlurLevelConfig {
+                layout: config.layout,
+                mip_view: &config.mip_views[i],
+                ping_view: &config.ping_views[i],
+                sampler: config.sampler,
+                width: w,
+                height: h,
+                level: i,
+            };
+            let (bg, buf) =
+                Self::create_blur_level_resources(context, &level_cfg);
             bind_groups.push(bg);
             buffers.push(buf);
         }
@@ -414,89 +484,59 @@ impl BloomPass {
 
     fn create_blur_level_resources(
         context: &RenderContext,
-        layout: &wgpu::BindGroupLayout,
-        mip_view: &wgpu::TextureView,
-        ping_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-        w: u32,
-        h: u32,
-        level: usize,
+        cfg: &BlurLevelConfig,
     ) -> ([wgpu::BindGroup; 2], [wgpu::Buffer; 2]) {
-        let texel_size = [1.0 / w as f32, 1.0 / h as f32];
-
-        let h_params = BlurParams {
-            texel_size,
-            horizontal: 1,
-            _pad: 0,
-        };
-        let h_buffer = context.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("Bloom Blur H Params {level}")),
-                contents: bytemuck::cast_slice(&[h_params]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-        let h_bg =
-            context
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Bloom Blur H BG {level}")),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                mip_view,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: h_buffer.as_entire_binding(),
-                        },
-                    ],
-                });
-
-        let v_params = BlurParams {
-            texel_size,
-            horizontal: 0,
-            _pad: 0,
-        };
-        let v_buffer = context.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("Bloom Blur V Params {level}")),
-                contents: bytemuck::cast_slice(&[v_params]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-        let v_bg =
-            context
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Bloom Blur V BG {level}")),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                ping_view,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: v_buffer.as_entire_binding(),
-                        },
-                    ],
-                });
+        let (h_bg, h_buffer) =
+            Self::create_blur_direction(context, cfg, cfg.mip_view, 1, "H");
+        let (v_bg, v_buffer) =
+            Self::create_blur_direction(context, cfg, cfg.ping_view, 0, "V");
 
         ([h_bg, v_bg], [h_buffer, v_buffer])
+    }
+
+    fn create_blur_direction(
+        context: &RenderContext,
+        cfg: &BlurLevelConfig,
+        source_view: &wgpu::TextureView,
+        horizontal: u32,
+        dir_label: &str,
+    ) -> (wgpu::BindGroup, wgpu::Buffer) {
+        let level = cfg.level;
+        let params = BlurParams {
+            texel_size: [1.0 / cfg.width as f32, 1.0 / cfg.height as f32],
+            horizontal,
+            _pad: 0,
+        };
+        let buffer = context.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Bloom Blur {dir_label} Params {level}")),
+                contents: bytemuck::cast_slice(&[params]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let bg = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Bloom Blur {dir_label} BG {level}")),
+                layout: cfg.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            source_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(cfg.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: buffer.as_entire_binding(),
+                    },
+                ],
+            });
+        (bg, buffer)
     }
 
     fn create_upsample_bind_groups(
@@ -701,12 +741,14 @@ impl ScreenPass for BloomPass {
         let (blur_bind_groups, blur_params_buffers) =
             Self::create_blur_resources(
                 context,
-                &self.blur_bind_group_layout,
-                &mip_views,
-                &ping_views,
-                &self.sampler,
-                width,
-                height,
+                &BlurChainConfig {
+                    layout: &self.blur_bind_group_layout,
+                    mip_views: &mip_views,
+                    ping_views: &ping_views,
+                    sampler: &self.sampler,
+                    width,
+                    height,
+                },
             );
 
         let upsample_bind_groups = Self::create_upsample_bind_groups(
