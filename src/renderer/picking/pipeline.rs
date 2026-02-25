@@ -4,17 +4,15 @@
 //! the pixel at the mouse position to determine which residue is under the
 //! cursor. This is exact - it matches exactly what's rendered on screen.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 
-use crate::{
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::geometry::backbone::backbone_vertex_buffer_layout,
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::geometry::backbone::backbone_vertex_buffer_layout;
 
 /// Selection buffer for GPU - stores selection state as a bit array
 pub struct SelectionBuffer {
@@ -191,7 +189,7 @@ impl Picking {
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let width = context.config.width;
         let height = context.config.height;
 
@@ -200,8 +198,6 @@ impl Picking {
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&context.device, width, height);
 
-        // Staging buffer for single pixel readback (256 bytes minimum, we only
-        // need 4)
         let staging_buffer =
             context.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Picking Staging Buffer"),
@@ -211,136 +207,19 @@ impl Picking {
                 mapped_at_creation: false,
             });
 
-        // Load picking shader for tubes
-        let tube_shader = shader_composer.compose(
-            &context.device,
-            "Picking Tube Shader",
-            "utility/picking_mesh.wgsl",
-        );
+        let tube_pipeline = Self::create_tube_pipeline(
+            context,
+            camera_bind_group_layout,
+            shader_composer,
+        )?;
+        let (capsule_pipeline, capsule_bind_group_layout) =
+            Self::create_capsule_pipeline(
+                context,
+                camera_bind_group_layout,
+                shader_composer,
+            )?;
 
-        // Tube picking pipeline
-        let tube_pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Picking Tube Pipeline Layout"),
-                bind_group_layouts: &[camera_bind_group_layout],
-                push_constant_ranges: &[],
-            },
-        );
-
-        let tube_pipeline = context.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Picking Tube Pipeline"),
-                layout: Some(&tube_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &tube_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[backbone_vertex_buffer_layout()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &tube_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            },
-        );
-
-        // Capsule picking pipeline
-        let capsule_shader = shader_composer.compose(
-            &context.device,
-            "Picking Capsule Shader",
-            "utility/picking_capsule.wgsl",
-        );
-
-        let capsule_bind_group_layout = context
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Picking Capsule Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX
-                        | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage {
-                            read_only: true,
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let capsule_pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Picking Capsule Pipeline Layout"),
-                bind_group_layouts: &[
-                    &capsule_bind_group_layout,
-                    camera_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
-
-        let capsule_pipeline = context.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Picking Capsule Pipeline"),
-                layout: Some(&capsule_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &capsule_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &capsule_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            },
-        );
-
-        Self {
+        Ok(Self {
             texture,
             texture_view,
             depth_texture,
@@ -355,7 +234,119 @@ impl Picking {
             selected_residues: Vec::new(),
             readback_in_flight: false,
             map_complete: Arc::new(AtomicBool::new(false)),
-        }
+        })
+    }
+
+    fn create_tube_pipeline(
+        context: &RenderContext,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
+    ) -> Result<wgpu::RenderPipeline, VisoError> {
+        let shader = shader_composer.compose(
+            &context.device,
+            "Picking Tube Shader",
+            "utility/picking_mesh.wgsl",
+        )?;
+
+        let layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Picking Tube Pipeline Layout"),
+                bind_group_layouts: &[camera_bind_group_layout],
+                push_constant_ranges: &[],
+            },
+        );
+
+        Ok(context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Picking Tube Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[backbone_vertex_buffer_layout()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(picking_depth_stencil()),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ))
+    }
+
+    fn create_capsule_pipeline(
+        context: &RenderContext,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
+        let shader = shader_composer.compose(
+            &context.device,
+            "Picking Capsule Shader",
+            "utility/picking_capsule.wgsl",
+        )?;
+
+        let bind_group_layout =
+            capsule_storage_bind_group_layout(&context.device);
+
+        let layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Picking Capsule Pipeline Layout"),
+                bind_group_layouts: &[
+                    &bind_group_layout,
+                    camera_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            },
+        );
+
+        let pipeline = context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Picking Capsule Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(picking_depth_stencil()),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        );
+
+        Ok((pipeline, bind_group_layout))
     }
 
     fn create_picking_texture(
@@ -438,144 +429,104 @@ impl Picking {
         })
     }
 
-    /// Render the picking pass and request readback at mouse position
+    /// Render the picking pass and request readback at mouse position.
     ///
     /// In Ribbon mode, pass ribbon buffers to render helices/sheets for
     /// picking. Tubes are still rendered (for coils in ribbon mode, or
     /// everything in tube mode).
     pub fn render(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
         camera_bind_group: &wgpu::BindGroup,
         geometry: &PickingGeometry,
-        mouse_x: u32,
-        mouse_y: u32,
+        mouse_pos: (u32, u32),
     ) {
-        let PickingGeometry {
-            backbone_vertex_buffer,
-            backbone_tube_index_buffer,
-            backbone_tube_index_count,
-            backbone_ribbon_index_buffer,
-            backbone_ribbon_index_count,
-            capsule_bind_group,
-            capsule_count,
-            bns_capsule_bind_group,
-            bns_capsule_count,
-        } = *geometry;
-        // Render picking pass
-        {
-            let mut render_pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Picking Render Pass"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.texture_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 0.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: Some(
-                        wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        },
-                    ),
-                    ..Default::default()
-                });
+        self.encode_picking_pass(encoder, camera_bind_group, geometry);
+        self.copy_pixel_to_staging(encoder, mouse_pos);
+    }
 
-            // Draw backbone geometry (tube + ribbon share the same vertex
-            // buffer)
-            render_pass.set_pipeline(&self.tube_pipeline);
-            render_pass.set_bind_group(0, camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, backbone_vertex_buffer.slice(..));
-
-            if backbone_tube_index_count > 0 {
-                render_pass.set_index_buffer(
-                    backbone_tube_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                render_pass.draw_indexed(0..backbone_tube_index_count, 0, 0..1);
-            }
-
-            if backbone_ribbon_index_count > 0 {
-                render_pass.set_index_buffer(
-                    backbone_ribbon_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                render_pass.draw_indexed(
-                    0..backbone_ribbon_index_count,
-                    0,
-                    0..1,
-                );
-            }
-
-            // Draw capsules (sidechains)
-            if let Some(capsule_bg) = capsule_bind_group {
-                if capsule_count > 0 {
-                    render_pass.set_pipeline(&self.capsule_pipeline);
-                    render_pass.set_bind_group(0, capsule_bg, &[]);
-                    render_pass.set_bind_group(1, camera_bind_group, &[]);
-                    render_pass.draw(0..6, 0..capsule_count);
-                }
-            }
-
-            // Draw ball-and-stick picking (degenerate capsules for spheres +
-            // bonds)
-            if let Some(bns_bg) = bns_capsule_bind_group {
-                if bns_capsule_count > 0 {
-                    render_pass.set_pipeline(&self.capsule_pipeline);
-                    render_pass.set_bind_group(0, bns_bg, &[]);
-                    render_pass.set_bind_group(1, camera_bind_group, &[]);
-                    render_pass.draw(0..6, 0..bns_capsule_count);
-                }
-            }
-        }
-
-        // Copy pixel at mouse position to staging buffer (only if not already
-        // in flight)
-        if mouse_x < self.width
-            && mouse_y < self.height
-            && !self.readback_in_flight
-        {
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: mouse_x,
-                        y: mouse_y,
-                        z: 0,
+    fn encode_picking_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        camera_bind_group: &wgpu::BindGroup,
+        geometry: &PickingGeometry,
+    ) {
+        let mut render_pass =
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Picking Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &self.staging_buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(256),
-                        rows_per_image: Some(1),
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(
+                    wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     },
-                },
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
+                ),
+                ..Default::default()
+            });
+
+        draw_picking_geometry(
+            &mut render_pass,
+            &self.tube_pipeline,
+            &self.capsule_pipeline,
+            camera_bind_group,
+            geometry,
+        );
+    }
+
+    /// Copy the pixel at `mouse_pos` to the staging buffer for readback.
+    fn copy_pixel_to_staging(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        (mouse_x, mouse_y): (u32, u32),
+    ) {
+        if mouse_x >= self.width
+            || mouse_y >= self.height
+            || self.readback_in_flight
+        {
+            return;
         }
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: mouse_x,
+                    y: mouse_y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     /// Start async readback (call after queue.submit)
@@ -666,5 +617,91 @@ impl Picking {
     pub fn clear_selection(&mut self) {
         self.selected_residues.clear();
         self.hovered_residue = -1;
+    }
+}
+
+fn capsule_storage_bind_group_layout(
+    device: &wgpu::Device,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Picking Capsule Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX
+                | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
+fn picking_depth_stencil() -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled: true,
+        depth_compare: wgpu::CompareFunction::Less,
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
+}
+
+fn draw_picking_geometry(
+    render_pass: &mut wgpu::RenderPass<'_>,
+    tube_pipeline: &wgpu::RenderPipeline,
+    capsule_pipeline: &wgpu::RenderPipeline,
+    camera_bind_group: &wgpu::BindGroup,
+    geometry: &PickingGeometry,
+) {
+    // Draw backbone geometry (tube + ribbon share the same vertex buffer)
+    render_pass.set_pipeline(tube_pipeline);
+    render_pass.set_bind_group(0, camera_bind_group, &[]);
+    render_pass.set_vertex_buffer(0, geometry.backbone_vertex_buffer.slice(..));
+
+    if geometry.backbone_tube_index_count > 0 {
+        render_pass.set_index_buffer(
+            geometry.backbone_tube_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(
+            0..geometry.backbone_tube_index_count,
+            0,
+            0..1,
+        );
+    }
+
+    if geometry.backbone_ribbon_index_count > 0 {
+        render_pass.set_index_buffer(
+            geometry.backbone_ribbon_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(
+            0..geometry.backbone_ribbon_index_count,
+            0,
+            0..1,
+        );
+    }
+
+    // Draw capsules (sidechains)
+    if let Some(capsule_bg) = geometry.capsule_bind_group {
+        if geometry.capsule_count > 0 {
+            render_pass.set_pipeline(capsule_pipeline);
+            render_pass.set_bind_group(0, capsule_bg, &[]);
+            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.draw(0..6, 0..geometry.capsule_count);
+        }
+    }
+
+    // Draw ball-and-stick picking (degenerate capsules for spheres + bonds)
+    if let Some(bns_bg) = geometry.bns_capsule_bind_group {
+        if geometry.bns_capsule_count > 0 {
+            render_pass.set_pipeline(capsule_pipeline);
+            render_pass.set_bind_group(0, bns_bg, &[]);
+            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.draw(0..6, 0..geometry.bns_capsule_count);
+        }
     }
 }

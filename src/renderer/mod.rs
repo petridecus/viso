@@ -11,6 +11,8 @@ pub mod geometry;
 pub mod impostor;
 /// Shared indexed-mesh draw-pass abstraction.
 pub(crate) mod mesh;
+/// GPU-based object picking and selection management.
+pub mod picking;
 pub(crate) mod pipeline_util;
 /// Post-processing effects (SSAO, bloom, FXAA).
 pub mod postprocess;

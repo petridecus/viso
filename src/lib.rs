@@ -96,7 +96,6 @@ pub mod gui;
 pub(crate) mod input;
 /// Runtime display, lighting, camera, and color options.
 pub mod options;
-pub(crate) mod picking;
 pub(crate) mod renderer;
 /// Scene graph holding entities.
 pub mod scene;
@@ -109,13 +108,11 @@ pub mod viewer;
 
 // Input types — platform-agnostic event API
 // Animation types for scene sync and custom behaviors
-pub use animation::{
-    behaviors::{
-        shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
-        PreemptionStrategy, SharedBehavior, SmoothInterpolation, Snap,
-    },
-    transition::Transition,
+pub use animation::behaviors::{
+    shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
+    PreemptionStrategy, SharedBehavior, SmoothInterpolation, Snap,
 };
+pub use animation::transition::Transition;
 // Convenience re-exports
 pub use engine::ProteinRenderEngine;
 pub use error::VisoError;

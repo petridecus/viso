@@ -3,8 +3,8 @@
 //! Renders residue indices to an offscreen buffer and reads back the pixel
 //! under the cursor to determine which residue was clicked or hovered.
 
-#[allow(clippy::module_inception)]
-mod picking;
-pub(crate) mod picking_state;
+mod pipeline;
+pub(crate) mod state;
+pub(crate) mod utils;
 
-pub use picking::{Picking, PickingGeometry, SelectionBuffer};
+pub use pipeline::{Picking, PickingGeometry, SelectionBuffer};
