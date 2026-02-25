@@ -9,6 +9,10 @@ use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
 use crate::error::VisoError;
+use crate::gpu::pipeline_helpers::{
+    create_screen_space_pipeline, filtering_sampler, linear_sampler,
+    texture_2d, uniform_buffer,
+};
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
 
@@ -41,14 +45,7 @@ impl FxaaPass {
         let (input_texture, input_view) =
             Self::create_input_texture(context, width, height);
 
-        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("FXAA Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler = linear_sampler(&context.device, "FXAA Sampler");
 
         let screen_size: [f32; 2] = [width as f32, height as f32];
         let screen_size_buffer = context.device.create_buffer_init(
@@ -60,46 +57,7 @@ impl FxaaPass {
             },
         );
 
-        let bind_group_layout = context.device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("FXAA Bind Group Layout"),
-                entries: &[
-                    // binding 0: input color texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 1: sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(
-                            wgpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    // binding 2: screen_size uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            },
-        );
+        let bind_group_layout = Self::create_bind_group_layout(context);
 
         let bind_group = Self::create_bind_group(
             context,
@@ -109,47 +67,11 @@ impl FxaaPass {
             &screen_size_buffer,
         );
 
-        let shader = shader_composer.compose(
-            &context.device,
-            "FXAA Shader",
-            "screen/fxaa.wgsl",
+        let pipeline = Self::create_pipeline(
+            context,
+            shader_composer,
+            &bind_group_layout,
         )?;
-
-        let pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("FXAA Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            },
-        );
-
-        let pipeline = context.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("FXAA Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: context.config.format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            },
-        );
 
         Ok(Self {
             pipeline,
@@ -163,6 +85,41 @@ impl FxaaPass {
             width,
             height,
         })
+    }
+
+    fn create_bind_group_layout(
+        context: &RenderContext,
+    ) -> wgpu::BindGroupLayout {
+        context.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("FXAA Bind Group Layout"),
+                entries: &[
+                    texture_2d(0),
+                    filtering_sampler(1),
+                    uniform_buffer(2),
+                ],
+            },
+        )
+    }
+
+    fn create_pipeline(
+        context: &RenderContext,
+        shader_composer: &mut ShaderComposer,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Result<wgpu::RenderPipeline, VisoError> {
+        let shader = shader_composer.compose(
+            &context.device,
+            "FXAA Shader",
+            "screen/fxaa.wgsl",
+        )?;
+        Ok(create_screen_space_pipeline(
+            &context.device,
+            "FXAA",
+            &shader,
+            context.config.format,
+            None,
+            &[bind_group_layout],
+        ))
     }
 
     fn create_input_texture(

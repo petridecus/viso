@@ -5,6 +5,8 @@
 
 /// Growable GPU buffers with automatic reallocation.
 pub mod dynamic_buffer;
+/// Shared wgpu boilerplate helpers for screen-space post-process pipelines.
+pub mod pipeline_helpers;
 /// wgpu device, surface, and queue initialization.
 pub mod render_context;
 /// Per-residue color storage buffer for GPU shaders.

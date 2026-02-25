@@ -8,6 +8,10 @@ use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
 use crate::error::VisoError;
+use crate::gpu::pipeline_helpers::{
+    create_screen_space_pipeline, depth_texture_2d, filtering_sampler,
+    linear_sampler, non_filtering_sampler, texture_2d, uniform_buffer,
+};
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
 
@@ -131,33 +135,11 @@ impl CompositePass {
         let width = context.render_width();
         let height = context.render_height();
 
-        // Create intermediate color texture (geometry renders here)
         let (color_texture, color_view) =
             Self::create_color_texture(context, width, height);
 
-        // Sampler for color and SSAO textures
-        let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Composite Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let (sampler, depth_sampler) = Self::create_samplers(context);
 
-        // Sampler for depth texture (comparison sampler not needed, just
-        // filtering)
-        let depth_sampler =
-            context.device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Composite Depth Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            });
-
-        // Create params buffer
         let params = CompositeParams {
             screen_size: [width as f32, height as f32],
             ..Default::default()
@@ -171,111 +153,8 @@ impl CompositePass {
             },
         );
 
-        // Bind group layout
-        let bind_group_layout = context.device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Composite Bind Group Layout"),
-                entries: &[
-                    // binding 0: color texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 1: SSAO texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 2: depth texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 3: sampler (for color/ssao)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(
-                            wgpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    // binding 4: depth sampler (NonFiltering — sampler uses
-                    // Nearest)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(
-                            wgpu::SamplerBindingType::NonFiltering,
-                        ),
-                        count: None,
-                    },
-                    // binding 5: params uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 6: normal G-buffer texture (for ambient ratio +
-                    // normal outlines)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 7: bloom texture (half-res blurred bright
-                    // pixels)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            },
-        );
+        let bind_group_layout = Self::create_bind_group_layout(context);
 
-        // Create bind group
         let bind_group = Self::create_bind_group(
             context,
             &bind_group_layout,
@@ -291,50 +170,11 @@ impl CompositePass {
             },
         );
 
-        // Load shader
-        let shader = shader_composer.compose(
-            &context.device,
-            "Composite Shader",
-            "screen/composite.wgsl",
+        let pipeline = Self::create_pipeline(
+            context,
+            shader_composer,
+            &bind_group_layout,
         )?;
-
-        // Pipeline layout
-        let pipeline_layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Composite Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            },
-        );
-
-        // Render pipeline
-        let pipeline = context.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Composite Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: context.config.format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            },
-        );
 
         Ok(Self {
             pipeline,
@@ -354,6 +194,62 @@ impl CompositePass {
             width,
             height,
         })
+    }
+
+    fn create_samplers(
+        context: &RenderContext,
+    ) -> (wgpu::Sampler, wgpu::Sampler) {
+        let sampler = linear_sampler(&context.device, "Composite Sampler");
+        let depth_sampler =
+            context.device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Composite Depth Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+        (sampler, depth_sampler)
+    }
+
+    fn create_bind_group_layout(
+        context: &RenderContext,
+    ) -> wgpu::BindGroupLayout {
+        context.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Composite Bind Group Layout"),
+                entries: &[
+                    texture_2d(0),
+                    texture_2d(1),
+                    depth_texture_2d(2),
+                    filtering_sampler(3),
+                    non_filtering_sampler(4),
+                    uniform_buffer(5),
+                    texture_2d(6),
+                    texture_2d(7),
+                ],
+            },
+        )
+    }
+
+    fn create_pipeline(
+        context: &RenderContext,
+        shader_composer: &mut ShaderComposer,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Result<wgpu::RenderPipeline, VisoError> {
+        let shader = shader_composer.compose(
+            &context.device,
+            "Composite Shader",
+            "screen/composite.wgsl",
+        )?;
+        Ok(create_screen_space_pipeline(
+            &context.device,
+            "Composite",
+            &shader,
+            context.config.format,
+            None,
+            &[bind_group_layout],
+        ))
     }
 
     fn create_color_texture(
