@@ -83,9 +83,8 @@ impl SidechainAnimationState {
                     .get(*cb_idx as usize)
                     .copied()
                     .unwrap_or(0) as usize;
-                let ca_pos = animator
-                    .get_ca_position(res_idx)
-                    .unwrap_or(*target_ca_pos);
+                let ca_pos =
+                    animator.get_ca_position(res_idx).unwrap_or(*target_ca_pos);
                 (ca_pos, *cb_idx)
             })
             .collect()

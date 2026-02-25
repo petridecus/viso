@@ -15,10 +15,16 @@ pub fn sheet_adjusted_view(
     sidechain: &SidechainView<'_>,
     offset_map: &HashMap<u32, Vec3>,
 ) -> OwnedSidechainView {
-    let positions =
-        adjust_sidechains_for_sheet(sidechain.positions, sidechain.residue_indices, offset_map);
-    let backbone_bonds =
-        adjust_bonds_for_sheet(sidechain.backbone_bonds, sidechain.residue_indices, offset_map);
+    let positions = adjust_sidechains_for_sheet(
+        sidechain.positions,
+        sidechain.residue_indices,
+        offset_map,
+    );
+    let backbone_bonds = adjust_bonds_for_sheet(
+        sidechain.backbone_bonds,
+        sidechain.residue_indices,
+        offset_map,
+    );
     OwnedSidechainView {
         positions,
         bonds: sidechain.bonds.to_vec(),
