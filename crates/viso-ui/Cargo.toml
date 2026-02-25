@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Dioxus web UI for the viso rendering engine"
 authors = ["Andreas Petrides <apetrides32@gmail.com>"]
+license-file = "../../LICENSE.md"
+repository = "https://github.com/petridecus/viso"
+readme = "../../README.md"
+keywords = ["protein", "visualization", "ui", "dioxus", "wasm"]
+categories = ["gui", "web-programming", "visualization"]
 
 [dependencies]
 dioxus = { version = "0.6", features = ["web"] }
