@@ -12,13 +12,11 @@ pub mod sphere;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{
-    gpu::{
-        dynamic_buffer::TypedBuffer, render_context::RenderContext,
-        shader_composer::ShaderComposer,
-    },
-    renderer::{pipeline_util, PipelineLayouts},
-};
+use crate::error::VisoError;
+use crate::gpu::dynamic_buffer::TypedBuffer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::{pipeline_util, PipelineLayouts};
 
 /// Shader identity: label + path, always passed together.
 pub struct ShaderDef<'a> {
@@ -50,7 +48,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
         layouts: &PipelineLayouts,
         vertices_per_instance: u32,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let label = shader.label;
         let instance_buffer = TypedBuffer::new_with_data(
             &context.device,
@@ -73,16 +71,16 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
             &bind_group_layout,
             layouts,
             shader_composer,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             pipeline,
             instance_buffer,
             bind_group_layout,
             bind_group,
             instance_count: 0,
             vertices_per_instance,
-        }
+        })
     }
 
     fn create_bind_group_layout(
@@ -127,13 +125,13 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
         bind_group_layout: &wgpu::BindGroupLayout,
         layouts: &PipelineLayouts,
         shader_composer: &mut ShaderComposer,
-    ) -> wgpu::RenderPipeline {
+    ) -> Result<wgpu::RenderPipeline, VisoError> {
         let label = shader_def.label;
         let shader = shader_composer.compose(
             &context.device,
             &format!("{label} Shader"),
             shader_def.path,
-        );
+        )?;
 
         let pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -148,9 +146,8 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
             },
         );
 
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        Ok(context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some(&format!("{label} Pipeline")),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -170,7 +167,8 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
-            })
+            },
+        ))
     }
 
     /// Write typed instances to the GPU buffer. Recreates the bind group if

@@ -8,9 +8,9 @@
 use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
-use crate::gpu::{
-    render_context::RenderContext, shader_composer::ShaderComposer,
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 
 /// FXAA (Fast Approximate Anti-Aliasing) post-process pass.
 pub struct FxaaPass {
@@ -34,7 +34,7 @@ impl FxaaPass {
     pub fn new(
         context: &RenderContext,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -113,7 +113,7 @@ impl FxaaPass {
             &context.device,
             "FXAA Shader",
             "screen/fxaa.wgsl",
-        );
+        )?;
 
         let pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -151,7 +151,7 @@ impl FxaaPass {
             },
         );
 
-        Self {
+        Ok(Self {
             pipeline,
             bind_group_layout,
             bind_group,
@@ -162,7 +162,7 @@ impl FxaaPass {
             output_view: None,
             width,
             height,
-        }
+        })
     }
 
     fn create_input_texture(

@@ -19,6 +19,8 @@ pub enum VisoError {
     OptionsParse(String),
     /// Viewer event-loop failure.
     Viewer(String),
+    /// Shader compilation or composition failure.
+    Shader(String),
 }
 
 impl fmt::Display for VisoError {
@@ -36,6 +38,7 @@ impl fmt::Display for VisoError {
                 write!(f, "options parse error: {msg}")
             }
             Self::Viewer(msg) => write!(f, "viewer error: {msg}"),
+            Self::Shader(msg) => write!(f, "shader error: {msg}"),
         }
     }
 }

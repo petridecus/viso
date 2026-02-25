@@ -7,9 +7,9 @@
 use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
-use crate::gpu::{
-    render_context::RenderContext, shader_composer::ShaderComposer,
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 
 /// Blur direction params — must match WGSL struct
 #[repr(C)]
@@ -75,7 +75,7 @@ impl BloomPass {
         context: &RenderContext,
         color_view: &wgpu::TextureView,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -164,7 +164,7 @@ impl BloomPass {
             &context.device,
             "Bloom Threshold Shader",
             "screen/bloom_threshold.wgsl",
-        );
+        )?;
 
         let threshold_pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -245,7 +245,7 @@ impl BloomPass {
             &context.device,
             "Bloom Blur Shader",
             "screen/bloom_blur.wgsl",
-        );
+        )?;
 
         let blur_pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -331,7 +331,7 @@ impl BloomPass {
             &context.device,
             "Bloom Upsample Shader",
             "screen/bloom_upsample.wgsl",
-        );
+        )?;
 
         let upsample_pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -383,7 +383,7 @@ impl BloomPass {
             &sampler,
         );
 
-        Self {
+        Ok(Self {
             threshold_pipeline,
             threshold_bind_group_layout,
             threshold_bind_group,
@@ -407,7 +407,7 @@ impl BloomPass {
             intensity,
             width,
             height,
-        }
+        })
     }
 
     fn create_texture(

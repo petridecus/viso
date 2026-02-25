@@ -36,7 +36,7 @@ impl std::error::Error for RenderContextError {
             Self::SurfaceCreation(e) => Some(e),
             Self::AdapterRequest(e) => Some(e),
             Self::DeviceRequest(e) => Some(e),
-            _ => None,
+            Self::UnsupportedSurface => None,
         }
     }
 }
@@ -58,6 +58,11 @@ pub struct RenderContext {
 impl RenderContext {
     /// Create a new render context from the given window surface target and
     /// initial size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderContextError`] if surface creation, adapter request,
+    /// device request, or surface configuration fails.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         initial_size: (u32, u32),
@@ -165,15 +170,18 @@ impl RenderContext {
 
     /// Acquire the next swapchain texture for rendering.
     ///
-    /// Returns [`wgpu::SurfaceError::Lost`] if no surface is available
-    /// (texture-only mode).
+    /// # Errors
+    ///
+    /// Returns [`wgpu::SurfaceError`] if the surface is lost, outdated,
+    /// or timed out, or if no surface is available (texture-only mode).
     pub fn get_next_frame(
         &self,
     ) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
-        match self.surface {
-            Some(ref surface) => surface.get_current_texture(),
-            None => Err(wgpu::SurfaceError::Lost),
-        }
+        self.surface
+            .as_ref()
+            .map_or(Err(wgpu::SurfaceError::Lost), |surface| {
+                surface.get_current_texture()
+            })
     }
 
     /// Returns `true` if this context has a presentation surface.

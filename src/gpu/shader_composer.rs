@@ -1,9 +1,12 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
+use std::collections::HashMap;
 
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderLanguage,
     ShaderType,
 };
+
+use crate::error::VisoError;
 
 /// Wraps `naga_oil::compose::Composer` to provide shader composition with
 /// `#import` support.
@@ -28,16 +31,10 @@ const MODULE_PATHS: &[&str] = &[
     "modules/volume.wgsl",
 ];
 
-impl Default for ShaderComposer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ShaderComposer {
     /// Create a new composer with all shader sources loaded and shared modules
     /// registered.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, VisoError> {
         let sources: HashMap<&'static str, &'static str> = HashMap::from([
             // Shared modules
             (
@@ -141,12 +138,14 @@ impl ShaderComposer {
                     language: ShaderLanguage::Wgsl,
                     ..Default::default()
                 })
-                .unwrap_or_else(|e| {
-                    panic!("Failed to register shader module '{path}': {e:?}")
-                });
+                .map_err(|e| {
+                    VisoError::Shader(format!(
+                        "failed to register shader module '{path}': {e:?}"
+                    ))
+                })?;
         }
 
-        Self { composer, sources }
+        Ok(Self { composer, sources })
     }
 
     /// Compose a shader into a `wgpu::ShaderModule` ready for pipeline
@@ -159,11 +158,10 @@ impl ShaderComposer {
         device: &wgpu::Device,
         label: &str,
         path: &str,
-    ) -> wgpu::ShaderModule {
-        let source = self
-            .sources
-            .get(path)
-            .unwrap_or_else(|| panic!("Unknown shader path: {path}"));
+    ) -> Result<wgpu::ShaderModule, VisoError> {
+        let source = self.sources.get(path).ok_or_else(|| {
+            VisoError::Shader(format!("unknown shader path: {path}"))
+        })?;
 
         let naga_module = self
             .composer
@@ -173,14 +171,16 @@ impl ShaderComposer {
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()
             })
-            .unwrap_or_else(|e| {
-                panic!("Failed to compose shader '{path}': {e}")
-            });
+            .map_err(|e| {
+                VisoError::Shader(format!(
+                    "failed to compose shader '{path}': {e}"
+                ))
+            })?;
 
-        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Naga(Cow::Owned(naga_module)),
-        })
+        }))
     }
 
     /// Compose a shader source into a `naga::Module` without creating a wgpu
@@ -189,11 +189,10 @@ impl ShaderComposer {
     pub fn compose_naga(
         &mut self,
         path: &str,
-    ) -> Result<naga::Module, Box<naga_oil::compose::ComposerError>> {
-        let source = self
-            .sources
-            .get(path)
-            .unwrap_or_else(|| panic!("Unknown shader path: {path}"));
+    ) -> Result<naga::Module, VisoError> {
+        let source = self.sources.get(path).ok_or_else(|| {
+            VisoError::Shader(format!("unknown shader path: {path}"))
+        })?;
 
         self.composer
             .make_naga_module(NagaModuleDescriptor {
@@ -202,11 +201,16 @@ impl ShaderComposer {
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()
             })
-            .map_err(Box::new)
+            .map_err(|e| {
+                VisoError::Shader(format!(
+                    "failed to compose shader '{path}': {e}"
+                ))
+            })
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -231,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_all_shaders_compose() {
-        let mut composer = ShaderComposer::new();
+        let mut composer = ShaderComposer::new().expect("ShaderComposer::new");
         for path in composable_shader_paths() {
             let _ = composer.compose_naga(path).unwrap_or_else(|e| {
                 panic!("Shader '{path}' failed to compose: {e}")

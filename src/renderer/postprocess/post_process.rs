@@ -1,16 +1,14 @@
 use glam::Mat4;
 
-use crate::{
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    options::Options,
-    renderer::postprocess::{
-        bloom::BloomPass,
-        composite::{CompositeInputs, CompositePass},
-        fxaa::FxaaPass,
-        screen_pass::ScreenPass,
-        ssao::SsaoRenderer,
-    },
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::options::Options;
+use crate::renderer::postprocess::bloom::BloomPass;
+use crate::renderer::postprocess::composite::{CompositeInputs, CompositePass};
+use crate::renderer::postprocess::fxaa::FxaaPass;
+use crate::renderer::postprocess::screen_pass::ScreenPass;
+use crate::renderer::postprocess::ssao::SsaoRenderer;
 
 /// Camera parameters needed for post-processing passes.
 pub struct PostProcessCamera {
@@ -39,7 +37,7 @@ impl PostProcessStack {
     pub fn new(
         context: &RenderContext,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
         let (normal_texture, normal_view) =
             Self::create_normal_texture(context);
@@ -49,10 +47,10 @@ impl PostProcessStack {
             &depth_view,
             &normal_view,
             shader_composer,
-        );
+        )?;
 
         let mut bloom_pass =
-            BloomPass::new(context, &normal_view, shader_composer);
+            BloomPass::new(context, &normal_view, shader_composer)?;
 
         let mut composite_pass = CompositePass::new(
             context,
@@ -63,7 +61,7 @@ impl PostProcessStack {
                 bloom: bloom_pass.get_output_view(),
             },
             shader_composer,
-        );
+        )?;
 
         bloom_pass.rebind_input(context, composite_pass.get_color_view());
 
@@ -75,10 +73,10 @@ impl PostProcessStack {
             1.0 / 2.2
         };
 
-        let fxaa_pass = FxaaPass::new(context, shader_composer);
+        let fxaa_pass = FxaaPass::new(context, shader_composer)?;
         composite_pass.set_output_view(fxaa_pass.get_input_view().clone());
 
-        Self {
+        Ok(Self {
             depth_texture,
             depth_view,
             normal_texture,
@@ -87,7 +85,7 @@ impl PostProcessStack {
             bloom_pass,
             composite_pass,
             fxaa_pass,
-        }
+        })
     }
 
     /// Recreate all resolution-dependent resources.

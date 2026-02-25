@@ -3,9 +3,9 @@ use rand::Rng;
 use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
-use crate::gpu::{
-    render_context::RenderContext, shader_composer::ShaderComposer,
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 
 /// SSAO parameters uniform - must match WGSL struct
 #[repr(C)]
@@ -109,7 +109,7 @@ impl SsaoRenderer {
         depth_view: &wgpu::TextureView,
         normal_view: &wgpu::TextureView,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -271,7 +271,7 @@ impl SsaoRenderer {
             &context.device,
             "SSAO Shader",
             "screen/ssao.wgsl",
-        );
+        )?;
 
         let ssao_pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -380,7 +380,7 @@ impl SsaoRenderer {
             &context.device,
             "SSAO Blur Shader",
             "screen/ssao_blur.wgsl",
-        );
+        )?;
 
         let blur_pipeline_layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -443,7 +443,7 @@ impl SsaoRenderer {
             &params_buffer,
         );
 
-        Self {
+        Ok(Self {
             ssao_texture,
             ssao_view,
             ssao_blurred_texture,
@@ -467,7 +467,7 @@ impl SsaoRenderer {
             radius,
             bias,
             power,
-        }
+        })
     }
 
     fn create_ssao_texture(

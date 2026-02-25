@@ -7,9 +7,9 @@
 use wgpu::util::DeviceExt;
 
 use super::screen_pass::ScreenPass;
-use crate::gpu::{
-    render_context::RenderContext, shader_composer::ShaderComposer,
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
 
 /// External texture view inputs for creating a composite pass.
 pub struct CompositeInputs<'a> {
@@ -127,7 +127,7 @@ impl CompositePass {
         context: &RenderContext,
         inputs: &CompositeInputs,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let width = context.render_width();
         let height = context.render_height();
 
@@ -296,7 +296,7 @@ impl CompositePass {
             &context.device,
             "Composite Shader",
             "screen/composite.wgsl",
-        );
+        )?;
 
         // Pipeline layout
         let pipeline_layout = context.device.create_pipeline_layout(
@@ -336,7 +336,7 @@ impl CompositePass {
             },
         );
 
-        Self {
+        Ok(Self {
             pipeline,
             bind_group_layout,
             bind_group,
@@ -353,7 +353,7 @@ impl CompositePass {
             params_buffer,
             width,
             height,
-        }
+        })
     }
 
     fn create_color_texture(

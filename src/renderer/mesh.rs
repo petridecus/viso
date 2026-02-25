@@ -8,13 +8,11 @@
 //! Used by `BackboneRenderer` today; designed for future use by isosurface
 //! renderers and any other indexed-mesh geometry.
 
-use crate::{
-    gpu::{
-        dynamic_buffer::DynamicBuffer, render_context::RenderContext,
-        shader_composer::ShaderComposer,
-    },
-    renderer::pipeline_util,
-};
+use crate::error::VisoError;
+use crate::gpu::dynamic_buffer::DynamicBuffer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::pipeline_util;
 
 /// Description of an indexed-mesh render pipeline.
 pub(crate) struct MeshPipelineDef<'a> {
@@ -30,10 +28,10 @@ pub(crate) fn create_mesh_pipeline(
     def: &MeshPipelineDef<'_>,
     bind_group_layouts: &[&wgpu::BindGroupLayout],
     shader_composer: &mut ShaderComposer,
-) -> wgpu::RenderPipeline {
+) -> Result<wgpu::RenderPipeline, VisoError> {
     let label = def.label;
     let shader =
-        shader_composer.compose(&context.device, label, def.shader_path);
+        shader_composer.compose(&context.device, label, def.shader_path)?;
 
     let pipeline_layout = context.device.create_pipeline_layout(
         &wgpu::PipelineLayoutDescriptor {
@@ -43,7 +41,7 @@ pub(crate) fn create_mesh_pipeline(
         },
     );
 
-    context
+    Ok(context
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -69,7 +67,7 @@ pub(crate) fn create_mesh_pipeline(
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
-        })
+        }))
 }
 
 /// An indexed-mesh draw pass: pipeline + index buffer.
