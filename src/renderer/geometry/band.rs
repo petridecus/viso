@@ -330,8 +330,4 @@ impl BandRenderer {
         self.pass.draw(render_pass, bind_groups);
     }
 
-    /// Get band count for debugging
-    pub fn band_count(&self) -> u32 {
-        self.pass.instance_count
-    }
 }

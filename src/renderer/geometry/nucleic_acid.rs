@@ -85,29 +85,6 @@ impl NucleicAcidRenderer {
         })
     }
 
-    /// Update from new chain data (skips if unchanged).
-    pub fn update(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        na_chains: &[Vec<Vec3>],
-        rings: &[NucleotideRing],
-    ) {
-        let new_hash = Self::compute_combined_hash(na_chains, rings);
-        if new_hash == self.last_chain_hash {
-            return;
-        }
-        self.last_chain_hash = new_hash;
-
-        let (stems, ring_instances) =
-            Self::generate_instances(na_chains, rings, None);
-
-        let _ = self.stem_pass.write_instances(device, queue, &stems);
-        let _ = self
-            .ring_pass
-            .write_instances(device, queue, &ring_instances);
-    }
-
     /// Draw nucleic acid geometry into the given render pass.
     pub fn draw<'a>(
         &'a self,

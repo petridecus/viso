@@ -180,9 +180,4 @@ impl PullRenderer {
         self.cone_pass.draw(render_pass, bind_groups);
     }
 
-    /// Whether a pull is currently being rendered.
-    pub fn is_active(&self) -> bool {
-        self.capsule_pass.instance_count > 0
-            || self.cone_pass.instance_count > 0
-    }
 }
