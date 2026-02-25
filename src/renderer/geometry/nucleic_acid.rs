@@ -4,22 +4,19 @@
 //! impostors connecting the backbone spline to nucleotide ring centers.
 //! Backbone ribbons are handled by `BackboneRenderer`.
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
-use foldit_conv::coords::entity::NucleotideRing;
+use foldit_conv::types::entity::NucleotideRing;
 use glam::Vec3;
 
-use crate::{
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::impostor::{
-        capsule::CapsuleInstance, polygon::ExtrudedPolygonInstance,
-        ImpostorPass, ShaderDef,
-    },
-    util::hash::{hash_vec3, hash_vec3_slice_summary},
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::impostor::capsule::CapsuleInstance;
+use crate::renderer::impostor::polygon::ExtrudedPolygonInstance;
+use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::util::hash::{hash_vec3, hash_vec3_slice_summary};
 
 /// Spline subdivision per P-atom span (used for stem anchor lookup)
 const SEGMENTS_PER_RESIDUE: usize = 16;
@@ -46,7 +43,7 @@ impl NucleicAcidRenderer {
         na_chains: &[Vec<Vec3>],
         rings: &[NucleotideRing],
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let mut stem_pass = ImpostorPass::new(
             context,
             &ShaderDef {
@@ -56,7 +53,7 @@ impl NucleicAcidRenderer {
             layouts,
             6,
             shader_composer,
-        );
+        )?;
 
         let mut ring_pass = ImpostorPass::new(
             context,
@@ -67,7 +64,7 @@ impl NucleicAcidRenderer {
             layouts,
             72,
             shader_composer,
-        );
+        )?;
 
         let (stems, ring_instances) =
             Self::generate_instances(na_chains, rings, None);
@@ -81,11 +78,11 @@ impl NucleicAcidRenderer {
 
         let last_chain_hash = Self::compute_combined_hash(na_chains, rings);
 
-        Self {
+        Ok(Self {
             stem_pass,
             ring_pass,
             last_chain_hash,
-        }
+        })
     }
 
     /// Update from new chain data (skips if unchanged).

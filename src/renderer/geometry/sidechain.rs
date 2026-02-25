@@ -10,11 +10,12 @@
 
 use glam::Vec3;
 
-use crate::{
-    camera::frustum::Frustum,
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::impostor::{capsule::CapsuleInstance, ImpostorPass, ShaderDef},
-};
+use crate::camera::frustum::Frustum;
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::impostor::capsule::CapsuleInstance;
+use crate::renderer::impostor::{ImpostorPass, ShaderDef};
 
 /// Radius used for frustum culling (capsule bounding sphere)
 const CULL_RADIUS: f32 = 5.0;
@@ -24,8 +25,11 @@ const HYDROPHOBIC_COLOR: [f32; 3] = [0.3, 0.5, 0.9]; // Blue
 const HYDROPHILIC_COLOR: [f32; 3] = [0.95, 0.6, 0.2]; // Orange
 const CAPSULE_RADIUS: f32 = 0.3;
 
-/// Sidechain geometry data that always travels together.
-pub struct SidechainData<'a> {
+/// Borrowed view of sidechain geometry data for GPU rendering.
+///
+/// This is the renderer's input type — a set of borrowed slices that travel
+/// together. For the owned counterpart, see [`SidechainAtoms`] in foldit-conv.
+pub struct SidechainView<'a> {
     /// World-space atom positions.
     pub positions: &'a [Vec3],
     /// Intra-sidechain bonds as `(atom_a, atom_b)` index pairs.
@@ -36,6 +40,36 @@ pub struct SidechainData<'a> {
     pub hydrophobicity: &'a [bool],
     /// Residue index for each sidechain atom.
     pub residue_indices: &'a [u32],
+}
+
+/// Owned sidechain data with optional position/bond overrides (e.g.
+/// sheet-surface adjustment). Use [`as_view`](Self::as_view) to borrow as a
+/// [`SidechainView`].
+pub struct OwnedSidechainView {
+    /// World-space atom positions (may be sheet-adjusted).
+    pub positions: Vec<Vec3>,
+    /// Intra-sidechain bonds.
+    pub bonds: Vec<(u32, u32)>,
+    /// CA-CB backbone bonds (may be sheet-adjusted).
+    pub backbone_bonds: Vec<(Vec3, u32)>,
+    /// Per-atom hydrophobicity flags.
+    pub hydrophobicity: Vec<bool>,
+    /// Residue index for each sidechain atom.
+    pub residue_indices: Vec<u32>,
+}
+
+impl OwnedSidechainView {
+    /// Borrow as a [`SidechainView`] for passing to renderers.
+    #[must_use]
+    pub fn as_view(&self) -> SidechainView<'_> {
+        SidechainView {
+            positions: &self.positions,
+            bonds: &self.bonds,
+            backbone_bonds: &self.backbone_bonds,
+            hydrophobicity: &self.hydrophobicity,
+            residue_indices: &self.residue_indices,
+        }
+    }
 }
 
 /// Renders sidechains as capsule chains (cylinders with hemispherical caps).
@@ -49,9 +83,9 @@ impl SidechainRenderer {
     pub fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
-        sidechain: &SidechainData,
+        sidechain: &SidechainView,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let mut pass = ImpostorPass::new(
             context,
             &ShaderDef {
@@ -61,7 +95,7 @@ impl SidechainRenderer {
             layouts,
             6,
             shader_composer,
-        );
+        )?;
 
         // No frustum culling on initial creation
         let instances = Self::generate_instances(sidechain, None, None);
@@ -69,14 +103,14 @@ impl SidechainRenderer {
         let _ =
             pass.write_instances(&context.device, &context.queue, &instances);
 
-        Self { pass }
+        Ok(Self { pass })
     }
 
     /// Generate capsule instances from sidechain data.
     /// - `frustum`: Optional frustum for culling (None = no culling)
     /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
     pub(crate) fn generate_instances(
-        sidechain: &SidechainData,
+        sidechain: &SidechainView,
         frustum: Option<&Frustum>,
         sidechain_colors: Option<([f32; 3], [f32; 3])>,
     ) -> Vec<CapsuleInstance> {
@@ -103,14 +137,11 @@ impl SidechainRenderer {
 
         // Helper to check if a capsule is visible (either endpoint in frustum)
         let is_visible = |pos_a: Vec3, pos_b: Vec3| -> bool {
-            match frustum {
-                Some(f) => {
-                    let center = (pos_a + pos_b) * 0.5;
-                    let half_len = (pos_a - pos_b).length() * 0.5;
-                    f.intersects_sphere(center, half_len + CULL_RADIUS)
-                }
-                None => true,
-            }
+            frustum.is_none_or(|f| {
+                let center = (pos_a + pos_b) * 0.5;
+                let half_len = (pos_a - pos_b).length() * 0.5;
+                f.intersects_sphere(center, half_len + CULL_RADIUS)
+            })
         };
 
         // Sidechain-sidechain bonds
@@ -179,7 +210,7 @@ impl SidechainRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sidechain: &SidechainData,
+        sidechain: &SidechainView,
     ) {
         self.update_with_frustum(device, queue, sidechain, None);
     }
@@ -189,7 +220,7 @@ impl SidechainRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sidechain: &SidechainData,
+        sidechain: &SidechainView,
         frustum: Option<&Frustum>,
     ) {
         let instances = Self::generate_instances(sidechain, frustum, None);

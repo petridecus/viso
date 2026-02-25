@@ -12,12 +12,12 @@
 
 use glam::Vec3;
 
-use crate::{
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    renderer::impostor::{
-        capsule::CapsuleInstance, cone::ConeInstance, ImpostorPass, ShaderDef,
-    },
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::renderer::impostor::capsule::CapsuleInstance;
+use crate::renderer::impostor::cone::ConeInstance;
+use crate::renderer::impostor::{ImpostorPass, ShaderDef};
 
 // Pull visual constants - match band defaults
 const PULL_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - same as BAND_COLOR
@@ -48,7 +48,7 @@ impl PullRenderer {
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let capsule_pass = ImpostorPass::new(
             context,
             &ShaderDef {
@@ -58,7 +58,7 @@ impl PullRenderer {
             layouts,
             6,
             shader_composer,
-        );
+        )?;
 
         let cone_pass = ImpostorPass::new(
             context,
@@ -69,12 +69,12 @@ impl PullRenderer {
             layouts,
             6,
             shader_composer,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             capsule_pass,
             cone_pass,
-        }
+        })
     }
 
     /// Update with the active pull, or clear if None

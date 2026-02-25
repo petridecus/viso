@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use foldit_conv::coords::dcd::DcdFrame;
+use foldit_conv::adapters::dcd::DcdFrame;
 use glam::Vec3;
 
 /// Minimal frame sequencer — auto-advances with configurable speed.
@@ -158,7 +158,7 @@ impl TrajectoryPlayer {
 /// This mirrors the logic in `extract_backbone_chains` from foldit-conv so
 /// the mapping is consistent with the chain topology the renderer uses.
 pub fn build_backbone_atom_indices(
-    coords: &foldit_conv::coords::Coords,
+    coords: &foldit_conv::types::coords::Coords,
 ) -> Vec<usize> {
     let mut indices = Vec::new();
     let mut last_chain_id: Option<u8> = None;

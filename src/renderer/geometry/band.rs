@@ -16,11 +16,12 @@
 
 use glam::Vec3;
 
-use crate::{
-    gpu::{render_context::RenderContext, shader_composer::ShaderComposer},
-    options::ColorOptions,
-    renderer::impostor::{capsule::CapsuleInstance, ImpostorPass, ShaderDef},
-};
+use crate::error::VisoError;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::options::ColorOptions;
+use crate::renderer::impostor::capsule::CapsuleInstance;
+use crate::renderer::impostor::{ImpostorPass, ShaderDef};
 
 // Foldit color constants for bands
 const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - default band
@@ -65,6 +66,7 @@ pub enum BandType {
 
 /// Information about a band to be rendered
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct BandRenderInfo {
     /// World-space position of first endpoint (attached to protein)
     pub endpoint_a: Vec3,
@@ -121,7 +123,7 @@ impl BandRenderer {
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         let pass = ImpostorPass::new(
             context,
             &ShaderDef {
@@ -131,9 +133,9 @@ impl BandRenderer {
             layouts,
             6,
             shader_composer,
-        );
+        )?;
 
-        Self { pass }
+        Ok(Self { pass })
     }
 
     /// Compute band radius based on strength (matches Foldit)
