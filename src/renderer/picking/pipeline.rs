@@ -151,6 +151,10 @@ pub struct PickingGeometry<'a> {
     pub bns_capsule_bind_group: Option<&'a wgpu::BindGroup>,
     /// Number of ball-and-stick capsule instances.
     pub bns_capsule_count: u32,
+    /// Ball-and-stick sphere bind group for picking.
+    pub bns_sphere_bind_group: Option<&'a wgpu::BindGroup>,
+    /// Number of ball-and-stick sphere instances.
+    pub bns_sphere_count: u32,
 }
 
 /// Manages GPU-based residue picking via an offscreen R32Uint render pass.
@@ -169,11 +173,13 @@ pub struct Picking {
     capsule_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for capsule storage buffer
     capsule_bind_group_layout: wgpu::BindGroupLayout,
+    /// Pipeline for rendering spheres to picking buffer
+    sphere_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for sphere storage buffer
+    sphere_bind_group_layout: wgpu::BindGroupLayout,
     /// Current dimensions
     width: u32,
     height: u32,
-    /// Currently hovered residue (-1 if none)
-    pub hovered_residue: i32,
     /// Currently selected residue indices
     pub selected_residues: Vec<i32>,
     /// Whether a readback is in flight (buffer mapping requested)
@@ -218,6 +224,12 @@ impl Picking {
                 camera_bind_group_layout,
                 shader_composer,
             )?;
+        let (sphere_pipeline, sphere_bind_group_layout) =
+            Self::create_sphere_pipeline(
+                context,
+                camera_bind_group_layout,
+                shader_composer,
+            )?;
 
         Ok(Self {
             texture,
@@ -228,9 +240,10 @@ impl Picking {
             tube_pipeline,
             capsule_pipeline,
             capsule_bind_group_layout,
+            sphere_pipeline,
+            sphere_bind_group_layout,
             width,
             height,
-            hovered_residue: -1,
             selected_residues: Vec::new(),
             readback_in_flight: false,
             map_complete: Arc::new(AtomicBool::new(false)),
@@ -349,6 +362,66 @@ impl Picking {
         Ok((pipeline, bind_group_layout))
     }
 
+    fn create_sphere_pipeline(
+        context: &RenderContext,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
+        let shader = shader_composer.compose(
+            &context.device,
+            "Picking Sphere Shader",
+            "utility/picking_sphere.wgsl",
+        )?;
+
+        let bind_group_layout =
+            sphere_storage_bind_group_layout(&context.device);
+
+        let layout = context.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Picking Sphere Pipeline Layout"),
+                bind_group_layouts: &[
+                    &bind_group_layout,
+                    camera_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            },
+        );
+
+        let pipeline = context.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Picking Sphere Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(picking_depth_stencil()),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        );
+
+        Ok((pipeline, bind_group_layout))
+    }
+
     fn create_picking_texture(
         device: &wgpu::Device,
         width: u32,
@@ -429,6 +502,22 @@ impl Picking {
         })
     }
 
+    /// Create a bind group for sphere storage buffer
+    pub fn create_sphere_bind_group(
+        &self,
+        device: &wgpu::Device,
+        sphere_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Picking Sphere Bind Group"),
+            layout: &self.sphere_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sphere_buffer.as_entire_binding(),
+            }],
+        })
+    }
+
     /// Render the picking pass and request readback at mouse position.
     ///
     /// In Ribbon mode, pass ribbon buffers to render helices/sheets for
@@ -485,6 +574,7 @@ impl Picking {
             &mut render_pass,
             &self.tube_pipeline,
             &self.capsule_pipeline,
+            &self.sphere_pipeline,
             camera_bind_group,
             geometry,
         );
@@ -547,11 +637,14 @@ impl Picking {
     }
 
     /// Try to complete the readback without blocking.
-    /// Returns true if new data was read, false if still pending.
+    /// Returns the raw pick ID if data was read, `None` if still pending.
     /// Uses previous frame's hover result until new data is ready.
-    pub fn complete_readback(&mut self, device: &wgpu::Device) -> bool {
+    pub fn complete_readback(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<u32> {
         if !self.readback_in_flight {
-            return false;
+            return None;
         }
 
         // Poll without waiting - process callbacks
@@ -559,35 +652,28 @@ impl Picking {
 
         // Check if the callback has signaled completion
         if !self.map_complete.load(Ordering::SeqCst) {
-            // Not ready yet - keep using cached hovered_residue
-            return false;
+            return None;
         }
 
         // Buffer is mapped - read the data
         let buffer_slice = self.staging_buffer.slice(..4);
         let data = buffer_slice.get_mapped_range();
-        let residue_id =
+        let raw_id =
             u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         drop(data);
         self.staging_buffer.unmap();
         self.readback_in_flight = false;
 
-        // residue_id is residue_idx + 1, so 0 means no hit
-        self.hovered_residue = if residue_id == 0 {
-            -1
-        } else {
-            (residue_id - 1) as i32
-        };
-        true
+        Some(raw_id)
     }
 
-    /// Process a click event, updating the selection based on the hovered
-    /// residue.
+    /// Process a click event, updating the selection based on the given
+    /// residue index.
     ///
     /// Returns `true` if the selection changed. Shift-click toggles individual
-    /// residues.
-    pub fn handle_click(&mut self, shift_held: bool) -> bool {
-        let hit = self.hovered_residue;
+    /// residues. Pass a negative index to clear the selection.
+    pub fn handle_click(&mut self, residue_idx: i32, shift_held: bool) -> bool {
+        let hit = residue_idx;
 
         if hit < 0 {
             if !self.selected_residues.is_empty() {
@@ -616,7 +702,6 @@ impl Picking {
     /// Clear all selection
     pub fn clear_selection(&mut self) {
         self.selected_residues.clear();
-        self.hovered_residue = -1;
     }
 }
 
@@ -625,6 +710,25 @@ fn capsule_storage_bind_group_layout(
 ) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Picking Capsule Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX
+                | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
+fn sphere_storage_bind_group_layout(
+    device: &wgpu::Device,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Picking Sphere Bind Group Layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX
@@ -653,6 +757,7 @@ fn draw_picking_geometry(
     render_pass: &mut wgpu::RenderPass<'_>,
     tube_pipeline: &wgpu::RenderPipeline,
     capsule_pipeline: &wgpu::RenderPipeline,
+    sphere_pipeline: &wgpu::RenderPipeline,
     camera_bind_group: &wgpu::BindGroup,
     geometry: &PickingGeometry,
 ) {
@@ -695,13 +800,23 @@ fn draw_picking_geometry(
         }
     }
 
-    // Draw ball-and-stick picking (degenerate capsules for spheres + bonds)
+    // Draw ball-and-stick bond capsules for picking
     if let Some(bns_bg) = geometry.bns_capsule_bind_group {
         if geometry.bns_capsule_count > 0 {
             render_pass.set_pipeline(capsule_pipeline);
             render_pass.set_bind_group(0, bns_bg, &[]);
             render_pass.set_bind_group(1, camera_bind_group, &[]);
             render_pass.draw(0..6, 0..geometry.bns_capsule_count);
+        }
+    }
+
+    // Draw ball-and-stick spheres for picking
+    if let Some(bns_sphere_bg) = geometry.bns_sphere_bind_group {
+        if geometry.bns_sphere_count > 0 {
+            render_pass.set_pipeline(sphere_pipeline);
+            render_pass.set_bind_group(0, bns_sphere_bg, &[]);
+            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.draw(0..6, 0..geometry.bns_sphere_count);
         }
     }
 }

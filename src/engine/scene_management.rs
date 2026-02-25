@@ -16,7 +16,7 @@ impl ProteinRenderEngine {
     /// Update backbone with new chains (regenerates the backbone mesh)
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
-        self.backbone_renderer.update(
+        self.renderers.backbone.update(
             &self.context.device,
             &self.context.queue,
             backbone_chains,
@@ -81,11 +81,13 @@ impl ProteinRenderEngine {
             hydrophobicity: &self.sc.cached_sidechain_hydrophobicity,
             residue_indices: &self.sc.cached_sidechain_residue_indices,
         };
-        let adjusted =
-            crate::util::sheet_adjust::sheet_adjusted_view(&raw_view, &offset_map);
+        let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
+            &raw_view,
+            &offset_map,
+        );
 
         // Update sidechains with frustum culling
-        self.sidechain_renderer.update_with_frustum(
+        self.renderers.sidechain.update_with_frustum(
             &self.context.device,
             &self.context.queue,
             &adjusted.as_view(),
@@ -93,10 +95,10 @@ impl ProteinRenderEngine {
         );
 
         // Recreate picking bind group since buffer may have changed
-        self.picking_groups.rebuild_capsule(
-            &self.picking,
+        self.pick.groups.rebuild_capsule(
+            &self.pick.picking,
             &self.context.device,
-            &self.sidechain_renderer,
+            &self.renderers.sidechain,
         );
     }
 
@@ -109,17 +111,22 @@ impl ProteinRenderEngine {
             .iter()
             .map(|se| se.entity.clone())
             .collect();
-        self.ball_and_stick_renderer.update_from_entities(
+        self.renderers.ball_and_stick.update_from_entities(
             &self.context,
             &entities,
             &self.options.display,
             Some(&self.options.colors),
         );
-        // Recreate picking bind group
-        self.picking_groups.rebuild_bns(
-            &self.picking,
+        // Recreate picking bind groups
+        self.pick.groups.rebuild_bns_bond(
+            &self.pick.picking,
             &self.context.device,
-            &self.ball_and_stick_renderer,
+            &self.renderers.ball_and_stick,
+        );
+        self.pick.groups.rebuild_bns_sphere(
+            &self.pick.picking,
+            &self.context.device,
+            &self.renderers.ball_and_stick,
         );
     }
 
@@ -127,7 +134,7 @@ impl ProteinRenderEngine {
     /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
         self.sc.cached_ss_types = ss_types.to_vec();
-        self.backbone_renderer
+        self.renderers.backbone
             .set_ss_override(Some(ss_types.to_vec()));
         let camera_eye = self.camera_controller.camera.eye;
         self.submit_per_chain_lod_remesh(camera_eye);
@@ -155,7 +162,7 @@ impl ProteinRenderEngine {
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.backbone_renderer
+        self.renderers.backbone
             .sheet_offsets()
             .iter()
             .copied()
@@ -165,7 +172,7 @@ impl ProteinRenderEngine {
     /// Update the band visualization.
     /// Call this when bands are added, removed, or modified.
     pub fn update_bands(&mut self, bands: &[BandRenderInfo]) {
-        self.band_renderer.update(
+        self.renderers.band.update(
             &self.context.device,
             &self.context.queue,
             bands,
@@ -176,7 +183,7 @@ impl ProteinRenderEngine {
     /// Update the pull visualization (only one pull at a time).
     /// Pass None to clear the pull visualization.
     pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
-        self.pull_renderer.update(
+        self.renderers.pull.update(
             &self.context.device,
             &self.context.queue,
             pull,

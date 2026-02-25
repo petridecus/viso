@@ -52,17 +52,17 @@ impl ProteinRenderEngine {
 impl ProteinRenderEngine {
     /// Currently hovered residue index, or -1 if none.
     pub fn hovered_residue(&self) -> i32 {
-        self.picking.hovered_residue
+        self.pick.hovered_target.as_residue_i32()
     }
 
     /// Currently selected residue indices.
     pub fn selected_residues(&self) -> &[i32] {
-        &self.picking.selected_residues
+        &self.pick.picking.selected_residues
     }
 
     /// Clear the current residue selection.
     pub fn clear_selection(&mut self) {
-        self.picking.clear_selection();
+        self.pick.picking.clear_selection();
     }
 
     /// Current screen size in physical pixels `(width, height)`.
@@ -95,14 +95,9 @@ impl ProteinRenderEngine {
     /// Each entry is `(label, used_bytes, allocated_bytes)`.
     pub fn gpu_buffer_stats(&self) -> Vec<(&str, usize, usize)> {
         let mut stats = Vec::new();
-        stats.extend(self.backbone_renderer.buffer_info());
-        stats.extend(self.sidechain_renderer.buffer_info());
-        stats.extend(self.ball_and_stick_renderer.buffer_info());
-        stats.extend(self.band_renderer.buffer_info());
-        stats.extend(self.pull_renderer.buffer_info());
-        stats.extend(self.nucleic_acid_renderer.buffer_info());
-        stats.extend(self.selection_buffer.buffer_info());
-        stats.extend(self.residue_color_buffer.buffer_info());
+        stats.extend(self.renderers.buffer_info());
+        stats.extend(self.pick.selection.buffer_info());
+        stats.extend(self.pick.residue_colors.buffer_info());
         stats
     }
 
@@ -136,14 +131,6 @@ impl ProteinRenderEngine {
         self.context.render_scale = scale;
     }
 
-    /// Set the DPI scale factor for picking coordinate conversion.
-    ///
-    /// Call this with the window's `scale_factor()` when mouse events come
-    /// from a webview (CSS/logical pixels) while the picking texture is
-    /// in physical pixels.
-    pub fn set_dpi_scale(&mut self, scale: f64) {
-        self.dpi_scale = scale as f32;
-    }
 }
 
 // ── Visualization (bands, pulls) ──
@@ -151,11 +138,11 @@ impl ProteinRenderEngine {
 impl ProteinRenderEngine {
     /// Clear all constraint band visualizations.
     pub fn clear_bands(&mut self) {
-        self.band_renderer.clear();
+        self.renderers.band.clear();
     }
 
     /// Clear the interactive pull visualization.
     pub fn clear_pulls(&mut self) {
-        self.pull_renderer.clear();
+        self.renderers.pull.clear();
     }
 }

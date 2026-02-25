@@ -89,18 +89,17 @@ pub fn generate_entity_mesh(
     let sidechain_instances = bytemuck::cast_slice(&sidechain_insts).to_vec();
 
     // --- Ball-and-stick instances ---
-    let (bns_spheres, bns_capsules, bns_picking) =
+    let (bns_spheres, bns_capsules) =
         BallAndStickRenderer::generate_all_instances(
             &g.non_protein_entities,
             display,
             Some(colors),
+            0, // pick IDs are 0-based; concatenation applies global offset
         );
     let bns_sphere_count = bns_spheres.len() as u32;
     let bns_capsule_count = bns_capsules.len() as u32;
-    let bns_picking_count = bns_picking.len() as u32;
     let bns_sphere_instances = bytemuck::cast_slice(&bns_spheres).to_vec();
     let bns_capsule_instances = bytemuck::cast_slice(&bns_capsules).to_vec();
-    let bns_picking_capsules = bytemuck::cast_slice(&bns_picking).to_vec();
 
     // --- Nucleic acid instances ---
     let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
@@ -129,8 +128,6 @@ pub fn generate_entity_mesh(
             sphere_count: bns_sphere_count,
             capsule_instances: bns_capsule_instances,
             capsule_count: bns_capsule_count,
-            picking_capsules: bns_picking_capsules,
-            picking_count: bns_picking_count,
         },
         na: NucleicAcidInstances {
             stem_instances: na_stem_instances,

@@ -124,6 +124,10 @@ impl ShaderComposer {
                 "utility/picking_capsule.wgsl",
                 include_str!("../shaders/utility/picking_capsule.wgsl"),
             ),
+            (
+                "utility/picking_sphere.wgsl",
+                include_str!("../shaders/utility/picking_sphere.wgsl"),
+            ),
         ]);
 
         let mut composer = Composer::default();
@@ -186,6 +190,7 @@ impl ShaderComposer {
     /// Compose a shader source into a `naga::Module` without creating a wgpu
     /// shader module. Useful for testing shader composition without a GPU
     /// device.
+    #[cfg(test)]
     pub fn compose_naga(
         &mut self,
         path: &str,
@@ -230,6 +235,7 @@ mod tests {
             "raster/impostor/cone.wgsl",
             "utility/picking_mesh.wgsl",
             "utility/picking_capsule.wgsl",
+            "utility/picking_sphere.wgsl",
         ]
     }
 

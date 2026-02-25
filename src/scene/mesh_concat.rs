@@ -12,6 +12,7 @@ use super::prepared::{
 use super::EntityResidueRange;
 use crate::animation::transition::Transition;
 use crate::renderer::geometry::backbone::ChainRange;
+use crate::renderer::picking::PickMap;
 
 /// Offset the `residue_idx` field embedded in raw vertex bytes.
 ///
@@ -43,6 +44,39 @@ pub fn offset_vertex_residue_idx(dst: &mut Vec<u8>, src: &[u8], offset: u32) {
     }
 }
 
+/// Patch pick IDs in BnS instance byte buffers.
+///
+/// Each instance has a pick ID stored as `f32` at `pick_id_byte_offset`
+/// within each `instance_stride`-sized block. Adds `(new_offset - old_offset)`
+/// to each pick ID so that 0-based local atom indices become globally unique.
+fn offset_bns_pick_ids(
+    dst: &mut Vec<u8>,
+    src: &[u8],
+    old_offset: u32,
+    new_offset: u32,
+    instance_stride: usize,
+    pick_id_byte_offset: usize,
+) {
+    if old_offset == new_offset {
+        dst.extend_from_slice(src);
+        return;
+    }
+
+    let start = dst.len();
+    dst.extend_from_slice(src);
+
+    let delta = new_offset as f32 - old_offset as f32;
+    let mut pos = start + pick_id_byte_offset;
+    while pos + 4 <= dst.len() {
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&dst[pos..pos + 4]);
+        let old_val = f32::from_ne_bytes(bytes);
+        let patched = old_val + delta;
+        dst[pos..pos + 4].copy_from_slice(&patched.to_ne_bytes());
+        pos += instance_stride;
+    }
+}
+
 /// Concatenate per-entity cached meshes into a single PreparedScene.
 pub fn concatenate_meshes(
     entity_meshes: &[(u32, &CachedEntityMesh)],
@@ -65,8 +99,9 @@ pub fn concatenate_meshes(
     let mut total_bns_sphere_count: u32 = 0;
     let mut all_bns_capsules: Vec<u8> = Vec::new();
     let mut total_bns_capsule_count: u32 = 0;
-    let mut all_bns_picking: Vec<u8> = Vec::new();
-    let mut total_bns_picking_count: u32 = 0;
+    // Running atom offset for making BnS pick IDs unique across mesh groups.
+    // Starts at 0; final `global_residue_offset` is added after the loop.
+    let mut bns_pick_offset: u32 = 0;
 
     // --- Nucleic acid ---
     let mut all_na_stem_bytes: Vec<u8> = Vec::new();
@@ -136,13 +171,32 @@ pub fn concatenate_meshes(
         all_sidechain.extend_from_slice(&mesh.sidechain_instances);
         total_sidechain_count += mesh.sidechain_instance_count;
 
-        // BNS: concatenate directly
-        all_bns_spheres.extend_from_slice(&mesh.bns.sphere_instances);
+        // BNS: offset 0-based pick IDs to contiguous global IDs
+        // SphereInstance: 32 bytes, pick_id at byte 28 (color.w)
+        // CapsuleInstance: 64 bytes, pick_id at byte 28 (endpoint_b.w)
+        offset_bns_pick_ids(
+            &mut all_bns_spheres,
+            &mesh.bns.sphere_instances,
+            0,
+            bns_pick_offset,
+            32,
+            28,
+        );
         total_bns_sphere_count += mesh.bns.sphere_count;
-        all_bns_capsules.extend_from_slice(&mesh.bns.capsule_instances);
+        offset_bns_pick_ids(
+            &mut all_bns_capsules,
+            &mesh.bns.capsule_instances,
+            0,
+            bns_pick_offset,
+            64,
+            28,
+        );
         total_bns_capsule_count += mesh.bns.capsule_count;
-        all_bns_picking.extend_from_slice(&mesh.bns.picking_capsules);
-        total_bns_picking_count += mesh.bns.picking_count;
+        // Advance offset by total atoms across this entity group's
+        // non-protein entities
+        for npe in &mesh.non_protein_entities {
+            bns_pick_offset += npe.coords.num_atoms as u32;
+        }
 
         // NA: concatenate instances directly (self-contained)
         all_na_stem_bytes.extend_from_slice(&mesh.na.stem_instances);
@@ -211,9 +265,44 @@ pub fn concatenate_meshes(
         global_residue_offset += mesh.residue_count;
     }
 
+    // Add global_residue_offset to all BnS pick IDs so they're contiguous
+    // after backbone/sidechain residue IDs.
+    if global_residue_offset > 0 {
+        let delta = global_residue_offset as f32;
+        // Patch sphere pick IDs (32-byte stride, offset 28)
+        let mut pos = 28;
+        while pos + 4 <= all_bns_spheres.len() {
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&all_bns_spheres[pos..pos + 4]);
+            let patched = f32::from_ne_bytes(bytes) + delta;
+            all_bns_spheres[pos..pos + 4]
+                .copy_from_slice(&patched.to_ne_bytes());
+            pos += 32;
+        }
+        // Patch capsule pick IDs (64-byte stride, offset 28)
+        let mut pos = 28;
+        while pos + 4 <= all_bns_capsules.len() {
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&all_bns_capsules[pos..pos + 4]);
+            let patched = f32::from_ne_bytes(bytes) + delta;
+            all_bns_capsules[pos..pos + 4]
+                .copy_from_slice(&patched.to_ne_bytes());
+            pos += 64;
+        }
+    }
+
     // Build flat ss_types
     let ss_types =
         build_ss_types(has_any_ss, &ss_parts, global_residue_offset as usize);
+
+    // Build PickMap from non-protein entities
+    let mut atom_entries: Vec<(u32, u32)> = Vec::new();
+    for entity in &all_non_protein {
+        for atom_idx in 0..entity.coords.num_atoms as u32 {
+            atom_entries.push((entity.entity_id, atom_idx));
+        }
+    }
+    let pick_map = PickMap::new(global_residue_offset, atom_entries);
 
     PreparedScene {
         backbone: BackboneMeshData {
@@ -234,8 +323,6 @@ pub fn concatenate_meshes(
             sphere_count: total_bns_sphere_count,
             capsule_instances: all_bns_capsules,
             capsule_count: total_bns_capsule_count,
-            picking_capsules: all_bns_picking,
-            picking_count: total_bns_picking_count,
         },
         na: NucleicAcidInstances {
             stem_instances: all_na_stem_bytes,
@@ -261,6 +348,7 @@ pub fn concatenate_meshes(
         entity_residue_ranges,
         non_protein_entities: all_non_protein,
         nucleic_acid_rings: all_na_rings,
+        pick_map,
     }
 }
 

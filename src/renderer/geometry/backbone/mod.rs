@@ -151,7 +151,6 @@ impl BackboneRenderer {
     pub fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
-        color_layout: &wgpu::BindGroupLayout,
         chains: &ChainPair,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, VisoError> {
@@ -172,7 +171,7 @@ impl BackboneRenderer {
             &layouts.camera,
             &layouts.lighting,
             &layouts.selection,
-            color_layout,
+            &layouts.color,
         ];
         let vl = backbone_vertex_buffer_layout();
 
@@ -223,24 +222,6 @@ impl BackboneRenderer {
     }
 
     // ── Draw ──
-
-    pub fn draw<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        bind_groups: &DrawBindGroups<'a>,
-    ) {
-        let Some(color) = bind_groups.color else {
-            return;
-        };
-        render_pass.set_bind_group(0, bind_groups.camera, &[]);
-        render_pass.set_bind_group(1, bind_groups.lighting, &[]);
-        render_pass.set_bind_group(2, bind_groups.selection, &[]);
-        render_pass.set_bind_group(3, color, &[]);
-
-        let vb = self.vertex_buffer.buffer();
-        self.tube_pass.draw_indexed(render_pass, vb);
-        self.ribbon_pass.draw_indexed(render_pass, vb);
-    }
 
     /// Frustum-culled draw: skip chains whose bounding sphere is off-screen.
     pub fn draw_culled<'a>(
@@ -312,15 +293,6 @@ impl BackboneRenderer {
 
     pub fn set_ss_override(&mut self, ss_types: Option<Vec<SSType>>) {
         self.ss_override = ss_types;
-    }
-
-    pub fn regenerate(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        geo: &GeometryOptions,
-    ) {
-        self.write_mesh(device, queue, geo);
     }
 
     // ── Scene-processor path ──

@@ -47,19 +47,12 @@ impl ProteinRenderEngine {
 
     /// Cursor moved — compute delta, forward to camera/picking.
     fn dispatch_cursor_moved(&mut self, x: f32, y: f32) {
-        let (delta_x, delta_y) = if let Some((lx, ly)) = self.last_cursor_pos {
-            (x - lx, y - ly)
-        } else {
-            (0.0, 0.0)
-        };
-        self.last_cursor_pos = Some((x, y));
-
-        // Update picking hover position
-        self.input.handle_mouse_position(x, y);
+        // Update picking hover position and get cursor delta
+        let (delta_x, delta_y) = self.input.handle_mouse_position(x, y);
 
         // Camera rotate/pan if left-mouse is down on background
         if self.camera_controller.mouse_pressed
-            && self.input.mouse_down_residue < 0
+            && self.input.mouse_down_target.is_none()
         {
             let delta = Vec2::new(delta_x, delta_y);
             if delta.length_squared() > 1.0 {
@@ -81,7 +74,7 @@ impl ProteinRenderEngine {
     ) -> bool {
         if button == MouseButton::Left {
             if pressed {
-                self.input.handle_mouse_down(self.picking.hovered_residue);
+                self.input.handle_mouse_down(self.pick.hovered_target);
                 self.camera_controller.mouse_pressed = true;
                 false
             } else {
@@ -105,26 +98,25 @@ impl ProteinRenderEngine {
     /// Returns true if selection changed.
     fn handle_mouse_up(&mut self) -> bool {
         let shift_held = self.camera_controller.shift_pressed;
-        let hovered = self.picking.hovered_residue;
+        let hovered = self.pick.hovered_target;
 
         match self.input.process_mouse_up(hovered, shift_held) {
             ClickResult::NoAction => false,
-            ClickResult::SingleClick { shift_held } => {
-                self.picking.handle_click(shift_held)
+            ClickResult::SingleClick { target, shift_held } => {
+                self.pick.picking
+                    .handle_click(target.as_residue_i32(), shift_held)
             }
-            ClickResult::DoubleClick {
-                residue,
-                shift_held,
-            } => self.select_ss_segment(residue, shift_held),
-            ClickResult::TripleClick {
-                residue,
-                shift_held,
-            } => self.select_chain(residue, shift_held),
+            ClickResult::DoubleClick { target, shift_held } => {
+                self.select_ss_segment(target.as_residue_i32(), shift_held)
+            }
+            ClickResult::TripleClick { target, shift_held } => {
+                self.select_chain(target.as_residue_i32(), shift_held)
+            }
             ClickResult::ClearSelection => {
-                if self.picking.selected_residues.is_empty() {
+                if self.pick.picking.selected_residues.is_empty() {
                     false
                 } else {
-                    self.picking.selected_residues.clear();
+                    self.pick.picking.selected_residues.clear();
                     true
                 }
             }
@@ -164,14 +156,14 @@ impl ProteinRenderEngine {
 
         // If shift is NOT held, clear existing selection first
         if !shift_held {
-            self.picking.selected_residues.clear();
+            self.pick.picking.selected_residues.clear();
         }
 
         // Add all residues in this segment to selection (avoid duplicates)
         for i in start..=end {
             let residue = i as i32;
-            if !self.picking.selected_residues.contains(&residue) {
-                self.picking.selected_residues.push(residue);
+            if !self.pick.picking.selected_residues.contains(&residue) {
+                self.pick.picking.selected_residues.push(residue);
             }
         }
 
@@ -186,7 +178,7 @@ impl ProteinRenderEngine {
             return false;
         }
         let target = residue_idx as usize;
-        let chains = self.backbone_renderer.cached_chains();
+        let chains = self.renderers.backbone.cached_chains();
 
         // Find the chain range containing the target residue
         let mut global_start = 0usize;
@@ -204,12 +196,12 @@ impl ProteinRenderEngine {
         };
 
         if !shift_held {
-            self.picking.selected_residues.clear();
+            self.pick.picking.selected_residues.clear();
         }
         for i in range {
             let residue = i as i32;
-            if !self.picking.selected_residues.contains(&residue) {
-                self.picking.selected_residues.push(residue);
+            if !self.pick.picking.selected_residues.contains(&residue) {
+                self.pick.picking.selected_residues.push(residue);
             }
         }
         true
@@ -243,7 +235,7 @@ impl KeyAction {
                 engine.scene.set_focus(Focus::Session);
                 engine.fit_camera_to_focus();
             }
-            Self::Cancel => engine.picking.clear_selection(),
+            Self::Cancel => engine.pick.picking.clear_selection(),
         }
     }
 }

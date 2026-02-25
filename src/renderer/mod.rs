@@ -25,4 +25,5 @@ pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
     pub lighting: wgpu::BindGroupLayout,
     pub selection: wgpu::BindGroupLayout,
+    pub color: wgpu::BindGroupLayout,
 }

@@ -253,8 +253,7 @@ impl StructureAnimator {
         // Capture current visual state as the new animation start.
         // Three cases: animating (sync to interpolated), static (use
         // previous target), or size-changed (collapse or snap).
-        let sizes_match =
-            self.sc.target_positions.len() == positions.len();
+        let sizes_match = self.sc.target_positions.len() == positions.len();
 
         if sizes_match
             && self.is_animating()
@@ -275,8 +274,7 @@ impl StructureAnimator {
                 .collect();
         } else if sizes_match {
             // No animation — use previous target as new start.
-            self.sc.start_positions =
-                self.sc.target_positions.clone();
+            self.sc.start_positions = self.sc.target_positions.clone();
             self.sc.start_ca = self.sc.target_ca.clone();
         } else if transition.is_some_and(|t| t.allows_size_change) {
             // Size changed with resize-capable transition — start each
@@ -318,11 +316,8 @@ impl StructureAnimator {
 
         // Compare positions with small epsilon
         const EPSILON: f32 = 0.001;
-        for (old, new) in self
-            .sc
-            .target_positions
-            .iter()
-            .zip(new_positions.iter())
+        for (old, new) in
+            self.sc.target_positions.iter().zip(new_positions.iter())
         {
             if (*old - *new).length_squared() > EPSILON * EPSILON {
                 return true;
@@ -374,18 +369,10 @@ impl StructureAnimator {
                 }
 
                 // Get the collapse point (CA position) for this atom's residue
-                let start_ca = self
-                    .sc
-                    .start_ca
-                    .get(res_idx)
-                    .copied()
-                    .unwrap_or(*start);
-                let end_ca = self
-                    .sc
-                    .target_ca
-                    .get(res_idx)
-                    .copied()
-                    .unwrap_or(*end);
+                let start_ca =
+                    self.sc.start_ca.get(res_idx).copied().unwrap_or(*start);
+                let end_ca =
+                    self.sc.target_ca.get(res_idx).copied().unwrap_or(*end);
 
                 let collapse_point =
                     start_ca + (end_ca - start_ca) * ctx.eased_t;
@@ -431,9 +418,7 @@ impl StructureAnimator {
 
             // Snap sidechain positions for atoms belonging to this group's
             // residues
-            for (i, &res_idx) in
-                self.sc.residue_indices.iter().enumerate()
-            {
+            for (i, &res_idx) in self.sc.residue_indices.iter().enumerate() {
                 let r = res_idx as usize;
                 if !(res_start..res_end).contains(&r) {
                     continue;

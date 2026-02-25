@@ -35,11 +35,11 @@ impl ProteinRenderEngine {
 
         // Ensure selection buffer has capacity for all residues (including new
         // structures)
-        self.selection_buffer
+        self.pick.selection
             .ensure_capacity(&self.context.device, total_residues);
 
         // Update backbone renderer (protein + NA)
-        self.backbone_renderer.update(
+        self.renderers.backbone.update(
             &self.context.device,
             &self.context.queue,
             backbone_chains,
@@ -51,20 +51,22 @@ impl ProteinRenderEngine {
         // Translate sidechains onto sheet surface (whole sidechain, not just
         // CA-CB bond)
         let offset_map = self.sheet_offset_map();
-        let adjusted =
-            crate::util::sheet_adjust::sheet_adjusted_view(sidechain, &offset_map);
+        let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
+            sidechain,
+            &offset_map,
+        );
 
-        self.sidechain_renderer.update(
+        self.renderers.sidechain.update(
             &self.context.device,
             &self.context.queue,
             &adjusted.as_view(),
         );
 
         // Update capsule picking bind group (buffer may have been reallocated)
-        self.picking_groups.rebuild_capsule(
-            &self.picking,
+        self.pick.groups.rebuild_capsule(
+            &self.pick.picking,
             &self.context.device,
-            &self.sidechain_renderer,
+            &self.renderers.sidechain,
         );
 
         // Cache secondary structure types for double-click segment selection
@@ -189,13 +191,13 @@ impl ProteinRenderEngine {
         // generate correct topology.
         let animating = !prepared.entity_transitions.is_empty();
         if animating {
-            self.backbone_renderer.update_metadata(
+            self.renderers.backbone.update_metadata(
                 prepared.backbone_chains.clone(),
                 prepared.na_chains.clone(),
                 prepared.ss_types.clone(),
             );
         } else {
-            self.backbone_renderer.apply_prepared(
+            self.renderers.backbone.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
                 PreparedBackboneData {
@@ -214,7 +216,7 @@ impl ProteinRenderEngine {
             let suppress_sidechains = dominant_transition
                 .is_some_and(|t| t.suppress_initial_sidechains);
             if !suppress_sidechains {
-                let _ = self.sidechain_renderer.apply_prepared(
+                let _ = self.renderers.sidechain.apply_prepared(
                     &self.context.device,
                     &self.context.queue,
                     &prepared.sidechain_instances,
@@ -223,7 +225,7 @@ impl ProteinRenderEngine {
             }
         }
 
-        self.ball_and_stick_renderer.apply_prepared(
+        self.renderers.ball_and_stick.apply_prepared(
             &self.context.device,
             &self.context.queue,
             &PreparedBallAndStickData {
@@ -231,23 +233,24 @@ impl ProteinRenderEngine {
                 sphere_count: prepared.bns.sphere_count,
                 capsule_bytes: &prepared.bns.capsule_instances,
                 capsule_count: prepared.bns.capsule_count,
-                picking_bytes: &prepared.bns.picking_capsules,
-                picking_count: prepared.bns.picking_count,
             },
         );
 
-        self.nucleic_acid_renderer.apply_prepared(
+        self.renderers.nucleic_acid.apply_prepared(
             &self.context.device,
             &self.context.queue,
             &prepared.na,
         );
 
+        // Store the pick map for typed target resolution
+        self.pick.pick_map = Some(prepared.pick_map.clone());
+
         // Recreate picking bind groups (buffers may have been reallocated)
-        self.picking_groups.rebuild_all(
-            &self.picking,
+        self.pick.groups.rebuild_all(
+            &self.pick.picking,
             &self.context.device,
-            &self.sidechain_renderer,
-            &self.ball_and_stick_renderer,
+            &self.renderers.sidechain,
+            &self.renderers.ball_and_stick,
         );
     }
 
@@ -389,14 +392,14 @@ impl ProteinRenderEngine {
         // Ensure selection/color buffers have capacity and update colors
         let total_residues =
             crate::util::sheet_adjust::backbone_residue_count(new_backbone);
-        self.selection_buffer
+        self.pick.selection
             .ensure_capacity(&self.context.device, total_residues);
-        self.residue_color_buffer
+        self.pick.residue_colors
             .ensure_capacity(&self.context.device, total_residues);
 
         // Animate colors to new target
         let colors = self.compute_per_residue_colors(new_backbone);
-        self.residue_color_buffer.set_target_colors(&colors);
+        self.pick.residue_colors.set_target_colors(&colors);
         self.sc.cached_per_residue_colors = Some(colors);
     }
 
@@ -420,13 +423,13 @@ impl ProteinRenderEngine {
         let total_residues = crate::util::sheet_adjust::backbone_residue_count(
             &prepared.backbone_chains,
         );
-        self.selection_buffer
+        self.pick.selection
             .ensure_capacity(&self.context.device, total_residues);
-        self.residue_color_buffer
+        self.pick.residue_colors
             .ensure_capacity(&self.context.device, total_residues);
 
         let colors = self.compute_per_residue_colors(&prepared.backbone_chains);
-        self.residue_color_buffer
+        self.pick.residue_colors
             .set_colors_immediate(&self.context.queue, &colors);
         self.sc.cached_per_residue_colors = Some(colors);
     }
@@ -542,7 +545,7 @@ impl ProteinRenderEngine {
 
         self.scene_processor.submit(SceneRequest::AnimationFrame {
             backbone_chains,
-            na_chains: self.backbone_renderer.cached_na_chains().to_vec(),
+            na_chains: self.renderers.backbone.cached_na_chains().to_vec(),
             sidechains,
             ss_types,
             per_residue_colors: self.sc.cached_per_residue_colors.clone(),
@@ -558,22 +561,21 @@ impl ProteinRenderEngine {
         use crate::options::{lod_scaled, select_chain_lod_tier};
 
         // Use clamped geometry as the base for LOD scaling
-        let total_residues =
-            crate::util::sheet_adjust::backbone_residue_count(
-                self.backbone_renderer.cached_chains(),
-            ) + self
-                .backbone_renderer
-                .cached_na_chains()
-                .iter()
-                .map(Vec::len)
-                .sum::<usize>();
+        let total_residues = crate::util::sheet_adjust::backbone_residue_count(
+            self.renderers.backbone.cached_chains(),
+        ) + self
+            .renderers.backbone
+            .cached_na_chains()
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>();
         let base_geo =
             self.options.geometry.clamped_for_residues(total_residues);
         let max_spr = base_geo.segments_per_residue;
         let max_csv = base_geo.cross_section_verts;
 
         let per_chain_lod: Vec<(usize, usize)> = self
-            .backbone_renderer
+            .renderers.backbone
             .chain_ranges()
             .iter()
             .map(|r| {
@@ -589,8 +591,8 @@ impl ProteinRenderEngine {
         };
 
         self.scene_processor.submit(SceneRequest::AnimationFrame {
-            backbone_chains: self.backbone_renderer.cached_chains().to_vec(),
-            na_chains: self.backbone_renderer.cached_na_chains().to_vec(),
+            backbone_chains: self.renderers.backbone.cached_chains().to_vec(),
+            na_chains: self.renderers.backbone.cached_na_chains().to_vec(),
             sidechains: None,
             ss_types,
             per_residue_colors: self.sc.cached_per_residue_colors.clone(),
@@ -605,24 +607,24 @@ impl ProteinRenderEngine {
             return;
         };
 
-        self.backbone_renderer.apply_mesh(
+        self.renderers.backbone.apply_mesh(
             &self.context.device,
             &self.context.queue,
             prepared.backbone,
         );
 
         if let Some(ref instances) = prepared.sidechain_instances {
-            let reallocated = self.sidechain_renderer.apply_prepared(
+            let reallocated = self.renderers.sidechain.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
                 instances,
                 prepared.sidechain_instance_count,
             );
             if reallocated {
-                self.picking_groups.rebuild_capsule(
-                    &self.picking,
+                self.pick.groups.rebuild_capsule(
+                    &self.pick.picking,
                     &self.context.device,
-                    &self.sidechain_renderer,
+                    &self.renderers.sidechain,
                 );
             }
         }

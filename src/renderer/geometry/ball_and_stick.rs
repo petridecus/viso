@@ -18,9 +18,6 @@ use crate::options::{ColorOptions, DisplayOptions};
 use crate::renderer::impostor::capsule::CapsuleInstance;
 use crate::renderer::impostor::sphere::SphereInstance;
 use crate::renderer::impostor::{ImpostorPass, ShaderDef};
-use crate::renderer::picking::utils::{
-    picking_bond, picking_sphere, SMALL_MOLECULE_PICK_OFFSET,
-};
 
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;
@@ -68,10 +65,6 @@ pub struct PreparedBallAndStickData<'a> {
     pub capsule_bytes: &'a [u8],
     /// Number of bond capsule instances.
     pub capsule_count: u32,
-    /// Raw bytes for picking capsule instance data.
-    pub picking_bytes: &'a [u8],
-    /// Number of picking capsule instances.
-    pub picking_count: u32,
 }
 
 /// Output buffers for instance generation.
@@ -79,11 +72,10 @@ pub struct PreparedBallAndStickData<'a> {
 struct InstanceCollector {
     spheres: Vec<SphereInstance>,
     bonds: Vec<CapsuleInstance>,
-    picking: Vec<CapsuleInstance>,
 }
 
 impl InstanceCollector {
-    /// Push a visual bond capsule and its paired picking capsule.
+    /// Push a visual bond capsule.
     ///
     /// `endpoints` is `[pos_a, pos_b]`; `colors` is `[color_a, color_b]`.
     fn push_bond(
@@ -100,27 +92,13 @@ impl InstanceCollector {
             color_a: [colors[0][0], colors[0][1], colors[0][2], 0.0],
             color_b: [colors[1][0], colors[1][1], colors[1][2], 0.0],
         });
-        self.picking
-            .push(picking_bond(pos_a, pos_b, radius, pick_id));
-    }
-
-    /// Push a degenerate picking capsule (sphere) for atom picking.
-    fn push_picking_sphere(
-        &mut self,
-        pos: [f32; 3],
-        radius: f32,
-        pick_id: u32,
-    ) {
-        self.picking.push(picking_sphere(pos, radius, pick_id));
     }
 }
 
 /// Renders small molecules as ray-cast sphere + capsule impostors.
-#[allow(clippy::struct_field_names)]
 pub struct BallAndStickRenderer {
     sphere_pass: ImpostorPass<SphereInstance>,
     bond_pass: ImpostorPass<CapsuleInstance>,
-    picking_pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BallAndStickRenderer {
@@ -152,45 +130,38 @@ impl BallAndStickRenderer {
             shader_composer,
         )?;
 
-        let picking_pass = ImpostorPass::new(
-            context,
-            &ShaderDef {
-                label: "BnS Picking",
-                path: "raster/impostor/capsule.wgsl",
-            },
-            layouts,
-            6,
-            shader_composer,
-        )?;
-
         Ok(Self {
             sphere_pass,
             bond_pass,
-            picking_pass,
         })
     }
 
     /// Generate all instances from entity data (pure CPU, no GPU access
     /// needed).
     ///
-    /// Returns (sphere_instances, bond_instances, picking_instances).
+    /// `pick_id_offset` is added to all per-atom pick IDs so that IDs are
+    /// globally unique when multiple entities are concatenated. Pass `0` for
+    /// the live-update path (the scene processor concatenation applies offsets
+    /// at the byte level instead).
+    ///
+    /// Returns (sphere_instances, bond_instances).
     pub(crate) fn generate_all_instances(
         entities: &[MoleculeEntity],
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
-    ) -> (
-        Vec<SphereInstance>,
-        Vec<CapsuleInstance>,
-        Vec<CapsuleInstance>,
-    ) {
+        pick_id_offset: u32,
+    ) -> (Vec<SphereInstance>, Vec<CapsuleInstance>) {
         let mut out = InstanceCollector::default();
+        let mut atom_offset = pick_id_offset;
 
         for entity in entities {
+            let entity_atom_count = entity.coords.num_atoms as u32;
             match entity.molecule_type {
                 MoleculeType::Ligand => {
                     Self::generate_ligand_instances(
                         &entity.coords,
                         None,
+                        atom_offset,
                         &mut out,
                     );
                 }
@@ -200,6 +171,7 @@ impl BallAndStickRenderer {
                     Self::generate_ligand_instances(
                         &entity.coords,
                         Some(tint),
+                        atom_offset,
                         &mut out,
                     );
                 }
@@ -210,21 +182,31 @@ impl BallAndStickRenderer {
                         Self::generate_ligand_instances(
                             &entity.coords,
                             Some(lipid_tint),
+                            atom_offset,
                             &mut out,
                         );
                     } else {
                         Self::generate_coarse_lipid_instances(
                             &entity.coords,
                             lipid_tint,
+                            atom_offset,
                             &mut out,
                         );
                     }
                 }
                 MoleculeType::Ion if display.show_ions => {
-                    Self::generate_ion_instances(&entity.coords, &mut out);
+                    Self::generate_ion_instances(
+                        &entity.coords,
+                        atom_offset,
+                        &mut out,
+                    );
                 }
                 MoleculeType::Water if display.show_waters => {
-                    Self::generate_water_instances(&entity.coords, &mut out);
+                    Self::generate_water_instances(
+                        &entity.coords,
+                        atom_offset,
+                        &mut out,
+                    );
                 }
                 MoleculeType::Solvent if display.show_solvent => {
                     let sc =
@@ -232,14 +214,16 @@ impl BallAndStickRenderer {
                     Self::generate_solvent_instances(
                         &entity.coords,
                         sc,
+                        atom_offset,
                         &mut out,
                     );
                 }
                 _ => {}
             }
+            atom_offset += entity_atom_count;
         }
 
-        (out.spheres, out.bonds, out.picking)
+        (out.spheres, out.bonds)
     }
 
     /// Regenerate all instances from entity data.
@@ -250,8 +234,8 @@ impl BallAndStickRenderer {
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
     ) {
-        let (sphere_instances, bond_instances, picking_instances) =
-            Self::generate_all_instances(entities, display, colors);
+        let (sphere_instances, bond_instances) =
+            Self::generate_all_instances(entities, display, colors, 0);
         let _ = self.sphere_pass.write_instances(
             &context.device,
             &context.queue,
@@ -261,11 +245,6 @@ impl BallAndStickRenderer {
             &context.device,
             &context.queue,
             &bond_instances,
-        );
-        let _ = self.picking_pass.write_instances(
-            &context.device,
-            &context.queue,
-            &picking_instances,
         );
     }
 
@@ -278,6 +257,7 @@ impl BallAndStickRenderer {
     fn generate_ligand_instances(
         coords: &foldit_conv::types::coords::Coords,
         carbon_tint: Option<[f32; 3]>,
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         let positions = atom_positions(coords);
@@ -288,14 +268,12 @@ impl BallAndStickRenderer {
                 coords.elements.get(i).copied().unwrap_or(Element::Unknown);
             let color = atom_color(elem, carbon_tint);
             let radius = elem.vdw_radius() * BALL_RADIUS_SCALE;
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + i as u32;
-            let p = [pos.x, pos.y, pos.z];
+            let pick_id = atom_offset + i as u32;
 
             out.spheres.push(SphereInstance {
                 center: [pos.x, pos.y, pos.z, radius],
                 color: [color[0], color[1], color[2], pick_id as f32],
             });
-            out.push_picking_sphere(p, radius, pick_id);
         }
 
         // Infer bonds per-residue (avoids O(n²) on large entities)
@@ -319,7 +297,7 @@ impl BallAndStickRenderer {
                     .unwrap_or(Element::Unknown),
                 carbon_tint,
             );
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + bond.atom_a as u32;
+            let pick_id = atom_offset + bond.atom_a as u32;
             let a = [pos_a.x, pos_a.y, pos_a.z];
             let b = [pos_b.x, pos_b.y, pos_b.z];
 
@@ -355,6 +333,7 @@ impl BallAndStickRenderer {
     fn generate_coarse_lipid_instances(
         coords: &foldit_conv::types::coords::Coords,
         lipid_carbon_tint: [f32; 3],
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         let positions = atom_positions(coords);
@@ -363,7 +342,7 @@ impl BallAndStickRenderer {
         for (i, pos) in positions.iter().enumerate() {
             let elem =
                 coords.elements.get(i).copied().unwrap_or(Element::Unknown);
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + i as u32;
+            let pick_id = atom_offset + i as u32;
 
             match elem {
                 Element::P => {
@@ -373,11 +352,6 @@ impl BallAndStickRenderer {
                         center: [pos.x, pos.y, pos.z, 1.0],
                         color: [color[0], color[1], color[2], pick_id as f32],
                     });
-                    out.push_picking_sphere(
-                        [pos.x, pos.y, pos.z],
-                        1.0,
-                        pick_id,
-                    );
                 }
                 Element::O | Element::N => {
                     // Head-group: small spheres, element-colored
@@ -398,6 +372,7 @@ impl BallAndStickRenderer {
             &positions,
             &coords.elements,
             Some(lipid_carbon_tint),
+            atom_offset,
             out,
         );
     }
@@ -409,6 +384,7 @@ impl BallAndStickRenderer {
         positions: &[Vec3],
         elements: &[Element],
         carbon_tint: Option<[f32; 3]>,
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         for bond in bonds {
@@ -426,7 +402,7 @@ impl BallAndStickRenderer {
 
             let pos_a = positions[bond.atom_a];
             let pos_b = positions[bond.atom_b];
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + bond.atom_a as u32;
+            let pick_id = atom_offset + bond.atom_a as u32;
 
             // C-C tail bonds thin, head-group bonds thicker
             let both_carbon = elem_a == Element::C && elem_b == Element::C;
@@ -445,6 +421,7 @@ impl BallAndStickRenderer {
 
     fn generate_ion_instances(
         coords: &foldit_conv::types::coords::Coords,
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         for (i, atom) in coords.atoms.iter().enumerate() {
@@ -452,19 +429,18 @@ impl BallAndStickRenderer {
                 coords.elements.get(i).copied().unwrap_or(Element::Unknown);
             let color = elem.cpk_color();
             let radius = elem.vdw_radius() * ION_RADIUS_SCALE;
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + i as u32;
-            let p = [atom.x, atom.y, atom.z];
+            let pick_id = atom_offset + i as u32;
 
             out.spheres.push(SphereInstance {
                 center: [atom.x, atom.y, atom.z, radius],
                 color: [color[0], color[1], color[2], pick_id as f32],
             });
-            out.push_picking_sphere(p, radius, pick_id);
         }
     }
 
     fn generate_water_instances(
         coords: &foldit_conv::types::coords::Coords,
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         let positions = atom_positions(coords);
@@ -478,8 +454,7 @@ impl BallAndStickRenderer {
 
             // Only render oxygens as visible spheres, skip hydrogens in water
             if elem == Element::O || elem == Element::Unknown {
-                let pick_id = SMALL_MOLECULE_PICK_OFFSET + i as u32;
-                let p = [pos.x, pos.y, pos.z];
+                let pick_id = atom_offset + i as u32;
 
                 out.spheres.push(SphereInstance {
                     center: [pos.x, pos.y, pos.z, WATER_RADIUS],
@@ -490,7 +465,6 @@ impl BallAndStickRenderer {
                         pick_id as f32,
                     ],
                 });
-                out.push_picking_sphere(p, WATER_RADIUS, pick_id);
             }
         }
 
@@ -500,7 +474,7 @@ impl BallAndStickRenderer {
             for bond in &inferred_bonds {
                 let pos_a = positions[bond.atom_a];
                 let pos_b = positions[bond.atom_b];
-                let pick_id = SMALL_MOLECULE_PICK_OFFSET + bond.atom_a as u32;
+                let pick_id = atom_offset + bond.atom_a as u32;
                 let radius = BOND_RADIUS * 0.7;
 
                 out.push_bond(
@@ -555,6 +529,7 @@ impl BallAndStickRenderer {
     fn generate_solvent_instances(
         coords: &foldit_conv::types::coords::Coords,
         solvent_color: [f32; 3],
+        atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
         const SOLVENT_RADIUS: f32 = 0.15;
@@ -565,8 +540,7 @@ impl BallAndStickRenderer {
             if elem == Element::H {
                 continue;
             }
-            let pick_id = SMALL_MOLECULE_PICK_OFFSET + i as u32;
-            let p = [atom.x, atom.y, atom.z];
+            let pick_id = atom_offset + i as u32;
 
             out.spheres.push(SphereInstance {
                 center: [atom.x, atom.y, atom.z, SOLVENT_RADIUS],
@@ -577,7 +551,6 @@ impl BallAndStickRenderer {
                     pick_id as f32,
                 ],
             });
-            out.push_picking_sphere(p, SOLVENT_RADIUS, pick_id);
         }
     }
 
@@ -600,12 +573,6 @@ impl BallAndStickRenderer {
             data.capsule_bytes,
             data.capsule_count,
         );
-        let _ = self.picking_pass.write_bytes(
-            device,
-            queue,
-            data.picking_bytes,
-            data.picking_count,
-        );
     }
 
     /// Draw both spheres and bonds in a single render pass.
@@ -618,14 +585,24 @@ impl BallAndStickRenderer {
         self.bond_pass.draw(render_pass, bind_groups);
     }
 
-    /// Get the picking buffer for the picking pass.
-    pub fn picking_buffer(&self) -> &wgpu::Buffer {
-        self.picking_pass.buffer()
+    /// Get the sphere instance buffer (visual pass).
+    pub fn sphere_buffer(&self) -> &wgpu::Buffer {
+        self.sphere_pass.buffer()
     }
 
-    /// Get the picking instance count.
-    pub fn picking_count(&self) -> u32 {
-        self.picking_pass.instance_count
+    /// Get the bond capsule instance buffer (visual pass).
+    pub fn bond_buffer(&self) -> &wgpu::Buffer {
+        self.bond_pass.buffer()
+    }
+
+    /// Get the sphere instance count.
+    pub fn sphere_count(&self) -> u32 {
+        self.sphere_pass.instance_count
+    }
+
+    /// Get the bond capsule instance count.
+    pub fn bond_count(&self) -> u32 {
+        self.bond_pass.instance_count
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
@@ -633,7 +610,6 @@ impl BallAndStickRenderer {
         vec![
             self.sphere_pass.buffer_info("BnS Spheres"),
             self.bond_pass.buffer_info("BnS Bonds"),
-            self.picking_pass.buffer_info("BnS Picking"),
         ]
     }
 

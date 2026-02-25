@@ -16,7 +16,7 @@ impl ProteinRenderEngine {
 
         // Fall back to backbone_renderer's cached chains
         get_ca_position_from_chains(
-            self.backbone_renderer.cached_chains(),
+            self.renderers.backbone.cached_chains(),
             residue_idx,
         )
     }
@@ -26,7 +26,7 @@ impl ProteinRenderEngine {
         if self.animator.is_animating() {
             self.animator.get_backbone()
         } else {
-            self.backbone_renderer.cached_chains().to_vec()
+            self.renderers.backbone.cached_chains().to_vec()
         }
     }
 
@@ -53,7 +53,7 @@ impl ProteinRenderEngine {
             return Some(pos);
         }
         get_ca_position_from_chains(
-            self.backbone_renderer.cached_chains(),
+            self.renderers.backbone.cached_chains(),
             residue_idx,
         )
     }

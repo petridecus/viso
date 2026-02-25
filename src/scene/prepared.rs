@@ -9,6 +9,7 @@ use super::{EntityResidueRange, PerEntityData};
 use crate::animation::transition::Transition;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
+use crate::renderer::picking::PickMap;
 
 /// Fallback color for residues without score data (neutral gray).
 pub const FALLBACK_RESIDUE_COLOR: [f32; 3] = [0.7, 0.7, 0.7];
@@ -47,10 +48,6 @@ pub struct BallAndStickInstances {
     pub capsule_instances: Vec<u8>,
     /// Number of capsules.
     pub capsule_count: u32,
-    /// Picking capsule bytes.
-    pub picking_capsules: Vec<u8>,
-    /// Number of picking capsules.
-    pub picking_count: u32,
 }
 
 /// Nucleic acid instance data (GPU-ready byte buffers).
@@ -155,6 +152,8 @@ pub struct PreparedScene {
     pub non_protein_entities: Vec<MoleculeEntity>,
     /// Base ring geometry from DNA/RNA entities.
     pub nucleic_acid_rings: Vec<NucleotideRing>,
+    /// Mapping from raw GPU pick IDs to typed pick targets.
+    pub pick_map: PickMap,
 }
 
 /// Pre-computed animation frame data, ready for GPU upload.

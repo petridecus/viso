@@ -167,8 +167,7 @@ impl ProteinRenderEngine {
             sidechain.hydrophobicity.to_vec();
         self.sc.cached_sidechain_residue_indices =
             sidechain.residue_indices.to_vec();
-        self.sc.cached_sidechain_atom_names =
-            sidechain_atom_names.to_vec();
+        self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
         let ca_positions =
@@ -208,9 +207,11 @@ impl ProteinRenderEngine {
             hydrophobicity: sidechain.hydrophobicity,
             residue_indices: sidechain.residue_indices,
         };
-        let adjusted =
-            crate::util::sheet_adjust::sheet_adjusted_view(&raw_view, &offset_map);
-        self.sidechain_renderer.update(
+        let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
+            &raw_view,
+            &offset_map,
+        );
+        self.renderers.sidechain.update(
             &self.context.device,
             &self.context.queue,
             &adjusted.as_view(),
