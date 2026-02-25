@@ -3,7 +3,8 @@
 use glam::Vec3;
 
 use super::ProteinRenderEngine;
-use crate::{options::Options, scene::Scene};
+use crate::options::Options;
+use crate::scene::Scene;
 
 // ── Lifecycle ──
 

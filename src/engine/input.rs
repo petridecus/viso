@@ -3,10 +3,8 @@
 use glam::Vec2;
 
 use super::ProteinRenderEngine;
-use crate::{
-    input::{ClickResult, InputEvent, KeyAction, MouseButton},
-    scene::Focus,
-};
+use crate::input::{ClickResult, InputEvent, KeyAction, MouseButton};
+use crate::scene::Focus;
 
 // ── Unified input handler ──
 
@@ -188,32 +186,33 @@ impl ProteinRenderEngine {
             return false;
         }
         let target = residue_idx as usize;
-
-        // Get backbone chains from tube renderer to determine chain boundaries
         let chains = self.backbone_renderer.cached_chains();
 
-        // Walk chains to find which one contains this residue
+        // Find the chain range containing the target residue
         let mut global_start = 0usize;
-        for chain in chains {
+        let chain_range = chains.iter().find_map(|chain| {
             let chain_residues = chain.len() / 3;
             let global_end = global_start + chain_residues;
-            if target >= global_start && target < global_end {
-                // Found the chain — select all its residues
-                if !shift_held {
-                    self.picking.selected_residues.clear();
-                }
-                for i in global_start..global_end {
-                    let residue = i as i32;
-                    if !self.picking.selected_residues.contains(&residue) {
-                        self.picking.selected_residues.push(residue);
-                    }
-                }
-                return true;
-            }
+            let result = (target >= global_start && target < global_end)
+                .then_some(global_start..global_end);
             global_start = global_end;
-        }
+            result
+        });
 
-        false
+        let Some(range) = chain_range else {
+            return false;
+        };
+
+        if !shift_held {
+            self.picking.selected_residues.clear();
+        }
+        for i in range {
+            let residue = i as i32;
+            if !self.picking.selected_residues.contains(&residue) {
+                self.picking.selected_residues.push(residue);
+            }
+        }
+        true
     }
 }
 

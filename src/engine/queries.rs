@@ -1,6 +1,6 @@
 //! Queries & Backend methods for ProteinRenderEngine
 
-use foldit_conv::coords::get_ca_position_from_chains;
+use foldit_conv::ops::transform::get_ca_position_from_chains;
 use glam::Vec3;
 
 use super::ProteinRenderEngine;
@@ -44,7 +44,7 @@ impl ProteinRenderEngine {
     /// during animation).
     pub fn get_current_ca_positions(&self) -> Vec<Vec3> {
         let chains = self.get_current_backbone_chains();
-        foldit_conv::coords::extract_ca_from_chains(&chains)
+        foldit_conv::ops::transform::extract_ca_from_chains(&chains)
     }
 
     /// Get a single interpolated CA position by residue index.
@@ -68,7 +68,7 @@ impl ProteinRenderEngine {
         let backbone_chains = self.get_current_backbone_chains();
         let sidechain_positions = self.get_current_sidechain_positions();
 
-        foldit_conv::coords::get_closest_atom_for_residue(
+        foldit_conv::ops::transform::get_closest_atom_for_residue(
             &backbone_chains,
             &sidechain_positions,
             &self.sc.cached_sidechain_residue_indices,
@@ -87,7 +87,7 @@ impl ProteinRenderEngine {
         let backbone_chains = self.get_current_backbone_chains();
         let sidechain_positions = self.get_current_sidechain_positions();
 
-        foldit_conv::coords::get_closest_atom_with_name(
+        foldit_conv::ops::transform::get_closest_atom_with_name(
             &backbone_chains,
             &sidechain_positions,
             &self.sc.cached_sidechain_residue_indices,

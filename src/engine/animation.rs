@@ -5,16 +5,16 @@ use std::path::Path;
 use glam::Vec3;
 
 use super::ProteinRenderEngine;
-use crate::{
-    animation::transition::Transition,
-    renderer::geometry::sidechain::SidechainData, scene::SceneEntity,
-    util::trajectory::TrajectoryPlayer,
-};
+use crate::animation::transition::Transition;
+use crate::renderer::geometry::sidechain::SidechainView;
+use crate::scene::SceneEntity;
+use crate::util::trajectory::TrajectoryPlayer;
 
 impl ProteinRenderEngine {
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &Path) {
-        use foldit_conv::coords::{dcd_file_to_frames, protein_only};
+        use foldit_conv::adapters::dcd::dcd_file_to_frames;
+        use foldit_conv::ops::transform::protein_only;
 
         use crate::util::trajectory::build_backbone_atom_indices;
 
@@ -57,7 +57,9 @@ impl ProteinRenderEngine {
 
         // Get current backbone chains for topology
         let backbone_chains =
-            foldit_conv::coords::extract_backbone_chains(&protein_coords);
+            foldit_conv::ops::transform::extract_backbone_chains(
+                &protein_coords,
+            );
 
         let num_atoms = header.num_atoms as usize;
         let num_frames = frames.len();
@@ -113,7 +115,7 @@ impl ProteinRenderEngine {
     pub fn animate_to_full_pose(
         &mut self,
         new_backbone: &[Vec<Vec3>],
-        sidechain: &SidechainData,
+        sidechain: &SidechainView,
         sidechain_atom_names: &[String],
         transition: &Transition,
     ) {
@@ -165,17 +167,14 @@ impl ProteinRenderEngine {
             sidechain.hydrophobicity.to_vec();
         self.sc.cached_sidechain_residue_indices =
             sidechain.residue_indices.to_vec();
-        self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
+        self.sc.cached_sidechain_atom_names =
+            sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
-        // CA is the second atom (index 1) in each group of 3 (N, CA, C) per
-        // residue
-        let ca_positions: Vec<Vec3> = new_backbone
-            .iter()
-            .flat_map(|chain| {
-                chain.chunks(3).filter_map(|chunk| chunk.get(1).copied())
-            })
-            .collect();
+        let ca_positions =
+            foldit_conv::render::backbone::ca_positions_from_chains(
+                new_backbone,
+            );
 
         // Pass sidechain data to animator FIRST (before set_target)
         // This allows set_target to detect sidechain changes and force
@@ -202,27 +201,19 @@ impl ProteinRenderEngine {
         // Update sidechain renderer with start positions (adjusted for sheet
         // surface)
         let offset_map = self.sheet_offset_map();
-        let adjusted_positions =
-            crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-                &self.sc.start_sidechain_positions,
-                sidechain.residue_indices,
-                &offset_map,
-            );
-        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            &self.sc.start_backbone_sidechain_bonds,
-            sidechain.residue_indices,
-            &offset_map,
-        );
+        let raw_view = SidechainView {
+            positions: &self.sc.start_sidechain_positions,
+            bonds: sidechain.bonds,
+            backbone_bonds: &self.sc.start_backbone_sidechain_bonds,
+            hydrophobicity: sidechain.hydrophobicity,
+            residue_indices: sidechain.residue_indices,
+        };
+        let adjusted =
+            crate::util::sheet_adjust::sheet_adjusted_view(&raw_view, &offset_map);
         self.sidechain_renderer.update(
             &self.context.device,
             &self.context.queue,
-            &SidechainData {
-                positions: &adjusted_positions,
-                bonds: sidechain.bonds,
-                backbone_bonds: &adjusted_bonds,
-                hydrophobicity: sidechain.hydrophobicity,
-                residue_indices: sidechain.residue_indices,
-            },
+            &adjusted.as_view(),
         );
     }
 }

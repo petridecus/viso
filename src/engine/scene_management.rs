@@ -2,19 +2,15 @@
 
 use std::collections::HashMap;
 
-use foldit_conv::{
-    coords::{MoleculeEntity, MoleculeType},
-    secondary_structure::SSType,
-};
+use foldit_conv::secondary_structure::SSType;
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
 use super::ProteinRenderEngine;
-use crate::{
-    animation::transition::Transition,
-    renderer::geometry::{
-        band::BandRenderInfo, pull::PullRenderInfo, sidechain::SidechainData,
-    },
-};
+use crate::animation::transition::Transition;
+use crate::renderer::geometry::band::BandRenderInfo;
+use crate::renderer::geometry::pull::PullRenderInfo;
+use crate::renderer::geometry::sidechain::SidechainView;
 
 impl ProteinRenderEngine {
     /// Update backbone with new chains (regenerates the backbone mesh)
@@ -71,54 +67,28 @@ impl ProteinRenderEngine {
 
         // Get current backbone-sidechain bonds (may be interpolated)
         let bs_bonds = if self.animator.is_animating() {
-            // Interpolate CA positions
-            self.sc
-                .target_backbone_sidechain_bonds
-                .iter()
-                .map(|(target_ca, cb_idx)| {
-                    let res_idx =
-                        self.sc
-                            .cached_sidechain_residue_indices
-                            .get(*cb_idx as usize)
-                            .copied()
-                            .unwrap_or(0) as usize;
-                    let ca_pos = self
-                        .animator
-                        .get_ca_position(res_idx)
-                        .unwrap_or(*target_ca);
-                    (ca_pos, *cb_idx)
-                })
-                .collect::<Vec<_>>()
+            self.sc.interpolated_backbone_bonds(&self.animator)
         } else {
             self.sc.target_backbone_sidechain_bonds.clone()
         };
 
         // Translate entire sidechains onto sheet surface
         let offset_map = self.sheet_offset_map();
-        let res_indices = self.sc.cached_sidechain_residue_indices.clone();
-        let adjusted_positions =
-            crate::util::sheet_adjust::adjust_sidechains_for_sheet(
-                &positions,
-                &res_indices,
-                &offset_map,
-            );
-        let adjusted_bonds = crate::util::sheet_adjust::adjust_bonds_for_sheet(
-            &bs_bonds,
-            &res_indices,
-            &offset_map,
-        );
+        let raw_view = SidechainView {
+            positions: &positions,
+            bonds: &self.sc.cached_sidechain_bonds,
+            backbone_bonds: &bs_bonds,
+            hydrophobicity: &self.sc.cached_sidechain_hydrophobicity,
+            residue_indices: &self.sc.cached_sidechain_residue_indices,
+        };
+        let adjusted =
+            crate::util::sheet_adjust::sheet_adjusted_view(&raw_view, &offset_map);
 
         // Update sidechains with frustum culling
         self.sidechain_renderer.update_with_frustum(
             &self.context.device,
             &self.context.queue,
-            &SidechainData {
-                positions: &adjusted_positions,
-                bonds: &self.sc.cached_sidechain_bonds,
-                backbone_bonds: &adjusted_bonds,
-                hydrophobicity: &self.sc.cached_sidechain_hydrophobicity,
-                residue_indices: &self.sc.cached_sidechain_residue_indices,
-            },
+            &adjusted.as_view(),
             Some(&frustum),
         );
 
@@ -132,25 +102,15 @@ impl ProteinRenderEngine {
 
     /// Refresh ball-and-stick renderer with current visibility flags.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
-        // Collect all non-protein entities from visible scene entities
+        // Collect all ligand entities (not protein, not nucleic acid)
         let entities: Vec<MoleculeEntity> = self
             .scene
-            .entities()
+            .ligand_entities()
             .iter()
-            .filter(|se| se.visible)
-            .map(|se| &se.entity)
-            .filter(|e| {
-                e.molecule_type != MoleculeType::Protein
-                    && !matches!(
-                        e.molecule_type,
-                        MoleculeType::DNA | MoleculeType::RNA
-                    )
-            })
-            .cloned()
+            .map(|se| se.entity.clone())
             .collect();
         self.ball_and_stick_renderer.update_from_entities(
-            &self.context.device,
-            &self.context.queue,
+            &self.context,
             &entities,
             &self.options.display,
             Some(&self.options.colors),
@@ -175,7 +135,6 @@ impl ProteinRenderEngine {
 
     /// Compute secondary structure types for all residues across all chains
     pub(crate) fn compute_ss_types(
-        &self,
         backbone_chains: &[Vec<Vec3>],
     ) -> Vec<SSType> {
         use foldit_conv::secondary_structure::auto::detect as detect_ss;
@@ -183,15 +142,10 @@ impl ProteinRenderEngine {
         let mut all_ss_types = Vec::new();
 
         for chain in backbone_chains {
-            // Extract CA positions (every 3rd atom starting at index 1: N, CA,
-            // C pattern)
-            let ca_positions: Vec<Vec3> = chain
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i % 3 == 1)
-                .map(|(_, &pos)| pos)
-                .collect();
-
+            let ca_positions: Vec<Vec3> =
+                foldit_conv::render::backbone::ca_positions_from_chains(
+                    std::slice::from_ref(chain),
+                );
             let ss_types = detect_ss(&ca_positions);
             all_ss_types.extend(ss_types);
         }

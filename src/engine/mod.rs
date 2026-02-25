@@ -8,45 +8,36 @@ mod scene_sync;
 
 use std::time::Instant;
 
-use foldit_conv::coords::{
-    split_into_entities, structure_file_to_coords, MoleculeEntity,
-    MoleculeType, RenderCoords,
-};
+use foldit_conv::adapters::pdb::structure_file_to_coords;
+use foldit_conv::render::RenderCoords;
+use foldit_conv::types::entity::{split_into_entities, MoleculeEntity};
 use glam::{Mat4, Vec3};
 
-use crate::{
-    animation::{
-        animator::StructureAnimator, sidechain_state::SidechainAnimationState,
-    },
-    camera::controller::CameraController,
-    gpu::{
-        render_context::RenderContext, residue_color::ResidueColorBuffer,
-        shader_composer::ShaderComposer,
-    },
-    input::InputState,
-    options::Options,
-    picking::{picking_state::PickingState, Picking, SelectionBuffer},
-    renderer::{
-        draw_context::DrawBindGroups,
-        geometry::{
-            backbone::{BackboneRenderer, ChainPair},
-            ball_and_stick::BallAndStickRenderer,
-            band::BandRenderer,
-            nucleic_acid::NucleicAcidRenderer,
-            pull::PullRenderer,
-            sidechain::{SidechainData, SidechainRenderer},
-        },
-        postprocess::post_process::PostProcessStack,
-        PipelineLayouts,
-    },
-    scene::{processor::SceneProcessor, Focus, Scene},
-    util::{
-        bond_topology::{get_residue_bonds, is_hydrophobic},
-        frame_timing::FrameTiming,
-        lighting::Lighting,
-        trajectory::TrajectoryPlayer,
-    },
-};
+use crate::animation::animator::StructureAnimator;
+use crate::animation::sidechain_state::SidechainAnimationState;
+use crate::camera::controller::CameraController;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::residue_color::ResidueColorBuffer;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::input::InputState;
+use crate::options::Options;
+use crate::renderer::draw_context::DrawBindGroups;
+use crate::renderer::geometry::backbone::{BackboneRenderer, ChainPair};
+use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
+use crate::renderer::geometry::band::BandRenderer;
+use crate::renderer::geometry::nucleic_acid::NucleicAcidRenderer;
+use crate::renderer::geometry::pull::PullRenderer;
+use crate::renderer::geometry::sidechain::{SidechainRenderer, SidechainView};
+use crate::renderer::picking::state::PickingState;
+use crate::renderer::picking::{Picking, SelectionBuffer};
+use crate::renderer::postprocess::post_process::PostProcessStack;
+use crate::renderer::PipelineLayouts;
+use crate::scene::processor::SceneProcessor;
+use crate::scene::{Focus, Scene, SceneEntity};
+use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
+use crate::util::frame_timing::FrameTiming;
+use crate::util::lighting::Lighting;
+use crate::util::trajectory::TrajectoryPlayer;
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -151,6 +142,11 @@ pub struct ProteinRenderEngine {
 
 impl ProteinRenderEngine {
     /// Engine with a default molecule path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError`](crate::error::VisoError) if GPU initialization
+    /// or structure loading fails.
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -166,6 +162,11 @@ impl ProteinRenderEngine {
     }
 
     /// Engine with a specified molecule path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError`](crate::error::VisoError) if GPU initialization
+    /// or structure loading fails.
     pub async fn new_with_path(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -188,6 +189,11 @@ impl ProteinRenderEngine {
     ///
     /// Use [`RenderContext::from_device`] to create a surface-less context
     /// from an externally-owned `wgpu::Device` and `wgpu::Queue`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError`](crate::error::VisoError) if structure loading
+    /// fails.
     pub fn new_from_context(
         mut context: RenderContext,
         scale_factor: f64,
@@ -206,7 +212,7 @@ impl ProteinRenderEngine {
         scale_factor: f64,
         cif_path: &str,
     ) -> Result<Self, crate::error::VisoError> {
-        let mut shader_composer = ShaderComposer::new();
+        let mut shader_composer = ShaderComposer::new()?;
 
         let mut camera_controller = CameraController::new(&context);
         let lighting = Lighting::new(&context);
@@ -233,20 +239,18 @@ impl ProteinRenderEngine {
 
         // Extract protein coords for rendering (may be absent for
         // nucleic-acid-only structures)
-        let protein_entity_id = entity_ids.iter().find(|&&id| {
-            scene.entity(id).is_some_and(|e| {
-                e.entity.molecule_type == MoleculeType::Protein
-            })
-        });
+        let protein_entity_id = entity_ids
+            .iter()
+            .find(|&&id| scene.entity(id).is_some_and(SceneEntity::is_protein));
         let render_coords = if let Some(protein_coords) = protein_entity_id
             .and_then(|&id| {
                 scene
                     .entity(id)
-                    .and_then(super::scene::SceneEntity::protein_coords)
+                    .and_then(SceneEntity::protein_coords)
             }) {
             log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
             let protein_coords =
-                foldit_conv::coords::protein_only(&protein_coords);
+                foldit_conv::ops::transform::protein_only(&protein_coords);
             log::debug!(
                 "after protein_only: {} atoms",
                 protein_coords.num_atoms
@@ -267,7 +271,7 @@ impl ProteinRenderEngine {
             rc
         } else {
             log::debug!("no protein coords found");
-            let empty = foldit_conv::coords::Coords {
+            let empty = foldit_conv::types::coords::Coords {
                 num_atoms: 0,
                 atoms: Vec::new(),
                 chain_ids: Vec::new(),
@@ -296,14 +300,8 @@ impl ProteinRenderEngine {
 
         // Extract NA chains early so BackboneRenderer can handle both
         let na_chains: Vec<Vec<Vec3>> = scene
-            .entities()
+            .nucleic_acid_entities()
             .iter()
-            .filter(|se| {
-                matches!(
-                    se.entity.molecule_type,
-                    MoleculeType::DNA | MoleculeType::RNA
-                )
-            })
             .flat_map(|se| se.entity.extract_p_atom_chains())
             .collect();
 
@@ -324,7 +322,7 @@ impl ProteinRenderEngine {
                 na: &na_chains,
             },
             &mut shader_composer,
-        );
+        )?;
 
         // Get sidechain data from RenderCoords
         let sidechain_positions = render_coords.sidechain_positions();
@@ -335,7 +333,7 @@ impl ProteinRenderEngine {
         let sidechain_renderer = SidechainRenderer::new(
             &context,
             &layouts,
-            &SidechainData {
+            &SidechainView {
                 positions: &sidechain_positions,
                 bonds: &render_coords.sidechain_bonds,
                 backbone_bonds: &render_coords.backbone_sidechain_bonds,
@@ -343,20 +341,20 @@ impl ProteinRenderEngine {
                 residue_indices: &sidechain_residue_indices,
             },
             &mut shader_composer,
-        );
+        )?;
 
         // Create band renderer (starts empty)
         let band_renderer =
-            BandRenderer::new(&context, &layouts, &mut shader_composer);
+            BandRenderer::new(&context, &layouts, &mut shader_composer)?;
 
         // Create pull renderer (starts empty, only one pull at a time)
         let pull_renderer =
-            PullRenderer::new(&context, &layouts, &mut shader_composer);
+            PullRenderer::new(&context, &layouts, &mut shader_composer)?;
 
         // Create the full post-processing stack (depth/normal textures, SSAO,
         // bloom, composite, FXAA)
         let post_process =
-            PostProcessStack::new(&context, &mut shader_composer);
+            PostProcessStack::new(&context, &mut shader_composer)?;
 
         // Create frame timing with 300 FPS limit
         let frame_timing = FrameTiming::new(TARGET_FPS);
@@ -366,7 +364,7 @@ impl ProteinRenderEngine {
             &context,
             &camera_controller.layout,
             &mut shader_composer,
-        );
+        )?;
 
         // Create initial picking bind groups
         let mut picking_groups = PickingState::new();
@@ -377,45 +375,29 @@ impl ProteinRenderEngine {
         );
 
         // Create ball-and-stick renderer for non-protein entities
-        let mut ball_and_stick_renderer =
-            BallAndStickRenderer::new(&context, &layouts, &mut shader_composer);
+        let mut ball_and_stick_renderer = BallAndStickRenderer::new(
+            &context,
+            &layouts,
+            &mut shader_composer,
+        )?;
 
         // Compute initial per-residue colors so the first frame isn't gray
-        {
-            let backbone_chains = &render_coords.backbone_chains;
-            let num_chains = backbone_chains.len();
-            let initial_colors: Vec<[f32; 3]> = if num_chains == 0 {
-                vec![[0.5, 0.5, 0.5]; total_residues.max(1)]
-            } else {
-                let mut colors = Vec::with_capacity(total_residues);
-                for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-                    let t = if num_chains > 1 {
-                        chain_idx as f32 / (num_chains - 1) as f32
-                    } else {
-                        0.0
-                    };
-                    let color = Self::chain_color(t);
-                    let n_residues = chain.len() / 3;
-                    for _ in 0..n_residues {
-                        colors.push(color);
-                    }
-                }
-                colors
-            };
-            residue_color_buffer
-                .set_colors_immediate(&context.queue, &initial_colors);
-        }
+        let initial_colors = initial_chain_colors(
+            &render_coords.backbone_chains,
+            total_residues,
+        );
+        residue_color_buffer
+            .set_colors_immediate(&context.queue, &initial_colors);
 
         // Collect non-protein entities for ball-and-stick
         let non_protein_refs: Vec<MoleculeEntity> = scene
             .entities()
             .iter()
-            .filter(|se| se.entity.molecule_type != MoleculeType::Protein)
+            .filter(|se| !se.is_protein())
             .map(|se| se.entity.clone())
             .collect();
         ball_and_stick_renderer.update_from_entities(
-            &context.device,
-            &context.queue,
+            &context,
             &non_protein_refs,
             &options.display,
             Some(&options.colors),
@@ -430,15 +412,9 @@ impl ProteinRenderEngine {
 
         // Create nucleic acid renderer for base rings + stem tubes
         // (backbone is now handled by BackboneRenderer)
-        let na_rings: Vec<foldit_conv::coords::entity::NucleotideRing> = scene
-            .entities()
+        let na_rings: Vec<foldit_conv::types::entity::NucleotideRing> = scene
+            .nucleic_acid_entities()
             .iter()
-            .filter(|se| {
-                matches!(
-                    se.entity.molecule_type,
-                    MoleculeType::DNA | MoleculeType::RNA
-                )
-            })
             .flat_map(|se| se.entity.extract_base_rings())
             .collect();
         let nucleic_acid_renderer = NucleicAcidRenderer::new(
@@ -447,7 +423,7 @@ impl ProteinRenderEngine {
             &na_chains,
             &na_rings,
             &mut shader_composer,
-        );
+        )?;
 
         // Fit camera to all atom positions (protein + non-protein + nucleic
         // acid P-atoms)
@@ -691,7 +667,7 @@ impl ProteinRenderEngine {
         self.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
-            &crate::picking::PickingGeometry {
+            &crate::renderer::picking::PickingGeometry {
                 backbone_vertex_buffer: self.backbone_renderer.vertex_buffer(),
                 backbone_tube_index_buffer: self
                     .backbone_renderer
@@ -720,8 +696,7 @@ impl ProteinRenderEngine {
                     .as_ref(),
                 bns_capsule_count: self.ball_and_stick_renderer.picking_count(),
             },
-            self.input.mouse_pos.0 as u32,
-            self.input.mouse_pos.1 as u32,
+            (self.input.mouse_pos.0 as u32, self.input.mouse_pos.1 as u32),
         );
 
         encoder
@@ -729,6 +704,11 @@ impl ProteinRenderEngine {
 
     /// Execute one frame: update animations, run the geometry pass,
     /// post-process, and present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wgpu::SurfaceError`] if the swapchain frame cannot be
+    /// acquired.
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         // Check if we should render based on FPS limit
         if !self.frame_timing.should_render() {
@@ -778,6 +758,29 @@ impl ProteinRenderEngine {
             self.picking.resize(&self.context.device, width, height);
         }
     }
+}
+
+/// Compute initial per-residue colors from chain hue ramp.
+fn initial_chain_colors(
+    backbone_chains: &[Vec<Vec3>],
+    total_residues: usize,
+) -> Vec<[f32; 3]> {
+    if backbone_chains.is_empty() {
+        return vec![[0.5, 0.5, 0.5]; total_residues.max(1)];
+    }
+    let num_chains = backbone_chains.len();
+    let mut colors = Vec::with_capacity(total_residues);
+    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+        let t = if num_chains > 1 {
+            chain_idx as f32 / (num_chains - 1) as f32
+        } else {
+            0.0
+        };
+        let color = ProteinRenderEngine::chain_color(t);
+        let n_residues = chain.len() / 3;
+        colors.extend(std::iter::repeat_n(color, n_residues));
+    }
+    colors
 }
 
 // =============================================================================
