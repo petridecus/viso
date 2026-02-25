@@ -2,11 +2,10 @@
 
 use std::time::Instant;
 
-use super::{
-    runner::{AnimationRunner, ResidueAnimationData},
-    state::StructureState,
-};
-use crate::animation::{behaviors::PreemptionStrategy, transition::Transition};
+use super::runner::{AnimationRunner, ResidueAnimationData};
+use super::state::StructureState;
+use crate::animation::behaviors::PreemptionStrategy;
+use crate::animation::transition::Transition;
 
 /// Controls animation lifecycle: when to start, preempt, or ignore new targets.
 #[derive(Clone)]

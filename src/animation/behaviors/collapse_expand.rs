@@ -2,11 +2,9 @@
 
 use std::time::Duration;
 
-use super::{
-    super::interpolation::InterpolationContext,
-    state::ResidueVisualState,
-    traits::{AnimationBehavior, PreemptionStrategy},
-};
+use super::super::interpolation::InterpolationContext;
+use super::state::ResidueVisualState;
+use super::traits::{AnimationBehavior, PreemptionStrategy};
 use crate::util::easing::EasingFunction;
 
 /// Two-phase animation: collapse to backbone, then expand to new state.
@@ -153,21 +151,18 @@ impl AnimationBehavior for CollapseExpand {
         // Get phase-eased progress for chi interpolation
         let phase_eased = ctx.phase_eased_t.unwrap_or(1.0);
 
-        let chis = if t < collapse_frac {
+        let mut chis = [0.0f32; 4];
+        if t < collapse_frac {
             // Phase 1: Collapse old sidechain toward backbone (chi -> 0)
-            let mut chis = [0.0f32; 4];
             for (i, chi) in chis.iter_mut().enumerate().take(start.num_chis) {
                 *chi = start.chis[i] * (1.0 - phase_eased);
             }
-            chis
         } else {
             // Phase 2: Expand new sidechain from backbone (0 -> chi)
-            let mut chis = [0.0f32; 4];
             for (i, chi) in chis.iter_mut().enumerate().take(end.num_chis) {
                 *chi = end.chis[i] * phase_eased;
             }
-            chis
-        };
+        }
 
         ResidueVisualState {
             backbone,

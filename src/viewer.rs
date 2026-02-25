@@ -12,19 +12,17 @@
 //!     .unwrap();
 //! ```
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
-use winit::{
-    application::ApplicationHandler,
-    event::{ElementState, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowId},
-};
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::{Window, WindowId};
 
-use crate::{
-    error::VisoError, options::Options, InputEvent, MouseButton,
-    ProteinRenderEngine,
-};
+use crate::error::VisoError;
+use crate::options::Options;
+use crate::{InputEvent, MouseButton, ProteinRenderEngine};
 
 // ── Builder ──────────────────────────────────────────────────────────────
 

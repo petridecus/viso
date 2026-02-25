@@ -4,10 +4,8 @@
 //! single `PanelController` field instead of six `#[cfg(feature = "gui")]`
 //! fields.
 
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use winit::window::Window;
 
@@ -195,8 +193,7 @@ impl PanelController {
             self.apply_layout(window);
         }
         if let Some(w) = resize_width {
-            let clamped =
-                w.max(Self::MIN_PANEL_WIDTH).min(Self::MAX_PANEL_WIDTH);
+            let clamped = w.clamp(Self::MIN_PANEL_WIDTH, Self::MAX_PANEL_WIDTH);
             if clamped != self.width {
                 self.width = clamped;
                 self.apply_layout(window);

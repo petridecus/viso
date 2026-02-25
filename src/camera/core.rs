@@ -38,7 +38,7 @@ pub struct CameraUniform {
     /// Debug visualization mode (0 = off, 1 = show normals).
     pub debug_mode: u32,
     /// Padding for GPU alignment.
-    pub _pad: [f32; 2],
+    pub(crate) _pad: [f32; 2],
 }
 
 impl Camera {

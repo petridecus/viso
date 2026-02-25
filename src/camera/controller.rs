@@ -1,13 +1,9 @@
 use glam::{Quat, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
-use crate::{
-    camera::{
-        core::{Camera, CameraUniform},
-        frustum::Frustum,
-    },
-    gpu::render_context::RenderContext,
-};
+use crate::camera::core::{Camera, CameraUniform};
+use crate::camera::frustum::Frustum;
+use crate::gpu::render_context::RenderContext;
 
 /// Speed of camera animation (higher = faster, 1.0 = instant)
 const CAMERA_ANIMATION_SPEED: f32 = 3.0;

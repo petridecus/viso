@@ -2,10 +2,8 @@
 
 use std::time::Duration;
 
-use super::{
-    state::ResidueVisualState,
-    traits::{AnimationBehavior, PreemptionStrategy},
-};
+use super::state::ResidueVisualState;
+use super::traits::{AnimationBehavior, PreemptionStrategy};
 use crate::util::easing::EasingFunction;
 
 /// Smooth interpolation with configurable easing.

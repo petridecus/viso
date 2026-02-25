@@ -69,6 +69,11 @@ impl Options {
     }
 
     /// Load options from a TOML file. Missing fields use defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::Io`] if the file cannot be read, or
+    /// [`VisoError::OptionsParse`] if the TOML content is invalid.
     pub fn load(path: &Path) -> Result<Self, VisoError> {
         let content = std::fs::read_to_string(path).map_err(VisoError::Io)?;
         toml::from_str(&content)
@@ -76,6 +81,11 @@ impl Options {
     }
 
     /// Save options to a TOML file (pretty-printed).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::Io`] if the file cannot be written, or
+    /// [`VisoError::OptionsParse`] if serialization fails.
     pub fn save(&self, path: &Path) -> Result<(), VisoError> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| VisoError::OptionsParse(e.to_string()))?;
@@ -92,12 +102,11 @@ impl Options {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "toml") {
-                    if let Some(stem) =
-                        path.file_stem().and_then(|s| s.to_str())
-                    {
-                        names.push(stem.to_owned());
-                    }
+                if path.extension().is_none_or(|ext| ext != "toml") {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_owned());
                 }
             }
         }
@@ -107,6 +116,7 @@ impl Options {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -4,14 +4,13 @@
 //! loads the viso-ui WASM bundle via a custom `viso://` protocol, and
 //! bridges IPC between the Dioxus web app and the native engine.
 
-use std::{borrow::Cow, sync::mpsc};
+use std::borrow::Cow;
+use std::sync::mpsc;
 
 use rust_embed::RustEmbed;
-use wry::{
-    dpi,
-    http::{header::CONTENT_TYPE, Response},
-    Rect, WebView, WebViewBuilder,
-};
+use wry::http::header::CONTENT_TYPE;
+use wry::http::Response;
+use wry::{dpi, Rect, WebView, WebViewBuilder};
 
 use crate::options::Options;
 
@@ -53,6 +52,10 @@ pub enum UiAction {
 ///
 /// Returns `(webview, action_rx)` — the receiver yields [`UiAction`]s
 /// from the WASM app.
+///
+/// # Errors
+///
+/// Returns [`wry::Error`] if the webview fails to build.
 pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     window: &W,
     window_width: u32,

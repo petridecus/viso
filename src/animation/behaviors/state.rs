@@ -70,14 +70,8 @@ pub fn lerp_vec3(t: f32, start: Vec3, end: Vec3) -> Vec3 {
 /// Adjusts the initial angle to be within 180 degrees of the final angle.
 #[inline]
 pub fn fix_angle(initial: f32, final_angle: f32) -> f32 {
-    let mut adjusted = initial;
-    while adjusted > final_angle + 180.0 {
-        adjusted -= 360.0;
-    }
-    while adjusted < final_angle - 180.0 {
-        adjusted += 360.0;
-    }
-    adjusted
+    let diff = initial - final_angle;
+    final_angle + (diff + 180.0).rem_euclid(360.0) - 180.0
 }
 
 /// Linear interpolation between two angles with proper wrapping.

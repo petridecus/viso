@@ -106,8 +106,8 @@ impl ResidueColorBuffer {
             colors.iter().map(|c| [c[0], c[1], c[2], 1.0]).collect();
         padded.resize(self.capacity, DEFAULT_RESIDUE_COLOR);
 
-        self.current_colors = padded.clone();
-        self.start_colors = padded.clone();
+        self.current_colors.clone_from(&padded);
+        self.start_colors.clone_from(&padded);
         self.target_colors = padded;
         self.transition_start = None;
 
@@ -140,9 +140,8 @@ impl ResidueColorBuffer {
     /// If transitioning: lerps start→target with easing, writes GPU buffer.
     /// Returns `true` if still transitioning (caller should request redraw).
     pub fn update(&mut self, queue: &wgpu::Queue) -> bool {
-        let start = match self.transition_start {
-            Some(s) => s,
-            None => return false,
+        let Some(start) = self.transition_start else {
+            return false;
         };
 
         let elapsed = start.elapsed().as_secs_f32();
@@ -202,8 +201,8 @@ impl ResidueColorBuffer {
             });
 
         self.capacity = new_capacity;
-        self.current_colors = data.clone();
-        self.start_colors = data.clone();
+        self.current_colors.clone_from(&data);
+        self.start_colors.clone_from(&data);
         self.target_colors = data;
         self.transition_start = None;
     }

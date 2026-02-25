@@ -1,10 +1,10 @@
 //! Core trait for animation behaviors.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
-use super::{
-    super::interpolation::InterpolationContext, state::ResidueVisualState,
-};
+use super::super::interpolation::InterpolationContext;
+use super::state::ResidueVisualState;
 
 /// How to handle a new target arriving while an animation is in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

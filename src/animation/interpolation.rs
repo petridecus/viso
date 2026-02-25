@@ -3,6 +3,7 @@
 /// Per-frame interpolation context computed once from behavior + raw progress,
 /// then shared across all interpolation to prevent backbone/sidechain desync.
 #[derive(Debug, Clone, Copy)]
+#[allow(clippy::struct_field_names)]
 pub struct InterpolationContext {
     /// Raw progress (0.0 to 1.0), unmodified from animation timer.
     pub raw_t: f32,

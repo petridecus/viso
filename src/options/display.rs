@@ -58,6 +58,7 @@ pub enum LipidMode {
 )]
 #[schemars(title = "Display", inline)]
 #[serde(default)]
+#[allow(clippy::struct_excessive_bools)]
 /// Display toggles and coloring mode selections.
 pub struct DisplayOptions {
     /// Whether to render water molecules.

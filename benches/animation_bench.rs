@@ -1,10 +1,8 @@
 use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use foldit_render::{
-    animation::{AnimationTimeline, ResidueAnimationState},
-    easing::EasingFunction,
-};
+use foldit_render::animation::{AnimationTimeline, ResidueAnimationState};
+use foldit_render::easing::EasingFunction;
 use glam::Vec3;
 
 fn easing_benchmark(c: &mut Criterion) {
