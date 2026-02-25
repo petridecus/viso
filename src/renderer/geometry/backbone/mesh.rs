@@ -4,18 +4,16 @@
 use foldit_conv::secondary_structure::{resolve, DetectionInput, SSType};
 use glam::Vec3;
 
-use super::{
-    path::{compute_sheet_geometry, interpolate_per_residue_normals},
-    profile::{
-        cap_offset, extrude_cross_section, interpolate_profiles,
-        resolve_na_profile, resolve_profile, CrossSectionProfile,
-    },
-    spline::{
-        catmull_rom, compute_frenet_frames, compute_helix_axis_points,
-        compute_rmf, cubic_bspline, SplinePoint,
-    },
-    BackboneVertex,
+use super::path::{compute_sheet_geometry, interpolate_per_residue_normals};
+use super::profile::{
+    cap_offset, extrude_cross_section, interpolate_profiles,
+    resolve_na_profile, resolve_profile, CrossSectionProfile,
 };
+use super::spline::{
+    catmull_rom, compute_frenet_frames, compute_helix_axis_points, compute_rmf,
+    cubic_bspline, SplinePoint,
+};
+use super::{BackboneMeshOutput, BackboneVertex};
 use crate::options::GeometryOptions;
 
 /// Per-chain index range and bounding sphere for frustum culling.
@@ -48,68 +46,54 @@ struct MeshWriter<'a> {
 const NA_COLOR: [f32; 3] = [0.45, 0.55, 0.85];
 
 /// Generate unified backbone mesh from protein and nucleic acid chains.
-///
-/// Returns `(vertices, tube_indices, ribbon_indices, sheet_offsets,
-/// chain_ranges)`.
 pub(crate) fn generate_mesh_colored(
     chains: &super::ChainPair,
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
     per_chain_lod: Option<&[(usize, usize)]>,
-) -> (
-    Vec<BackboneVertex>,
-    Vec<u32>,
-    Vec<u32>,
-    Vec<(u32, Vec3)>,
-    Vec<ChainRange>,
-) {
-    let mut all_vertices: Vec<BackboneVertex> = Vec::new();
-    let mut all_tube_indices: Vec<u32> = Vec::new();
-    let mut all_ribbon_indices: Vec<u32> = Vec::new();
-    let mut all_sheet_offsets: Vec<(u32, Vec3)> = Vec::new();
-    let mut all_chain_ranges: Vec<ChainRange> = Vec::new();
-    let mut global_residue_idx: u32 = 0;
+) -> BackboneMeshOutput {
+    let (mut out, global_residue_idx) = process_protein_chains(
+        chains.protein,
+        ss_override,
+        per_residue_colors,
+        geo,
+        per_chain_lod,
+    );
+    let na_lod = per_chain_lod.map(|l| &l[chains.protein.len()..]);
+    process_na_chains(chains.na, geo, na_lod, &mut out, global_residue_idx);
 
+    out
+}
+
+fn process_protein_chains(
+    chains: &[Vec<Vec3>],
+    ss_override: Option<&[SSType]>,
+    per_residue_colors: Option<&[[f32; 3]]>,
+    geo: &GeometryOptions,
+    per_chain_lod: Option<&[(usize, usize)]>,
+) -> (BackboneMeshOutput, u32) {
+    let mut out = BackboneMeshOutput::default();
+    let mut global_residue_idx: u32 = 0;
     let spr = geo.segments_per_residue;
     let csv = geo.cross_section_verts;
 
-    // ── Protein chains (N-CA-C triplets) ──
+    for (chain_idx, chain) in chains.iter().enumerate() {
+        let atoms = ChainAtoms::from_interleaved(chain);
 
-    for (chain_idx, chain) in chains.protein.iter().enumerate() {
-        let ca_positions: Vec<Vec3> = chain
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| i % 3 == 1)
-            .map(|(_, &pos)| pos)
-            .collect();
-
-        if ca_positions.len() < 2 {
-            global_residue_idx += ca_positions.len() as u32;
+        if atoms.ca.len() < 2 {
+            global_residue_idx += atoms.ca.len() as u32;
             continue;
         }
 
-        let n_residues = ca_positions.len();
+        let n_residues = atoms.ca.len();
         let chain_override = ss_override.and_then(|o| {
             let start = global_residue_idx as usize;
             let end = (start + n_residues).min(o.len());
             (start < o.len()).then(|| &o[start..end])
         });
         let ss_types =
-            resolve(chain_override, DetectionInput::CaPositions(&ca_positions));
-
-        let n_positions: Vec<Vec3> = chain
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| i % 3 == 0)
-            .map(|(_, &pos)| pos)
-            .collect();
-        let c_positions: Vec<Vec3> = chain
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| i % 3 == 2)
-            .map(|(_, &pos)| pos)
-            .collect();
+            resolve(chain_override, DetectionInput::CaPositions(&atoms.ca));
 
         let profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {
@@ -127,51 +111,41 @@ pub(crate) fn generate_mesh_colored(
             })
             .collect();
 
-        let tube_start = all_tube_indices.len() as u32;
-        let ribbon_start = all_ribbon_indices.len() as u32;
-
         let (chain_spr, chain_csv) =
             per_chain_lod.map_or((spr, csv), |l| l[chain_idx]);
 
         let params = MeshParams {
-            base_vertex: all_vertices.len() as u32,
+            base_vertex: out.vertices.len() as u32,
             cross_section_verts: chain_csv,
             segments_per_residue: chain_spr,
         };
-        let (verts, tube_inds, ribbon_inds, offsets) =
-            generate_protein_chain_mesh(
-                &ChainAtoms {
-                    ca: &ca_positions,
-                    n: &n_positions,
-                    c: &c_positions,
-                },
-                &ss_types,
-                &profiles,
-                global_residue_idx,
-                &params,
-            );
-
-        all_vertices.extend(verts);
-        all_tube_indices.extend(tube_inds);
-        all_ribbon_indices.extend(ribbon_inds);
-        all_sheet_offsets.extend(offsets);
-
-        let (center, radius) = bounding_sphere(&ca_positions);
-        all_chain_ranges.push(ChainRange {
-            tube_index_start: tube_start,
-            tube_index_end: all_tube_indices.len() as u32,
-            ribbon_index_start: ribbon_start,
-            ribbon_index_end: all_ribbon_indices.len() as u32,
-            bounding_center: center,
-            bounding_radius: radius,
-        });
+        let (center, radius) = bounding_sphere(&atoms.ca);
+        let chain_mesh = generate_protein_chain_mesh(
+            &atoms,
+            &ss_types,
+            &profiles,
+            global_residue_idx,
+            &params,
+        );
+        out.push_chain(chain_mesh, center, radius);
 
         global_residue_idx += n_residues as u32;
     }
 
-    // ── Nucleic acid chains (P-atom positions) ──
+    (out, global_residue_idx)
+}
 
-    for (na_idx, chain) in chains.na.iter().enumerate() {
+fn process_na_chains(
+    chains: &[Vec<Vec3>],
+    geo: &GeometryOptions,
+    per_chain_lod: Option<&[(usize, usize)]>,
+    out: &mut BackboneMeshOutput,
+    mut global_residue_idx: u32,
+) {
+    let spr = geo.segments_per_residue;
+    let csv = geo.cross_section_verts;
+
+    for (na_idx, chain) in chains.iter().enumerate() {
         if chain.len() < 2 {
             global_residue_idx += chain.len() as u32;
             continue;
@@ -184,44 +158,20 @@ pub(crate) fn generate_mesh_colored(
             })
             .collect();
 
-        let tube_start = all_tube_indices.len() as u32;
-        let ribbon_start = all_ribbon_indices.len() as u32;
-
-        let (chain_spr, chain_csv) = per_chain_lod
-            .map_or((spr, csv), |l| l[chains.protein.len() + na_idx]);
+        let (chain_spr, chain_csv) =
+            per_chain_lod.map_or((spr, csv), |l| l[na_idx]);
 
         let params = MeshParams {
-            base_vertex: all_vertices.len() as u32,
+            base_vertex: out.vertices.len() as u32,
             cross_section_verts: chain_csv,
             segments_per_residue: chain_spr,
         };
-        let (verts, tube_inds, ribbon_inds) =
-            generate_na_chain_mesh(chain, &profiles, &params);
-
-        all_vertices.extend(verts);
-        all_tube_indices.extend(tube_inds);
-        all_ribbon_indices.extend(ribbon_inds);
-
         let (center, radius) = bounding_sphere(chain);
-        all_chain_ranges.push(ChainRange {
-            tube_index_start: tube_start,
-            tube_index_end: all_tube_indices.len() as u32,
-            ribbon_index_start: ribbon_start,
-            ribbon_index_end: all_ribbon_indices.len() as u32,
-            bounding_center: center,
-            bounding_radius: radius,
-        });
+        let chain_mesh = generate_na_chain_mesh(chain, &profiles, &params);
+        out.push_chain(chain_mesh, center, radius);
 
         global_residue_idx += n_residues as u32;
     }
-
-    (
-        all_vertices,
-        all_tube_indices,
-        all_ribbon_indices,
-        all_sheet_offsets,
-        all_chain_ranges,
-    )
 }
 
 /// Compute bounding sphere (centroid + max distance) from a set of positions.
@@ -240,11 +190,30 @@ fn bounding_sphere(positions: &[Vec3]) -> (Vec3, f32) {
 
 // ==================== PROTEIN CHAIN MESH ====================
 
-/// Backbone atom positions for a single protein chain.
-struct ChainAtoms<'a> {
-    ca: &'a [Vec3],
-    n: &'a [Vec3],
-    c: &'a [Vec3],
+/// Owned backbone atom positions split from an interleaved N-CA-C chain.
+struct ChainAtoms {
+    n: Vec<Vec3>,
+    ca: Vec<Vec3>,
+    c: Vec<Vec3>,
+}
+
+impl ChainAtoms {
+    /// Split a flat interleaved `[N, CA, C, N, CA, C, ...]` chain into
+    /// separate N, CA, and C position vectors.
+    fn from_interleaved(chain: &[Vec3]) -> Self {
+        let cap = chain.len() / 3;
+        let mut n = Vec::with_capacity(cap);
+        let mut ca = Vec::with_capacity(cap);
+        let mut c = Vec::with_capacity(cap);
+        for (i, &pos) in chain.iter().enumerate() {
+            match i % 3 {
+                0 => n.push(pos),
+                1 => ca.push(pos),
+                _ => c.push(pos),
+            }
+        }
+        Self { n, ca, c }
+    }
 }
 
 /// Generate mesh for a single protein chain (with SS detection, sheet
@@ -255,16 +224,16 @@ fn generate_protein_chain_mesh(
     profiles: &[CrossSectionProfile],
     global_residue_base: u32,
     params: &MeshParams,
-) -> (Vec<BackboneVertex>, Vec<u32>, Vec<u32>, Vec<(u32, Vec3)>) {
+) -> BackboneMeshOutput {
     let n = atoms.ca.len();
     if n < 2 {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return BackboneMeshOutput::default();
     }
 
     let (flat_ca, sheet_normals, sheet_offsets) = compute_sheet_geometry(
-        atoms.ca,
-        atoms.n,
-        atoms.c,
+        &atoms.ca,
+        &atoms.n,
+        &atoms.c,
         ss_types,
         global_residue_base,
     );
@@ -273,12 +242,12 @@ fn generate_protein_chain_mesh(
     let spline_points = catmull_rom(&flat_ca, spr);
     let total = spline_points.len();
     if total < 2 {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return BackboneMeshOutput::default();
     }
 
     let tangents = compute_tangents(&spline_points);
 
-    let helix_centers = compute_helix_axis_points(atoms.ca);
+    let helix_centers = compute_helix_axis_points(&atoms.ca);
     let spline_helix_centers = cubic_bspline(&helix_centers, spr);
 
     let mut frames = build_frames(&spline_points, &tangents);
@@ -294,14 +263,18 @@ fn generate_protein_chain_mesh(
         &spline_sheet_normals,
         ss_types,
         &spline_profiles,
-        total,
-        n,
     );
 
     let (verts, tube_inds, ribbon_inds) =
         extrude_and_index(&final_frames, &spline_profiles, params);
 
-    (verts, tube_inds, ribbon_inds, sheet_offsets)
+    BackboneMeshOutput {
+        vertices: verts,
+        tube_indices: tube_inds,
+        ribbon_indices: ribbon_inds,
+        sheet_offsets,
+        ..Default::default()
+    }
 }
 
 // ==================== NUCLEIC ACID CHAIN MESH ====================
@@ -312,17 +285,17 @@ fn generate_na_chain_mesh(
     positions: &[Vec3],
     profiles: &[CrossSectionProfile],
     params: &MeshParams,
-) -> (Vec<BackboneVertex>, Vec<u32>, Vec<u32>) {
+) -> BackboneMeshOutput {
     let n = positions.len();
     if n < 2 {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return BackboneMeshOutput::default();
     }
 
     let spr = params.segments_per_residue;
     let spline_points = catmull_rom(positions, spr);
     let total = spline_points.len();
     if total < 2 {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return BackboneMeshOutput::default();
     }
 
     let tangents = compute_tangents(&spline_points);
@@ -331,8 +304,15 @@ fn generate_na_chain_mesh(
     compute_frenet_frames(&mut frames);
 
     let spline_profiles = interpolate_profiles(profiles, total, n);
+    let (verts, tube_inds, ribbon_inds) =
+        extrude_and_index(&frames, &spline_profiles, params);
 
-    extrude_and_index(&frames, &spline_profiles, params)
+    BackboneMeshOutput {
+        vertices: verts,
+        tube_indices: tube_inds,
+        ribbon_indices: ribbon_inds,
+        ..Default::default()
+    }
 }
 
 // ==================== SHARED HELPERS ====================
@@ -408,9 +388,9 @@ fn compute_final_frames(
     sheet_normals: &[Vec3],
     ss_types: &[SSType],
     profiles: &[CrossSectionProfile],
-    total_spline: usize,
-    n_residues: usize,
 ) -> Vec<SplinePoint> {
+    let total_spline = rmf_frames.len();
+    let n_residues = ss_types.len();
     let mut result = Vec::with_capacity(total_spline);
 
     for i in 0..total_spline {

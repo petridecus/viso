@@ -13,19 +13,52 @@ use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 pub(crate) use mesh::ChainRange;
 
-use crate::{
-    camera::frustum::Frustum,
-    gpu::{
-        dynamic_buffer::DynamicBuffer, render_context::RenderContext,
-        shader_composer::ShaderComposer,
-    },
-    options::GeometryOptions,
-    renderer::{
-        draw_context::DrawBindGroups,
-        mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef},
-    },
-    util::hash::hash_vec3_slices,
-};
+/// Output of backbone mesh generation.
+#[derive(Default)]
+pub(crate) struct BackboneMeshOutput {
+    pub vertices: Vec<BackboneVertex>,
+    pub tube_indices: Vec<u32>,
+    pub ribbon_indices: Vec<u32>,
+    pub sheet_offsets: Vec<(u32, Vec3)>,
+    pub chain_ranges: Vec<ChainRange>,
+}
+
+impl BackboneMeshOutput {
+    /// Merge a per-chain mesh, recording a [`ChainRange`].
+    fn push_chain(
+        &mut self,
+        chain: Self,
+        bounding_center: Vec3,
+        bounding_radius: f32,
+    ) {
+        let tube_index_start = self.tube_indices.len() as u32;
+        let ribbon_index_start = self.ribbon_indices.len() as u32;
+
+        self.vertices.extend(chain.vertices);
+        self.tube_indices.extend(chain.tube_indices);
+        self.ribbon_indices.extend(chain.ribbon_indices);
+        self.sheet_offsets.extend(chain.sheet_offsets);
+
+        self.chain_ranges.push(ChainRange {
+            tube_index_start,
+            tube_index_end: self.tube_indices.len() as u32,
+            ribbon_index_start,
+            ribbon_index_end: self.ribbon_indices.len() as u32,
+            bounding_center,
+            bounding_radius,
+        });
+    }
+}
+
+use crate::camera::frustum::Frustum;
+use crate::error::VisoError;
+use crate::gpu::dynamic_buffer::DynamicBuffer;
+use crate::gpu::render_context::RenderContext;
+use crate::gpu::shader_composer::ShaderComposer;
+use crate::options::GeometryOptions;
+use crate::renderer::draw_context::DrawBindGroups;
+use crate::renderer::mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef};
+use crate::util::hash::hash_vec3_slices;
 
 // ==================== VERTEX FORMAT ====================
 
@@ -121,7 +154,7 @@ impl BackboneRenderer {
         color_layout: &wgpu::BindGroupLayout,
         chains: &ChainPair,
         shader_composer: &mut ShaderComposer,
-    ) -> Self {
+    ) -> Result<Self, VisoError> {
         // No mesh generation here — the scene processor background thread
         // handles all mesh generation. We just create empty GPU buffers
         // and pipelines. The first frame will be blank until
@@ -153,7 +186,7 @@ impl BackboneRenderer {
             },
             mesh_layouts,
             shader_composer,
-        );
+        )?;
         let ribbon_pipeline = create_mesh_pipeline(
             context,
             &MeshPipelineDef {
@@ -164,7 +197,7 @@ impl BackboneRenderer {
             },
             mesh_layouts,
             shader_composer,
-        );
+        )?;
 
         let tube_pass =
             MeshPass::new(device, "Backbone Tube Index", tube_pipeline, &[]);
@@ -175,7 +208,7 @@ impl BackboneRenderer {
             &[],
         );
 
-        Self {
+        Ok(Self {
             tube_pass,
             ribbon_pass,
             vertex_buffer,
@@ -186,7 +219,7 @@ impl BackboneRenderer {
             sheet_offsets: Vec::new(),
             chain_ranges: Vec::new(),
             cached_lod_tiers: Vec::new(),
-        }
+        })
     }
 
     // ── Draw ──
@@ -430,13 +463,7 @@ impl BackboneRenderer {
         chains: &ChainPair,
         ss_override: Option<&[SSType]>,
         geo: &GeometryOptions,
-    ) -> (
-        Vec<BackboneVertex>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<(u32, Vec3)>,
-        Vec<ChainRange>,
-    ) {
+    ) -> BackboneMeshOutput {
         mesh::generate_mesh_colored(chains, ss_override, None, geo, None)
     }
 
@@ -446,13 +473,7 @@ impl BackboneRenderer {
         per_residue_colors: Option<&[[f32; 3]]>,
         geo: &GeometryOptions,
         per_chain_lod: Option<&[(usize, usize)]>,
-    ) -> (
-        Vec<BackboneVertex>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<(u32, Vec3)>,
-        Vec<ChainRange>,
-    ) {
+    ) -> BackboneMeshOutput {
         mesh::generate_mesh_colored(
             chains,
             ss_override,
@@ -474,19 +495,21 @@ impl BackboneRenderer {
             protein: &self.cached_chains,
             na: &self.cached_na_chains,
         };
-        let (verts, t_idx, r_idx, offsets, ranges) =
+        let mesh =
             Self::generate_mesh(&chains, self.ss_override.as_deref(), geo);
-        if verts.is_empty() {
+        if mesh.vertices.is_empty() {
             self.tube_pass.index_count = 0;
             self.ribbon_pass.index_count = 0;
             self.chain_ranges.clear();
             return;
         }
-        let _ = self.vertex_buffer.write(device, queue, &verts);
-        self.tube_pass.write_indices(device, queue, &t_idx);
-        self.ribbon_pass.write_indices(device, queue, &r_idx);
-        self.sheet_offsets = offsets;
-        self.chain_ranges = ranges;
+        let _ = self.vertex_buffer.write(device, queue, &mesh.vertices);
+        self.tube_pass
+            .write_indices(device, queue, &mesh.tube_indices);
+        self.ribbon_pass
+            .write_indices(device, queue, &mesh.ribbon_indices);
+        self.sheet_offsets = mesh.sheet_offsets;
+        self.chain_ranges = mesh.chain_ranges;
     }
 }
 
@@ -506,10 +529,8 @@ fn new_buffer<T: bytemuck::Pod>(
 }
 
 fn combined_hash(protein_chains: &[Vec<Vec3>], na_chains: &[Vec<Vec3>]) -> u64 {
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
     hash_vec3_slices(protein_chains).hash(&mut h);
     hash_vec3_slices(na_chains).hash(&mut h);

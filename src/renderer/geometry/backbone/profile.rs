@@ -6,7 +6,8 @@
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 
-use super::{spline::SplinePoint, BackboneVertex};
+use super::spline::SplinePoint;
+use super::BackboneVertex;
 use crate::options::GeometryOptions;
 
 // ==================== CROSS-SECTION PROFILE ====================
