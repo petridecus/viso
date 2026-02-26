@@ -5,8 +5,9 @@ need, the conventions we follow, and how to get everything running.
 
 ## Getting started
 
-Make sure you have the Rust toolchain installed first (see the
-[Prerequisites](README.md#prerequisites) section in the README).
+Make sure you have the Rust toolchain and any platform-specific dependencies
+installed first (see the [Prerequisites](README.md#prerequisites) section in
+the README).
 
 ### Install just
 
@@ -61,8 +62,8 @@ Highlights:
 ## Running checks locally
 
 ```sh
-just check        # fmt + clippy + test + doc (mirrors CI)
-just check-all    # above + cargo-deny + machete + file-lengths
+just check        # fmt + clippy + test + doc
+just check-all    # above + cargo-deny + machete + file-lengths (mirrors CI)
 ```
 
 Or run the commands individually:

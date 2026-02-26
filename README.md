@@ -22,7 +22,7 @@ Viso supports multiple representation styles — backbone ribbons, tubes, ball-a
 - **Multiple representations**: secondary structure ribbons (helices/sheets), backbone tubes, ray-marched sidechain impostors, ball-and-stick ligands, nucleic acid backbones
 - **Post-processing pipeline**: bloom, screen-space ambient occlusion, FXAA anti-aliasing, edge outlines, tone mapping
 - **Interactive camera**: arcball rotation, panning, zoom, auto-rotation
-- **GPU picking**: click to select individual residues, double-click to select chains, shift-click for multi-select
+- **GPU picking**: click to select individual residues, double-click to select segments, triple-click to select chains, shift-click for multi-select
 - **Animation system**: multiple behaviors including smooth interpolation, cascading reveals, and collapse/expand transitions
 - **RCSB integration**: pass a 4-character PDB ID and Viso downloads the structure automatically
 - **TOML-based presets**: configure display, lighting, coloring, geometry, and post-processing via preset files
@@ -49,6 +49,25 @@ Verify both are available:
 cargo --version
 cargo +nightly fmt --version
 ```
+
+### Platform-specific dependencies
+
+**Linux** — the default build includes a GUI webview panel, which requires GTK3 and WebKit2GTK:
+
+```sh
+# Debian/Ubuntu
+sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
+
+# Fedora
+sudo dnf install gtk3-devel webkit2gtk4.1-devel
+
+# Arch
+sudo pacman -S gtk3 webkit2gtk-4.1
+```
+
+**macOS** and **Windows** require no additional system dependencies.
+
+To build without the GUI (and skip these dependencies), use `--no-default-features --features viewer`.
 
 ## Building
 
@@ -90,92 +109,14 @@ When given a PDB ID, Viso downloads the corresponding mmCIF file from RCSB and c
 | `W` | Toggle water visibility |
 | `Escape` | Clear selection |
 
+Key bindings are configurable via TOML preset files.
+
 ### Logging
 
 Viso uses `env_logger`. Set the `RUST_LOG` environment variable to control log output:
 
 ```bash
 RUST_LOG=info cargo run --release -- 1ubq
-```
-
-## Repository Structure
-
-```
-src/
-  lib.rs                        Library root
-  main.rs                       Binary entry point and event loop
-
-  engine/                       Core rendering engine
-    mod.rs                      ProteinRenderEngine — central orchestrator
-    animation.rs                Animation methods (impl ProteinRenderEngine)
-    input.rs                    Input and selection methods
-    options.rs                  Options methods
-    queries.rs                  Queries and backend methods
-    scene_management.rs         Scene management methods
-    scene_sync.rs               Scene sync and GPU upload methods
-
-  gpu/                          GPU infrastructure
-    render_context.rs           wgpu device/surface management
-    shader_composer.rs          WGSL shader module compilation
-    dynamic_buffer.rs           GPU buffer utilities
-    residue_color.rs            Per-residue color buffer with animated transitions
-
-  scene/                        Scene graph and background processing
-    mod.rs                      Entity-based scene graph
-    processor.rs                Background CPU thread for mesh generation
-
-  renderer/
-    molecular/                  Protein/molecule renderers
-      tube.rs                   Backbone coil tubes
-      ribbon.rs                 Secondary structure ribbons (helices/sheets)
-      capsule_sidechain.rs      Ray-marched sidechain impostors
-      ball_and_stick.rs         Ligand and small molecule renderer
-      nucleic_acid.rs           DNA/RNA backbone and base rings
-      band.rs                   Band visualization
-      pull.rs                   Pull/constraint visualization
-    postprocess/                Screen-space post-processing
-      post_process.rs           Post-processing stack orchestrator
-      bloom.rs                  Bloom (glow) effect
-      ssao.rs                   Screen-space ambient occlusion
-      composite.rs              Final composite pass (SSAO + outlines + tone mapping)
-      fxaa.rs                   Fast approximate anti-aliasing
-
-  camera/                       Camera system
-    core.rs                     Camera struct and GPU uniform
-    controller.rs               Arcball-style interactive camera control
-    frustum.rs                  View frustum culling
-    input.rs                    Input state tracking
-    input_state.rs              Mouse click state machine
-
-  animation/                    Structure animation system
-    interpolation.rs            Interpolation functions
-    preferences.rs              Animation behavior configuration
-    sidechain_state.rs          Sidechain animation state
-    animator/                   Animation controller, runner, and state
-    behaviors/                  Animation styles (snap, smooth, cascade, collapse/expand)
-
-  picking/                      GPU-based residue selection
-    picking.rs                  Render residue IDs to offscreen texture, read back at cursor
-    picking_state.rs            Picking bind group state
-
-  util/                         Utilities and configuration
-    options.rs                  TOML-based preset system (display, lighting, color, geometry)
-    lighting.rs                 Dual-light PBR lighting with rim light and IBL
-    frame_timing.rs             FPS limiting and frame statistics
-    bond_topology.rs            Residue bond connectivity data
-    easing.rs                   Easing functions
-    score_color.rs              Score-based coloring
-    sheet_adjust.rs             Sheet geometry adjustments
-    trajectory.rs               Trajectory playback
-
-assets/
-  shaders/                      WGSL shader source
-    raster/                     Vertex/fragment shaders for meshes and impostors
-    screen/                     Post-processing shaders (bloom, SSAO, FXAA, composite)
-    modules/                    Reusable shader modules (camera, lighting, SDF, ray-marching)
-    compute/                    Compute shaders
-    utility/                    GPU picking shaders
-  models/                       Cached downloaded structures (not checked in)
 ```
 
 ## License
