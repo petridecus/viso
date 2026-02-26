@@ -1,10 +1,12 @@
 //! GPU resource management utilities.
 //!
 //! Provides wgpu device/surface initialization, dynamic buffer management,
-//! per-residue color storage, and shader composition.
+//! lighting, per-residue color storage, and shader composition.
 
 /// Growable GPU buffers with automatic reallocation.
 pub mod dynamic_buffer;
+/// GPU lighting uniform, IBL cubemaps, and bind group management.
+pub mod lighting;
 /// Shared wgpu boilerplate helpers for screen-space post-process pipelines.
 pub mod pipeline_helpers;
 /// wgpu device, surface, and queue initialization.

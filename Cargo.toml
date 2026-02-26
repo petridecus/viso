@@ -66,4 +66,56 @@ name = "viso"
 path = "src/main.rs"
 required-features = ["binary"]
 
+[lints.clippy]
+# Broad lint groups (lower priority so individual lints can override)
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# Restriction lints (opt-in, not covered by the groups above)
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+str_to_string = "deny"
+
+# GPU / graphics allowances — casts are intentional and safe
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+
+# Float comparison: graphics math frequently compares against 0.0, 1.0, etc.
+float_cmp = "allow"
+
+# Multiple crate versions: transitive deps — not actionable
+multiple_crate_versions = "allow"
+
+# Pedantic allowances
+suboptimal_flops = "allow"
+missing_const_for_fn = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+items_after_statements = "allow"
+use_self = "allow"
+redundant_pub_crate = "allow"
+
+[lints.rust]
+missing_docs = "deny"
+unused_results = "deny"
+unused_qualifications = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+bare_urls = "deny"
+
 [dev-dependencies]

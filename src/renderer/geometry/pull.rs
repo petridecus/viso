@@ -10,8 +10,7 @@
 //!
 //! Only one pull can be active at a time.
 
-use glam::Vec3;
-
+use crate::engine::command::PullInfo;
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::{Shader, ShaderComposer};
@@ -24,17 +23,6 @@ const PULL_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - same as BAND_COLOR
 const PULL_CYLINDER_RADIUS: f32 = 0.25; // Same as BAND_MID_RADIUS (default strength)
 const PULL_CONE_RADIUS: f32 = 0.6; // Larger than cylinder for visible arrow
 const PULL_CONE_LENGTH: f32 = 2.0;
-
-/// Information about the active pull
-#[derive(Debug, Clone)]
-pub struct PullRenderInfo {
-    /// Position of the atom being pulled
-    pub atom_pos: Vec3,
-    /// Target position (mouse position in world space)
-    pub target_pos: Vec3,
-    /// Residue index for picking
-    pub residue_idx: u32,
-}
 
 /// Renders the active pull constraint (capsule cylinder + cone arrow).
 pub struct PullRenderer {
@@ -82,7 +70,7 @@ impl PullRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pull: Option<&PullRenderInfo>,
+        pull: Option<&PullInfo>,
     ) {
         if let Some(p) = pull {
             let (capsules, cones) = Self::generate_instances(p);
@@ -109,7 +97,7 @@ impl PullRenderer {
     }
 
     fn generate_instances(
-        pull: &PullRenderInfo,
+        pull: &PullInfo,
     ) -> (Vec<CapsuleInstance>, Vec<ConeInstance>) {
         let mut capsules = Vec::with_capacity(1);
         let mut cones = Vec::with_capacity(1);

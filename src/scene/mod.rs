@@ -2,7 +2,7 @@
 //! render data.
 //!
 //! Everything is a
-//! [`MoleculeEntity`](foldit_conv::types::entity::MoleculeEntity). Each entity
+//! [`MoleculeEntity`]. Each entity
 //! is wrapped in a [`SceneEntity`] that pairs the core data with rendering
 //! metadata (visibility, name, SS override, score cache, mesh version).
 
@@ -19,7 +19,7 @@ use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
-pub use prepared::{PreparedAnimationFrame, PreparedScene, SceneRequest};
+pub use prepared::{PreparedScene, SceneRequest};
 
 // ---------------------------------------------------------------------------
 // Focus

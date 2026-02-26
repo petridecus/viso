@@ -1,11 +1,11 @@
-//! Queries & Backend methods for ProteinRenderEngine
+//! Queries & Backend methods for VisoEngine
 
 use foldit_conv::ops::transform::get_ca_position_from_chains;
 use glam::Vec3;
 
-use super::ProteinRenderEngine;
+use super::VisoEngine;
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Get the CA position of a residue by index.
     /// Returns None if the residue index is out of bounds.
     pub fn get_residue_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
@@ -36,7 +36,22 @@ impl ProteinRenderEngine {
         if self.animator.is_animating() && self.animator.has_sidechain_data() {
             self.animator.get_sidechain_positions()
         } else {
-            self.sc.target_sidechain_positions.clone()
+            self.sc_anim.target_sidechain_positions.clone()
+        }
+    }
+
+    /// Get the current visual backbone-sidechain bonds (interpolated during
+    /// animation). Each bond is a `(ca_position, cb_sidechain_index)` pair.
+    pub(crate) fn get_current_backbone_sidechain_bonds(
+        &self,
+    ) -> Vec<(Vec3, u32)> {
+        if self.animator.is_animating() {
+            self.sc_anim.interpolated_backbone_bonds(
+                &self.animator,
+                &self.sc_cache.sidechain_residue_indices,
+            )
+        } else {
+            self.sc_anim.target_backbone_sidechain_bonds.clone()
         }
     }
 
@@ -71,7 +86,7 @@ impl ProteinRenderEngine {
         foldit_conv::ops::transform::get_closest_atom_for_residue(
             &backbone_chains,
             &sidechain_positions,
-            &self.sc.cached_sidechain_residue_indices,
+            &self.sc_cache.sidechain_residue_indices,
             residue_idx,
             reference_point,
         )
@@ -90,8 +105,8 @@ impl ProteinRenderEngine {
         foldit_conv::ops::transform::get_closest_atom_with_name(
             &backbone_chains,
             &sidechain_positions,
-            &self.sc.cached_sidechain_residue_indices,
-            &self.sc.cached_sidechain_atom_names,
+            &self.sc_cache.sidechain_residue_indices,
+            &self.sc_cache.sidechain_atom_names,
             residue_idx,
             reference_point,
         )
@@ -130,10 +145,10 @@ impl ProteinRenderEngine {
         // Check sidechain atoms
         let sidechain_positions = self.get_current_sidechain_positions();
         for (i, (res_idx, name)) in self
-            .sc
-            .cached_sidechain_residue_indices
+            .sc_cache
+            .sidechain_residue_indices
             .iter()
-            .zip(self.sc.cached_sidechain_atom_names.iter())
+            .zip(self.sc_cache.sidechain_atom_names.iter())
             .enumerate()
         {
             if *res_idx as usize == residue_idx && name == atom_name {

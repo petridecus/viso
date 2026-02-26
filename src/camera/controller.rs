@@ -38,10 +38,6 @@ pub struct CameraController {
     /// When Some, the camera spins around the captured axis (camera up at
     /// toggle time).
     auto_rotate_axis: Option<Vec3>,
-    /// Whether the primary mouse button is pressed.
-    pub mouse_pressed: bool,
-    /// Whether the shift key is held.
-    pub shift_pressed: bool,
     /// Rotation sensitivity multiplier.
     pub rotate_speed: f32,
     /// Pan sensitivity multiplier.
@@ -136,8 +132,6 @@ impl CameraController {
             layout,
             bind_group,
             auto_rotate_axis: None,
-            mouse_pressed: false,
-            shift_pressed: false,
             rotate_speed: 0.01,
             pan_speed: 0.1,
             zoom_speed: 0.05,
@@ -277,6 +271,29 @@ impl CameraController {
             0,
             bytemuck::cast_slice(&[self.uniform]),
         );
+    }
+
+    /// Apply camera options from the configuration.
+    pub fn apply_camera_options(
+        &mut self,
+        opts: &crate::options::CameraOptions,
+    ) {
+        self.camera.fovy = opts.fovy;
+        self.camera.znear = opts.znear;
+        self.camera.zfar = opts.zfar;
+        self.rotate_speed = opts.rotate_speed * 0.02;
+        self.pan_speed = opts.pan_speed * 0.2;
+        self.zoom_speed = opts.zoom_speed * 0.5;
+    }
+
+    /// Apply debug options (normals visualization mode).
+    pub fn apply_debug_options(
+        &mut self,
+        debug: &crate::options::DebugOptions,
+        queue: &wgpu::Queue,
+    ) {
+        self.uniform.debug_mode = u32::from(debug.show_normals);
+        self.update_gpu(queue);
     }
 
     /// Update the camera aspect ratio after a window resize.

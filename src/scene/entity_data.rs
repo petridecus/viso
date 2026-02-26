@@ -54,6 +54,7 @@ impl EntityResidueRange {
 
     /// Whether the given global residue index falls within this range.
     #[must_use]
+    #[allow(dead_code)]
     pub fn contains(&self, residue_idx: u32) -> bool {
         residue_idx >= self.start && residue_idx < self.end()
     }

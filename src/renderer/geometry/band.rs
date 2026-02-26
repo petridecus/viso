@@ -16,6 +16,7 @@
 
 use glam::Vec3;
 
+use crate::engine::command::{BandInfo, BandType};
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::{Shader, ShaderComposer};
@@ -49,68 +50,6 @@ const OPTIMAL_DISULF_DIST: f32 = 2.0;
 const MIN_HBOND_DIST: f32 = 1.95;
 const MAX_HBOND_DIST: f32 = 3.0;
 const OPTIMAL_DIST_EPSILON: f32 = 0.1;
-
-/// Type of band for color coding
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BandType {
-    /// Default band (purple)
-    #[default]
-    Default,
-    /// Backbone-to-backbone band (yellow-orange)
-    Backbone,
-    /// Disulfide bridge band (yellow-green)
-    Disulfide,
-    /// Hydrogen bond band (cyan)
-    HBond,
-}
-
-/// Information about a band to be rendered
-#[derive(Debug, Clone)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct BandRenderInfo {
-    /// World-space position of first endpoint (attached to protein)
-    pub endpoint_a: Vec3,
-    /// World-space position of second endpoint
-    pub endpoint_b: Vec3,
-    /// Whether the band is in pull mode (attracts)
-    pub is_pull: bool,
-    /// Whether the band is in push mode (repels)
-    pub is_push: bool,
-    /// Whether the band is disabled
-    pub is_disabled: bool,
-    /// Band strength (affects radius and color intensity, default 1.0)
-    pub strength: f32,
-    /// Target length for the band (Angstroms, used for type detection if not
-    /// specified)
-    pub target_length: f32,
-    /// Residue index for picking (typically the first residue)
-    pub residue_idx: u32,
-    /// Whether this is a "pull" to a point in space (vs between two atoms)
-    /// When true, an anchor sphere is rendered at endpoint_b
-    pub is_space_pull: bool,
-    /// Explicit band type (overrides auto-detection from target_length)
-    pub band_type: Option<BandType>,
-    /// Whether this band was created by a recipe/script (dimmer appearance)
-    pub from_script: bool,
-}
-
-impl Default for BandRenderInfo {
-    fn default() -> Self {
-        Self {
-            endpoint_a: Vec3::ZERO,
-            endpoint_b: Vec3::ZERO,
-            is_pull: true,
-            is_push: false,
-            is_disabled: false,
-            strength: 1.0,
-            target_length: 0.0,
-            residue_idx: 0,
-            is_space_pull: false,
-            band_type: None,
-            from_script: false,
-        }
-    }
-}
 
 /// Renders constraint bands between atoms as capsule impostors.
 pub struct BandRenderer {
@@ -156,7 +95,7 @@ impl BandRenderer {
     }
 
     /// Determine band type from target length if not explicitly specified
-    fn detect_band_type(band: &BandRenderInfo) -> BandType {
+    fn detect_band_type(band: &BandInfo) -> BandType {
         if let Some(band_type) = band.band_type {
             return band_type;
         }
@@ -175,7 +114,7 @@ impl BandRenderer {
 
     /// Compute band color based on type, strength, distance (matches Foldit)
     fn compute_color(
-        band: &BandRenderInfo,
+        band: &BandInfo,
         band_type: BandType,
         colors: Option<&ColorOptions>,
     ) -> [f32; 3] {
@@ -228,7 +167,7 @@ impl BandRenderer {
 
     /// Generate capsule instances from band data
     fn generate_instances(
-        bands: &[BandRenderInfo],
+        bands: &[BandInfo],
         colors: Option<&ColorOptions>,
     ) -> Vec<CapsuleInstance> {
         // Each band gets: 1 cylinder + 2 endpoint spheres = 3 instances
@@ -304,7 +243,7 @@ impl BandRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bands: &[BandRenderInfo],
+        bands: &[BandInfo],
         colors: Option<&ColorOptions>,
     ) {
         let instances = Self::generate_instances(bands, colors);

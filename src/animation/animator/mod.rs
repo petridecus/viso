@@ -6,54 +6,32 @@
 
 mod controller;
 mod runner;
+mod sidechain;
 mod state;
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 pub use controller::AnimationController;
 use glam::Vec3;
 pub use runner::AnimationRunner;
+use runner::ResidueAnimationData;
+use sidechain::{AnimationContext, SidechainAnimationData, SidechainTarget};
 pub use state::StructureState;
 
 use super::interpolation::InterpolationContext;
 use super::transition::Transition;
 use crate::scene::EntityResidueRange;
 
-/// Sidechain animation state: start/target positions, residue indices,
-/// CA positions for collapse, and snapped ranges for non-targeted entities.
-struct SidechainAnimationData {
-    /// Start sidechain positions (animation begin state).
-    start_positions: Vec<Vec3>,
-    /// Target sidechain positions (animation end state).
-    target_positions: Vec<Vec3>,
-    /// Residue index for each sidechain atom (for collapse point lookup).
-    residue_indices: Vec<u32>,
-    /// CA positions per residue for collapse animation (indexed by residue).
-    start_ca: Vec<Vec3>,
-    /// Target CA positions per residue.
-    target_ca: Vec<Vec3>,
-    /// Residue ranges that have been snapped (non-targeted entities).
-    /// Sidechain atoms in these ranges skip interpolation entirely.
-    snapped_ranges: Vec<(usize, usize)>,
-}
-
-impl SidechainAnimationData {
-    /// Create empty sidechain animation data.
-    fn new() -> Self {
-        Self {
-            start_positions: Vec::new(),
-            target_positions: Vec::new(),
-            residue_indices: Vec::new(),
-            start_ca: Vec::new(),
-            target_ca: Vec::new(),
-            snapped_ranges: Vec::new(),
-        }
-    }
-
-    /// Whether sidechain data is present.
-    fn has_data(&self) -> bool {
-        !self.target_positions.is_empty()
-    }
+/// Animation state for a single entity.
+///
+/// Pairs an [`AnimationRunner`] with the residue range it owns in the
+/// flat structure array so each entity can animate independently.
+struct EntityAnimationState {
+    /// The active runner for this entity.
+    runner: AnimationRunner,
+    /// Residue range this entity owns in the flat array.
+    range: EntityResidueRange,
 }
 
 /// Composes [`StructureState`], [`AnimationRunner`], and
@@ -63,15 +41,16 @@ pub struct StructureAnimator {
     runner: Option<AnimationRunner>,
     controller: AnimationController,
     /// Sidechain animation state (positions, residue indices, CA, snapped
-    /// ranges).
+    /// ranges, change tracking).
     sc: SidechainAnimationData,
-    /// Flag indicating sidechains changed (for triggering animation even when
-    /// backbone is static)
-    sidechains_changed: bool,
-    /// Pending transition for sidechain-only animation
-    pending_sidechain_transition: Option<Transition>,
     /// Current frame's animation progress (0.0 to 1.0), set by update().
     current_frame_progress: f32,
+    /// Per-entity animation runners. When populated, these take precedence
+    /// over the global `runner` for their entity's residues.
+    entity_runners: HashMap<u32, EntityAnimationState>,
+    /// Per-entity behavior overrides. When an entity has an entry here,
+    /// `animate_entity` will use this transition instead of the default.
+    entity_behaviors: HashMap<u32, Transition>,
 }
 
 impl StructureAnimator {
@@ -82,9 +61,9 @@ impl StructureAnimator {
             runner: None,
             controller: AnimationController::new(),
             sc: SidechainAnimationData::new(),
-            sidechains_changed: false,
-            pending_sidechain_transition: None,
             current_frame_progress: 1.0,
+            entity_runners: HashMap::new(),
+            entity_behaviors: HashMap::new(),
         }
     }
 
@@ -94,6 +73,7 @@ impl StructureAnimator {
         self.controller.set_enabled(enabled);
         if !enabled {
             self.runner = None;
+            self.entity_runners.clear();
         }
     }
 
@@ -103,14 +83,23 @@ impl StructureAnimator {
         self.controller.is_enabled()
     }
 
-    /// Whether an animation is currently in progress.
+    /// Whether any animation (global or per-entity) is currently in progress.
     pub fn is_animating(&self) -> bool {
-        self.runner.is_some()
+        self.runner.is_some() || !self.entity_runners.is_empty()
     }
 
     /// Animation progress (0.0 to 1.0), computed in the last `update()` call.
     pub fn progress(&self) -> f32 {
         self.current_frame_progress
+    }
+
+    /// Build an `AnimationContext` from current animator state.
+    fn animation_context(&self) -> AnimationContext<'_> {
+        AnimationContext {
+            raw_t: self.progress(),
+            runner: self.runner.as_ref(),
+            is_animating: self.is_animating(),
+        }
     }
 
     /// Set a new target state, potentially triggering an animation.
@@ -123,9 +112,9 @@ impl StructureAnimator {
 
         // Use the pending sidechain transition if sidechains changed,
         // otherwise use the provided transition
-        let effective_transition = if self.sidechains_changed {
-            self.pending_sidechain_transition
-                .take()
+        let effective_transition = if self.sc.changed {
+            self.sc
+                .take_pending_transition()
                 .unwrap_or_else(|| transition.clone())
         } else {
             transition.clone()
@@ -141,7 +130,7 @@ impl StructureAnimator {
 
         if let Some(runner) = maybe_runner {
             self.runner = Some(runner);
-        } else if self.sidechains_changed {
+        } else if self.sc.changed {
             // Sidechain-only change: create a timing-only runner
             // (empty residue data — just provides progress/behavior for
             // sidechain interpolation)
@@ -152,7 +141,7 @@ impl StructureAnimator {
         }
 
         // Reset sidechain change flag after processing
-        self.sidechains_changed = false;
+        self.sc.changed = false;
 
         self.state.set_target(new_target);
     }
@@ -161,39 +150,69 @@ impl StructureAnimator {
     ///
     /// Returns `true` if animations are still active.
     pub fn update(&mut self, now: Instant) -> bool {
-        let Some(ref runner) = self.runner else {
+        let mut any_active = false;
+
+        // 1. Poll the global runner (backward compat path).
+        if let Some(ref runner) = self.runner {
+            self.current_frame_progress = runner.progress(now);
+            runner.apply_to_state(&mut self.state, self.current_frame_progress);
+
+            if self.current_frame_progress >= 1.0 {
+                self.current_frame_progress = 1.0;
+                self.state.snap_to_target();
+                self.runner = None;
+            } else {
+                any_active = true;
+            }
+        } else {
             self.current_frame_progress = 1.0;
-            return false;
-        };
-
-        self.current_frame_progress = runner.progress(now);
-
-        // Apply interpolated states using the same progress value
-        runner.apply_to_state(&mut self.state, self.current_frame_progress);
-
-        // Check if complete
-        if self.current_frame_progress >= 1.0 {
-            self.current_frame_progress = 1.0;
-            self.state.snap_to_target();
-            self.runner = None;
-            return false;
         }
 
-        true
+        // 2. Poll per-entity runners. Each runner interpolates only its own
+        //    residue range and writes the result into `self.state`.
+        let mut completed_entities = Vec::new();
+        for (&entity_id, entity_state) in &self.entity_runners {
+            let t = entity_state.runner.progress(now);
+
+            if t >= 1.0 {
+                Self::snap_range_to_target(
+                    &mut self.state,
+                    &entity_state.range,
+                );
+                completed_entities.push(entity_id);
+            } else {
+                entity_state.runner.apply_to_state(&mut self.state, t);
+                any_active = true;
+            }
+        }
+
+        // 3. Remove completed entity runners.
+        for id in completed_entities {
+            let _ = self.entity_runners.remove(&id);
+        }
+
+        any_active
     }
 
-    /// Skip current animation to end state.
+    /// Skip all animations (global and per-entity) to end state.
     #[allow(dead_code)] // public API, not yet called internally
     pub fn skip(&mut self) {
         self.current_frame_progress = 1.0;
         self.state.snap_to_target();
         self.runner = None;
+        // Snap each entity's residues to target before clearing.
+        for entity_state in self.entity_runners.values() {
+            Self::snap_range_to_target(&mut self.state, &entity_state.range);
+        }
+        self.entity_runners.clear();
     }
 
-    /// Cancel current animation, staying at current visual position.
+    /// Cancel all animations (global and per-entity), staying at current
+    /// visual position.
     #[allow(dead_code)] // public API, not yet called internally
     pub fn cancel(&mut self) {
         self.runner = None;
+        self.entity_runners.clear();
     }
 
     /// Get the current visual backbone state as chains.
@@ -243,88 +262,31 @@ impl StructureAnimator {
         ca_positions: &[Vec3],
         transition: Option<&Transition>,
     ) {
-        // Clear per-entity snap ranges (will be re-set by
-        // remove_non_targeted_from_runner if needed)
-        self.sc.snapped_ranges.clear();
-
-        // Check if sidechains actually changed
-        let sidechains_changed = self.sidechains_differ(positions);
-
-        // Capture current visual state as the new animation start.
-        // Three cases: animating (sync to interpolated), static (use
-        // previous target), or size-changed (collapse or snap).
-        let sizes_match = self.sc.target_positions.len() == positions.len();
-
-        if sizes_match
-            && self.is_animating()
-            && !self.sc.target_positions.is_empty()
-        {
-            // Animation in progress — sync to current interpolated
-            // positions to prevent jumps during rapid updates (pulls).
-            self.sc.start_positions = self.get_sidechain_positions();
-            let ctx = self.interpolation_context();
-            self.sc.start_ca = self
-                .sc
-                .start_ca
-                .iter()
-                .zip(self.sc.target_ca.iter())
-                .map(|(start, target)| {
-                    *start + (*target - *start) * ctx.eased_t
-                })
-                .collect();
-        } else if sizes_match {
-            // No animation — use previous target as new start.
-            self.sc.start_positions = self.sc.target_positions.clone();
-            self.sc.start_ca = self.sc.target_ca.clone();
-        } else if transition.is_some_and(|t| t.allows_size_change) {
-            // Size changed with resize-capable transition — start each
-            // sidechain atom at its residue's CA (collapsed) so
-            // CollapseExpand can animate them expanding outward.
-            self.sc.start_positions = residue_indices
-                .iter()
-                .map(|&ri| {
-                    ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO)
-                })
-                .collect();
-            self.sc.start_ca = ca_positions.to_vec();
-        } else {
-            // Size changed, no resize animation — snap to target.
-            self.sc.start_positions = positions.to_vec();
-            self.sc.start_ca = ca_positions.to_vec();
-        }
-
-        self.sc.target_positions = positions.to_vec();
-        self.sc.target_ca = ca_positions.to_vec();
-        self.sc.residue_indices = residue_indices.to_vec();
-
-        // Store sidechain change state for set_target() to use
-        self.sidechains_changed = sidechains_changed;
-        self.pending_sidechain_transition = transition.cloned();
+        let anim = AnimationContext {
+            raw_t: self.current_frame_progress,
+            runner: self.runner.as_ref(),
+            is_animating: self.is_animating(),
+        };
+        let target = SidechainTarget {
+            positions,
+            residue_indices,
+            ca_positions,
+        };
+        self.sc.set_target(&target, transition, anim);
     }
 
-    /// Check if new sidechain positions differ from current target.
-    fn sidechains_differ(&self, new_positions: &[Vec3]) -> bool {
-        // Size change means difference
-        if self.sc.target_positions.len() != new_positions.len() {
-            return !new_positions.is_empty();
-        }
-
-        // Empty means no change
-        if new_positions.is_empty() {
-            return false;
-        }
-
-        // Compare positions with small epsilon
-        const EPSILON: f32 = 0.001;
-        for (old, new) in
-            self.sc.target_positions.iter().zip(new_positions.iter())
-        {
-            if (*old - *new).length_squared() > EPSILON * EPSILON {
-                return true;
+    /// Snap an entity's residue range so `current = target`.
+    fn snap_range_to_target(
+        state: &mut StructureState,
+        range: &EntityResidueRange,
+    ) {
+        let start = range.start as usize;
+        let end = range.end() as usize;
+        for r in start..end {
+            if let Some(target) = state.get_target(r).copied() {
+                state.set_current(r, target);
             }
         }
-
-        false
     }
 
     /// Get interpolated sidechain positions using the current animation
@@ -333,58 +295,7 @@ impl StructureAnimator {
     /// This applies the same interpolation logic as backbone animation,
     /// including collapse/expand for mutations.
     pub fn get_sidechain_positions(&self) -> Vec<Vec3> {
-        let raw_t = self.progress();
-
-        // If no runner or animation complete, return target positions
-        let Some(runner) = self.runner.as_ref() else {
-            return self.sc.target_positions.clone();
-        };
-        if raw_t >= 1.0 {
-            return self.sc.target_positions.clone();
-        }
-        let behavior = runner.behavior();
-
-        let ctx = behavior.compute_context(raw_t);
-
-        self.sc
-            .start_positions
-            .iter()
-            .zip(self.sc.target_positions.iter())
-            .enumerate()
-            .map(|(i, (start, end))| {
-                let res_idx =
-                    self.sc.residue_indices.get(i).copied().unwrap_or(0)
-                        as usize;
-
-                // Skip interpolation for snapped (non-targeted) entities —
-                // CollapseExpand's 3-point path (start→CA→end) produces visible
-                // motion even when start==end, so we must bypass it entirely.
-                if self
-                    .sc
-                    .snapped_ranges
-                    .iter()
-                    .any(|&(s, e)| res_idx >= s && res_idx < e)
-                {
-                    return *end;
-                }
-
-                // Get the collapse point (CA position) for this atom's residue
-                let start_ca =
-                    self.sc.start_ca.get(res_idx).copied().unwrap_or(*start);
-                let end_ca =
-                    self.sc.target_ca.get(res_idx).copied().unwrap_or(*end);
-
-                let collapse_point =
-                    start_ca + (end_ca - start_ca) * ctx.eased_t;
-
-                behavior.interpolate_position(
-                    raw_t,
-                    *start,
-                    *end,
-                    collapse_point,
-                )
-            })
-            .collect()
+        self.sc.get_positions(self.animation_context())
     }
 
     /// Snap sidechain and CA positions for entities NOT covered by any
@@ -401,36 +312,8 @@ impl StructureAnimator {
         entity_residue_ranges: &[EntityResidueRange],
         active_entities: &std::collections::HashSet<u32>,
     ) {
-        for range in entity_residue_ranges {
-            if active_entities.contains(&range.entity_id) {
-                continue; // This entity has a transition, let it animate
-            }
-
-            let res_start = range.start as usize;
-            let res_end = range.end() as usize;
-
-            // Snap CA positions for this group's residues
-            for r in res_start..res_end.min(self.sc.start_ca.len()) {
-                if let Some(target) = self.sc.target_ca.get(r) {
-                    self.sc.start_ca[r] = *target;
-                }
-            }
-
-            // Snap sidechain positions for atoms belonging to this group's
-            // residues
-            for (i, &res_idx) in self.sc.residue_indices.iter().enumerate() {
-                let r = res_idx as usize;
-                if !(res_start..res_end).contains(&r) {
-                    continue;
-                }
-                if let (Some(target), Some(start)) = (
-                    self.sc.target_positions.get(i),
-                    self.sc.start_positions.get_mut(i),
-                ) {
-                    *start = *target;
-                }
-            }
-        }
+        self.sc
+            .snap_non_targeted(entity_residue_ranges, active_entities);
     }
 
     /// Remove non-targeted entity residues from the active AnimationRunner.
@@ -472,7 +355,7 @@ impl StructureAnimator {
         }
 
         // Store snapped ranges so get_sidechain_positions() can skip them
-        self.sc.snapped_ranges = snap_ranges;
+        self.sc.set_snapped_ranges(snap_ranges);
     }
 
     /// Check if sidechain animation state is valid (has data).
@@ -491,25 +374,127 @@ impl StructureAnimator {
         })
     }
 
+    // ── Per-entity animation API ──────────────────────────────────────
+
+    /// Set the animation behavior that will be used for this entity's next
+    /// update via [`animate_entity`](Self::animate_entity).
+    ///
+    /// Overrides the default smooth transition for the given entity.
+    pub fn set_entity_behavior(
+        &mut self,
+        entity_id: u32,
+        transition: Transition,
+    ) {
+        let _ = self.entity_behaviors.insert(entity_id, transition);
+    }
+
+    /// Clear a per-entity behavior override, reverting to the default
+    /// (smooth) transition.
+    pub fn clear_entity_behavior(&mut self, entity_id: u32) {
+        let _ = self.entity_behaviors.remove(&entity_id);
+    }
+
+    /// Start a per-entity animation for the given entity.
+    ///
+    /// The entity's residues (identified by `range`) will be animated
+    /// independently from the rest of the structure. If the entity already
+    /// has an active runner, it is replaced (the current visual state is
+    /// synced first so the new animation starts from the visible position).
+    ///
+    /// `new_backbone` is the full-structure backbone chains — only the
+    /// residues within `range` are extracted for animation.
+    #[allow(dead_code)] // API for future engine integration
+    pub fn animate_entity(
+        &mut self,
+        entity_id: u32,
+        range: &EntityResidueRange,
+        new_backbone: &[Vec<Vec3>],
+        transition: &Transition,
+    ) {
+        if !self.controller.is_enabled() {
+            return;
+        }
+
+        let new_target = StructureState::from_backbone(new_backbone);
+        let start_idx = range.start as usize;
+        let end_idx = range.end() as usize;
+
+        // If this entity is already animating, sync its residues to the
+        // current interpolated position so the new animation picks up
+        // smoothly.
+        if let Some(prev) = self.entity_runners.get(&entity_id) {
+            let t = prev.runner.progress(Instant::now());
+            prev.runner.apply_to_state(&mut self.state, t);
+        }
+
+        // Build per-residue animation data for this entity's range.
+        let mut residue_data = Vec::new();
+        for global_idx in start_idx..end_idx {
+            let start = match self.state.get_current(global_idx) {
+                Some(s) => *s,
+                None => continue,
+            };
+            let target = match new_target.get_target(global_idx) {
+                Some(t) => *t,
+                None => continue,
+            };
+
+            if StructureState::states_differ(&start, &target) {
+                residue_data.push(ResidueAnimationData {
+                    residue_idx: global_idx,
+                    start,
+                    target,
+                });
+            }
+        }
+
+        // Update the structure's target state for this entity's residues.
+        for global_idx in start_idx..end_idx {
+            if let Some(target) = new_target.get_target(global_idx).copied() {
+                self.state.set_target_residue(global_idx, target);
+            }
+        }
+
+        // Only create a runner if there are residues that actually changed.
+        if residue_data.is_empty() {
+            // No visual change — snap and remove any stale runner.
+            Self::snap_range_to_target(&mut self.state, range);
+            let _ = self.entity_runners.remove(&entity_id);
+            return;
+        }
+
+        let runner =
+            AnimationRunner::new(transition.behavior.clone(), residue_data);
+        let _ = self.entity_runners.insert(
+            entity_id,
+            EntityAnimationState {
+                runner,
+                range: *range,
+            },
+        );
+    }
+
+    /// Whether a specific entity is currently animating.
+    #[allow(dead_code)] // API for future engine integration
+    pub fn is_entity_animating(&self, entity_id: u32) -> bool {
+        self.entity_runners.contains_key(&entity_id)
+    }
+
+    /// Whether any animation (global or per-entity) is active.
+    ///
+    /// Alias for [`is_animating`](Self::is_animating) — provided for
+    /// symmetry with [`is_entity_animating`](Self::is_entity_animating).
+    #[allow(dead_code)] // API for future engine integration
+    pub fn is_any_animating(&self) -> bool {
+        self.is_animating()
+    }
+
+    // ── End per-entity animation API ────────────────────────────────
+
     /// Get the CA position of a residue by index.
     /// Returns the interpolated position during animation.
     pub fn get_ca_position(&self, residue_idx: usize) -> Option<Vec3> {
-        let target = self.sc.target_ca.get(residue_idx)?;
-
-        // If not animating, return target position
-        let Some(runner) = self.runner.as_ref() else {
-            return Some(*target);
-        };
-        let raw_t = self.progress();
-        if raw_t >= 1.0 {
-            return Some(*target);
-        }
-
-        // Use unified context for consistent interpolation with
-        // backbone/sidechains
-        let start = self.sc.start_ca.get(residue_idx).unwrap_or(target);
-        let ctx = runner.behavior().compute_context(raw_t);
-        Some(*start + (*target - *start) * ctx.eased_t)
+        self.sc.get_ca(residue_idx, self.animation_context())
     }
 }
 
@@ -523,7 +508,8 @@ impl std::fmt::Debug for StructureAnimator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StructureAnimator")
             .field("residue_count", &self.state.residue_count())
-            .field("is_animating", &self.runner.is_some())
+            .field("is_animating", &self.is_animating())
+            .field("entity_runners", &self.entity_runners.len())
             .field("controller", &self.controller)
             .finish_non_exhaustive()
     }
@@ -639,32 +625,5 @@ mod tests {
             animator.is_animating(),
             "Sidechain-only change should trigger animation"
         );
-    }
-
-    #[test]
-    fn test_sidechains_differ_detects_changes() {
-        let mut animator = StructureAnimator::new();
-
-        // Set initial sidechains
-        let sidechain_pos = vec![Vec3::new(1.0, 2.0, 3.0)];
-        let residue_indices = vec![0];
-        let ca_positions = vec![Vec3::ZERO];
-        animator.set_sidechain_target_with_transition(
-            &sidechain_pos,
-            &residue_indices,
-            &ca_positions,
-            None,
-        );
-
-        // Same positions should not differ
-        assert!(!animator.sidechains_differ(&sidechain_pos));
-
-        // Different positions should differ
-        let different_pos = vec![Vec3::new(1.0, 2.0, 4.0)];
-        assert!(animator.sidechains_differ(&different_pos));
-
-        // Very small change should not differ (within epsilon)
-        let tiny_change = vec![Vec3::new(1.0, 2.0, 3.0005)];
-        assert!(!animator.sidechains_differ(&tiny_change));
     }
 }

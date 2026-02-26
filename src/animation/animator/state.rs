@@ -86,6 +86,20 @@ impl StructureState {
         }
     }
 
+    /// Set target state for a specific residue.
+    ///
+    /// Used by per-entity animation to update only one entity's residues
+    /// without replacing the entire target array.
+    pub fn set_target_residue(
+        &mut self,
+        idx: usize,
+        state: ResidueVisualState,
+    ) {
+        if let Some(target) = self.target.get_mut(idx) {
+            *target = state;
+        }
+    }
+
     /// Whether this state has a different residue count than `other`.
     pub fn size_differs(&self, other: &StructureState) -> bool {
         self.current.len() != other.current.len()

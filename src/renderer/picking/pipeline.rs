@@ -687,11 +687,6 @@ impl Picking {
 
         true
     }
-
-    /// Clear all selection
-    pub fn clear_selection(&mut self) {
-        self.selected_residues.clear();
-    }
 }
 
 fn storage_bind_group_layout(

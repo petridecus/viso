@@ -3,7 +3,7 @@ use glam::Mat4;
 use crate::error::VisoError;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
-use crate::options::Options;
+use crate::options::VisoOptions;
 use crate::renderer::postprocess::bloom::BloomPass;
 use crate::renderer::postprocess::composite::{CompositeInputs, CompositePass};
 use crate::renderer::postprocess::fxaa::FxaaPass;
@@ -156,7 +156,11 @@ impl PostProcessStack {
     }
 
     /// Push post-processing option values to GPU.
-    pub fn apply_options(&mut self, options: &Options, queue: &wgpu::Queue) {
+    pub fn apply_options(
+        &mut self,
+        options: &VisoOptions,
+        queue: &wgpu::Queue,
+    ) {
         let pp = &options.post_processing;
         self.composite_pass.params.outline_thickness = pp.outline_thickness;
         self.composite_pass.params.outline_strength = pp.outline_strength;

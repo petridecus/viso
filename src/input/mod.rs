@@ -1,15 +1,12 @@
-//! Input handling for keyboard actions and mouse interaction.
-//!
-//! Defines key-bindable actions, a multi-click state machine for
-//! residue selection, and platform-agnostic input events.
+//! Input handling: event types, state machines, and the input processor
+//! that converts raw window events into engine commands.
 
 /// Platform-agnostic input events.
 pub mod event;
-/// Key-bindable actions for camera and display toggles.
-pub mod keyboard;
 /// Multi-click state machine and mouse position tracking.
-pub mod mouse;
+pub(crate) mod mouse;
+/// Converts raw events into engine commands.
+pub mod processor;
 
 pub use event::{InputEvent, MouseButton};
-pub use keyboard::KeyAction;
-pub use mouse::{ClickResult, InputState};
+pub use processor::{InputProcessor, KeyBindings};

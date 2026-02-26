@@ -12,7 +12,7 @@ use wry::http::header::CONTENT_TYPE;
 use wry::http::Response;
 use wry::{dpi, Rect, WebView, WebViewBuilder};
 
-use crate::options::Options;
+use crate::options::VisoOptions;
 
 /// Embedded viso-ui dist output (built by `trunk build`).
 #[derive(RustEmbed)]
@@ -154,8 +154,8 @@ pub fn panel_bounds_floating(
 }
 
 /// Push the Options JSON schema to the webview (call once after creation).
-pub fn push_schema(webview: &WebView, options: &Options) {
-    let schema = schemars::schema_for!(Options);
+pub fn push_schema(webview: &WebView, options: &VisoOptions) {
+    let schema = schemars::schema_for!(VisoOptions);
     let json = serde_json::to_string(&schema).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
     let _ = webview
@@ -165,7 +165,7 @@ pub fn push_schema(webview: &WebView, options: &Options) {
 }
 
 /// Push the current Options state to the webview.
-pub fn push_options(webview: &WebView, options: &Options) {
+pub fn push_options(webview: &WebView, options: &VisoOptions) {
     let json = serde_json::to_string(options).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
     let _ = webview

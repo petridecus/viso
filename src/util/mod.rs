@@ -1,8 +1,8 @@
 //! Shared utilities for the rendering engine.
 //!
 //! Helpers for frame timing, trajectory playback, hashing, score-to-color
-//! mapping, sheet-surface adjustments, easing curves, lighting, and bond
-//! topology lookups.
+//! mapping, sheet-surface adjustments, easing curves, and bond topology
+//! lookups.
 
 /// Residue-level bond and element lookups from `foldit_conv`.
 pub mod bond_topology;
@@ -12,8 +12,6 @@ pub mod easing;
 pub mod frame_timing;
 /// Fast hashing helpers for change detection on Vec3 data.
 pub mod hash;
-/// GPU lighting uniform and bind group management.
-pub mod lighting;
 /// Score-to-color gradient mapping.
 pub mod score_color;
 /// Sheet-surface sidechain position adjustment.

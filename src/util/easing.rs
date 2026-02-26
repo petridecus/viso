@@ -7,12 +7,14 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EasingFunction {
     /// Linear interpolation (no easing).
+    #[allow(dead_code)]
     Linear,
     /// Quadratic ease-in (slow start, fast end).
     QuadraticIn,
     /// Quadratic ease-out (fast start, slow end).
     QuadraticOut,
     /// Square root ease-out (fast start, gradual slow).
+    #[allow(dead_code)]
     SqrtOut,
     /// Cubic Hermite interpolation with configurable control points.
     /// Formula: c1·3t(1-t)² + c2·3(1-t)t² + t³

@@ -1,17 +1,55 @@
-//! Options methods for ProteinRenderEngine
+//! Options methods for VisoEngine
 
-use super::ProteinRenderEngine;
-use crate::options::Options;
+use super::VisoEngine;
+use crate::options::VisoOptions;
 
-impl ProteinRenderEngine {
-    /// Replace options and apply all changes to subsystems.
-    pub fn set_options(&mut self, new: Options) {
+impl VisoEngine {
+    /// Replace options and apply only the sections that changed.
+    pub fn set_options(&mut self, new: VisoOptions) {
+        let old = &self.options;
+        let lighting_changed = old.lighting != new.lighting;
+        let post_changed = old.post_processing != new.post_processing;
+        let camera_changed = old.camera != new.camera;
+        let debug_changed = old.debug != new.debug;
+        let display_changed = old.display != new.display;
+        let color_mode_changed =
+            old.display.backbone_color_mode != new.display.backbone_color_mode;
+        let geometry_changed = old.geometry != new.geometry;
+        let colors_changed = old.colors != new.colors;
+
         self.options = new;
-        self.apply_options();
+
+        if lighting_changed {
+            self.apply_lighting();
+        }
+        if post_changed {
+            self.apply_post_processing();
+        }
+        if camera_changed {
+            self.apply_camera();
+        }
+        if debug_changed {
+            self.apply_debug();
+        }
+        if display_changed {
+            self.refresh_ball_and_stick();
+            if color_mode_changed {
+                let chains = self.renderers.backbone.cached_chains().to_vec();
+                let new_colors = self.compute_per_residue_colors(&chains);
+                self.pick.residue_colors.set_target_colors(&new_colors);
+                self.sc_cache.per_residue_colors = Some(new_colors);
+            }
+        }
+        if geometry_changed {
+            let camera_eye = self.camera_controller.camera.eye;
+            self.submit_per_chain_lod_remesh(camera_eye);
+        }
+        if colors_changed {
+            self.refresh_ball_and_stick();
+        }
     }
 
-    /// Push current option values to all subsystems (lighting, camera,
-    /// composite, etc.).
+    /// Force-refresh all subsystems from current options (escape hatch).
     pub fn apply_options(&mut self) {
         self.apply_lighting();
         self.apply_post_processing();
@@ -29,7 +67,7 @@ impl ProteinRenderEngine {
         let chains = self.renderers.backbone.cached_chains().to_vec();
         let new_colors = self.compute_per_residue_colors(&chains);
         self.pick.residue_colors.set_target_colors(&new_colors);
-        self.sc.cached_per_residue_colors = Some(new_colors);
+        self.sc_cache.per_residue_colors = Some(new_colors);
     }
 
     /// Push lighting options to the GPU uniform.
@@ -82,7 +120,7 @@ impl ProteinRenderEngine {
         presets_dir: &std::path::Path,
     ) -> bool {
         let path = presets_dir.join(format!("{name}.toml"));
-        match Options::load(&path) {
+        match VisoOptions::load(&path) {
             Ok(opts) => {
                 log::info!("Loaded view preset '{name}'");
                 self.set_options(opts);

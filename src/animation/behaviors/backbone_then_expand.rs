@@ -47,6 +47,7 @@ impl BackboneThenExpand {
 
     /// Set custom easing functions.
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_easing(
         mut self,
         backbone_easing: EasingFunction,

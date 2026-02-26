@@ -1,4 +1,4 @@
-//! Scene Management methods for ProteinRenderEngine
+//! Scene Management methods for VisoEngine
 
 use std::collections::HashMap;
 
@@ -6,14 +6,13 @@ use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
-use super::ProteinRenderEngine;
+use super::command::{BandInfo, PullInfo};
+use super::VisoEngine;
 use crate::animation::transition::Transition;
 use crate::renderer::geometry::backbone::BackboneUpdateData;
-use crate::renderer::geometry::band::BandRenderInfo;
-use crate::renderer::geometry::pull::PullRenderInfo;
 use crate::renderer::geometry::sidechain::SidechainView;
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Update backbone with new chains (regenerates the backbone mesh)
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
@@ -33,62 +32,38 @@ impl ProteinRenderEngine {
     /// reduce draw calls.
     pub(crate) fn update_frustum_culling(&mut self) {
         // Skip if no sidechain data
-        if self.sc.target_sidechain_positions.is_empty() {
+        if self.sc_anim.target_sidechain_positions.is_empty() {
+            return;
+        }
+
+        // Only update culling when camera moves more than 5 units.
+        // Exception: always update during animation so sidechain positions
+        // reflect the interpolated state.
+        if !self.should_update_culling() {
             return;
         }
 
         let camera_eye = self.camera_controller.camera.eye;
-        let camera_delta = (camera_eye - self.sc.last_cull_camera_eye).length();
+        self.last_cull_camera_eye = camera_eye;
 
-        // Only update culling when camera moves more than 5 units
-        // This prevents expensive updates on minor camera movements.
-        // Exception: always update during animation so sidechain positions
-        // reflect the interpolated state (not the final target uploaded by
-        // apply_pending_scene).
-        const CULL_UPDATE_THRESHOLD: f32 = 5.0;
-        let animating =
-            self.animator.is_animating() && self.animator.has_sidechain_data();
-        if camera_delta < CULL_UPDATE_THRESHOLD && !animating {
-            return;
-        }
-
-        self.sc.last_cull_camera_eye = camera_eye;
-
-        // Get current frustum
         let frustum = self.camera_controller.frustum();
+        let positions = self.get_current_sidechain_positions();
+        let bs_bonds = self.get_current_backbone_sidechain_bonds();
 
-        // Get current sidechain positions (may be interpolated during
-        // animation)
-        let positions = if self.animator.is_animating()
-            && self.animator.has_sidechain_data()
-        {
-            self.animator.get_sidechain_positions()
-        } else {
-            self.sc.target_sidechain_positions.clone()
-        };
-
-        // Get current backbone-sidechain bonds (may be interpolated)
-        let bs_bonds = if self.animator.is_animating() {
-            self.sc.interpolated_backbone_bonds(&self.animator)
-        } else {
-            self.sc.target_backbone_sidechain_bonds.clone()
-        };
-
-        // Translate entire sidechains onto sheet surface
+        // Translate sidechains onto sheet surface and apply frustum culling
         let offset_map = self.sheet_offset_map();
         let raw_view = SidechainView {
             positions: &positions,
-            bonds: &self.sc.cached_sidechain_bonds,
+            bonds: &self.sc_cache.sidechain_bonds,
             backbone_bonds: &bs_bonds,
-            hydrophobicity: &self.sc.cached_sidechain_hydrophobicity,
-            residue_indices: &self.sc.cached_sidechain_residue_indices,
+            hydrophobicity: &self.sc_cache.sidechain_hydrophobicity,
+            residue_indices: &self.sc_cache.sidechain_residue_indices,
         };
         let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
             &raw_view,
             &offset_map,
         );
 
-        // Update sidechains with frustum culling
         self.renderers.sidechain.update_with_frustum(
             &self.context.device,
             &self.context.queue,
@@ -102,6 +77,25 @@ impl ProteinRenderEngine {
             &self.context.device,
             &self.renderers.sidechain,
         );
+    }
+
+    /// Whether frustum culling should be recalculated this frame.
+    ///
+    /// Returns `true` when the camera has moved more than the threshold or
+    /// an animation with sidechain data is active (positions are
+    /// interpolated and need continuous updates).
+    fn should_update_culling(&self) -> bool {
+        const CULL_UPDATE_THRESHOLD: f32 = 5.0;
+
+        let animating =
+            self.animator.is_animating() && self.animator.has_sidechain_data();
+        if animating {
+            return true;
+        }
+
+        let camera_eye = self.camera_controller.camera.eye;
+        let camera_delta = (camera_eye - self.last_cull_camera_eye).length();
+        camera_delta >= CULL_UPDATE_THRESHOLD
     }
 
     /// Refresh ball-and-stick renderer with current visibility flags.
@@ -135,7 +129,7 @@ impl ProteinRenderEngine {
     /// Set SS override (from puzzle.toml annotation). Updates cached types
     /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
-        self.sc.cached_ss_types = ss_types.to_vec();
+        self.sc_cache.ss_types = ss_types.to_vec();
         self.renderers
             .backbone
             .set_ss_override(Some(ss_types.to_vec()));
@@ -175,7 +169,7 @@ impl ProteinRenderEngine {
 
     /// Update the band visualization.
     /// Call this when bands are added, removed, or modified.
-    pub fn update_bands(&mut self, bands: &[BandRenderInfo]) {
+    pub fn update_bands(&mut self, bands: &[BandInfo]) {
         self.renderers.band.update(
             &self.context.device,
             &self.context.queue,
@@ -186,7 +180,7 @@ impl ProteinRenderEngine {
 
     /// Update the pull visualization (only one pull at a time).
     /// Pass None to clear the pull visualization.
-    pub fn update_pull(&mut self, pull: Option<&PullRenderInfo>) {
+    pub fn update_pull(&mut self, pull: Option<&PullInfo>) {
         self.renderers.pull.update(
             &self.context.device,
             &self.context.queue,
@@ -201,6 +195,9 @@ impl ProteinRenderEngine {
         entities: Vec<MoleculeEntity>,
         fit_camera: bool,
     ) -> Vec<u32> {
+        // Store canonical copy on the engine (source of truth)
+        self.entities.clone_from(&entities);
+
         let ids = self.scene.add_entities(entities);
         if fit_camera {
             // Sync immediately so entity data is available for camera fit

@@ -1,6 +1,8 @@
 mod accessors;
 mod animation;
-mod input;
+/// The engine's complete interactive vocabulary.
+pub mod command;
+mod construction;
 mod options;
 pub(crate) mod picking_system;
 mod queries;
@@ -8,107 +10,28 @@ pub(crate) mod renderers;
 mod scene_management;
 mod scene_sync;
 
-use std::time::Instant;
+use std::collections::HashMap;
 
-use foldit_conv::adapters::pdb::structure_file_to_coords;
-use foldit_conv::render::RenderCoords;
-use foldit_conv::types::entity::split_into_entities;
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::{Mat4, Vec3};
 
 use self::picking_system::PickingSystem;
 use self::renderers::Renderers;
 use crate::animation::animator::StructureAnimator;
-use crate::animation::sidechain_state::SidechainAnimationState;
+use crate::animation::sidechain_state::{SidechainAnimData, SidechainCache};
+use crate::animation::transition::Transition;
 use crate::camera::controller::CameraController;
 use crate::error::VisoError;
+use crate::gpu::lighting::Lighting;
 use crate::gpu::render_context::RenderContext;
-use crate::gpu::residue_color::ResidueColorBuffer;
 use crate::gpu::shader_composer::ShaderComposer;
-use crate::input::InputState;
-use crate::options::Options;
+use crate::options::VisoOptions;
 use crate::renderer::draw_context::DrawBindGroups;
-use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::picking::{PickTarget, SelectionBuffer};
 use crate::renderer::postprocess::post_process::PostProcessStack;
-use crate::renderer::PipelineLayouts;
 use crate::scene::processor::SceneProcessor;
-use crate::scene::{Focus, Scene, SceneEntity};
-use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
+use crate::scene::{EntityResidueRange, Focus, Scene};
 use crate::util::frame_timing::FrameTiming;
-use crate::util::lighting::Lighting;
 use crate::util::trajectory::TrajectoryPlayer;
-
-/// Load a structure file and split into entities, returning a populated Scene
-/// and the derived protein `RenderCoords`.
-fn load_scene_from_file(
-    cif_path: &str,
-) -> Result<(Scene, RenderCoords), VisoError> {
-    let coords = structure_file_to_coords(std::path::Path::new(cif_path))
-        .map_err(|e| VisoError::StructureLoad(e.to_string()))?;
-
-    let entities = split_into_entities(&coords);
-
-    for e in &entities {
-        log::debug!(
-            "  entity {} — {:?}: {} atoms",
-            e.entity_id,
-            e.molecule_type,
-            e.coords.num_atoms
-        );
-    }
-
-    let mut scene = Scene::new();
-    let entity_ids = scene.add_entities(entities);
-
-    let render_coords = extract_render_coords(&scene, &entity_ids);
-    Ok((scene, render_coords))
-}
-
-/// Derive protein `RenderCoords` from a populated scene.
-fn extract_render_coords(scene: &Scene, entity_ids: &[u32]) -> RenderCoords {
-    let protein_entity_id = entity_ids
-        .iter()
-        .find(|&&id| scene.entity(id).is_some_and(SceneEntity::is_protein));
-
-    if let Some(protein_coords) = protein_entity_id
-        .and_then(|&id| scene.entity(id).and_then(SceneEntity::protein_coords))
-    {
-        log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
-        let protein_coords =
-            foldit_conv::ops::transform::protein_only(&protein_coords);
-        log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
-        let rc = RenderCoords::from_coords_with_topology(
-            &protein_coords,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
-        );
-        log::debug!(
-            "render_coords: {} backbone chains, {} residues",
-            rc.backbone_chains.len(),
-            rc.backbone_chains
-                .iter()
-                .map(|c| c.len() / 3)
-                .sum::<usize>()
-        );
-        rc
-    } else {
-        log::debug!("no protein coords found");
-        let empty = foldit_conv::types::coords::Coords {
-            num_atoms: 0,
-            atoms: Vec::new(),
-            chain_ids: Vec::new(),
-            res_names: Vec::new(),
-            res_nums: Vec::new(),
-            atom_names: Vec::new(),
-            elements: Vec::new(),
-        };
-        RenderCoords::from_coords_with_topology(
-            &empty,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
-        )
-    }
-}
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -121,15 +44,15 @@ const TARGET_FPS: u32 = 300;
 ///
 /// # Construction
 ///
-/// Use [`ProteinRenderEngine::new`] for a default molecule or
-/// [`ProteinRenderEngine::new_with_path`] to load a specific `.cif`/`.pdb`
+/// Use [`VisoEngine::new`] for a default molecule or
+/// [`VisoEngine::new_with_path`] to load a specific `.cif`/`.pdb`
 /// file.
 ///
 /// # Frame loop
 ///
 /// Each frame, call [`render`](Self::render) to draw and present. Call
 /// [`resize`](Self::resize) when the window size changes. Input is forwarded
-/// via [`handle_input`](Self::handle_input).
+/// via [`execute`](Self::execute).
 ///
 /// # Scene management
 ///
@@ -140,20 +63,24 @@ const TARGET_FPS: u32 = 300;
 ///
 /// # Animation
 ///
-/// Structural changes are animated via the `StructureAnimator`.
-/// Control the animation style per-update by passing a
-/// [`Transition`](crate::animation::transition::Transition).
-pub struct ProteinRenderEngine {
+/// Structural changes are animated via the internal `StructureAnimator`.
+/// Animation transitions are managed internally by the engine pipeline.
+pub struct VisoEngine {
     /// Core wgpu device, queue, and surface.
     pub context: RenderContext,
     _shader_composer: ShaderComposer,
 
     /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
     pub(crate) post_process: PostProcessStack,
-    /// Mouse and keyboard input state.
-    pub input: InputState,
-    /// Cached sidechain animation and SS-type state.
-    pub(crate) sc: SidechainAnimationState,
+    /// Current cursor position in physical pixels (set by the viewer /
+    /// input processor each frame for GPU picking).
+    cursor_pos: (f32, f32),
+    /// Sidechain animation start/target pairs.
+    pub(crate) sc_anim: SidechainAnimData,
+    /// Cached scene-derived sidechain data.
+    pub(crate) sc_cache: SidechainCache,
+    /// Camera eye position at the last frustum-culling update.
+    pub(crate) last_cull_camera_eye: Vec3,
 
     /// Orbital camera controller.
     pub camera_controller: CameraController,
@@ -161,12 +88,19 @@ pub struct ProteinRenderEngine {
     pub lighting: Lighting,
     /// Scene graph holding all entities.
     scene: Scene,
+    /// Canonical entity data (source of truth). Scene is derived from this.
+    pub(crate) entities: Vec<MoleculeEntity>,
+    /// Per-entity residue ranges in the flat array (maps entity_id to
+    /// start/count).
+    pub(crate) entity_ranges: Vec<EntityResidueRange>,
+    /// Per-entity animation behavior overrides (default = smooth).
+    pub(crate) entity_behaviors: HashMap<u32, Transition>,
     /// Background thread for off-main-thread mesh generation.
     pub(crate) scene_processor: SceneProcessor,
     /// Structural animation driver.
     pub(crate) animator: StructureAnimator,
     /// Runtime display, lighting, color, and geometry options.
-    options: Options,
+    options: VisoOptions,
     /// Currently applied options preset name, if any.
     active_preset: Option<String>,
     /// Per-frame timing and FPS tracking.
@@ -185,7 +119,7 @@ pub struct ProteinRenderEngine {
 // Core
 // =============================================================================
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Engine with a default molecule path.
     ///
     /// # Errors
@@ -251,59 +185,87 @@ impl ProteinRenderEngine {
         Self::init_with_context(context, cif_path)
     }
 
+    /// Engine with an empty scene (no entities loaded).
+    ///
+    /// Initializes all GPU resources but starts with no visible geometry.
+    /// Entities can be loaded later via [`load_entities`](Self::load_entities)
+    /// or [`sync_scene_to_renderers`](Self::sync_scene_to_renderers).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError`] if GPU pipeline initialization fails.
+    pub fn new_empty(context: RenderContext) -> Result<Self, VisoError> {
+        Self::init_empty(context)
+    }
+
+    /// Shared empty-init logic.
+    fn init_empty(context: RenderContext) -> Result<Self, VisoError> {
+        let render_coords = construction::empty_render_coords();
+        let scene = Scene::new();
+        let bootstrap =
+            construction::init_gpu_pipeline(&context, scene, &render_coords)?;
+        let options = VisoOptions::default();
+        Self::assemble(context, options, bootstrap, Vec::new())
+    }
+
     /// Shared construction logic for both windowed and headless modes.
     fn init_with_context(
         context: RenderContext,
         cif_path: &str,
     ) -> Result<Self, VisoError> {
-        let mut shader_composer = ShaderComposer::new()?;
-        let mut camera_controller = CameraController::new(&context);
-        let lighting = Lighting::new(&context);
-        let options = Options::default();
+        let (scene, render_coords) =
+            construction::load_scene_from_file(cif_path)?;
+        let options = VisoOptions::default();
 
-        let (scene, render_coords) = load_scene_from_file(cif_path)?;
-        let n = render_coords.residue_count().max(1);
-        let selection = SelectionBuffer::new(&context.device, n);
-        let residue_colors = ResidueColorBuffer::new(&context.device, n);
-        let layouts = PipelineLayouts {
-            camera: camera_controller.layout.clone(),
-            lighting: lighting.layout.clone(),
-            selection: selection.layout.clone(),
-            color: residue_colors.layout.clone(),
-        };
-        let mut renderers = Renderers::new(
+        let mut bootstrap =
+            construction::init_gpu_pipeline(&context, scene, &render_coords)?;
+        bootstrap.renderers.init_ball_and_stick_entities(
             &context,
-            &layouts,
-            &render_coords,
-            &scene,
-            &mut shader_composer,
-        )?;
-        renderers.init_ball_and_stick_entities(&context, &scene, &options);
-        let mut pick = PickingSystem::new(
-            &context,
-            &camera_controller.layout,
-            selection,
-            residue_colors,
-            &mut shader_composer,
-        )?;
-        pick.init_colors_and_groups(
+            &bootstrap.scene,
+            &options,
+        );
+        bootstrap.pick.init_colors_and_groups(
             &context,
             &render_coords.backbone_chains,
-            &renderers,
+            &bootstrap.renderers,
         );
-        let post_process =
-            PostProcessStack::new(&context, &mut shader_composer)?;
-        let positions = collect_all_positions(&render_coords, &scene, &options);
-        camera_controller.fit_to_positions(&positions);
+        let positions = construction::collect_all_positions(
+            &render_coords,
+            &bootstrap.scene,
+            &options,
+        );
+        bootstrap.camera_controller.fit_to_positions(&positions);
+
+        let entities: Vec<MoleculeEntity> = bootstrap
+            .scene
+            .entities()
+            .iter()
+            .map(|se| se.entity.clone())
+            .collect();
+        Self::assemble(context, options, bootstrap, entities)
+    }
+
+    /// Build the final `VisoEngine` from initialized GPU subsystems.
+    fn assemble(
+        context: RenderContext,
+        options: VisoOptions,
+        bootstrap: construction::GpuBootstrap,
+        entities: Vec<MoleculeEntity>,
+    ) -> Result<Self, VisoError> {
         Ok(Self {
             context,
-            _shader_composer: shader_composer,
-            post_process,
-            input: InputState::new(),
-            sc: SidechainAnimationState::new(),
-            camera_controller,
-            lighting,
-            scene,
+            _shader_composer: bootstrap.shader_composer,
+            post_process: bootstrap.post_process,
+            cursor_pos: (0.0, 0.0),
+            sc_anim: SidechainAnimData::new(),
+            sc_cache: SidechainCache::new(),
+            last_cull_camera_eye: Vec3::ZERO,
+            camera_controller: bootstrap.camera_controller,
+            lighting: bootstrap.lighting,
+            scene: bootstrap.scene,
+            entities,
+            entity_ranges: Vec::new(),
+            entity_behaviors: HashMap::new(),
             scene_processor: SceneProcessor::new()
                 .map_err(VisoError::ThreadSpawn)?,
             animator: StructureAnimator::new(),
@@ -311,193 +273,39 @@ impl ProteinRenderEngine {
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
             trajectory_player: None,
-            renderers,
-            pick,
+            renderers: bootstrap.renderers,
+            pick: bootstrap.pick,
         })
     }
 
     /// Per-frame updates: animation ticks, uniform uploads, frustum culling.
     fn pre_render(&mut self) {
-        // Apply any pending animation frame from the background thread
-        // (non-blocking)
         self.apply_pending_animation();
+        self.tick_animation();
 
-        // Trajectory playback — submit frames to background thread
-        // (non-blocking)
-        if let Some(ref mut player) = self.trajectory_player {
-            if let Some(backbone_chains) = player.tick(Instant::now()) {
-                self.submit_animation_frame_with_backbone(
-                    backbone_chains,
-                    false,
-                );
-            }
-        } else {
-            // Standard animator path
-            let animating = self.animator.update(Instant::now());
-
-            // If animation is active, submit interpolated positions to
-            // background thread
-            if animating {
-                self.submit_animation_frame();
-            }
-        }
-
-        // Update hover state in camera uniform (from GPU picking)
+        // Camera uniform (hover state from GPU picking)
         self.camera_controller.uniform.hovered_residue =
             self.pick.hovered_target.as_residue_i32();
         self.camera_controller.update_gpu(&self.context.queue);
 
-        // Compute fog params from camera state each frame (depth-buffer fog,
-        // always in sync) fog_start = focus point distance → front half
-        // stays crisp fog_density scaled so back of protein reaches
-        // ~87% fog (exp(-2) ≈ 0.13)
-        let distance = self.camera_controller.distance();
-        let bounding_radius = self.camera_controller.bounding_radius();
-        let fog_start = distance;
-        let fog_density = 2.0 / bounding_radius.max(10.0);
+        // Depth-buffer fog from camera distance
+        let fog_start = self.camera_controller.distance();
+        let fog_density =
+            2.0 / self.camera_controller.bounding_radius().max(10.0);
         self.post_process.update_fog(
             &self.context.queue,
             fog_start,
             fog_density,
         );
 
-        // Per-chain LOD — submit background remesh when any chain's tier
-        // changes
-        let camera_eye = self.camera_controller.camera.eye;
-        let per_chain_tiers: Vec<u8> = self
-            .renderers
-            .backbone
-            .chain_ranges()
-            .iter()
-            .map(|r| {
-                crate::options::select_chain_lod_tier(
-                    r.bounding_center,
-                    camera_eye,
-                )
-            })
-            .collect();
-        if per_chain_tiers != self.renderers.backbone.cached_lod_tiers() {
-            self.renderers
-                .backbone
-                .set_cached_lod_tiers(per_chain_tiers);
-            self.submit_per_chain_lod_remesh(camera_eye);
-        }
-
-        // Update selection buffer (from GPU picking)
-        self.pick
-            .selection
-            .update(&self.context.queue, &self.pick.picking.selected_residues);
-
-        // Update per-residue color buffer (transition interpolation)
+        self.check_and_submit_lod();
+        self.pick.update_selection_buffer(&self.context.queue);
         let _color_transitioning =
             self.pick.residue_colors.update(&self.context.queue);
-
-        // Update lighting to follow camera (headlamp mode)
-        // Use camera.up (set by quaternion) for consistent basis vectors
-        let camera = &self.camera_controller.camera;
-        let forward = (camera.target - camera.eye).normalize();
-        let right = camera.up.cross(forward).normalize(); // right = up × forward
-        let up = forward.cross(right); // recalculate up to ensure orthonormal
-        self.lighting.update_headlamp(right, up, forward);
+        self.lighting
+            .update_headlamp_from_camera(&self.camera_controller.camera);
         self.lighting.update_gpu(&self.context.queue);
-
-        // Frustum culling for sidechains - update when camera moves
-        // significantly
         self.update_frustum_culling();
-    }
-
-    /// Encode the main geometry render pass.
-    fn encode_geometry_pass(&self, encoder: &mut wgpu::CommandEncoder) {
-        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("main render pass"),
-            color_attachments: &[
-                Some(wgpu::RenderPassColorAttachment {
-                    view: self.post_process.color_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &self.post_process.normal_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }),
-            ],
-            depth_stencil_attachment: Some(
-                wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.post_process.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                },
-            ),
-            ..Default::default()
-        });
-
-        let bind_groups = DrawBindGroups {
-            camera: &self.camera_controller.bind_group,
-            lighting: &self.lighting.bind_group,
-            selection: &self.pick.selection.bind_group,
-            color: Some(&self.pick.residue_colors.bind_group),
-        };
-
-        let frustum = self.camera_controller.frustum();
-        self.renderers
-            .backbone
-            .draw_culled(&mut rp, &bind_groups, &frustum);
-
-        if self.options.display.show_sidechains {
-            self.renderers.sidechain.draw(&mut rp, &bind_groups);
-        }
-
-        self.renderers.ball_and_stick.draw(&mut rp, &bind_groups);
-        self.renderers.nucleic_acid.draw(&mut rp, &bind_groups);
-        self.renderers.band.draw(&mut rp, &bind_groups);
-        self.renderers.pull.draw(&mut rp, &bind_groups);
-    }
-
-    /// Build the picking geometry descriptor from current renderer state.
-    fn build_picking_geometry(
-        &self,
-    ) -> crate::renderer::picking::PickingGeometry<'_> {
-        crate::renderer::picking::PickingGeometry {
-            backbone_vertex_buffer: self.renderers.backbone.vertex_buffer(),
-            backbone_tube_index_buffer: self
-                .renderers
-                .backbone
-                .tube_index_buffer(),
-            backbone_tube_index_count: self
-                .renderers
-                .backbone
-                .tube_index_count(),
-            backbone_ribbon_index_buffer: self
-                .renderers
-                .backbone
-                .ribbon_index_buffer(),
-            backbone_ribbon_index_count: self
-                .renderers
-                .backbone
-                .ribbon_index_count(),
-            capsule_bind_group: self.pick.groups.capsule.as_ref(),
-            capsule_count: if self.options.display.show_sidechains {
-                self.renderers.sidechain.instance_count()
-            } else {
-                0
-            },
-            bns_capsule_bind_group: self.pick.groups.bns_bond.as_ref(),
-            bns_capsule_count: self.renderers.ball_and_stick.bond_count(),
-            bns_sphere_bind_group: self.pick.groups.bns_sphere.as_ref(),
-            bns_sphere_count: self.renderers.ball_and_stick.sphere_count(),
-        }
     }
 
     /// Core render — geometry, post-process, picking — targeting the given
@@ -508,34 +316,55 @@ impl ProteinRenderEngine {
     ) -> wgpu::CommandEncoder {
         let mut encoder = self.context.create_encoder();
 
-        self.encode_geometry_pass(&mut encoder);
+        // Geometry pass
+        let input = renderers::GeometryPassInput {
+            color: self.post_process.color_view(),
+            normal: &self.post_process.normal_view,
+            depth: &self.post_process.depth_view,
+            show_sidechains: self.options.display.show_sidechains,
+        };
+        let bind_groups = DrawBindGroups {
+            camera: &self.camera_controller.bind_group,
+            lighting: &self.lighting.bind_group,
+            selection: &self.pick.selection.bind_group,
+            color: Some(&self.pick.residue_colors.bind_group),
+        };
+        let frustum = self.camera_controller.frustum();
+        self.renderers.encode_geometry_pass(
+            &mut encoder,
+            &input,
+            &bind_groups,
+            &frustum,
+        );
 
         // Post-processing: SSAO → bloom → composite → FXAA
-        let proj = self.camera_controller.camera.build_projection();
-        let view_matrix = Mat4::look_at_rh(
-            self.camera_controller.camera.eye,
-            self.camera_controller.camera.target,
-            self.camera_controller.camera.up,
-        );
+        let camera = &self.camera_controller.camera;
         self.post_process.render(
             &mut encoder,
             &self.context.queue,
             &crate::renderer::postprocess::post_process::PostProcessCamera {
-                proj,
-                view_matrix,
-                znear: self.camera_controller.camera.znear,
-                zfar: self.camera_controller.camera.zfar,
+                proj: camera.build_projection(),
+                view_matrix: Mat4::look_at_rh(
+                    camera.eye,
+                    camera.target,
+                    camera.up,
+                ),
+                znear: camera.znear,
+                zfar: camera.zfar,
             },
             view.clone(),
         );
 
         // GPU Picking pass
-        let picking_geometry = self.build_picking_geometry();
+        let picking_geometry = self.pick.build_geometry(
+            &self.renderers,
+            self.options.display.show_sidechains,
+        );
         self.pick.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
             &picking_geometry,
-            (self.input.mouse_pos.0 as u32, self.input.mouse_pos.1 as u32),
+            (self.cursor_pos.0 as u32, self.cursor_pos.1 as u32),
         );
 
         encoder
@@ -568,15 +397,7 @@ impl ProteinRenderEngine {
 
         // Try to complete any pending readback from previous frame
         // (non-blocking poll)
-        if let Some(raw_id) =
-            self.pick.picking.complete_readback(&self.context.device)
-        {
-            self.pick.hovered_target = self
-                .pick
-                .pick_map
-                .as_ref()
-                .map_or(PickTarget::None, |pm| pm.resolve(raw_id));
-        }
+        self.pick.poll_and_resolve(&self.context.device);
 
         frame.present();
 
@@ -609,79 +430,85 @@ impl ProteinRenderEngine {
     }
 }
 
-/// Compute initial per-residue colors from chain hue ramp.
-fn initial_chain_colors(
-    backbone_chains: &[Vec<Vec3>],
-    total_residues: usize,
-) -> Vec<[f32; 3]> {
-    if backbone_chains.is_empty() {
-        return vec![[0.5, 0.5, 0.5]; total_residues.max(1)];
-    }
-    let num_chains = backbone_chains.len();
-    let mut colors = Vec::with_capacity(total_residues);
-    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let t = if num_chains > 1 {
-            chain_idx as f32 / (num_chains - 1) as f32
-        } else {
-            0.0
-        };
-        let color = ProteinRenderEngine::chain_color(t);
-        let n_residues = chain.len() / 3;
-        colors.extend(std::iter::repeat_n(color, n_residues));
-    }
-    colors
-}
-
-/// Collect all atom positions for initial camera fit (protein + ligands + NA).
-fn collect_all_positions(
-    render_coords: &RenderCoords,
-    scene: &Scene,
-    options: &Options,
-) -> Vec<Vec3> {
-    let mut positions = render_coords.all_positions.clone();
-    let non_protein: Vec<foldit_conv::types::entity::MoleculeEntity> = scene
-        .entities()
-        .iter()
-        .filter(|se| !se.is_protein())
-        .map(|se| se.entity.clone())
-        .collect();
-    positions.extend(BallAndStickRenderer::collect_positions(
-        &non_protein,
-        &options.display,
-    ));
-    for chain in scene
-        .nucleic_acid_entities()
-        .iter()
-        .flat_map(|se| se.entity.extract_p_atom_chains())
-    {
-        positions.extend(&chain);
-    }
-    positions
-}
-
 // =============================================================================
-// Camera
+// Command dispatch
 // =============================================================================
 
-impl ProteinRenderEngine {
-    /// Fit camera to the currently focused element.
-    pub fn fit_camera_to_focus(&mut self) {
-        match *self.scene.focus() {
-            Focus::Session => {
-                let positions = self.scene.all_positions();
-                if !positions.is_empty() {
-                    self.camera_controller
-                        .fit_to_positions_animated(&positions);
-                }
+impl VisoEngine {
+    /// Execute a single [`command::VisoCommand`].
+    ///
+    /// This is **the** centralized entry point for all interactive behavior.
+    /// Keyboard bindings, mouse gestures, GUI buttons, and programmatic
+    /// callers all go through here.
+    ///
+    /// Returns `true` if the residue selection changed (relevant for
+    /// selection commands only).
+    pub fn execute(&mut self, cmd: command::VisoCommand) -> bool {
+        use command::VisoCommand;
+        match cmd {
+            // ── Camera ──
+            VisoCommand::RecenterCamera => {
+                self.fit_camera_to_focus();
+                false
             }
-            Focus::Entity(eid) => {
-                if let Some(se) = self.scene.entity(eid) {
-                    let positions = se.entity.positions();
-                    if !positions.is_empty() {
-                        self.camera_controller
-                            .fit_to_positions_animated(&positions);
-                    }
+            VisoCommand::ToggleAutoRotate => {
+                let _ = self.camera_controller.toggle_auto_rotate();
+                false
+            }
+            VisoCommand::RotateCamera { delta } => {
+                self.camera_controller.rotate(delta);
+                false
+            }
+            VisoCommand::PanCamera { delta } => {
+                self.camera_controller.pan(delta);
+                false
+            }
+            VisoCommand::Zoom { delta } => {
+                self.camera_controller.zoom(delta);
+                false
+            }
+
+            // ── Focus ──
+            VisoCommand::CycleFocus => {
+                let _ = self.scene.cycle_focus();
+                self.fit_camera_to_focus();
+                false
+            }
+            VisoCommand::ResetFocus => {
+                self.scene.set_focus(Focus::Session);
+                self.fit_camera_to_focus();
+                false
+            }
+
+            // ── Playback ──
+            VisoCommand::ToggleTrajectory => {
+                if self.trajectory_player.is_some() {
+                    self.toggle_trajectory();
                 }
+                false
+            }
+
+            // ── Selection ──
+            VisoCommand::ClearSelection => self.pick.clear_selection(),
+            VisoCommand::SelectResidue { index, extend } => {
+                self.pick.picking.handle_click(index, extend)
+            }
+            VisoCommand::SelectSegment { index, extend } => self
+                .pick
+                .select_segment(index, &self.sc_cache.ss_types, extend),
+            VisoCommand::SelectChain { index, extend } => {
+                let chains = self.renderers.backbone.cached_chains();
+                self.pick.select_chain(index, chains, extend)
+            }
+
+            // ── Constraint visualization ──
+            VisoCommand::UpdateBands { bands } => {
+                self.update_bands(&bands);
+                false
+            }
+            VisoCommand::UpdatePull { pull } => {
+                self.update_pull(pull.as_ref());
+                false
             }
         }
     }

@@ -2,9 +2,11 @@ use foldit_conv::render::RenderCoords;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
+use crate::camera::frustum::Frustum;
 use crate::gpu::render_context::RenderContext;
 use crate::gpu::shader_composer::ShaderComposer;
-use crate::options::Options;
+use crate::options::VisoOptions;
+use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::backbone::{BackboneRenderer, ChainPair};
 use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
 use crate::renderer::geometry::band::BandRenderer;
@@ -13,6 +15,18 @@ use crate::renderer::geometry::pull::PullRenderer;
 use crate::renderer::geometry::sidechain::{SidechainRenderer, SidechainView};
 use crate::renderer::PipelineLayouts;
 use crate::scene::Scene;
+
+/// Input for the main geometry render pass.
+pub(crate) struct GeometryPassInput<'a> {
+    /// Color attachment (post-process input).
+    pub color: &'a wgpu::TextureView,
+    /// Normal attachment (post-process input).
+    pub normal: &'a wgpu::TextureView,
+    /// Depth attachment.
+    pub depth: &'a wgpu::TextureView,
+    /// Whether sidechain capsules should be drawn.
+    pub show_sidechains: bool,
+}
 
 /// All geometry renderers grouped together.
 pub(crate) struct Renderers {
@@ -94,7 +108,7 @@ impl Renderers {
         &mut self,
         context: &RenderContext,
         scene: &Scene,
-        options: &Options,
+        options: &VisoOptions,
     ) {
         let non_protein_refs: Vec<MoleculeEntity> = scene
             .entities()
@@ -108,6 +122,61 @@ impl Renderers {
             &options.display,
             Some(&options.colors),
         );
+    }
+
+    /// Encode the main geometry render pass.
+    pub fn encode_geometry_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &GeometryPassInput<'_>,
+        bind_groups: &DrawBindGroups<'_>,
+        frustum: &Frustum,
+    ) {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("main render pass"),
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    view: input.color,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: input.normal,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+            ],
+            depth_stencil_attachment: Some(
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: input.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                },
+            ),
+            ..Default::default()
+        });
+
+        self.backbone.draw_culled(&mut rp, bind_groups, frustum);
+
+        if input.show_sidechains {
+            self.sidechain.draw(&mut rp, bind_groups);
+        }
+
+        self.ball_and_stick.draw(&mut rp, bind_groups);
+        self.nucleic_acid.draw(&mut rp, bind_groups);
+        self.band.draw(&mut rp, bind_groups);
+        self.pull.draw(&mut rp, bind_groups);
     }
 
     /// GPU buffer sizes across all renderers.

@@ -23,6 +23,7 @@ pub struct SmoothInterpolation {
 impl SmoothInterpolation {
     /// Create with custom parameters.
     #[must_use]
+    #[allow(dead_code)]
     pub fn new(duration: Duration, easing: EasingFunction) -> Self {
         Self {
             duration,
@@ -43,6 +44,7 @@ impl SmoothInterpolation {
 
     /// Fast interpolation (100ms, quadratic ease-out).
     #[must_use]
+    #[allow(dead_code)]
     pub fn fast() -> Self {
         Self {
             duration: Duration::from_millis(100),
@@ -53,6 +55,7 @@ impl SmoothInterpolation {
 
     /// Linear interpolation (no easing distortion).
     #[must_use]
+    #[allow(dead_code)]
     pub fn linear(duration: Duration) -> Self {
         Self {
             duration,
@@ -63,6 +66,7 @@ impl SmoothInterpolation {
 
     /// Set preemption strategy.
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_preemption(mut self, strategy: PreemptionStrategy) -> Self {
         self.preemption = strategy;
         self

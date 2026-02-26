@@ -1,19 +1,21 @@
 //! Transition describes how to animate from the current state to a new target.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::behaviors::{
-    AnimationBehavior, SharedBehavior, SmoothInterpolation, Snap,
+    shared, AnimationBehavior, BackboneThenExpand, Cascade, CollapseExpand,
+    SharedBehavior, SmoothInterpolation, Snap,
 };
 
 /// Describes how to animate from current state to a new target.
 ///
-/// Consumers construct transitions with the desired behavior and flags.
-/// Viso provides built-in behaviors ([`SmoothInterpolation`],
-/// [`CollapseExpand`](super::behaviors::CollapseExpand),
-/// [`BackboneThenExpand`](super::behaviors::BackboneThenExpand),
-/// [`Cascade`](super::behaviors::Cascade), [`Snap`]) or consumers can
-/// implement [`AnimationBehavior`] for custom strategies.
+/// Consumers construct transitions via preset constructors:
+/// [`snap()`](Self::snap), [`smooth()`](Self::smooth),
+/// [`collapse_expand()`](Self::collapse_expand),
+/// [`backbone_then_expand()`](Self::backbone_then_expand),
+/// [`cascade()`](Self::cascade), or [`with_behavior()`](Self::with_behavior)
+/// for custom strategies.
 #[derive(Clone)]
 pub struct Transition {
     /// The interpolation behavior (easing, phasing, duration).
@@ -42,6 +44,38 @@ impl Transition {
     pub fn smooth() -> Self {
         Self {
             behavior: Arc::new(SmoothInterpolation::standard()),
+            allows_size_change: false,
+            suppress_initial_sidechains: false,
+        }
+    }
+
+    /// Sidechains collapse to CA, backbone moves, sidechains expand.
+    /// Used for mutations.
+    #[must_use]
+    pub fn collapse_expand(collapse: Duration, expand: Duration) -> Self {
+        Self {
+            behavior: shared(CollapseExpand::new(collapse, expand)),
+            allows_size_change: true,
+            suppress_initial_sidechains: true,
+        }
+    }
+
+    /// Backbone animates first, then sidechains expand.
+    /// Two-phase with configurable durations.
+    #[must_use]
+    pub fn backbone_then_expand(backbone: Duration, expand: Duration) -> Self {
+        Self {
+            behavior: shared(BackboneThenExpand::new(backbone, expand)),
+            allows_size_change: false,
+            suppress_initial_sidechains: true,
+        }
+    }
+
+    /// Staggered per-residue delays for wave-like effects.
+    #[must_use]
+    pub fn cascade(base: Duration, delay_per_residue: Duration) -> Self {
+        Self {
+            behavior: shared(Cascade::new(base, delay_per_residue)),
             allows_size_change: false,
             suppress_initial_sidechains: false,
         }

@@ -25,6 +25,7 @@ pub struct Cascade {
     /// Base duration for each residue's animation.
     pub base_duration: Duration,
     /// Delay between each residue starting.
+    #[allow(dead_code)]
     pub delay_per_residue: Duration,
     /// Easing for individual residue animations.
     pub easing: EasingFunction,
@@ -43,6 +44,7 @@ impl Cascade {
 
     /// Set custom easing.
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_easing(mut self, easing: EasingFunction) -> Self {
         self.easing = easing;
         self
@@ -51,6 +53,7 @@ impl Cascade {
     /// Maps global animation progress to per-residue progress,
     /// accounting for staggered start times.
     #[must_use]
+    #[allow(dead_code)]
     pub fn residue_t(
         &self,
         global_t: f32,
@@ -91,6 +94,7 @@ impl Cascade {
 
     /// Total duration for a given number of residues.
     #[must_use]
+    #[allow(dead_code)]
     pub fn total_duration_for(&self, num_residues: usize) -> Duration {
         if num_residues == 0 {
             return Duration::ZERO;

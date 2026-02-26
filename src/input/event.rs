@@ -1,16 +1,15 @@
-/// Platform-agnostic input events for the render engine.
+/// Platform-agnostic input events.
 ///
-/// Consumers forward raw window events as [`InputEvent`] variants;
-/// the engine internally dispatches them to camera, picking, and selection.
+/// These are fed into an [`InputProcessor`](super::InputProcessor) which
+/// converts them into [`VisoCommand`](crate::VisoCommand) values.
 ///
 /// # Example
 ///
 /// ```ignore
-/// engine.handle_input(InputEvent::CursorMoved { x: 100.0, y: 200.0 });
-/// engine.handle_input(InputEvent::MouseButton {
-///     button: MouseButton::Left,
-///     pressed: true,
-/// });
+/// let cmd = input_processor.handle_event(
+///     InputEvent::CursorMoved { x: 100.0, y: 200.0 },
+///     engine.hovered_target(),
+/// );
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputEvent {

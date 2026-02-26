@@ -1,3 +1,6 @@
+//! Build script: ensures the viso-ui dist directory exists for rust-embed.
+#![allow(clippy::expect_used)]
+
 use std::path::{Path, PathBuf};
 
 fn main() {

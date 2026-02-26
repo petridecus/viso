@@ -1,15 +1,18 @@
 //! Centralized rendering/display options with TOML preset support.
 //!
 //! All tweakable settings (lighting, post-processing, camera, colors, geometry,
-//! keybindings, display toggles) are consolidated here. Options serialize
-//! to/from TOML for view presets stored in `assets/view_presets/`.
+//! display toggles) are consolidated here. Options serialize to/from TOML for
+//! view presets stored in `assets/view_presets/`.
+//!
+//! Key bindings live in [`crate::input::KeyBindings`] on the
+//! [`InputProcessor`](crate::input::InputProcessor), not here — they are an
+//! input concern, not a rendering option.
 
 mod camera;
 mod colors;
 mod debug;
 mod display;
 mod geometry;
-mod keybindings;
 mod lighting;
 mod post_processing;
 
@@ -26,7 +29,6 @@ pub use geometry::{
     lod_params, lod_scaled, select_chain_lod_tier, select_lod_tier,
     GeometryOptions,
 };
-pub use keybindings::KeybindingOptions;
 pub use lighting::LightingOptions;
 pub use post_processing::PostProcessingOptions;
 use schemars::JsonSchema;
@@ -40,7 +42,7 @@ use crate::error::VisoError;
     Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
 )]
 #[serde(default)]
-pub struct Options {
+pub struct VisoOptions {
     /// Display toggles and coloring modes.
     pub display: DisplayOptions,
     /// Lighting parameters.
@@ -54,18 +56,15 @@ pub struct Options {
     pub colors: ColorOptions,
     /// Backbone and ligand geometry options.
     pub geometry: GeometryOptions,
-    /// Keyboard binding options.
-    #[schemars(skip)]
-    pub keybindings: KeybindingOptions,
     /// Debug visualization options.
     pub debug: DebugOptions,
 }
 
-impl Options {
+impl VisoOptions {
     /// Generate JSON Schema describing the UI-exposed options.
     #[must_use]
     pub fn json_schema() -> schemars::Schema {
-        schemars::schema_for!(Options)
+        schemars::schema_for!(VisoOptions)
     }
 
     /// Load options from a TOML file. Missing fields use defaults.
@@ -122,9 +121,9 @@ mod tests {
 
     #[test]
     fn default_round_trips_through_toml() {
-        let opts = Options::default();
+        let opts = VisoOptions::default();
         let toml_str = toml::to_string_pretty(&opts).unwrap();
-        let parsed: Options = toml::from_str(&toml_str).unwrap();
+        let parsed: VisoOptions = toml::from_str(&toml_str).unwrap();
         assert_eq!(opts, parsed);
     }
 
@@ -134,23 +133,11 @@ mod tests {
 [lighting]
 shininess = 80.0
 ";
-        let opts: Options = toml::from_str(toml_str).unwrap();
+        let opts: VisoOptions = toml::from_str(toml_str).unwrap();
         assert_eq!(opts.lighting.shininess, 80.0);
         // Everything else should be default
         assert_eq!(opts.lighting.ambient, 0.45);
         assert_eq!(opts.display.lipid_mode, LipidMode::Coarse);
-    }
-
-    #[test]
-    fn keybinding_lookup() {
-        use crate::input::KeyAction;
-        let opts = Options::default();
-        assert_eq!(
-            opts.keybindings.lookup("KeyQ"),
-            Some(KeyAction::RecenterCamera)
-        );
-        assert_eq!(opts.keybindings.lookup("Tab"), Some(KeyAction::CycleFocus));
-        assert_eq!(opts.keybindings.lookup("KeyZ"), None);
     }
 
     #[test]
@@ -163,7 +150,7 @@ shininess = 80.0
     #[test]
     fn schema_has_expected_properties() {
         let schema_value =
-            serde_json::to_value(Options::json_schema()).unwrap();
+            serde_json::to_value(VisoOptions::json_schema()).unwrap();
         let props = schema_value["properties"].as_object().unwrap();
 
         // UI-exposed sections should be present
@@ -174,7 +161,6 @@ shininess = 80.0
 
         // Skipped sections should be absent
         assert!(!props.contains_key("colors"));
-        assert!(!props.contains_key("keybindings"));
 
         // Geometry and debug should be present (exposed in UI)
         assert!(props.contains_key("geometry"));

@@ -21,15 +21,17 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::error::VisoError;
-use crate::options::Options;
-use crate::{InputEvent, MouseButton, ProteinRenderEngine};
+use crate::input::processor::InputProcessor;
+use crate::input::{InputEvent, MouseButton};
+use crate::options::VisoOptions;
+use crate::VisoEngine;
 
 // ── Builder ──────────────────────────────────────────────────────────────
 
 /// Fluent builder for [`Viewer`].
 pub struct ViewerBuilder {
     path: Option<String>,
-    options: Option<Options>,
+    options: Option<VisoOptions>,
     title: String,
 }
 
@@ -53,7 +55,7 @@ impl ViewerBuilder {
 
     /// Override the default options.
     #[must_use]
-    pub fn with_options(mut self, options: Options) -> Self {
+    pub fn with_options(mut self, options: VisoOptions) -> Self {
         self.options = Some(options);
         self
     }
@@ -84,7 +86,7 @@ impl ViewerBuilder {
 /// enter the event loop.
 pub struct Viewer {
     path: Option<String>,
-    options: Option<Options>,
+    options: Option<VisoOptions>,
     title: String,
 }
 
@@ -110,6 +112,7 @@ impl Viewer {
         let mut app = ViewerApp {
             window: None,
             engine: None,
+            input: InputProcessor::new(),
             last_frame_time: Instant::now(),
             path: self.path,
             options: self.options,
@@ -129,10 +132,11 @@ impl Viewer {
 /// Internal winit application handler.
 struct ViewerApp {
     window: Option<Arc<Window>>,
-    engine: Option<ProteinRenderEngine>,
+    engine: Option<VisoEngine>,
+    input: InputProcessor,
     last_frame_time: Instant,
     path: Option<String>,
-    options: Option<Options>,
+    options: Option<VisoOptions>,
     title: String,
     #[cfg(feature = "gui")]
     panel: crate::gui::panel::PanelController,
@@ -146,19 +150,17 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
     (inner.width.max(1), inner.height.max(1))
 }
 
-/// Create a [`ProteinRenderEngine`], optionally loading a structure file.
+/// Create a [`VisoEngine`], optionally loading a structure file.
 fn create_engine(
     window: Arc<Window>,
     size: (u32, u32),
     scale: f64,
     path: Option<&str>,
-) -> Result<ProteinRenderEngine, VisoError> {
+) -> Result<VisoEngine, VisoError> {
     let result = if let Some(path) = path {
-        pollster::block_on(ProteinRenderEngine::new_with_path(
-            window, size, scale, path,
-        ))
+        pollster::block_on(VisoEngine::new_with_path(window, size, scale, path))
     } else {
-        pollster::block_on(ProteinRenderEngine::new(window, size, scale))
+        pollster::block_on(VisoEngine::new(window, size, scale))
     };
     result.map_err(|e| VisoError::Viewer(e.to_string()))
 }
@@ -225,16 +227,32 @@ impl ViewerApp {
         w.request_redraw();
     }
 
+    // ── Input event handlers ────────────────────────────────────────
+
+    /// Forward a mouse/scroll/modifier event through the InputProcessor
+    /// and execute any resulting command.
+    fn dispatch_input(&mut self, event: InputEvent) {
+        let Some(engine) = &mut self.engine else {
+            return;
+        };
+        // Update cursor position for GPU picking
+        if let InputEvent::CursorMoved { x, y } = event {
+            engine.set_cursor_pos(x, y);
+        }
+        if let Some(cmd) =
+            self.input.handle_event(event, engine.hovered_target())
+        {
+            let _ = engine.execute(cmd);
+        }
+    }
+
     fn handle_mouse_input(
         &mut self,
         button: winit::event::MouseButton,
         state: ElementState,
     ) {
-        let Some(engine) = &mut self.engine else {
-            return;
-        };
         let pressed = state == ElementState::Pressed;
-        let _ = engine.handle_input(InputEvent::MouseButton {
+        self.dispatch_input(InputEvent::MouseButton {
             button: MouseButton::from(button),
             pressed,
         });
@@ -244,11 +262,8 @@ impl ViewerApp {
         &mut self,
         position: winit::dpi::PhysicalPosition<f64>,
     ) {
-        let Some(engine) = &mut self.engine else {
-            return;
-        };
         #[allow(clippy::cast_possible_truncation)]
-        let _ = engine.handle_input(InputEvent::CursorMoved {
+        self.dispatch_input(InputEvent::CursorMoved {
             x: position.x as f32,
             y: position.y as f32,
         });
@@ -265,10 +280,7 @@ impl ViewerApp {
             MouseScrollDelta::LineDelta(_, y) => y,
             MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
         };
-        let Some(engine) = &mut self.engine else {
-            return;
-        };
-        let _ = engine.handle_input(InputEvent::Scroll {
+        self.dispatch_input(InputEvent::Scroll {
             delta: scroll_delta,
         });
         let Some(w) = &self.window else { return };
@@ -276,10 +288,7 @@ impl ViewerApp {
     }
 
     fn handle_modifiers_changed(&mut self, modifiers: winit::event::Modifiers) {
-        let Some(engine) = &mut self.engine else {
-            return;
-        };
-        let _ = engine.handle_input(InputEvent::ModifiersChanged {
+        self.dispatch_input(InputEvent::ModifiersChanged {
             shift: modifiers.state().shift_key(),
         });
     }
@@ -288,13 +297,13 @@ impl ViewerApp {
         if event.state != ElementState::Pressed {
             return;
         }
-        use winit::keyboard::PhysicalKey;
+        use winit::keyboard::{KeyCode, PhysicalKey};
         let PhysicalKey::Code(code) = event.physical_key else {
             return;
         };
 
         #[cfg(feature = "gui")]
-        if code == winit::keyboard::KeyCode::Backslash {
+        if code == KeyCode::Backslash {
             self.panel.toggle();
             let Some(window) = &self.window else { return };
             self.panel.apply_layout(window);
@@ -304,9 +313,32 @@ impl ViewerApp {
         let Some(engine) = &mut self.engine else {
             return;
         };
+
+        // Display toggles are VisoOptions mutations, not commands.
+        // The viewer handles them directly.
+        match code {
+            KeyCode::KeyI => {
+                engine.toggle_ions();
+                return;
+            }
+            KeyCode::KeyU => {
+                engine.toggle_waters();
+                return;
+            }
+            KeyCode::KeyO => {
+                engine.toggle_solvent();
+                return;
+            }
+            KeyCode::KeyL => {
+                engine.toggle_lipids();
+                return;
+            }
+            _ => {}
+        }
+
         let key_str = format!("{code:?}");
-        if let Some(action) = engine.options().keybindings.lookup(&key_str) {
-            action.execute(engine);
+        if let Some(cmd) = self.input.handle_key_press(&key_str) {
+            let _ = engine.execute(cmd);
         }
     }
 }

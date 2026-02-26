@@ -1,16 +1,35 @@
-//! Animation methods for ProteinRenderEngine
+//! Animation methods for VisoEngine
 
 use std::path::Path;
+use std::time::Instant;
 
 use glam::Vec3;
 
-use super::ProteinRenderEngine;
+use super::VisoEngine;
 use crate::animation::transition::Transition;
 use crate::renderer::geometry::sidechain::SidechainView;
 use crate::scene::SceneEntity;
 use crate::util::trajectory::TrajectoryPlayer;
 
-impl ProteinRenderEngine {
+impl VisoEngine {
+    /// Tick trajectory playback or the standard animator, submitting any
+    /// interpolated frame to the background thread.
+    pub(crate) fn tick_animation(&mut self) {
+        if let Some(ref mut player) = self.trajectory_player {
+            if let Some(backbone_chains) = player.tick(Instant::now()) {
+                self.submit_animation_frame_with_backbone(
+                    backbone_chains,
+                    false,
+                );
+            }
+        } else {
+            let animating = self.animator.update(Instant::now());
+            if animating {
+                self.submit_animation_frame();
+            }
+        }
+    }
+
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &Path) {
         use foldit_conv::adapters::dcd::dcd_file_to_frames;
@@ -113,19 +132,20 @@ impl ProteinRenderEngine {
 
     /// Capture sidechain start positions for animation preemption.
     fn capture_sidechain_start(&mut self, sidechain: &SidechainView) {
-        if self.sc.target_sidechain_positions.len() == sidechain.positions.len()
+        if self.sc_anim.target_sidechain_positions.len()
+            == sidechain.positions.len()
         {
             if self.animator.is_animating()
                 && self.animator.has_sidechain_data()
             {
-                self.sc.start_sidechain_positions =
+                self.sc_anim.start_sidechain_positions =
                     self.animator.get_sidechain_positions();
                 let ctx = self.animator.interpolation_context();
-                self.sc.start_backbone_sidechain_bonds = self
-                    .sc
+                self.sc_anim.start_backbone_sidechain_bonds = self
+                    .sc_anim
                     .start_backbone_sidechain_bonds
                     .iter()
-                    .zip(self.sc.target_backbone_sidechain_bonds.iter())
+                    .zip(self.sc_anim.target_backbone_sidechain_bonds.iter())
                     .map(|((start_pos, idx), (target_pos, _))| {
                         let pos = *start_pos
                             + (*target_pos - *start_pos) * ctx.eased_t;
@@ -133,14 +153,15 @@ impl ProteinRenderEngine {
                     })
                     .collect();
             } else {
-                self.sc.start_sidechain_positions =
-                    self.sc.target_sidechain_positions.clone();
-                self.sc.start_backbone_sidechain_bonds =
-                    self.sc.target_backbone_sidechain_bonds.clone();
+                self.sc_anim.start_sidechain_positions =
+                    self.sc_anim.target_sidechain_positions.clone();
+                self.sc_anim.start_backbone_sidechain_bonds =
+                    self.sc_anim.target_backbone_sidechain_bonds.clone();
             }
         } else {
-            self.sc.start_sidechain_positions = sidechain.positions.to_vec();
-            self.sc.start_backbone_sidechain_bonds =
+            self.sc_anim.start_sidechain_positions =
+                sidechain.positions.to_vec();
+            self.sc_anim.start_backbone_sidechain_bonds =
                 sidechain.backbone_bonds.to_vec();
         }
     }
@@ -156,15 +177,15 @@ impl ProteinRenderEngine {
         self.capture_sidechain_start(sidechain);
 
         // Set new targets and cached data
-        self.sc.target_sidechain_positions = sidechain.positions.to_vec();
-        self.sc.target_backbone_sidechain_bonds =
+        self.sc_anim.target_sidechain_positions = sidechain.positions.to_vec();
+        self.sc_anim.target_backbone_sidechain_bonds =
             sidechain.backbone_bonds.to_vec();
-        self.sc.cached_sidechain_bonds = sidechain.bonds.to_vec();
-        self.sc.cached_sidechain_hydrophobicity =
+        self.sc_cache.sidechain_bonds = sidechain.bonds.to_vec();
+        self.sc_cache.sidechain_hydrophobicity =
             sidechain.hydrophobicity.to_vec();
-        self.sc.cached_sidechain_residue_indices =
+        self.sc_cache.sidechain_residue_indices =
             sidechain.residue_indices.to_vec();
-        self.sc.cached_sidechain_atom_names = sidechain_atom_names.to_vec();
+        self.sc_cache.sidechain_atom_names = sidechain_atom_names.to_vec();
 
         // Extract CA positions from backbone for sidechain collapse animation
         let ca_positions =
@@ -198,9 +219,9 @@ impl ProteinRenderEngine {
         // surface)
         let offset_map = self.sheet_offset_map();
         let raw_view = SidechainView {
-            positions: &self.sc.start_sidechain_positions,
+            positions: &self.sc_anim.start_sidechain_positions,
             bonds: sidechain.bonds,
-            backbone_bonds: &self.sc.start_backbone_sidechain_bonds,
+            backbone_bonds: &self.sc_anim.start_backbone_sidechain_bonds,
             hydrophobicity: sidechain.hydrophobicity,
             residue_indices: sidechain.residue_indices,
         };

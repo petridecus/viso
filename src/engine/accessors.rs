@@ -1,14 +1,42 @@
-//! Read-only query methods and lifecycle helpers for [`ProteinRenderEngine`].
+//! Read-only query methods and lifecycle helpers for [`VisoEngine`].
 
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
-use super::ProteinRenderEngine;
-use crate::options::Options;
-use crate::scene::Scene;
+use super::VisoEngine;
+use crate::animation::transition::Transition;
+use crate::options::VisoOptions;
+use crate::scene::{EntityResidueRange, Focus, Scene};
+
+// ── Camera ──
+
+impl VisoEngine {
+    /// Fit camera to the currently focused element.
+    pub fn fit_camera_to_focus(&mut self) {
+        match *self.scene.focus() {
+            Focus::Session => {
+                let positions = self.scene.all_positions();
+                if !positions.is_empty() {
+                    self.camera_controller
+                        .fit_to_positions_animated(&positions);
+                }
+            }
+            Focus::Entity(eid) => {
+                if let Some(se) = self.scene.entity(eid) {
+                    let positions = se.entity.positions();
+                    if !positions.is_empty() {
+                        self.camera_controller
+                            .fit_to_positions_animated(&positions);
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ── Lifecycle ──
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Advance camera animation and apply any pending scene from the
     /// background processor.
     ///
@@ -30,7 +58,7 @@ impl ProteinRenderEngine {
 
 // ── Scene access ──
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Read-only access to the scene graph.
     pub fn scene(&self) -> &Scene {
         &self.scene
@@ -47,9 +75,71 @@ impl ProteinRenderEngine {
     }
 }
 
+// ── Source-of-truth entity access ──
+
+impl VisoEngine {
+    /// Get the canonical entity list (source of truth).
+    ///
+    /// This is the authoritative copy of entity data on the engine.
+    /// Scene may temporarily differ during animation.
+    #[allow(dead_code)]
+    pub fn entities(&self) -> &[MoleculeEntity] {
+        &self.entities
+    }
+
+    /// Get per-entity residue ranges in the flat concatenated arrays.
+    ///
+    /// Each entry maps an entity ID to its start index and count in the
+    /// global residue array. Populated when the scene processor delivers
+    /// a prepared scene.
+    #[allow(dead_code)]
+    pub fn entity_ranges(&self) -> &[EntityResidueRange] {
+        &self.entity_ranges
+    }
+
+    /// Set the animation behavior for a specific entity.
+    ///
+    /// This behavior will be used when the entity is next updated.
+    /// Overrides the default smooth transition for the given entity.
+    #[allow(dead_code)]
+    pub fn set_entity_behavior(
+        &mut self,
+        entity_id: u32,
+        transition: Transition,
+    ) {
+        let _ = self.entity_behaviors.insert(entity_id, transition.clone());
+        self.animator.set_entity_behavior(entity_id, transition);
+    }
+
+    /// Clear a per-entity behavior override, reverting to default (smooth).
+    #[allow(dead_code)]
+    pub fn clear_entity_behavior(&mut self, entity_id: u32) {
+        let _ = self.entity_behaviors.remove(&entity_id);
+        self.animator.clear_entity_behavior(entity_id);
+    }
+}
+
+// ── Input state ──
+
+impl VisoEngine {
+    /// Update the cursor position used for GPU picking.
+    ///
+    /// Call this each frame (or on each `CursorMoved` event) so the
+    /// picking pass reads from the correct screen coordinate.
+    pub fn set_cursor_pos(&mut self, x: f32, y: f32) {
+        self.cursor_pos = (x, y);
+    }
+
+    /// The pick target currently under the cursor (resolved from the
+    /// previous frame's GPU picking pass).
+    pub fn hovered_target(&self) -> crate::renderer::picking::PickTarget {
+        self.pick.hovered_target
+    }
+}
+
 // ── Query (read-only state inspection) ──
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Currently hovered residue index, or -1 if none.
     pub fn hovered_residue(&self) -> i32 {
         self.pick.hovered_target.as_residue_i32()
@@ -57,12 +147,12 @@ impl ProteinRenderEngine {
 
     /// Currently selected residue indices.
     pub fn selected_residues(&self) -> &[i32] {
-        &self.pick.picking.selected_residues
+        self.pick.selected_residues()
     }
 
     /// Clear the current residue selection.
     pub fn clear_selection(&mut self) {
-        self.pick.picking.clear_selection();
+        let _ = self.pick.clear_selection();
     }
 
     /// Current screen size in physical pixels `(width, height)`.
@@ -86,7 +176,7 @@ impl ProteinRenderEngine {
     }
 
     /// Read-only access to the current options.
-    pub fn options(&self) -> &Options {
+    pub fn options(&self) -> &VisoOptions {
         &self.options
     }
 
@@ -123,7 +213,7 @@ impl ProteinRenderEngine {
 
 // ── Configuration ──
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Set the GPU render scale (supersampling factor).
     pub fn set_render_scale(&mut self, scale: u32) {
         self.context.render_scale = scale;
@@ -132,7 +222,7 @@ impl ProteinRenderEngine {
 
 // ── Visualization (bands, pulls) ──
 
-impl ProteinRenderEngine {
+impl VisoEngine {
     /// Clear all constraint band visualizations.
     pub fn clear_bands(&mut self) {
         self.renderers.band.clear();

@@ -277,6 +277,27 @@ impl Lighting {
         }
     }
 
+    /// Apply lighting options from the configuration to the GPU uniform.
+    pub fn apply_options(
+        &mut self,
+        opts: &crate::options::LightingOptions,
+        queue: &wgpu::Queue,
+    ) {
+        self.uniform.light1_intensity = opts.light1_intensity;
+        self.uniform.light2_intensity = opts.light2_intensity;
+        self.uniform.ambient = opts.ambient;
+        self.uniform.specular_intensity = opts.specular_intensity;
+        self.uniform.shininess = opts.shininess;
+        self.uniform.rim_power = opts.rim_power;
+        self.uniform.rim_intensity = opts.rim_intensity;
+        self.uniform.rim_directionality = opts.rim_directionality;
+        self.uniform.rim_color = opts.rim_color;
+        self.uniform.ibl_strength = opts.ibl_strength;
+        self.uniform.roughness = opts.roughness;
+        self.uniform.metalness = opts.metalness;
+        self.update_gpu(queue);
+    }
+
     /// Write the current lighting uniform to the GPU buffer.
     pub fn update_gpu(&self, queue: &wgpu::Queue) {
         queue.write_buffer(
@@ -284,6 +305,20 @@ impl Lighting {
             0,
             bytemuck::cast_slice(&[self.uniform]),
         );
+    }
+
+    /// Compute camera basis vectors and update headlamp directions.
+    ///
+    /// Convenience wrapper around [`update_headlamp`](Self::update_headlamp)
+    /// that extracts the basis from a [`Camera`](crate::camera::core::Camera).
+    pub fn update_headlamp_from_camera(
+        &mut self,
+        camera: &crate::camera::core::Camera,
+    ) {
+        let forward = (camera.target - camera.eye).normalize();
+        let right = camera.up.cross(forward).normalize();
+        let up = forward.cross(right);
+        self.update_headlamp(right, up, forward);
     }
 
     /// Update light directions to follow camera (headlamp mode)

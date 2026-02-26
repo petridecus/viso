@@ -142,6 +142,7 @@ pub struct PreparedScene {
     /// animation).
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     /// All atom positions for camera fitting.
+    #[allow(dead_code)]
     pub all_positions: Vec<Vec3>,
     /// Per-entity transitions. Entities in the map animate; others snap.
     /// Empty map = snap all (no animation).
@@ -149,8 +150,10 @@ pub struct PreparedScene {
     /// Where each entity's residues land in the flat concatenated arrays.
     pub entity_residue_ranges: Vec<EntityResidueRange>,
     /// Non-protein entities for ball-and-stick rendering.
+    #[allow(dead_code)]
     pub non_protein_entities: Vec<MoleculeEntity>,
     /// Base ring geometry from DNA/RNA entities.
+    #[allow(dead_code)]
     pub nucleic_acid_rings: Vec<NucleotideRing>,
     /// Mapping from raw GPU pick IDs to typed pick targets.
     pub pick_map: PickMap,

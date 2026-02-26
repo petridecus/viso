@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use winit::window::Window;
 
 use super::webview::{self, UiAction};
-use crate::ProteinRenderEngine;
+use crate::VisoEngine;
 
 /// Owns the webview panel and all associated state.
 pub(crate) struct PanelController {
@@ -57,7 +57,7 @@ impl PanelController {
         window: &Window,
         width: u32,
         height: u32,
-        engine: &ProteinRenderEngine,
+        engine: &VisoEngine,
     ) {
         match webview::create_webview(window, width, height, self.width) {
             Ok((wv, rx)) => {
@@ -150,7 +150,7 @@ impl PanelController {
     /// changed (so the caller can request a redraw of the layout).
     pub(crate) fn drain_and_apply(
         &mut self,
-        engine: &mut ProteinRenderEngine,
+        engine: &mut VisoEngine,
         window: &Window,
     ) {
         let Some(ref rx) = self.action_rx else {
@@ -205,7 +205,7 @@ impl PanelController {
     pub(crate) fn push_stats_if_due(
         &mut self,
         now: Instant,
-        engine: &ProteinRenderEngine,
+        engine: &VisoEngine,
     ) {
         let Some(ref wv) = self.webview else {
             return;
