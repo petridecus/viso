@@ -6,57 +6,127 @@ This chapter provides a high-level view of viso's architecture: how subsystems r
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Application Layer                         │
+│                      Application Layer                          │
 │  (foldit-rs window.rs / viso main.rs)                           │
-│                                                                  │
-│  winit events → input handling → engine API calls                │
-│  IPC messages → backend handler → engine API calls               │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
+│                                                                 │
+│  winit events ──► InputProcessor ──► VisoCommand                │
+│  IPC messages ──► backend handler ──► engine API calls          │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    ProteinRenderEngine                            │
-│                                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌──────────────┐  │
-│  │  Scene    │  │ Animator  │  │  Camera    │  │   Picking    │  │
-│  │          │  │          │  │ Controller │  │              │  │
-│  │ Groups   │  │ Behaviors│  │ Arcball    │  │ GPU readback │  │
-│  │ Entities │  │ Interp.  │  │ Animation  │  │ Selection    │  │
-│  │ Focus    │  │ Sidechain│  │ Frustum    │  │ Bit-array    │  │
-│  └────┬─────┘  └────┬─────┘  └────┬───────┘  └──────┬───────┘  │
-│       │              │             │                  │          │
-│       ▼              ▼             │                  │          │
-│  ┌─────────────────────────┐      │                  │          │
-│  │    SceneProcessor       │      │                  │          │
-│  │    (background thread)  │      │                  │          │
-│  │                         │      │                  │          │
-│  │  Per-group mesh cache   │      │                  │          │
-│  │  Tube/ribbon/sidechain  │      │                  │          │
-│  │  Ball-and-stick/NA gen  │      │                  │          │
-│  └───────────┬─────────────┘      │                  │          │
-│              │ triple buffer      │                  │          │
-│              ▼                    ▼                  ▼          │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                    Renderers                             │   │
-│  │                                                         │   │
-│  │  Molecular:                    Post-Processing:         │   │
-│  │  ├─ TubeRenderer              ├─ SSAO                   │   │
-│  │  ├─ RibbonRenderer            ├─ Bloom                  │   │
-│  │  ├─ CapsuleSidechainRenderer  ├─ Composite              │   │
-│  │  ├─ BallAndStickRenderer      └─ FXAA                   │   │
-│  │  ├─ BandRenderer                                        │   │
-│  │  ├─ PullRenderer              ShaderComposer:           │   │
-│  │  └─ NucleicAcidRenderer       └─ naga_oil composition   │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                           │                                     │
-│                           ▼                                     │
-│                    ┌─────────────┐                              │
-│                    │ RenderContext│                              │
-│                    │ wgpu device │                              │
-│                    │ queue       │                              │
-│                    │ surface     │                              │
-│                    └─────────────┘                              │
+│                         VisoEngine                              │
+│                                                                 │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │
+│  │ Scene      │  │ Animator   │  │ Camera     │  │ Picking    │ │
+│  │            │  │            │  │ Controller │  │ System     │ │
+│  │ Groups     │  │ Backbone   │  │ Arcball    │  │ GPU read   │ │
+│  │ Entities   │  │ Sidechain  │  │ Animation  │  │ Selection  │ │
+│  │ Focus      │  │ Per-entity │  │ Frustum    │  │ Bit-array  │ │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘ │
+│        │               │               │               │        │
+│        ▼               ▼               │               │        │
+│  ┌───────────────────────────┐         │               │        │
+│  │  SceneProcessor           │         │               │        │
+│  │  (background thread)      │         │               │        │
+│  │                           │         │               │        │
+│  │  Per-group mesh cache     │         │               │        │
+│  │  Tube/ribbon/sidechain    │         │               │        │
+│  │  Ball-and-stick/NA gen    │         │               │        │
+│  └─────────────┬─────────────┘         │               │        │
+│                │ triple buffer         │               │        │
+│                ▼                       ▼               ▼        │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                      Renderers                            │  │
+│  │                                                           │  │
+│  │  Molecular:                   Post-Processing:            │  │
+│  │  ├─ BackboneRenderer          ├─ SSAO                     │  │
+│  │  │  (tubes + ribbons)         ├─ Bloom                    │  │
+│  │  ├─ SidechainRenderer         ├─ Composite                │  │
+│  │  ├─ BallAndStickRenderer      └─ FXAA                     │  │
+│  │  ├─ BandRenderer                                          │  │
+│  │  ├─ PullRenderer              ShaderComposer:             │  │
+│  │  └─ NucleicAcidRenderer       └─ naga_oil composition     │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                            │                                    │
+│                            ▼                                    │
+│                    ┌──────────────┐                             │
+│                    │ RenderContext│                             │
+│                    │ wgpu device  │                             │
+│                    │ queue        │                             │
+│                    │ surface      │                             │
+│                    └──────────────┘                             │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## High-Level Data Flow
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                     INITIALIZATION                        │
+│                                                           │
+│  File path (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity> │
+│         │                                    │            │
+│         ▼                                    │            │
+│  foldit_conv::parse ──► Vec<MoleculeEntity> ◄┘            │
+│                                │                          │
+│                                ▼                          │
+│                     Engine stores as                      │
+│                    SOURCE OF TRUTH                        │
+└────────────────────────────┬──────────────────────────────┘
+                             │
+                             ▼
+┌───────────────────────────────────────────────────────────┐
+│                         SCENE                             │
+│                                                           │
+│  The "live" renderable state of the world.                │
+│  Positions, SS types, colors, sidechain topology —        │
+│  everything needed to produce geometry.                   │
+│                                                           │
+│  Dirty-flagged: only rebuilds geometry when changed.      │
+│  During animation: reflects interpolated state.           │
+│  When animation completes: matches source of truth.       │
+└────────────────────────────┬──────────────────────────────┘
+                             │
+                             ▼
+┌───────────────────────────────────────────────────────────┐
+│                       RENDERER                            │
+│                                                           │
+│  Consumes Scene read-only, produces GPU data.             │
+│                                                           │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │ renderer::geometry                                  │  │
+│  │                                                     │  │
+│  │ Scene data ──► meshes + impostor instances          │  │
+│  │ (tubes, ribbons, capsules, ball-and-stick, NA)      │  │
+│  └──────────────────────┬──────────────────────────────┘  │
+│                         │                                 │
+│                         ▼                                 │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │ GPU Passes                                          │  │
+│  │                                                     │  │
+│  │ 1. Geometry pass (color + normals + depth)          │  │
+│  │ 2. Picking pass (object ID readback)                │  │
+│  │ 3. Post-process (SSAO, bloom, fog, FXAA)            │  │
+│  │           │                                         │  │
+│  │           ▼                                         │  │
+│  │ Final 2D screen-space texture                       │  │
+│  └─────────────────────────────────────────────────────┘  │
+└────────────────────────────┬──────────────────────────────┘
+                             │
+                             ▼
+┌───────────────────────────────────────────────────────────┐
+│                   OUTPUT / EMBEDDING                      │
+│                                                           │
+│  The final texture is consumed by the host:               │
+│    • winit window (current viewer)                        │
+│    • HTML canvas (wasm / web embed)                       │
+│    • PNG snapshot (headless)                              │
+│    • dioxus / egui / any framework with a texture slot    │
+│                                                           │
+│  The engine produces a texture; the consumer decides      │
+│  what to do with it.                                      │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow: File to Screen
@@ -108,6 +178,7 @@ Viso uses two threads with lock-free communication:
 ### Main Thread
 
 Owns all GPU resources and runs the render loop. Responsibilities:
+
 - Processing input events (mouse, keyboard, IPC)
 - Managing the scene (add/remove groups, update entities)
 - Running animation (update each frame, get interpolated state)
@@ -122,6 +193,7 @@ The main thread **never blocks** on the background thread. If meshes aren't read
 ### Background Thread
 
 Owns the mesh cache and performs CPU-intensive work:
+
 - Receiving scene requests via `mpsc::Receiver` (blocks when idle)
 - Generating tube, ribbon, sidechain, ball-and-stick, and nucleic acid meshes
 - Maintaining a per-group mesh cache with version-based invalidation
@@ -130,13 +202,14 @@ Owns the mesh cache and performs CPU-intensive work:
 
 ### Lock-Free Bridge
 
-| Mechanism | Direction | Semantics |
-|-----------|-----------|-----------|
-| `mpsc::channel` | Main → Background | Submit requests (non-blocking send) |
-| `triple_buffer` (scene) | Background → Main | Latest `PreparedScene` (non-blocking read) |
-| `triple_buffer` (anim) | Background → Main | Latest `PreparedAnimationFrame` (non-blocking read) |
+| Mechanism               | Direction         | Semantics                                           |
+| ----------------------- | ----------------- | --------------------------------------------------- |
+| `mpsc::channel`         | Main → Background | Submit requests (non-blocking send)                 |
+| `triple_buffer` (scene) | Background → Main | Latest `PreparedScene` (non-blocking read)          |
+| `triple_buffer` (anim)  | Background → Main | Latest `PreparedAnimationFrame` (non-blocking read) |
 
 Triple buffers guarantee:
+
 - The writer always has a buffer to write to (never blocks)
 - The reader always gets the latest completed result
 - No data races or mutex contention
@@ -145,24 +218,30 @@ Triple buffers guarantee:
 
 ```
 viso/src/
-├── lib.rs                  # Module declarations
+├── lib.rs                  # Public API (flat re-exports only)
 ├── main.rs                 # Standalone viewer binary
 ├── engine/
-│   ├── mod.rs              # ProteinRenderEngine (core orchestrator)
-│   ├── animation.rs        # Pose animation methods
-│   ├── input.rs            # Input handling and selection
-│   ├── options.rs          # Runtime options application
-│   ├── queries.rs          # State queries
-│   ├── scene_management.rs # Group management, bands, pulls
-│   └── scene_sync.rs       # Background processor communication
+│   ├── mod.rs              # VisoEngine struct, render(), command dispatch
+│   ├── command.rs          # VisoCommand enum + BandInfo, PullInfo
+│   ├── construction.rs     # Engine constructors (new, new_with_path, new_empty)
+│   ├── accessors.rs        # Lifecycle, scene access, query getters
+│   ├── animation.rs        # Trajectory loading, pose animation
+│   ├── options.rs          # Option application, presets, toggles
+│   ├── queries.rs          # Atom position lookups
+│   ├── picking_system.rs   # GPU picking wrapper
+│   ├── renderers.rs        # Renderer aggregation
+│   ├── scene_management.rs # Backbone/sidechain updates, SS override
+│   └── scene_sync.rs       # Scene-to-renderer pipeline
 ├── scene/
-│   ├── mod.rs              # Scene, EntityGroup, Focus, AggregatedRenderData
-│   └── processor.rs        # SceneProcessor background thread
+│   ├── mod.rs              # Scene, EntityGroup, Focus
+│   ├── processor.rs        # SceneProcessor (background thread)
+│   ├── prepared.rs         # PreparedScene, SceneRequest types
+│   └── entity_data.rs      # Entity render data extraction
 ├── animation/
 │   ├── mod.rs              # Module re-exports
-│   ├── transition.rs       # Transition (behavior + flags)
-│   ├── interpolation.rs    # InterpolationContext, lerp utilities
-│   ├── sidechain_state.rs  # Sidechain animation tracking
+│   ├── transition.rs       # Transition (public API: behavior + flags)
+│   ├── interpolation.rs    # InterpolationContext
+│   ├── sidechain_state.rs  # SidechainAnimData (engine-level anim pairs)
 │   ├── behaviors/
 │   │   ├── traits.rs       # AnimationBehavior trait
 │   │   ├── snap.rs         # Instant snap
@@ -172,52 +251,40 @@ viso/src/
 │   │   ├── backbone_then_expand.rs  # Backbone-first animation
 │   │   └── state.rs        # ResidueVisualState
 │   └── animator/
-│       ├── mod.rs          # StructureAnimator (top-level API)
+│       ├── mod.rs          # StructureAnimator (global + per-entity runners)
+│       ├── sidechain.rs    # SidechainAnimationData (interpolation state)
 │       ├── controller.rs   # AnimationController (preemption)
 │       ├── runner.rs       # AnimationRunner (single animation)
 │       └── state.rs        # StructureState (current/target)
+├── input/
+│   ├── mod.rs              # InputEvent, MouseButton
+│   ├── processor.rs        # InputProcessor (events → VisoCommand)
+│   └── event.rs            # InputEvent enum
+├── options/
+│   └── mod.rs              # VisoOptions + sub-option structs
 ├── camera/
 │   ├── mod.rs              # Module declarations
 │   ├── core.rs             # Camera struct
 │   ├── controller.rs       # CameraController (input + animation)
-│   ├── frustum.rs          # Frustum culling
-│   └── input_state.rs      # Click detection state machine
-├── picking/
-│   ├── mod.rs              # Module re-exports
-│   ├── picking.rs          # Picking, SelectionBuffer
-│   └── picking_state.rs    # Picking bind group management
+│   └── frustum.rs          # Frustum culling
 ├── gpu/
+│   ├── mod.rs              # GPU subsystem re-exports
 │   ├── render_context.rs   # wgpu device, queue, surface
-│   ├── shader_composer.rs  # naga_oil shader composition
-│   ├── dynamic_buffer.rs   # Growable GPU buffers
-│   └── residue_color.rs    # Per-residue color GPU buffer
+│   ├── texture.rs          # RenderTarget
+│   ├── lighting.rs         # Lighting uniform + IBL
+│   ├── shader_composer.rs  # WGSL #import via naga-oil
+│   └── dynamic_buffer.rs   # Growable GPU buffers
 ├── renderer/
-│   ├── mod.rs              # MolecularRenderer trait
-│   ├── pipeline_util.rs    # Shared pipeline configuration
-│   ├── molecular/
-│   │   ├── tube.rs         # Backbone tubes
-│   │   ├── ribbon.rs       # Helices and sheets
-│   │   ├── capsule_sidechain.rs  # Sidechain capsules
-│   │   ├── ball_and_stick.rs     # Ligands, ions, waters
-│   │   ├── band.rs         # Constraint bands
-│   │   ├── pull.rs         # Active pull visualization
-│   │   ├── nucleic_acid.rs # DNA/RNA backbone
-│   │   ├── draw_context.rs # DrawBindGroups
-│   │   └── capsule_instance.rs  # Shared CapsuleInstance struct
-│   └── postprocess/
-│       ├── post_process.rs # PostProcessStack
-│       ├── ssao.rs         # Screen-space ambient occlusion
-│       ├── bloom.rs        # Bloom extraction and blur
-│       ├── composite.rs    # Final compositing
-│       └── fxaa.rs         # Anti-aliasing
+│   ├── geometry/           # Scene data → mesh/impostor generation
+│   ├── picking/            # GPU-based object picking + readback
+│   ├── postprocess/        # SSAO, bloom, composite, FXAA
+│   └── draw_context.rs     # Bind group bundles for draw calls
+├── viewer.rs               # Standalone winit viewer (feature-gated)
+├── gui/                    # Webview options panel (feature-gated)
 └── util/
-    ├── options.rs          # Options, DisplayOptions, ColorOptions, etc.
-    ├── lighting.rs         # Lighting uniform management
-    ├── frame_timing.rs     # Frame rate tracking
-    ├── score_color.rs      # Energy score → RGB conversion
-    ├── sheet_adjust.rs     # Sheet surface offset adjustment
     ├── easing.rs           # Easing functions
     ├── bond_topology.rs    # Bond inference utilities
+    ├── frame_timing.rs     # Frame rate tracking
     └── trajectory.rs       # DCD trajectory playback
 ```
 
@@ -226,6 +293,7 @@ viso/src/
 ### Why Background Processing?
 
 Mesh generation for complex proteins (>1000 residues) can take 20-40ms. At 60fps, that's most of the frame budget. By offloading to a background thread:
+
 - The main thread maintains smooth rendering
 - GPU upload is <1ms (raw buffer writes)
 - The background thread can take as long as it needs without dropping frames
@@ -233,6 +301,7 @@ Mesh generation for complex proteins (>1000 residues) can take 20-40ms. At 60fps
 ### Why Triple Buffers?
 
 Triple buffers provide lock-free communication:
+
 - The background thread always has a buffer to write to
 - The main thread always reads the latest result
 - No mutexes, no contention, no blocking on either side
@@ -246,6 +315,7 @@ Molecular scenes often have multiple groups where only one changes at a time (e.
 ### Why Capsule Impostors?
 
 Sidechains and ball-and-stick atoms use ray-marched impostor rendering instead of mesh-based spheres and cylinders:
+
 - **Memory**: a capsule is 48 bytes vs. hundreds of bytes for a mesh sphere
 - **Quality**: impostors are pixel-perfect at any zoom level
 - **Performance**: GPU ray-marching is efficient for the simple SDF shapes (spheres, capsules, cones)

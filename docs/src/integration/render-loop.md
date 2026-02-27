@@ -4,17 +4,21 @@ Every frame follows a specific sequence. Getting the order right matters -- appl
 
 ## Minimal Render Loop (Standalone)
 
-From viso's `main.rs`:
+From viso's standalone viewer:
 
 ```rust
 WindowEvent::RedrawRequested => {
-    engine.apply_pending_scene();
+    let dt = now.duration_since(last_frame_time).as_secs_f32();
+    last_frame_time = now;
+
+    engine.update(dt);   // Apply pending scene, advance animation
+
     match engine.render() {
         Ok(()) => {}
         Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-            engine.resize(window.inner_size().width, window.inner_size().height);
+            engine.resize(width, height);
         }
-        Err(e) => log::error!("render error: {:?}", e),
+        Err(e) => log::error!("render error: {e:?}"),
     }
     window.request_redraw();
 }
@@ -29,12 +33,10 @@ foldit-rs has a richer per-frame sequence:
 2. Ensure surface matches window size
 3. Process backend updates (Rosetta/ML triple buffers)
 4. Sync scene to renderers if dirty (submits to background thread)
-5. Apply pending scene from background thread (GPU uploads)
-6. Update camera animation (dt)
-7. Update frame visuals (bands, pulls)
-8. Render
-9. Push dirty UI state to webview
-10. Request next frame
+5. engine.update(dt) — apply pending scene, advance camera + structure animation
+6. Render
+7. Push dirty UI state to webview
+8. Request next frame
 ```
 
 ### Step-by-Step
@@ -55,31 +57,19 @@ app.sync_engine();
 
 If the scene has changed since the last sync (tracked by a generation counter), this collects `PerGroupData` for all visible groups and submits a `SceneRequest::FullRebuild` to the background processor. This is non-blocking -- the background thread generates meshes while the main thread continues rendering the previous frame's data.
 
-#### 3. Apply Pending Scene
+#### 3. Update
 
 ```rust
-engine.apply_pending_scene();
+engine.update(dt);
 ```
 
-Checks the triple buffer for a completed `PreparedScene` from the background thread. If one is available, it:
+This single call handles all per-frame bookkeeping:
 
-- Uploads vertex/index buffers to the GPU
-- Updates sidechain instance buffers
-- Updates backbone chain data for the camera and animation system
-- Rebuilds picking bind groups
-- Fires animation if an action was specified
+- **Apply pending scene** -- checks the triple buffer for completed meshes from the background thread. If available, uploads vertex/index buffers to the GPU, updates sidechain instance buffers, rebuilds picking bind groups, and fires animation if an action was specified. GPU upload is typically <1ms.
+- **Advance camera animation** -- animated camera transitions (focus point, distance, bounding radius) and turntable auto-rotation.
+- **Advance structure animation** -- interpolates backbone and sidechain positions when a transition is in progress.
 
-This is a GPU-upload-only operation, typically <1ms.
-
-#### 4. Update Camera Animation
-
-```rust
-let still_animating = engine.update_camera_animation(dt);
-```
-
-Advances animated camera transitions (focus point, distance, bounding radius). Returns `true` if the camera is still animating. Also handles turntable auto-rotation.
-
-#### 5. Render
+#### 4. Render
 
 ```rust
 match engine.render() {

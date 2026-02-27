@@ -142,7 +142,7 @@ Bands visualize distance constraints between atoms:
 
 ```rust
 engine.update_bands(&[
-    BandRenderInfo {
+    BandInfo {
         endpoint_a: Vec3::new(10.0, 20.0, 30.0),
         endpoint_b: Vec3::new(15.0, 22.0, 28.0),
         strength: 1.0,
@@ -171,7 +171,7 @@ Band visual properties:
 A pull is a temporary constraint while the user drags a residue:
 
 ```rust
-engine.update_pull(Some(&PullRenderInfo {
+engine.update_pull(Some(&PullInfo {
     atom_pos: atom_world_position,
     target_pos: mouse_world_position,
     residue_idx: 42,

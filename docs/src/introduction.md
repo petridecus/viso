@@ -20,7 +20,7 @@ The two are complementary:
 
 | This Book | Rustdoc |
 |-----------|---------|
-| How the render loop works | Every method on `ProteinRenderEngine` |
+| How the render loop works | Every method on `VisoEngine` |
 | What animation behaviors exist and when to use them | Exact signatures, trait bounds, field types |
 | How the background processor threads data | All public and `pub(crate)` items |
 | Integration patterns from foldit-rs | Exhaustive API surface |
@@ -45,4 +45,4 @@ The two are complementary:
 1. [Architecture Overview](./architecture/overview.md) -- system diagram and data flow
 2. [Rendering Pipeline](./deep-dives/rendering-pipeline.md) -- geometry pass and post-processing
 3. [Background Scene Processing](./deep-dives/background-processing.md) -- threading model
-4. [Animation System](./deep-dives/animation-system.md) -- three-layer architecture
+4. [Animation System](./deep-dives/animation-system.md) -- transitions, behaviors, and interpolation

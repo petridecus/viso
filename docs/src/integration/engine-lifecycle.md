@@ -1,6 +1,6 @@
 # Engine Lifecycle
 
-`ProteinRenderEngine` is the central facade for all rendering, input handling, scene management, and animation in viso. This chapter covers how to create it, what happens during initialization, and how to manage its lifetime.
+`VisoEngine` is the central facade for all rendering, input handling, scene management, and animation in viso. This chapter covers how to create it, what happens during initialization, and how to manage its lifetime.
 
 ## Creation
 
@@ -8,7 +8,7 @@ The engine is created asynchronously because wgpu adapter and device initializat
 
 ```rust
 // With a structure file (standalone use)
-let mut engine = ProteinRenderEngine::new_with_path(
+let mut engine = VisoEngine::new_with_path(
     window.clone(),   // impl Into<wgpu::SurfaceTarget<'static>>
     (width, height),  // Physical pixel dimensions
     scale_factor,     // DPI scale (e.g. 2.0 on Retina)
@@ -16,7 +16,7 @@ let mut engine = ProteinRenderEngine::new_with_path(
 ).await;
 
 // Without a pre-loaded structure (library use)
-let mut engine = ProteinRenderEngine::new(
+let mut engine = VisoEngine::new(
     window.clone(),
     (width, height),
     scale_factor,
@@ -80,7 +80,7 @@ This sends a `SceneRequest::Shutdown` message and waits for the thread to finish
 
 ## Ownership Model
 
-`ProteinRenderEngine` owns:
+`VisoEngine` owns:
 
 | Component | Type | Purpose |
 |-----------|------|---------|

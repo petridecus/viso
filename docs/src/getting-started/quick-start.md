@@ -1,6 +1,6 @@
 # Quick Start
 
-Viso ships with a standalone binary (`main.rs`) that opens a window, loads a protein structure, and renders it with full interactivity. This chapter walks through that code as a minimal integration example.
+Viso ships with a standalone viewer that opens a window, loads a protein structure, and renders it with full interactivity.
 
 ## Running the Standalone Viewer
 
@@ -14,158 +14,105 @@ This downloads PDB entry `1UBQ` from RCSB, caches it in `assets/models/`, and op
 cargo run -p viso -- path/to/structure.cif
 ```
 
-## The Code
+## Using the Viewer API
 
-The standalone viewer is roughly 230 lines. Here are the key pieces.
-
-### Application State
+The simplest way to use viso is the `Viewer` builder:
 
 ```rust
-struct RenderApp {
-    window: Option<Arc<Window>>,
-    engine: Option<ProteinRenderEngine>,
-    last_mouse_pos: (f32, f32),
-    cif_path: String,
-}
+use viso::Viewer;
+
+Viewer::builder()
+    .with_path("assets/models/4pnk.cif")
+    .build()
+    .run()
+    .unwrap();
 ```
 
-The engine and window are `Option` because winit creates the window asynchronously in the `resumed` callback.
+This handles window creation, engine initialization, input wiring, and the render loop. For customization:
+
+```rust
+use viso::{Viewer, VisoOptions};
+
+Viewer::builder()
+    .with_path("1ubq")
+    .with_title("My Protein Viewer")
+    .with_options(my_options)
+    .build()
+    .run()
+    .unwrap();
+```
+
+## Under the Hood
+
+The viewer is a thin wrapper around `VisoEngine`. Here's what it does each frame:
 
 ### Initialization
 
 ```rust
-fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-    if self.window.is_none() {
-        // Create window at 75% of monitor size
-        let window = Arc::new(event_loop.create_window(attrs).unwrap());
+// Create engine (async wgpu init, uses pollster::block_on)
+let mut engine = pollster::block_on(
+    VisoEngine::new_with_path(window.clone(), (width, height), scale, &path)
+)?;
 
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-
-        // Create engine (async -- uses pollster::block_on here)
-        let mut engine = pollster::block_on(
-            ProteinRenderEngine::new_with_path(
-                window.clone(),
-                (size.width, size.height),
-                scale,
-                &self.cif_path,
-            )
-        );
-
-        // Kick off background scene processing
-        engine.sync_scene_to_renderers(None);
-
-        window.request_redraw();
-        self.window = Some(window);
-        self.engine = Some(engine);
-    }
-}
+// Kick off background mesh generation
+engine.sync_scene_to_renderers(None);
 ```
-
-Key points:
-- `ProteinRenderEngine::new_with_path` is async (it initializes wgpu). The standalone uses `pollster::block_on`.
-- `sync_scene_to_renderers(None)` submits the loaded scene to the background mesh-generation thread. The `None` means no animation action.
-- `request_redraw()` starts the render loop.
 
 ### The Render Loop
 
 ```rust
-WindowEvent::RedrawRequested => {
-    if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-        engine.apply_pending_scene();
-        match engine.render() {
-            Ok(()) => {}
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-                let inner = window.inner_size();
-                engine.resize(inner.width, inner.height);
-            }
-            Err(e) => log::error!("render error: {:?}", e),
-        }
-        window.request_redraw();
+// Each frame:
+engine.update(dt);       // Advance animation, apply pending scene
+match engine.render() {  // Full GPU pipeline
+    Ok(()) => {}
+    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+        engine.resize(width, height);
     }
+    Err(e) => log::error!("render error: {e:?}"),
 }
+window.request_redraw();
 ```
-
-Each frame:
-1. `apply_pending_scene()` -- checks if the background thread has finished generating meshes. If so, uploads them to the GPU (<1ms).
-2. `render()` -- executes the full rendering pipeline (geometry pass, picking pass, post-processing).
-3. `request_redraw()` -- schedules the next frame.
 
 ### Input Wiring
 
-Mouse and keyboard events are forwarded to the engine:
+The viewer uses `InputProcessor` to translate winit events into commands:
 
 ```rust
-// Rotation and panning
-WindowEvent::CursorMoved { position, .. } => {
-    let delta_x = position.x as f32 - self.last_mouse_pos.0;
-    let delta_y = position.y as f32 - self.last_mouse_pos.1;
-    engine.handle_mouse_move(delta_x, delta_y);
-    engine.handle_mouse_position(position.x as f32, position.y as f32);
-    self.last_mouse_pos = (position.x as f32, position.y as f32);
-}
+let mut input = InputProcessor::new();
 
-// Zoom
-WindowEvent::MouseWheel { delta, .. } => {
-    match delta {
-        MouseScrollDelta::LineDelta(_, y) => engine.handle_mouse_wheel(y),
-        MouseScrollDelta::PixelDelta(pos) => {
-            engine.handle_mouse_wheel(pos.y as f32 * 0.01)
-        }
-    }
-}
-
-// Click selection
-WindowEvent::MouseInput { button, state, .. } => {
-    let pressed = state == ElementState::Pressed;
-    engine.handle_mouse_button(button, pressed);
-    if button == MouseButton::Left && !pressed {
-        engine.handle_mouse_up();
-    }
-}
-
-// Modifier keys (shift for pan and multi-select)
-WindowEvent::ModifiersChanged(modifiers) => {
-    engine.update_modifiers(modifiers.state());
+// On each winit event:
+let event = InputEvent::CursorMoved { x, y };
+if let Some(cmd) = input.handle_event(event, engine.hovered_target()) {
+    let _ = engine.execute(cmd);
 }
 ```
 
-### Resize Handling
+See [Handling Input](../integration/handling-input.md) for details.
+
+## Embedding Without the Viewer
+
+For embedding viso in your own application (dioxus, egui, web, etc.), use `VisoEngine` directly:
 
 ```rust
-WindowEvent::Resized(event_size) => {
-    engine.resize(event_size.width, event_size.height);
-}
+use viso::{VisoEngine, VisoCommand, InputProcessor, InputEvent};
 
-WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-    engine.set_scale_factor(scale_factor);
-    let inner = window.inner_size();
-    engine.resize(inner.width, inner.height);
+// Create engine with your own surface
+let mut engine = pollster::block_on(
+    VisoEngine::new(window.clone(), (width, height), scale)
+);
+
+// Load entities
+engine.load_entities(entities, "My Structure", true);
+engine.sync_scene_to_renderers(None);
+
+// Your render loop:
+loop {
+    engine.update(dt);
+    engine.render()?;
 }
 ```
 
-### PDB ID Resolution
-
-The `resolve_structure_path` function handles both local files and 4-character PDB codes:
-
-```rust
-fn resolve_structure_path(input: &str) -> Result<String, String> {
-    // If it's a file path that exists, use it directly
-    if std::path::Path::new(input).exists() {
-        return Ok(input.to_string());
-    }
-
-    // If it's a 4-character alphanumeric code, treat as PDB ID
-    if input.len() == 4 && input.chars().all(|c| c.is_ascii_alphanumeric()) {
-        let pdb_id = input.to_lowercase();
-        let url = format!("https://files.rcsb.org/download/{}.cif", pdb_id);
-        // Download and cache in assets/models/
-        // ...
-    }
-
-    Err(format!("File not found and not a valid PDB code: {}", input))
-}
-```
+See [Engine Lifecycle](../integration/engine-lifecycle.md) for the full integration guide.
 
 ## What's Different in foldit-rs
 

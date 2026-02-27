@@ -1,11 +1,11 @@
 # Options and Presets
 
-Viso's visual appearance is controlled by the `Options` struct, which can be loaded from and saved to TOML files. This enables presets for different visualization styles.
+Viso's visual appearance is controlled by the `VisoOptions` struct, which can be loaded from and saved to TOML files. This enables presets for different visualization styles.
 
 ## Options Structure
 
 ```rust
-pub struct Options {
+pub struct VisoOptions {
     pub display: DisplayOptions,
     pub lighting: LightingOptions,
     pub post_processing: PostProcessingOptions,
@@ -144,13 +144,13 @@ Default keybindings:
 
 ```rust
 // Load from TOML file (partial files supported)
-let options = Options::load(Path::new("presets/dark.toml"))?;
+let options = VisoOptions::load(Path::new("presets/dark.toml"))?;
 
 // Save to TOML file
 options.save(Path::new("presets/my_preset.toml"))?;
 
 // List available presets in a directory
-let presets = Options::list_presets(Path::new("presets/"));
+let presets = VisoOptions::list_presets(Path::new("presets/"));
 // Returns: ["dark", "publication", "presentation", ...]
 ```
 

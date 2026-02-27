@@ -1,147 +1,222 @@
 # Handling Input
 
-Viso's input system translates mouse and keyboard events into camera manipulation and residue selection. The engine exposes simple methods that you wire to your windowing system's events.
+Viso provides an `InputProcessor` that translates raw mouse/keyboard events into `VisoCommand` values. The engine executes commands via `engine.execute(cmd)`.
 
-## Mouse Events
+## Architecture
 
-### Movement (Rotation and Panning)
-
-```rust
-// Track mouse position yourself, then pass deltas
-let delta_x = new_x - last_x;
-let delta_y = new_y - last_y;
-
-engine.handle_mouse_move(delta_x, delta_y);
-engine.handle_mouse_position(new_x, new_y);
+```
+Platform events (winit, web, etc.)
+    │
+    ▼
+InputEvent (platform-agnostic)
+    │
+    ▼
+InputProcessor
+    │  translates to
+    ▼
+VisoCommand
+    │
+    ▼
+engine.execute(cmd)
 ```
 
-`handle_mouse_move` rotates or pans the camera:
-- **Default drag** -- arcball rotation around the focus point
-- **Shift + drag** -- panning (translates the focus point)
-- Rotation and panning only activate when the mouse was pressed on the background (not on a residue), preventing accidental camera movement during selection.
+`InputProcessor` is optional convenience. Consumers who handle their own input can construct `VisoCommand` values directly and skip `InputProcessor` entirely.
 
-`handle_mouse_position` updates the mouse coordinates for GPU picking. The picking system uses this position in the next render pass to determine which residue is under the cursor.
+## InputEvent
 
-### Scroll (Zoom)
+The platform-agnostic input enum:
 
 ```rust
-// Line-based scroll (most mice)
-engine.handle_mouse_wheel(scroll_y);
-
-// Pixel-based scroll (trackpads) -- scale appropriately
-engine.handle_mouse_wheel(pixel_y * 0.01);
+pub enum InputEvent {
+    CursorMoved { x: f32, y: f32 },
+    MouseButton { button: MouseButton, pressed: bool },
+    Scroll { delta: f32 },
+    ModifiersChanged { shift: bool },
+}
 ```
 
-Zoom adjusts the orbital distance from the focus point, clamped to [1.0, 1000.0].
+Your windowing layer converts platform events into these variants.
 
-### Click (Selection)
+## Wiring Input (winit example)
 
-Click handling is split into press and release:
+From viso's standalone viewer:
 
 ```rust
-// Mouse down -- records what's under the cursor
-engine.handle_mouse_button(MouseButton::Left, true);
+struct ViewerApp {
+    engine: Option<VisoEngine>,
+    input: InputProcessor,
+    // ...
+}
 
-// Mouse up -- processes selection based on click type
-engine.handle_mouse_button(MouseButton::Left, false);
-let selection_changed = engine.handle_mouse_up();
+impl ViewerApp {
+    fn dispatch_input(&mut self, event: InputEvent) {
+        let Some(engine) = &mut self.engine else { return };
+
+        // Update cursor for GPU picking
+        if let InputEvent::CursorMoved { x, y } = event {
+            engine.set_cursor_pos(x, y);
+        }
+
+        // Translate event to command and execute
+        if let Some(cmd) = self.input.handle_event(event, engine.hovered_target()) {
+            let _ = engine.execute(cmd);
+        }
+    }
+}
 ```
 
-The input system tracks click timing internally to distinguish:
-
-| Click Type | Action |
-|-----------|--------|
-| Single click | Select the residue under cursor |
-| Shift + click | Toggle residue in multi-selection |
-| Double click | Select entire secondary structure segment |
-| Triple click | Select entire chain |
-| Click on background | Clear selection |
-| Drag (moved after press) | No selection (was a camera operation) |
-
-### How Click Detection Works
-
-On mouse down, the engine records which residue (if any) is under the cursor via GPU picking. On mouse up, the input state machine classifies the click:
-
-1. If the mouse moved significantly between press and release, it's a drag -- no selection action.
-2. If the mouse didn't move, timing determines the click count:
-   - Single click within the double-click threshold
-   - Double click if two clicks occur rapidly on the same residue
-   - Triple click if three clicks occur rapidly on the same residue
-
-## Modifier Keys
+### Mouse movement
 
 ```rust
-// From winit ModifiersChanged event
-engine.update_modifiers(modifiers.state());
-
-// Or set shift directly (for non-winit integrations)
-engine.set_shift_pressed(true);
+WindowEvent::CursorMoved { position, .. } => {
+    dispatch_input(InputEvent::CursorMoved {
+        x: position.x as f32,
+        y: position.y as f32,
+    });
+}
 ```
 
-Shift affects two behaviors:
-- **Camera**: shift + drag pans instead of rotating
-- **Selection**: shift + click adds to or toggles the selection instead of replacing it
-
-## Selection Queries
-
-After a click, you can query the current selection state:
+### Scroll (zoom)
 
 ```rust
-// Currently hovered residue (-1 if none)
-let hovered = engine.picking.hovered_residue;
-
-// Currently selected residues
-let selected: &Vec<i32> = &engine.picking.selected_residues;
+WindowEvent::MouseWheel { delta, .. } => {
+    let scroll_delta = match delta {
+        MouseScrollDelta::LineDelta(_, y) => y,
+        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
+    };
+    dispatch_input(InputEvent::Scroll { delta: scroll_delta });
+}
 ```
 
-### Clearing Selection
+### Click (selection)
 
 ```rust
-engine.clear_selection();
+WindowEvent::MouseInput { button, state, .. } => {
+    dispatch_input(InputEvent::MouseButton {
+        button: MouseButton::from(button),
+        pressed: state == ElementState::Pressed,
+    });
+}
 ```
 
-This clears both the selected residue list and the hover state.
-
-## Double-Click: Secondary Structure Segments
-
-A double-click selects all residues in the same contiguous secondary structure segment:
-
-1. Find the SS type of the clicked residue
-2. Walk backward to find the segment start (where SS type changes)
-3. Walk forward to find the segment end
-4. Select all residues in [start, end]
-
-With shift held, the segment is added to the existing selection.
-
-## Triple-Click: Chain Selection
-
-A triple-click selects all residues in the same chain:
-
-1. Walk the backbone chains to find which chain contains the clicked residue
-2. Select all residues in that chain's range
-
-With shift held, the chain is added to the existing selection.
-
-## Keyboard Events
-
-The standalone viewer handles two keys:
+### Modifier keys
 
 ```rust
-Key::Character("w" | "W") => engine.toggle_waters(),
-Key::Named(NamedKey::Escape) => engine.clear_selection(),
+WindowEvent::ModifiersChanged(modifiers) => {
+    dispatch_input(InputEvent::ModifiersChanged {
+        shift: modifiers.state().shift_key(),
+    });
+}
 ```
 
-foldit-rs extends this with configurable keybindings (see [Options and Presets](../configuration/options-and-presets.md)):
+## Keyboard Input
+
+Keyboard events go through `InputProcessor::handle_key_press`, which looks up the key in the configurable `KeyBindings` map:
+
+```rust
+WindowEvent::KeyboardInput { event, .. } => {
+    if event.state == ElementState::Pressed {
+        let key_str = format!("{:?}", event.physical_key);
+        if let Some(cmd) = input.handle_key_press(&key_str) {
+            let _ = engine.execute(cmd);
+        }
+    }
+}
+```
+
+Display toggles (waters, ions, solvent, lipids) are `VisoOptions` mutations, not commands. The viewer handles them directly:
+
+```rust
+match code {
+    KeyCode::KeyU => engine.toggle_waters(),
+    KeyCode::KeyI => engine.toggle_ions(),
+    KeyCode::KeyO => engine.toggle_solvent(),
+    KeyCode::KeyL => engine.toggle_lipids(),
+    _ => { /* check keybindings */ }
+}
+```
+
+## VisoCommand
+
+The full action vocabulary:
+
+```rust
+pub enum VisoCommand {
+    // Camera
+    RecenterCamera,
+    RotateCamera { delta: Vec2 },
+    PanCamera { delta: Vec2 },
+    Zoom { delta: f32 },
+    ToggleAutoRotate,
+
+    // Focus
+    CycleFocus,
+    ResetFocus,
+
+    // Selection
+    ClearSelection,
+    SelectResidue { index: i32, extend: bool },
+    SelectSegment { index: i32, extend: bool },
+    SelectChain { index: i32, extend: bool },
+
+    // Visualization
+    UpdateBands { bands: Vec<BandInfo> },
+    UpdatePull { pull: Option<PullInfo> },
+
+    // Playback
+    ToggleTrajectory,
+}
+```
+
+## Click Detection
+
+`InputProcessor` tracks click timing internally to distinguish:
+
+| Click Type | Resulting Command |
+|-----------|-------------------|
+| Single click on residue | `SelectResidue { index, extend: false }` |
+| Shift + click on residue | `SelectResidue { index, extend: true }` |
+| Double click | `SelectSegment { index, extend }` |
+| Triple click | `SelectChain { index, extend }` |
+| Click on background | `ClearSelection` |
+| Drag (moved after press) | `RotateCamera` or `PanCamera` (no selection) |
+
+Shift + drag produces `PanCamera` instead of `RotateCamera`.
+
+## KeyBindings
+
+Customizable key-to-command mapping, serde-serializable:
+
+```rust
+let mut input = InputProcessor::new();
+// Default bindings are pre-loaded:
+// Q → RecenterCamera, Tab → CycleFocus, R → ToggleAutoRotate, etc.
+```
+
+Default keybindings:
 
 | Key | Action |
 |-----|--------|
 | Q | Recenter camera |
 | T | Toggle trajectory playback |
-| I | Toggle ions |
-| U | Toggle waters |
-| O | Toggle solvent |
-| L | Toggle lipids |
 | Tab | Cycle focus |
 | R | Toggle auto-rotate |
 | \` | Reset focus to session |
-| Escape | Cancel / clear selection |
+| Escape | Clear selection |
+
+## Skipping InputProcessor
+
+For web embeds or custom hosts, construct commands directly:
+
+```rust
+// Rotate camera by 5 degrees
+engine.execute(VisoCommand::RotateCamera {
+    delta: Vec2::new(5.0, 0.0),
+});
+
+// Select residue 42
+engine.execute(VisoCommand::SelectResidue {
+    index: 42,
+    extend: false,
+});
+```
