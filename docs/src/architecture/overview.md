@@ -220,72 +220,22 @@ Triple buffers guarantee:
 viso/src/
 ├── lib.rs                  # Public API (flat re-exports only)
 ├── main.rs                 # Standalone viewer binary
-├── engine/
-│   ├── mod.rs              # VisoEngine struct, render(), command dispatch
-│   ├── command.rs          # VisoCommand enum + BandInfo, PullInfo
-│   ├── construction.rs     # Engine constructors (new, new_with_path, new_empty)
-│   ├── accessors.rs        # Lifecycle, scene access, query getters
-│   ├── animation.rs        # Trajectory loading, pose animation
-│   ├── options.rs          # Option application, presets, toggles
-│   ├── queries.rs          # Atom position lookups
-│   ├── picking_system.rs   # GPU picking wrapper
-│   ├── renderers.rs        # Renderer aggregation
-│   ├── scene_management.rs # Backbone/sidechain updates, SS override
-│   └── scene_sync.rs       # Scene-to-renderer pipeline
-├── scene/
-│   ├── mod.rs              # Scene, EntityGroup, Focus
-│   ├── processor.rs        # SceneProcessor (background thread)
-│   ├── prepared.rs         # PreparedScene, SceneRequest types
-│   └── entity_data.rs      # Entity render data extraction
-├── animation/
-│   ├── mod.rs              # Module re-exports
-│   ├── transition.rs       # Transition (public API: behavior + flags)
-│   ├── interpolation.rs    # InterpolationContext
-│   ├── sidechain_state.rs  # SidechainAnimData (engine-level anim pairs)
-│   ├── behaviors/
-│   │   ├── traits.rs       # AnimationBehavior trait
-│   │   ├── snap.rs         # Instant snap
-│   │   ├── smooth.rs       # Eased interpolation
-│   │   ├── cascade.rs      # Per-residue staggered animation
-│   │   ├── collapse_expand.rs  # Two-phase mutation animation
-│   │   ├── backbone_then_expand.rs  # Backbone-first animation
-│   │   └── state.rs        # ResidueVisualState
-│   └── animator/
-│       ├── mod.rs          # StructureAnimator (global + per-entity runners)
-│       ├── sidechain.rs    # SidechainAnimationData (interpolation state)
-│       ├── controller.rs   # AnimationController (preemption)
-│       ├── runner.rs       # AnimationRunner (single animation)
-│       └── state.rs        # StructureState (current/target)
-├── input/
-│   ├── mod.rs              # InputEvent, MouseButton
-│   ├── processor.rs        # InputProcessor (events → VisoCommand)
-│   └── event.rs            # InputEvent enum
-├── options/
-│   └── mod.rs              # VisoOptions + sub-option structs
-├── camera/
-│   ├── mod.rs              # Module declarations
-│   ├── core.rs             # Camera struct
-│   ├── controller.rs       # CameraController (input + animation)
-│   └── frustum.rs          # Frustum culling
-├── gpu/
-│   ├── mod.rs              # GPU subsystem re-exports
-│   ├── render_context.rs   # wgpu device, queue, surface
-│   ├── texture.rs          # RenderTarget
-│   ├── lighting.rs         # Lighting uniform + IBL
-│   ├── shader_composer.rs  # WGSL #import via naga-oil
-│   └── dynamic_buffer.rs   # Growable GPU buffers
-├── renderer/
+├── engine/                 # Core coordinator: frame loop, command dispatch, subsystem wiring
+├── scene/                  # Entity storage, groups, visibility, SS overrides, dirty flagging
+├── animation/              # Structural animation system
+│   ├── behaviors/          # How animations look (snap, smooth, collapse/expand, cascade)
+│   └── animator/           # State machines that execute animations (runner, controller, preemption)
+├── input/                  # Raw window events → VisoCommand conversion
+├── options/                # TOML-serializable runtime options (lighting, camera, colors, display)
+├── camera/                 # Orbital camera controller, animated transitions, frustum culling
+├── gpu/                    # wgpu device/surface init, dynamic buffers, lighting, shader composition
+├── renderer/               # GPU rendering pipeline
 │   ├── geometry/           # Scene data → mesh/impostor generation
 │   ├── picking/            # GPU-based object picking + readback
-│   ├── postprocess/        # SSAO, bloom, composite, FXAA
-│   └── draw_context.rs     # Bind group bundles for draw calls
+│   └── postprocess/        # SSAO, bloom, composite, FXAA
 ├── viewer.rs               # Standalone winit viewer (feature-gated)
 ├── gui/                    # Webview options panel (feature-gated)
-└── util/
-    ├── easing.rs           # Easing functions
-    ├── bond_topology.rs    # Bond inference utilities
-    ├── frame_timing.rs     # Frame rate tracking
-    └── trajectory.rs       # DCD trajectory playback
+└── util/                   # Easing curves, frame timing, trajectory playback, bond topology
 ```
 
 ## Key Design Decisions

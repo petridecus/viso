@@ -7,13 +7,9 @@
 - [Quick Start](./getting-started/quick-start.md)
 - [Building and Running](./getting-started/building-and-running.md)
 
-# Integration Guide
+# Architecture
 
-- [Engine Lifecycle](./integration/engine-lifecycle.md)
-- [The Render Loop](./integration/render-loop.md)
-- [Scene Management](./integration/scene-management.md)
-- [Handling Input](./integration/handling-input.md)
-- [Dynamic Structure Updates](./integration/dynamic-updates.md)
+- [Architecture Overview](./architecture/overview.md)
 
 # Configuration
 
@@ -28,6 +24,10 @@
 - [Rendering Pipeline](./deep-dives/rendering-pipeline.md)
 - [Background Scene Processing](./deep-dives/background-processing.md)
 
-# Architecture
+# Integration Guide
 
-- [Architecture Overview](./architecture/overview.md)
+- [Engine Lifecycle](./integration/engine-lifecycle.md)
+- [The Render Loop](./integration/render-loop.md)
+- [Scene Management](./integration/scene-management.md)
+- [Handling Input](./integration/handling-input.md)
+- [Dynamic Structure Updates](./integration/dynamic-updates.md)

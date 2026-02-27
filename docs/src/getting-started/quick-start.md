@@ -1,22 +1,97 @@
 # Quick Start
 
-Viso ships with a standalone viewer that opens a window, loads a protein structure, and renders it with full interactivity.
+Viso is a library first. With no feature flags enabled, it gives you `VisoEngine` — a self-contained rendering engine you embed in your own event loop. The optional `viewer` feature adds a standalone winit window for quick prototyping.
 
-## Running the Standalone Viewer
+## Using Viso as a Library
 
-```sh
-cargo run -p viso -- 1ubq
+Add viso to your `Cargo.toml` with no extra features:
+
+```toml
+[dependencies]
+viso = { path = "../viso" }  # or git/registry
+pollster = "0.4"             # for blocking on async GPU init
 ```
 
-This downloads PDB entry `1UBQ` from RCSB, caches it in `assets/models/`, and opens a window. You can also pass a local file path:
+The minimal integration has three steps: create an engine, load structure data, and run a render loop.
 
-```sh
-cargo run -p viso -- path/to/structure.cif
+### 1. Create the Engine
+
+`RenderContext` initializes the wgpu device and surface. Pass it to `VisoEngine::new_empty` to get an engine with no entities loaded:
+
+```rust
+use viso::{VisoEngine, RenderContext};
+
+let context = pollster::block_on(
+    RenderContext::new(window.clone(), (width, height))
+)?;
+let mut engine = VisoEngine::new_empty(context)?;
 ```
 
-## Using the Viewer API
+Or load a structure file directly:
 
-The simplest way to use viso is the `Viewer` builder:
+```rust
+let mut engine = pollster::block_on(
+    VisoEngine::new_with_path(window.clone(), (width, height), scale_factor, "path/to/structure.cif")
+)?;
+```
+
+`new_with_path` accepts `.cif`, `.pdb`, and `.bcif` files. It parses the file, populates the scene, and kicks off background mesh generation.
+
+### 2. Load Entities
+
+If you used `new_empty`, load entities yourself:
+
+```rust
+// entities: Vec<MoleculeEntity> from foldit_conv or your own pipeline
+let entity_ids = engine.load_entities(entities, true); // true = fit camera
+engine.sync_scene_to_renderers(None);
+```
+
+`sync_scene_to_renderers` submits the scene to the background thread for mesh generation. Pass `None` to snap to the current state with no animation.
+
+### 3. Render Loop
+
+Each frame, call `update` then `render`:
+
+```rust
+engine.update(dt);       // advance animation, apply pending meshes
+match engine.render() {  // full GPU pipeline → 2D texture
+    Ok(()) => {}
+    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+        engine.resize(width, height);
+    }
+    Err(e) => log::error!("render error: {e:?}"),
+}
+```
+
+That's it. The engine handles background mesh generation, animation, and the full post-processing pipeline internally. You own the event loop and the window.
+
+### Input (Optional)
+
+`InputProcessor` is a convenience layer that translates raw input events into `VisoCommand` values. You can use it or wire commands directly:
+
+```rust
+use viso::{InputProcessor, InputEvent};
+
+let mut input = InputProcessor::new();
+
+// In your event handler:
+let event = InputEvent::CursorMoved { x, y };
+if let Some(cmd) = input.handle_event(event, engine.hovered_target()) {
+    let _ = engine.execute(cmd);
+}
+```
+
+## Standalone Viewer
+
+For quick prototyping, enable the `viewer` feature:
+
+```toml
+[dependencies]
+viso = { path = "../viso", features = ["viewer"] }
+```
+
+This pulls in `winit` and `pollster` and gives you `Viewer`, which handles window creation, the event loop, input wiring, and the render loop:
 
 ```rust
 use viso::Viewer;
@@ -24,104 +99,29 @@ use viso::Viewer;
 Viewer::builder()
     .with_path("assets/models/4pnk.cif")
     .build()
-    .run()
-    .unwrap();
+    .run()?;
 ```
 
-This handles window creation, engine initialization, input wiring, and the render loop. For customization:
+### Running the CLI
 
-```rust
-use viso::{Viewer, VisoOptions};
+The `binary` feature (enabled by default) builds a standalone CLI that can download structures from RCSB by PDB code:
 
-Viewer::builder()
-    .with_path("1ubq")
-    .with_title("My Protein Viewer")
-    .with_options(my_options)
-    .build()
-    .run()
-    .unwrap();
+```sh
+cargo run -p viso -- 1ubq
 ```
 
-## Under the Hood
+This downloads the CIF file, caches it in `assets/models/`, and opens a viewer window. You can also pass a local file path:
 
-The viewer is a thin wrapper around `VisoEngine`. Here's what it does each frame:
-
-### Initialization
-
-```rust
-// Create engine (async wgpu init, uses pollster::block_on)
-let mut engine = pollster::block_on(
-    VisoEngine::new_with_path(window.clone(), (width, height), scale, &path)
-)?;
-
-// Kick off background mesh generation
-engine.sync_scene_to_renderers(None);
+```sh
+cargo run -p viso -- path/to/structure.cif
 ```
 
-### The Render Loop
+## What Foldit Adds
 
-```rust
-// Each frame:
-engine.update(dt);       // Advance animation, apply pending scene
-match engine.render() {  // Full GPU pipeline
-    Ok(()) => {}
-    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-        engine.resize(width, height);
-    }
-    Err(e) => log::error!("render error: {e:?}"),
-}
-window.request_redraw();
-```
-
-### Input Wiring
-
-The viewer uses `InputProcessor` to translate winit events into commands:
-
-```rust
-let mut input = InputProcessor::new();
-
-// On each winit event:
-let event = InputEvent::CursorMoved { x, y };
-if let Some(cmd) = input.handle_event(event, engine.hovered_target()) {
-    let _ = engine.execute(cmd);
-}
-```
-
-See [Handling Input](../integration/handling-input.md) for details.
-
-## Embedding Without the Viewer
-
-For embedding viso in your own application (dioxus, egui, web, etc.), use `VisoEngine` directly:
-
-```rust
-use viso::{VisoEngine, VisoCommand, InputProcessor, InputEvent};
-
-// Create engine with your own surface
-let mut engine = pollster::block_on(
-    VisoEngine::new(window.clone(), (width, height), scale)
-);
-
-// Load entities
-engine.load_entities(entities, "My Structure", true);
-engine.sync_scene_to_renderers(None);
-
-// Your render loop:
-loop {
-    engine.update(dt);
-    engine.render()?;
-}
-```
-
-See [Engine Lifecycle](../integration/engine-lifecycle.md) for the full integration guide.
-
-## What's Different in foldit-rs
-
-The standalone viewer is intentionally minimal. foldit-rs adds:
+The standalone viewer is intentionally minimal. Foldit adds:
 
 - **Multiple entity groups** with independent visibility and focus cycling
 - **Backend integration** (Rosetta minimization, ML structure prediction) that streams coordinate updates
 - **Animated transitions** between poses using the animation system
 - **A webview UI** for controls, panels, and sequence display
 - **Band and pull visualization** for constraint-based manipulation
-
-These patterns are covered in the [Integration Guide](../integration/engine-lifecycle.md).

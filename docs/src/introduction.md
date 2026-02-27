@@ -1,48 +1,96 @@
 # Introduction
 
-Viso is a GPU-accelerated 3D protein visualization engine built in Rust on top of [wgpu](https://wgpu.rs/). It powers the molecular graphics in [foldit-rs](https://github.com/foldit/foldit-rs), rendering proteins, ligands, nucleic acids, and constraint visualizations at interactive frame rates.
+Viso is a GPU-accelerated 3D protein visualization engine built in Rust on
+top of [wgpu](https://wgpu.rs/). It powers the molecular graphics in
+Foldit, rendering proteins, ligands, nucleic acids, and constraint visualizations at interactive frame
+rates.
 
-## What Viso Does
+Viso is designed as an **embeddable library** -- you give it a window or
+surface, feed it structure data, and it produces a 2D texture. The host
+decides what to do with that texture: display it in a winit window, paint it
+onto an HTML canvas, write it to a PNG, or drop it into a dioxus/egui
+texture slot.
 
-- **Multiple representations** -- ribbons, tubes, ball-and-stick, capsule sidechains, nucleic acid backbones
-- **Post-processing pipeline** -- SSAO, bloom, FXAA, depth-based outlines, fog, tone mapping
-- **Interactive camera** -- arcball rotation, panning, zoom, animated transitions, auto-rotate
-- **GPU picking** -- click to select residues, double-click for secondary structure segments, triple-click for chains, shift-click for multi-select
-- **Animation system** -- smooth interpolation, cascading reveals, collapse/expand mutations, per-entity targeted animation
-- **Background scene processing** -- CPU-heavy mesh generation on a dedicated thread with triple-buffered results
-- **TOML presets** -- display, lighting, color, geometry, and camera options with load/save support
+```rust
+use viso::Viewer;
 
-## Relationship to Rustdoc
+Viewer::builder()
+    .with_path("1ubq")           // PDB code or local .cif/.pdb/.bcif path
+    .with_title("My Viewer")
+    .build()
+    .run()?;
+```
 
-This book covers **concepts, architecture, and integration patterns**. For the full API reference (every struct, method, and field), see the [rustdoc documentation](../target/doc/viso/index.html) generated with `cargo doc`.
+## Features
 
-The two are complementary:
+**Rendering**
 
-| This Book | Rustdoc |
-|-----------|---------|
-| How the render loop works | Every method on `VisoEngine` |
-| What animation behaviors exist and when to use them | Exact signatures, trait bounds, field types |
-| How the background processor threads data | All public and `pub(crate)` items |
-| Integration patterns from foldit-rs | Exhaustive API surface |
+- Ribbons, tubes, ball-and-stick, capsule sidechains, nucleic acid backbones
+- Ray-marched impostors for pixel-perfect spheres and capsules at any zoom
+- Post-processing pipeline -- SSAO, bloom, FXAA, depth-based outlines, fog, tone mapping
+
+**Interaction**
+
+- Arcball camera with animated transitions, panning, zoom, and auto-rotate
+- GPU picking -- click to select residues, double-click for SS segments, triple-click for chains, shift-click for multi-select
+
+**Animation**
+
+- Smooth interpolation, cascading reveals, collapse/expand mutations
+- Per-entity targeted animation with configurable behaviors
+
+**Performance**
+
+- Background mesh generation on a dedicated thread with triple-buffered results
+- Per-group mesh caching -- only changed groups are regenerated
+- Lock-free communication between main and background threads
+
+**Configuration**
+
+- TOML-serializable options for display, lighting, color, geometry, and camera
+- Load/save presets, per-section diffing on update
+
+## How It Works
+
+```
+File (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity>
+        │                                │
+        ▼                                │
+ foldit_conv::parse ───▶ MoleculeEntity◄─┘
+        │
+        ▼
+     Scene (live renderable state, dirty-flagged)
+        │
+        ├───▶ SceneProcessor (background thread)
+        │         mesh generation + triple buffer
+        │
+        ▼
+     Renderer (geometry → picking → post-process)
+        │
+        ▼
+     2D texture ───▶ winit / canvas / PNG / embed
+```
+
+For the full architecture, see [Architecture Overview](./architecture/overview.md).
 
 ## Where to Start
 
-**If you want to embed viso in your own application:**
+**Embed viso in your application:**
 
-1. [Quick Start](./getting-started/quick-start.md) -- walk through the standalone `main.rs`
-2. [Engine Lifecycle](./integration/engine-lifecycle.md) -- creation, initialization, shutdown
-3. [The Render Loop](./integration/render-loop.md) -- per-frame sequence
-4. [Handling Input](./integration/handling-input.md) -- mouse and keyboard wiring
+- [Quick Start](./getting-started/quick-start.md) -- standalone viewer walkthrough
+- [Engine Lifecycle](./integration/engine-lifecycle.md) -- creation, initialization, shutdown
+- [The Render Loop](./integration/render-loop.md) -- per-frame sequence
+- [Handling Input](./integration/handling-input.md) -- mouse and keyboard wiring
 
-**If you want to understand how foldit-rs uses viso:**
+**Understand how Foldit uses viso:**
 
-1. [Scene Management](./integration/scene-management.md) -- groups, entities, focus
-2. [Dynamic Structure Updates](./integration/dynamic-updates.md) -- Rosetta and ML integration
-3. [Options and Presets](./configuration/options-and-presets.md) -- TOML configuration
+- [Scene Management](./integration/scene-management.md) -- groups, entities, focus
+- [Dynamic Structure Updates](./integration/dynamic-updates.md) -- Rosetta and ML integration
+- [Options and Presets](./configuration/options-and-presets.md) -- TOML configuration
 
-**If you want to understand viso internals:**
+**Dig into viso internals:**
 
-1. [Architecture Overview](./architecture/overview.md) -- system diagram and data flow
-2. [Rendering Pipeline](./deep-dives/rendering-pipeline.md) -- geometry pass and post-processing
-3. [Background Scene Processing](./deep-dives/background-processing.md) -- threading model
-4. [Animation System](./deep-dives/animation-system.md) -- transitions, behaviors, and interpolation
+- [Architecture Overview](./architecture/overview.md) -- system diagram and data flow
+- [Rendering Pipeline](./deep-dives/rendering-pipeline.md) -- geometry pass and post-processing
+- [Background Scene Processing](./deep-dives/background-processing.md) -- threading model
+- [Animation System](./deep-dives/animation-system.md) -- transitions, behaviors, and interpolation
