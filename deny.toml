@@ -16,9 +16,13 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
-exceptions = [
-    { allow = ["AGPL-3.0-only"], crate = "viso" },
-]
+exceptions = []
+
+# Viso uses a proprietary license (LICENSE.md) with no SPDX identifier.
+# publish = false in Cargo.toml makes cargo-deny skip the workspace member.
+[licenses.private]
+ignore = true
+registries = []
 
 [bans]
 multiple-versions = "warn"
