@@ -9,6 +9,8 @@ mod queries;
 pub(crate) mod renderers;
 mod scene_management;
 mod scene_sync;
+pub(crate) mod sidechain_cache;
+pub(crate) mod trajectory;
 
 use std::collections::HashMap;
 
@@ -17,9 +19,10 @@ use glam::{Mat4, Vec3};
 
 use self::picking_system::PickingSystem;
 use self::renderers::Renderers;
-use crate::animation::animator::StructureAnimator;
-use crate::animation::sidechain_state::{SidechainAnimData, SidechainCache};
+use self::sidechain_cache::SidechainCache;
+use self::trajectory::TrajectoryPlayer;
 use crate::animation::transition::Transition;
+use crate::animation::StructureAnimator;
 use crate::camera::controller::CameraController;
 use crate::error::VisoError;
 use crate::gpu::lighting::Lighting;
@@ -31,7 +34,6 @@ use crate::renderer::postprocess::post_process::PostProcessStack;
 use crate::scene::processor::SceneProcessor;
 use crate::scene::{EntityResidueRange, Focus, Scene};
 use crate::util::frame_timing::FrameTiming;
-use crate::util::trajectory::TrajectoryPlayer;
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -75,8 +77,6 @@ pub struct VisoEngine {
     /// Current cursor position in physical pixels (set by the viewer /
     /// input processor each frame for GPU picking).
     cursor_pos: (f32, f32),
-    /// Sidechain animation start/target pairs.
-    pub(crate) sc_anim: SidechainAnimData,
     /// Cached scene-derived sidechain data.
     pub(crate) sc_cache: SidechainCache,
     /// Camera eye position at the last frustum-culling update.
@@ -257,7 +257,6 @@ impl VisoEngine {
             _shader_composer: bootstrap.shader_composer,
             post_process: bootstrap.post_process,
             cursor_pos: (0.0, 0.0),
-            sc_anim: SidechainAnimData::new(),
             sc_cache: SidechainCache::new(),
             last_cull_camera_eye: Vec3::ZERO,
             camera_controller: bootstrap.camera_controller,

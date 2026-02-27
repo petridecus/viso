@@ -3,30 +3,52 @@
 use std::path::Path;
 use std::time::Instant;
 
-use glam::Vec3;
-
+use super::trajectory::TrajectoryPlayer;
 use super::VisoEngine;
 use crate::animation::transition::Transition;
-use crate::renderer::geometry::sidechain::SidechainView;
 use crate::scene::SceneEntity;
-use crate::util::trajectory::TrajectoryPlayer;
 
 impl VisoEngine {
-    /// Tick trajectory playback or the standard animator, submitting any
+    /// Tick animation (both trajectory and structural), submitting any
     /// interpolated frame to the background thread.
+    ///
+    /// Trajectory frames are fed through `animate_entity()` with
+    /// `Transition::snap()`, so both paths converge through the
+    /// animator's update loop.
     pub(crate) fn tick_animation(&mut self) {
-        if let Some(ref mut player) = self.trajectory_player {
-            if let Some(backbone_chains) = player.tick(Instant::now()) {
-                self.submit_animation_frame_with_backbone(
-                    backbone_chains,
-                    false,
-                );
-            }
-        } else {
-            let animating = self.animator.update(Instant::now());
-            if animating {
-                self.submit_animation_frame();
-            }
+        let now = Instant::now();
+
+        // If a trajectory is active, feed its frame through per-entity
+        // animation so it converges with the standard path.
+        self.advance_trajectory(now);
+
+        if !self.animator.update(now) {
+            return;
+        }
+
+        let backbone = self.animator.get_backbone();
+        let include_sidechains =
+            !self.sc_cache.target_sidechain_positions.is_empty()
+                && self.animator.should_include_sidechains();
+
+        self.scene.update_visual_positions(backbone.clone());
+        self.submit_animation_frame_with_backbone(backbone, include_sidechains);
+    }
+
+    /// Feed the current trajectory frame (if any) through per-entity
+    /// animation with `Transition::snap()`.
+    fn advance_trajectory(&mut self, now: Instant) {
+        let Some(ref mut player) = self.trajectory_player else {
+            return;
+        };
+        let Some(backbone_chains) = player.tick(now) else {
+            return;
+        };
+
+        let snap = Transition::snap();
+        for range in &self.entity_ranges {
+            self.animator
+                .animate_entity(range, &backbone_chains, &snap, None);
         }
     }
 
@@ -35,7 +57,7 @@ impl VisoEngine {
         use foldit_conv::adapters::dcd::dcd_file_to_frames;
         use foldit_conv::ops::transform::protein_only;
 
-        use crate::util::trajectory::build_backbone_atom_indices;
+        use super::trajectory::build_backbone_atom_indices;
 
         let (header, frames) = match dcd_file_to_frames(path) {
             Ok(r) => r,
@@ -113,126 +135,5 @@ impl VisoEngine {
                 player.total_frames()
             );
         }
-    }
-
-    /// Animate backbone to new pose with specified transition.
-    pub fn animate_to_pose(
-        &mut self,
-        new_backbone: &[Vec<Vec3>],
-        transition: &Transition,
-    ) {
-        self.animator.set_target(new_backbone, transition);
-
-        // If animator has visual state, update renderers
-        if self.animator.residue_count() > 0 {
-            let visual_backbone = self.animator.get_backbone();
-            self.update_backbone(&visual_backbone);
-        }
-    }
-
-    /// Capture sidechain start positions for animation preemption.
-    fn capture_sidechain_start(&mut self, sidechain: &SidechainView) {
-        if self.sc_anim.target_sidechain_positions.len()
-            == sidechain.positions.len()
-        {
-            if self.animator.is_animating()
-                && self.animator.has_sidechain_data()
-            {
-                self.sc_anim.start_sidechain_positions =
-                    self.animator.get_sidechain_positions();
-                let ctx = self.animator.interpolation_context();
-                self.sc_anim.start_backbone_sidechain_bonds = self
-                    .sc_anim
-                    .start_backbone_sidechain_bonds
-                    .iter()
-                    .zip(self.sc_anim.target_backbone_sidechain_bonds.iter())
-                    .map(|((start_pos, idx), (target_pos, _))| {
-                        let pos = *start_pos
-                            + (*target_pos - *start_pos) * ctx.eased_t;
-                        (pos, *idx)
-                    })
-                    .collect();
-            } else {
-                self.sc_anim.start_sidechain_positions =
-                    self.sc_anim.target_sidechain_positions.clone();
-                self.sc_anim.start_backbone_sidechain_bonds =
-                    self.sc_anim.target_backbone_sidechain_bonds.clone();
-            }
-        } else {
-            self.sc_anim.start_sidechain_positions =
-                sidechain.positions.to_vec();
-            self.sc_anim.start_backbone_sidechain_bonds =
-                sidechain.backbone_bonds.to_vec();
-        }
-    }
-
-    /// Animate to new pose with sidechain data and explicit transition.
-    pub fn animate_to_full_pose(
-        &mut self,
-        new_backbone: &[Vec<Vec3>],
-        sidechain: &SidechainView,
-        sidechain_atom_names: &[String],
-        transition: &Transition,
-    ) {
-        self.capture_sidechain_start(sidechain);
-
-        // Set new targets and cached data
-        self.sc_anim.target_sidechain_positions = sidechain.positions.to_vec();
-        self.sc_anim.target_backbone_sidechain_bonds =
-            sidechain.backbone_bonds.to_vec();
-        self.sc_cache.sidechain_bonds = sidechain.bonds.to_vec();
-        self.sc_cache.sidechain_hydrophobicity =
-            sidechain.hydrophobicity.to_vec();
-        self.sc_cache.sidechain_residue_indices =
-            sidechain.residue_indices.to_vec();
-        self.sc_cache.sidechain_atom_names = sidechain_atom_names.to_vec();
-
-        // Extract CA positions from backbone for sidechain collapse animation
-        let ca_positions =
-            foldit_conv::render::backbone::ca_positions_from_chains(
-                new_backbone,
-            );
-
-        // Pass sidechain data to animator FIRST (before set_target)
-        // This allows set_target to detect sidechain changes and force
-        // animation even when backbone is unchanged (for Shake/MPNN
-        // animations)
-        self.animator.set_sidechain_target_with_transition(
-            sidechain.positions,
-            sidechain.residue_indices,
-            &ca_positions,
-            Some(transition),
-        );
-
-        // Set backbone target (this starts the animation, checking sidechain
-        // changes)
-        self.animator.set_target(new_backbone, transition);
-
-        // Update renderers with START visual state (animation will interpolate
-        // from here)
-        if self.animator.residue_count() > 0 {
-            let visual_backbone = self.animator.get_backbone();
-            self.update_backbone(&visual_backbone);
-        }
-
-        // Update sidechain renderer with start positions (adjusted for sheet
-        // surface)
-        let offset_map = self.sheet_offset_map();
-        let raw_view = SidechainView {
-            positions: &self.sc_anim.start_sidechain_positions,
-            bonds: sidechain.bonds,
-            backbone_bonds: &self.sc_anim.start_backbone_sidechain_bonds,
-            hydrophobicity: sidechain.hydrophobicity,
-            residue_indices: sidechain.residue_indices,
-        };
-        let adjusted = crate::util::sheet_adjust::sheet_adjusted_view(
-            &raw_view,
-            &offset_map,
-        );
-        self.renderers.sidechain.update(
-            &self.context.device,
-            &self.context.queue,
-            &adjusted.as_view(),
-        );
     }
 }

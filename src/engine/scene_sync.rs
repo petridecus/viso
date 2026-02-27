@@ -1,13 +1,13 @@
 //! Scene Sync methods for VisoEngine
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
 
 use super::VisoEngine;
-use crate::animation::sidechain_state::SidechainAnimData;
 use crate::animation::transition::Transition;
+use crate::animation::SidechainAnimPositions;
 use crate::renderer::geometry::backbone::{
     BackboneUpdateData, PreparedBackboneData,
 };
@@ -219,174 +219,47 @@ impl VisoEngine {
             return;
         };
 
-        // Store entity residue ranges on the engine (source of truth)
+        // Store entity residue ranges on both engine and Scene
         self.entity_ranges
             .clone_from(&prepared.entity_residue_ranges);
+        self.scene
+            .set_entity_residue_ranges(prepared.entity_residue_ranges.clone());
 
-        let dominant_transition = prepared.entity_transitions.values().next();
         let animating = !prepared.entity_transitions.is_empty();
 
         if animating {
-            let transition = dominant_transition.cloned().unwrap_or_default();
-            self.setup_animation_targets_from_prepared(&prepared, &transition);
-
-            let active: HashSet<u32> =
-                prepared.entity_transitions.keys().copied().collect();
-            self.animator.snap_entities_without_action(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
-            self.animator.remove_non_targeted_from_runner(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
-            self.snap_non_targeted_sidechains(
-                &prepared.entity_residue_ranges,
-                &active,
-            );
+            self.setup_per_entity_animation(&prepared);
             self.submit_animation_frame();
         } else {
             self.snap_from_prepared(&prepared);
         }
 
-        let suppress_sidechains =
-            dominant_transition.is_some_and(|t| t.suppress_initial_sidechains);
+        let suppress_sidechains = prepared
+            .entity_transitions
+            .values()
+            .any(|t| t.suppress_initial_sidechains);
         self.upload_prepared_to_gpu(&prepared, animating, suppress_sidechains);
     }
 
-    /// Snap sidechain start positions to target for entities that are NOT
-    /// part of the current transition, so they don't animate.
-    fn snap_non_targeted_sidechains(
-        &mut self,
-        entity_residue_ranges: &[crate::scene::EntityResidueRange],
-        active: &HashSet<u32>,
-    ) {
-        for range in entity_residue_ranges {
-            if active.contains(&range.entity_id) {
-                continue;
-            }
-            let res_start = range.start as usize;
-            let res_end = range.end() as usize;
-            for (i, &res_idx) in
-                self.sc_cache.sidechain_residue_indices.iter().enumerate()
-            {
-                let r = res_idx as usize;
-                if r < res_start
-                    || r >= res_end
-                    || i >= self.sc_anim.start_sidechain_positions.len()
-                    || i >= self.sc_anim.target_sidechain_positions.len()
-                {
-                    continue;
-                }
-                self.sc_anim.start_sidechain_positions[i] =
-                    self.sc_anim.target_sidechain_positions[i];
-            }
-            for (j, &(_, cb_idx)) in self
-                .sc_anim
-                .target_backbone_sidechain_bonds
-                .iter()
-                .enumerate()
-            {
-                let res_idx = self
-                    .sc_cache
-                    .sidechain_residue_indices
-                    .get(cb_idx as usize)
-                    .copied()
-                    .unwrap_or(u32::MAX) as usize;
-                if res_idx < res_start
-                    || res_idx >= res_end
-                    || j >= self.sc_anim.start_backbone_sidechain_bonds.len()
-                {
-                    continue;
-                }
-                self.sc_anim.start_backbone_sidechain_bonds[j] =
-                    self.sc_anim.target_backbone_sidechain_bonds[j];
-            }
-        }
-    }
-
-    /// Capture sidechain start positions from prepared scene data.
-    fn capture_prepared_sidechain_start(&mut self, prepared: &PreparedScene) {
-        let new_backbone = &prepared.backbone_chains;
-        let sidechain_positions = prepared.sidechain.positions();
-        let sidechain_residue_indices = prepared.sidechain.residue_indices();
-
-        if self.sc_anim.target_sidechain_positions.len()
-            == sidechain_positions.len()
-        {
-            if self.animator.is_animating()
-                && self.animator.has_sidechain_data()
-            {
-                self.sc_anim.start_sidechain_positions =
-                    self.animator.get_sidechain_positions();
-                let ctx = self.animator.interpolation_context();
-                self.sc_anim.start_backbone_sidechain_bonds = self
-                    .sc_anim
-                    .start_backbone_sidechain_bonds
-                    .iter()
-                    .zip(self.sc_anim.target_backbone_sidechain_bonds.iter())
-                    .map(|((start_pos, idx), (target_pos, _))| {
-                        let pos = *start_pos
-                            + (*target_pos - *start_pos) * ctx.eased_t;
-                        (pos, *idx)
-                    })
-                    .collect();
-            } else {
-                self.sc_anim
-                    .start_sidechain_positions
-                    .clone_from(&self.sc_anim.target_sidechain_positions);
-                self.sc_anim
-                    .start_backbone_sidechain_bonds
-                    .clone_from(&self.sc_anim.target_backbone_sidechain_bonds);
-            }
-        } else {
-            let ca_positions =
-                foldit_conv::render::backbone::ca_positions_from_chains(
-                    new_backbone,
-                );
-            self.sc_anim.start_sidechain_positions = sidechain_residue_indices
-                .iter()
-                .map(|&ri| {
-                    ca_positions.get(ri as usize).copied().unwrap_or(Vec3::ZERO)
-                })
-                .collect();
-            self.sc_anim
-                .start_backbone_sidechain_bonds
-                .clone_from(&prepared.sidechain.backbone_bonds);
-        }
-    }
-
-    /// Set up animation targets from prepared scene data.
-    fn setup_animation_targets_from_prepared(
-        &mut self,
-        prepared: &PreparedScene,
-        transition: &Transition,
-    ) {
+    /// Set up per-entity animation from prepared scene data.
+    ///
+    /// For each entity with a transition, dispatches to
+    /// `animator.animate_entity()` so each entity gets its own runner.
+    /// Entities without transitions are not animated.
+    fn setup_per_entity_animation(&mut self, prepared: &PreparedScene) {
         let new_backbone = &prepared.backbone_chains;
 
-        self.capture_prepared_sidechain_start(prepared);
-
-        // Extract CA positions for sidechain collapse animation
+        // Extract sidechain data for per-entity dispatch
         let ca_positions =
             foldit_conv::render::backbone::ca_positions_from_chains(
                 new_backbone,
             );
-
-        // Pass sidechain data to animator FIRST (before set_target)
         let sidechain_positions = prepared.sidechain.positions();
         let sidechain_residue_indices = prepared.sidechain.residue_indices();
-        self.animator.set_sidechain_target_with_transition(
-            &sidechain_positions,
-            &sidechain_residue_indices,
-            &ca_positions,
-            Some(transition),
-        );
 
-        // Set new targets and cached data
-        self.sc_cache.update_from_sidechain_atoms(
-            &prepared.sidechain,
-            &mut self.sc_anim,
-        );
+        // Update sidechain cache
+        self.sc_cache
+            .update_from_sidechain_atoms(&prepared.sidechain);
 
         // Cache secondary structure types
         if let Some(ref ss) = prepared.ss_types {
@@ -400,8 +273,29 @@ impl VisoEngine {
             .per_residue_colors
             .clone_from(&prepared.per_residue_colors);
 
-        // Set backbone target (starts the animation)
-        self.animator.set_target(new_backbone, transition);
+        // Dispatch per-entity animation with sidechain data
+        for range in &prepared.entity_residue_ranges {
+            let transition = prepared
+                .entity_transitions
+                .get(&range.entity_id)
+                .cloned()
+                .unwrap_or_default();
+
+            let entity_sc = Self::extract_entity_sidechain(
+                &sidechain_positions,
+                &sidechain_residue_indices,
+                &ca_positions,
+                range,
+                prepared.entity_transitions.get(&range.entity_id),
+            );
+
+            self.animator.animate_entity(
+                range,
+                new_backbone,
+                &transition,
+                entity_sc,
+            );
+        }
 
         // Ensure selection/color buffers have capacity and update colors
         let total_residues =
@@ -421,11 +315,12 @@ impl VisoEngine {
 
     /// Snap update from prepared scene data (no animation).
     fn snap_from_prepared(&mut self, prepared: &PreparedScene) {
-        self.sc_cache.update_from_sidechain_atoms(
-            &prepared.sidechain,
-            &mut self.sc_anim,
-        );
-        self.sc_anim.snap_positions();
+        // Write at-rest backbone to Scene's visual state
+        self.scene
+            .update_visual_positions(prepared.backbone_chains.clone());
+
+        self.sc_cache
+            .update_from_sidechain_atoms(&prepared.sidechain);
 
         if let Some(ref ss) = prepared.ss_types {
             self.sc_cache.ss_types.clone_from(ss);
@@ -528,6 +423,48 @@ impl VisoEngine {
         }
     }
 
+    /// Extract sidechain animation positions for a single entity.
+    ///
+    /// Returns `None` if the entity has no sidechain atoms in its range,
+    /// or if `transition` is `None` (entity has no active transition).
+    fn extract_entity_sidechain(
+        all_positions: &[Vec3],
+        all_residue_indices: &[u32],
+        all_ca: &[Vec3],
+        range: &crate::scene::EntityResidueRange,
+        transition: Option<&Transition>,
+    ) -> Option<SidechainAnimPositions> {
+        let transition = transition?;
+        let res_start = range.start as usize;
+        let res_end = range.end() as usize;
+        let collapse_to_ca = transition.allows_size_change;
+
+        let mut start = Vec::new();
+        let mut target = Vec::new();
+
+        for (i, &res_idx) in all_residue_indices.iter().enumerate() {
+            let r = res_idx as usize;
+            if !(res_start..res_end).contains(&r) {
+                continue;
+            }
+            let Some(&pos) = all_positions.get(i) else {
+                continue;
+            };
+            target.push(pos);
+            if collapse_to_ca {
+                start.push(all_ca.get(r).copied().unwrap_or(Vec3::ZERO));
+            } else {
+                start.push(pos);
+            }
+        }
+
+        if target.is_empty() {
+            return None;
+        }
+
+        Some(SidechainAnimPositions { start, target })
+    }
+
     /// Check per-chain LOD tiers and submit a background remesh if any
     /// chain's tier has changed.
     pub(crate) fn check_and_submit_lod(&mut self) {
@@ -555,8 +492,9 @@ impl VisoEngine {
     /// Submit an animation frame to the background thread for mesh generation.
     pub(crate) fn submit_animation_frame(&self) {
         let visual_backbone = self.animator.get_backbone();
-        let has_sidechains = self.animator.has_sidechain_data()
-            && self.animator.should_include_sidechains();
+        let has_sidechains =
+            !self.sc_cache.target_sidechain_positions.is_empty()
+                && self.animator.should_include_sidechains();
         self.submit_animation_frame_with_backbone(
             visual_backbone,
             has_sidechains,
@@ -570,16 +508,17 @@ impl VisoEngine {
         include_sidechains: bool,
     ) {
         let sidechains = if include_sidechains {
-            let interpolated_positions =
-                self.animator.get_sidechain_positions();
-            let interpolated_bonds = self.sc_anim.interpolated_backbone_bonds(
-                &self.animator,
-                &self.sc_cache.sidechain_residue_indices,
-            );
-            Some(SidechainAnimData::to_interpolated_sidechain_atoms(
+            let interpolated_positions = self
+                .animator
+                .get_aggregated_sidechain_positions()
+                .unwrap_or_else(|| {
+                    self.sc_cache.target_sidechain_positions.clone()
+                });
+            let interpolated_bonds =
+                self.sc_cache.interpolated_backbone_bonds(&self.animator);
+            Some(self.sc_cache.to_interpolated_sidechain_atoms(
                 &interpolated_positions,
                 &interpolated_bonds,
-                &self.sc_cache,
             ))
         } else {
             None
@@ -681,13 +620,43 @@ impl VisoEngine {
     }
 
     /// Update protein coords for a specific entity.
+    ///
+    /// Updates the engine's source-of-truth entities first, then derives
+    /// Scene from them. Uses the entity's per-entity behavior override if
+    /// set, otherwise falls back to the provided transition.
     pub fn update_entity_coords(
         &mut self,
         id: u32,
         coords: foldit_conv::types::coords::Coords,
         transition: Transition,
     ) {
+        // 1. Update source-of-truth on the engine
+        if let Some(entity) =
+            self.entities.iter_mut().find(|e| e.entity_id == id)
+        {
+            let mut entities = vec![entity.clone()];
+            foldit_conv::types::assembly::update_protein_entities(
+                &mut entities,
+                coords.clone(),
+            );
+            if let Some(updated) = entities.into_iter().next() {
+                *entity = updated;
+            }
+        }
+
+        // 2. Update Scene (derived copy)
         self.scene.update_entity_protein_coords(id, coords);
-        self.sync_scene_to_renderers(Some(transition));
+
+        // 3. Look up per-entity behavior override
+        let effective_transition = self
+            .entity_behaviors
+            .get(&id)
+            .cloned()
+            .unwrap_or(transition);
+
+        // 4. Sync with per-entity transition
+        let mut entity_transitions = HashMap::new();
+        let _ = entity_transitions.insert(id, effective_transition);
+        self.sync_scene_to_renderers_targeted(entity_transitions);
     }
 }

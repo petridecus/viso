@@ -39,16 +39,28 @@ pub enum Focus {
 // Scene
 // ---------------------------------------------------------------------------
 
-/// The authoritative scene. Owns all entities in a flat list.
+/// The authoritative scene. Owns all entities in a flat list, plus the
+/// current visual state (which may be interpolated during animation).
 pub struct Scene {
     /// Entities in insertion order.
     entities: Vec<SceneEntity>,
     focus: Focus,
     next_entity_id: u32,
-    /// Monotonically increasing generation; bumped on any mutation.
+    /// Monotonically increasing generation; bumped on any structural mutation
+    /// (add/remove entity, coords update).
     generation: u64,
     /// Generation that was last consumed by the renderer.
     rendered_generation: u64,
+    /// Position generation; bumped each animation frame.
+    position_generation: u64,
+    /// Position generation last consumed by the renderer.
+    rendered_position_generation: u64,
+
+    // -- Current visual state (may be interpolated during animation) --
+    /// Current visual backbone chains (interpolated or at-rest).
+    pub(crate) visual_backbone_chains: Vec<Vec<Vec3>>,
+    /// Per-entity residue ranges in the flat concatenated arrays.
+    pub(crate) entity_residue_ranges: Vec<EntityResidueRange>,
 }
 
 impl Scene {
@@ -61,6 +73,10 @@ impl Scene {
             next_entity_id: 0,
             generation: 0,
             rendered_generation: 0,
+            position_generation: 0,
+            rendered_position_generation: 0,
+            visual_backbone_chains: Vec::new(),
+            entity_residue_ranges: Vec::new(),
         }
     }
 
@@ -85,6 +101,34 @@ impl Scene {
     /// Mark current generation as rendered (call after updating renderers).
     pub fn mark_rendered(&mut self) {
         self.rendered_generation = self.generation;
+    }
+
+    /// Whether visual positions changed since last `mark_position_rendered()`.
+    #[must_use]
+    pub fn is_position_dirty(&self) -> bool {
+        self.position_generation != self.rendered_position_generation
+    }
+
+    /// Mark current position generation as rendered.
+    pub fn mark_position_rendered(&mut self) {
+        self.rendered_position_generation = self.position_generation;
+    }
+
+    /// Update the visual backbone positions (called each animation frame).
+    ///
+    /// Bumps the position generation so the renderer knows to re-submit
+    /// an animation frame.
+    pub fn update_visual_positions(&mut self, backbone_chains: Vec<Vec<Vec3>>) {
+        self.visual_backbone_chains = backbone_chains;
+        self.position_generation += 1;
+    }
+
+    /// Set entity residue ranges (populated from prepared scene data).
+    pub fn set_entity_residue_ranges(
+        &mut self,
+        ranges: Vec<EntityResidueRange>,
+    ) {
+        self.entity_residue_ranges = ranges;
     }
 
     // -- Entity management --

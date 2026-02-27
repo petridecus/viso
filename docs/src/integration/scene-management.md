@@ -160,16 +160,13 @@ After modifying the scene, sync to the rendering pipeline:
 // Full sync with optional transition
 engine.sync_scene_to_renderers(Some(Transition::smooth()));
 
-// Targeted sync -- only specific entities get animation, others snap
-engine.sync_scene_to_renderers_targeted(
-    HashMap::from([(design_id, Transition::with_behavior(
-        BackboneThenExpand::new(
-            Duration::from_millis(400),
-            Duration::from_millis(600),
-        ))
-        .allowing_size_change()
-        .suppressing_initial_sidechains()
-    )])
+// Per-entity behavior: set before updating coordinates
+engine.set_entity_behavior(design_id, Transition::backbone_then_expand(
+    Duration::from_millis(400),
+    Duration::from_millis(600),
+)
+    .allowing_size_change()
+    .suppressing_initial_sidechains()
 );
 ```
 

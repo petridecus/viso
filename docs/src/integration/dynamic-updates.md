@@ -2,52 +2,34 @@
 
 Viso is designed for live manipulation -- structures can be updated mid-session by computational backends (Rosetta energy minimization, ML structure prediction) or user actions (mutations, drag operations). This chapter covers the APIs and patterns for dynamic updates.
 
-## Coordinate Updates
+## Per-Entity Coordinate Updates
 
-### Single Entity
+The primary API for updating structure coordinates is `update_entity_coords()`, which updates the engine's source-of-truth entities first, then propagates to the scene and animation system:
 
 ```rust
-// Update protein coordinates in a specific entity
-engine.scene.update_entity_protein_coords(entity_id, new_coords);
-engine.sync_scene_to_renderers(Some(Transition::smooth()));
+// Update a specific entity's coordinates with animation
+engine.update_entity_coords(entity_id, new_coords, Transition::smooth());
 ```
 
-### Combined Multi-Group Update (Rosetta)
+The engine looks up the entity's assigned behavior (or uses the provided transition) and dispatches to the per-entity animation system.
 
-When Rosetta operates on a multi-group session, coordinates come back as a single byte stream:
+### Per-Entity Behavior Control
 
-```rust
-// Before sending to Rosetta: get combined coords
-let result = engine.scene.combined_coords_for_backend();
-// result.bytes -> send to Rosetta
-// result.chain_ids_per_group -> keep for splitting the response
-
-// After Rosetta responds: apply combined update
-engine.scene.apply_combined_update(
-    &response_bytes,
-    &result.chain_ids_per_group,
-)?;
-engine.sync_scene_to_renderers(Some(Transition::smooth()));
-```
-
-### Replacing Entities
-
-When the structure topology changes (e.g., ML prediction replaces backbone-only with full-atom):
+Before updating an entity, callers can assign a specific animation behavior:
 
 ```rust
-if let Some(group) = engine.group_mut(group_id) {
-    group.set_entities(new_entities);
-    group.name = "Updated Structure".to_string();
-    group.invalidate_render_cache();
-}
-engine.sync_scene_to_renderers(Some(
-    Transition::with_behavior(BackboneThenExpand::new(
-        Duration::from_millis(400),
-        Duration::from_millis(600),
-    ))
-    .allowing_size_change()
-    .suppressing_initial_sidechains()
+// Set behavior BEFORE updating coordinates
+engine.set_entity_behavior(entity_id, Transition::collapse_expand(
+    Duration::from_millis(200),
+    Duration::from_millis(300),
 ));
+
+// Update coordinates — engine uses CollapseExpand for this entity
+engine.update_entity_coords(entity_id, new_coords, Transition::smooth());
+
+// After the animation completes, the behavior remains set.
+// To revert to default:
+engine.clear_entity_behavior(entity_id);
 ```
 
 ## Transitions
@@ -61,78 +43,32 @@ Transition::snap()
 // Standard smooth interpolation (300ms ease-out)
 Transition::smooth()
 
-// Custom behavior
-Transition::with_behavior(CollapseExpand::default())
+// Two-phase: sidechains collapse to CA, backbone moves, sidechains expand
+Transition::collapse_expand(
+    Duration::from_millis(300),
+    Duration::from_millis(300),
+)
 
-// With flags
-Transition::with_behavior(BackboneThenExpand::new(...))
+// Two-phase: backbone animates first, then sidechains expand
+Transition::backbone_then_expand(
+    Duration::from_millis(400),
+    Duration::from_millis(600),
+)
+
+// Builder flags
+Transition::collapse_expand(
+    Duration::from_millis(200),
+    Duration::from_millis(300),
+)
     .allowing_size_change()
     .suppressing_initial_sidechains()
 ```
 
-See [Animation System](../deep-dives/animation-system.md) for details on built-in behaviors.
-
-## Backbone Animation
-
-For updates that only change backbone coordinates:
-
-```rust
-engine.animate_to_pose(&new_backbone_chains, &Transition::smooth());
-```
-
-This sets a new animation target. The animator interpolates from the current visual position to the new target over the behavior's duration.
-
-## Full Pose Animation (Backbone + Sidechains)
-
-For updates that include sidechain data:
-
-```rust
-engine.animate_to_full_pose(
-    &new_backbone_chains,
-    &sidechain_data,        // SidechainData { positions, bonds, backbone_bonds, ... }
-    &sidechain_atom_names,
-    &Transition::smooth(),
-);
-```
-
-This handles:
-- Capturing current visual positions as animation start (for smooth preemption)
-- Setting new backbone and sidechain targets
-- Coordinating backbone and sidechain animation timing
-- Sheet surface offset adjustment
+See [Animation System](../deep-dives/animation-system.md) for details on preset behaviors and phase evaluation.
 
 ### Preemption
 
-If a new update arrives while an animation is playing, the behavior's `PreemptionStrategy` determines what happens:
-
-- **Restart** (default) -- start new animation from current visual position to new target
-- **Ignore** -- ignore the new target until current animation completes
-- **Blend** -- blend toward new target while maintaining velocity
-
-Most behaviors use `Restart`, which gives responsive feedback during rapid update cycles.
-
-## Targeted Per-Entity Animation
-
-When only some groups should animate (e.g., a design group finalizes while the input structure stays still):
-
-```rust
-use std::collections::HashMap;
-
-engine.sync_scene_to_renderers_targeted(
-    HashMap::from([
-        (design_entity_id, Transition::with_behavior(
-            BackboneThenExpand::new(
-                Duration::from_millis(400),
-                Duration::from_millis(600),
-            ))
-            .allowing_size_change()
-            .suppressing_initial_sidechains()
-        ),
-    ])
-);
-```
-
-Entities not in the map are snapped instantly to their current state, preventing unwanted animation of unchanged structures.
+If a new update arrives while an animation is playing, the current visual position becomes the new animation's start state and the timer resets. This provides responsive feedback during rapid update cycles (e.g., Rosetta wiggle).
 
 ## Band and Pull Visualization
 
@@ -141,24 +77,23 @@ Entities not in the map are snapped instantly to their current state, preventing
 Bands visualize distance constraints between atoms:
 
 ```rust
-engine.update_bands(&[
-    BandInfo {
-        endpoint_a: Vec3::new(10.0, 20.0, 30.0),
-        endpoint_b: Vec3::new(15.0, 22.0, 28.0),
-        strength: 1.0,
-        target_length: 3.5,
-        residue_idx: 42,
-        band_type: BandType::Default,
-        is_pull: false,
-        is_push: false,
-        is_disabled: false,
-        is_space_pull: false,
-        from_script: false,
-    },
-]);
-
-// Clear all bands
-engine.clear_bands();
+engine.execute(VisoCommand::UpdateBands {
+    bands: vec![
+        BandInfo {
+            endpoint_a: Vec3::new(10.0, 20.0, 30.0),
+            endpoint_b: Vec3::new(15.0, 22.0, 28.0),
+            strength: 1.0,
+            target_length: 3.5,
+            residue_idx: 42,
+            band_type: BandType::Default,
+            is_pull: false,
+            is_push: false,
+            is_disabled: false,
+            is_space_pull: false,
+            from_script: false,
+        },
+    ],
+});
 ```
 
 Band visual properties:
@@ -171,104 +106,24 @@ Band visual properties:
 A pull is a temporary constraint while the user drags a residue:
 
 ```rust
-engine.update_pull(Some(&PullInfo {
-    atom_pos: atom_world_position,
-    target_pos: mouse_world_position,
-    residue_idx: 42,
-}));
+engine.execute(VisoCommand::UpdatePull {
+    pull: Some(PullInfo {
+        atom_pos: atom_world_position,
+        target_pos: mouse_world_position,
+        residue_idx: 42,
+    }),
+});
 
 // Clear when drag ends
-engine.clear_pull();
+engine.execute(VisoCommand::UpdatePull { pull: None });
 ```
 
 Pulls render as a purple cylinder from atom to mouse position with a cone/arrow at the mouse end.
 
-## Real foldit-rs Patterns
-
-### Rosetta Wiggle Cycle
-
-```rust
-// 1. Send coords to Rosetta
-let combined = engine.scene.combined_coords_for_backend();
-rosetta.minimize(combined.bytes);
-
-// 2. Receive updated coords (via triple buffer, checked each frame)
-let update = backend.try_recv();
-if let BackendUpdate::RosettaCoords { coords_bytes, score, .. } = update {
-    engine.scene.apply_combined_update(&coords_bytes, &chain_ids)?;
-
-    // Cache per-residue scores for coloring
-    if let Some(scores) = per_residue_scores {
-        group.set_per_residue_scores(Some(scores));
-    }
-
-    engine.sync_scene_to_renderers(Some(Transition::smooth()));
-}
-```
-
-### ML Structure Prediction (Streaming)
-
-```rust
-// Intermediate frames during prediction
-fn on_ml_intermediate(engine: &mut Engine, entities: Vec<MoleculeEntity>, step: u32) {
-    if let Some(group) = engine.group_mut(group_id) {
-        group.set_entities(entities);
-        group.name = format!("Predicting... ({}/{})", step, total_steps);
-        group.invalidate_render_cache();
-    }
-    engine.sync_scene_to_renderers(Some(
-        Transition::with_behavior(SmoothInterpolation::linear(Duration::from_millis(100)))
-    ));
-}
-
-// Final result
-fn on_ml_complete(engine: &mut Engine, entities: Vec<MoleculeEntity>) {
-    if let Some(group) = engine.group_mut(group_id) {
-        group.set_entities(entities);
-        group.name = "Prediction Result".to_string();
-        group.invalidate_render_cache();
-    }
-    engine.sync_scene_to_renderers_targeted(
-        HashMap::from([(group_id, Transition::with_behavior(
-            BackboneThenExpand::new(
-                Duration::from_millis(400),
-                Duration::from_millis(600),
-            ))
-            .allowing_size_change()
-            .suppressing_initial_sidechains()
-        )])
-    );
-}
-```
-
-### RFDiffusion3 Design (Backbone Streaming)
-
-RFD3 streams backbone-only intermediates, then delivers a full-atom final result:
-
-```rust
-// Intermediates: backbone only
-let backbone_chains = positions_to_backbone_chains(&backbone_positions);
-let coords = backbone_chains_to_coords(&backbone_chains);
-let entities = split_into_entities(&coords);
-engine.load_entities(entities, "Designing...", false);
-
-// Final: full-atom with backbone-then-expand animation
-engine.sync_scene_to_renderers_targeted(
-    HashMap::from([(design_id, Transition::with_behavior(
-        BackboneThenExpand::new(
-            Duration::from_millis(400),
-            Duration::from_millis(600),
-        ))
-        .allowing_size_change()
-        .suppressing_initial_sidechains()
-    )])
-);
-```
-
 ## Animation Control
 
 ```rust
-engine.skip_animations();           // Jump to final state
-engine.cancel_animations();         // Stay at current visual state
-engine.set_animation_enabled(false); // Disable all animation (snap)
+animator.skip();     // Jump to final state
+animator.cancel();   // Stay at current visual state
+animator.set_enabled(false); // Disable all animation (snap)
 ```

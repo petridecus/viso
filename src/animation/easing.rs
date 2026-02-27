@@ -1,7 +1,7 @@
 //! Easing functions for animation interpolation.
 //!
-//! Provides various easing curves for smooth visual transitions in the
-//! animation system. All functions are designed for <100ns evaluation time.
+//! Provides various easing curves for smooth visual transitions.
+//! All functions are designed for <100ns evaluation time.
 
 /// Easing function variants for animation curves.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,146 +1,152 @@
 # Animation System
 
-Viso's animation system manages smooth visual transitions when protein structures change. It uses a two-layer architecture that separates *how to animate* from the application's *why*.
+Viso's animation system manages smooth visual transitions when protein structures change. It is fully data-driven — a `Transition` describes the animation as a sequence of phases, and an `AnimationRunner` evaluates those phases each frame.
 
-## Two-Layer Architecture
+## Data-Driven Architecture
 
 ```
-Transition              →    AnimationBehavior
-  (behavior + flags)          (how to animate)
+Transition              →    AnimationRunner
+  (phases + flags)            (evaluates phases per frame)
 ```
 
-1. **Transition** -- a struct bundling a behavior with metadata flags (size-change permission, sidechain suppression)
-2. **Behavior** -- a trait implementation that defines interpolation curves, timing, and visual effects
+1. **Transition** — a struct holding a `Vec<AnimationPhase>` plus metadata flags (size-change permission, sidechain suppression). Each phase has an easing function, duration, lerp range, and sidechain visibility flag.
+2. **AnimationRunner** — executes a single animation from start to target states, advancing through phases sequentially.
 
-The consumer constructs `Transition` values directly, choosing the appropriate behavior for each update. Viso only cares about *how* to interpolate, not *why*.
+There are no trait objects or behavior types. The consumer constructs `Transition` values using preset constructors, and the runner evaluates the phase sequence directly.
 
 ## Transition
 
 ```rust
 pub struct Transition {
-    pub behavior: SharedBehavior,
+    pub phases: Vec<AnimationPhase>,
     pub allows_size_change: bool,
     pub suppress_initial_sidechains: bool,
+    pub name: &'static str,
 }
 
-// Convenience constructors
-Transition::snap()     // Instant, allows resize
-Transition::smooth()   // 300ms cubic hermite ease-out
-Transition::with_behavior(CollapseExpand::default())  // Custom behavior
-Transition::default()  // Same as smooth()
+// Preset constructors
+Transition::snap()       // Instant, allows resize
+Transition::smooth()     // 300ms cubic hermite ease-out
+Transition::collapse_expand(collapse_dur, expand_dur)
+Transition::backbone_then_expand(backbone_dur, expand_dur)
+Transition::cascade(base_dur, delay_per_residue)
+Transition::default()    // Same as smooth()
 
 // Builder methods
-Transition::with_behavior(BackboneThenExpand::new(...))
+Transition::collapse_expand(
+    Duration::from_millis(200),
+    Duration::from_millis(300),
+)
     .allowing_size_change()
     .suppressing_initial_sidechains()
 ```
 
-## Built-in Behaviors
+## AnimationPhase
+
+Each phase in a transition defines a segment of the animation:
+
+```rust
+pub struct AnimationPhase {
+    pub easing: EasingFunction,
+    pub duration: Duration,
+    pub lerp_start: f32,    // e.g. 0.0
+    pub lerp_end: f32,      // e.g. 0.4
+    pub include_sidechains: bool,
+}
+```
+
+The runner maps raw progress (0→1 over total duration) through the phase sequence. Each phase applies its own easing within its lerp range.
+
+## Preset Behaviors
 
 ### Snap
 
-Instant transition. Duration is zero. Used for initial loads where animation would delay the first meaningful frame.
+Instant transition. Duration is zero. Used for initial loads where animation would delay the first meaningful frame. Also used internally when trajectory frames are fed through the animation pipeline.
 
-### SmoothInterpolation
+### Smooth (Default)
 
-Standard eased lerp between start and target:
+Standard eased lerp between start and target. 300ms with cubic hermite ease-out (`CubicHermite { c1: 0.33, c2: 1.0 }`). Good for incremental changes where start and target are close.
 
-```rust
-SmoothInterpolation::standard()        // 300ms, cubic hermite ease-out
-SmoothInterpolation::fast()            // 100ms, quadratic out
-SmoothInterpolation::linear(duration)  // No easing
-```
-
-Good for incremental changes where start and target are close.
-
-### Cascade
-
-Staggered per-residue animation that creates a wave effect:
-
-```rust
-Cascade::new(
-    Duration::from_millis(500),  // Base duration per residue
-    Duration::from_millis(5),    // Delay between residues
-)
-```
-
-Each residue starts its animation slightly after the previous one. The total duration is `base_duration + delay_per_residue * residue_count`. Used for dramatic reveals.
-
-### CollapseExpand
+### Collapse/Expand
 
 Two-phase animation for mutations:
 
-1. **Collapse phase** -- sidechain atoms collapse toward the backbone CA position
-2. **Expand phase** -- new sidechain atoms expand outward from CA to their final positions
+1. **Collapse phase** — sidechain atoms collapse toward the backbone CA position (QuadraticIn easing)
+2. **Expand phase** — new sidechain atoms expand outward from CA to their final positions (QuadraticOut easing)
 
 ```rust
-CollapseExpand::new(
+Transition::collapse_expand(
     Duration::from_millis(300),  // Collapse duration
     Duration::from_millis(300),  // Expand duration
 )
 ```
 
-This provides clear visual feedback that a mutation occurred, even when the backbone barely moves.
+Collapse-to-CA is handled at animation setup time — the `SidechainAnimPositions` start positions are set to CA coordinates when `allows_size_change` is true.
 
-### BackboneThenExpand
+### Backbone Then Expand
 
 Two-phase animation for transitions where sidechains should appear after backbone settles:
 
-1. **Backbone phase** -- backbone atoms lerp to final positions while sidechains are hidden
-2. **Expand phase** -- sidechain atoms expand from collapsed (at CA) to final positions
+1. **Backbone phase** — backbone atoms lerp to final positions while sidechains are hidden
+2. **Expand phase** — sidechain atoms expand from collapsed (at CA) to final positions
 
 ```rust
-BackboneThenExpand::new(
+Transition::backbone_then_expand(
     Duration::from_millis(400),  // Backbone lerp duration
     Duration::from_millis(600),  // Sidechain expand duration
 )
 ```
 
-Uses `should_include_sidechains(raw_t)` to hide sidechains during the backbone phase, preventing visual artifacts when new atoms appear before the backbone has settled.
+Uses `include_sidechains: false` on the first phase to hide sidechains during backbone movement, preventing visual artifacts when new atoms appear before the backbone has settled.
 
-## The AnimationBehavior Trait
+### Cascade
 
-All behaviors implement this trait:
-
-```rust
-pub trait AnimationBehavior: Send + Sync {
-    /// Eased time for raw progress t
-    fn eased_t(&self, t: f32) -> f32;
-
-    /// Compute visual state at time t
-    fn compute_state(&self, t: f32, start: &ResidueVisualState, end: &ResidueVisualState)
-        -> ResidueVisualState;
-
-    /// Total animation duration
-    fn duration(&self) -> Duration;
-
-    /// How to handle a new target arriving mid-animation
-    fn preemption(&self) -> PreemptionStrategy { PreemptionStrategy::Restart }
-
-    /// Interpolation context (override for multi-phase behaviors)
-    fn compute_context(&self, raw_t: f32) -> InterpolationContext;
-
-    /// Whether sidechains should be visible at this progress
-    fn should_include_sidechains(&self, _raw_t: f32) -> bool { true }
-
-    /// Position interpolation with optional collapse point
-    fn interpolate_position(&self, t: f32, start: Vec3, end: Vec3, collapse_point: Vec3) -> Vec3;
-}
-```
-
-### Preemption Strategies
-
-When a new target arrives while an animation is playing:
+Staggered per-residue wave animation (QuadraticOut easing):
 
 ```rust
-pub enum PreemptionStrategy {
-    Restart,  // Start from current visual position to new target (default)
-    Ignore,   // Ignore new target until animation completes
-    Blend,    // Blend toward new target maintaining velocity
-}
+Transition::cascade(
+    Duration::from_millis(500),  // Base duration per residue
+    Duration::from_millis(5),    // Delay between residues
+)
 ```
 
-`Restart` is the most common -- it provides responsive feedback during rapid update cycles. The current visual state becomes the new start state, and the timer resets.
+Note: per-residue staggering is not yet integrated into the runner — currently animates all residues with the same timing.
+
+## Per-Entity Animation
+
+Each entity gets its own `AnimationRunner` with independent timing. The `StructureAnimator` manages a `HashMap<u32, EntityAnimationState>` of per-entity runners and aggregates their interpolated output each frame.
+
+```rust
+// The engine dispatches per-entity:
+animator.animate_entity(
+    &range,          // EntityResidueRange (includes entity_id)
+    &backbone_chains,
+    &transition,
+    sidechain_data,  // Option<SidechainAnimPositions>
+);
+
+// Each frame:
+let still_animating = animator.update(Instant::now());
+let visual_backbone = animator.get_backbone();
+```
+
+### How It Works
+
+1. `animate_entity()` builds per-residue `ResidueAnimationData` (start/target backbone positions) for the entity's residue range
+2. An `AnimationRunner` is created with those residues, the transition's phases, and optional sidechain positions
+3. Each frame, `update()` calls `interpolate_residues()` on each runner, which returns an iterator of `(residue_idx, lerped_visual)` pairs
+4. Sidechain positions are interpolated with the same `eased_t` as backbone
+5. When a runner completes (progress >= 1.0), the entity's residues are snapped to target and the runner is removed
+
+### Preemption
+
+When a new target arrives while an entity is mid-animation:
+
+- The current interpolated position becomes the new animation's start state
+- The previous animation's sidechain positions are captured for smooth handoff (when atom counts match)
+- A new runner replaces the old one with the new target
+
+This provides responsive feedback during rapid update cycles (e.g., Rosetta wiggle).
 
 ## ResidueVisualState
 
@@ -149,75 +155,44 @@ Each residue's visual state during animation:
 ```rust
 pub struct ResidueVisualState {
     pub backbone: [Vec3; 3],  // N, CA, C positions
-    pub chis: [f32; 4],       // Up to 4 chi (dihedral) angles
-    pub num_chis: usize,      // Number of valid chi angles
 }
 ```
 
-Interpolation lerps backbone positions and chi angles. Chi angles use angle-aware interpolation that handles wrapping across the -180/180 boundary.
-
-## InterpolationContext
-
-Computed once per frame from the behavior and raw progress, then shared across all interpolation to prevent backbone/sidechain desync:
-
-```rust
-pub struct InterpolationContext {
-    pub raw_t: f32,                  // 0.0 to 1.0
-    pub eased_t: f32,               // After easing function
-    pub phase_t: Option<f32>,       // Within current phase (multi-phase behaviors)
-    pub phase_eased_t: Option<f32>, // Eased within phase
-}
-```
-
-## StructureAnimator
-
-The top-level animator that applications interact with:
-
-```rust
-let mut animator = StructureAnimator::new();
-
-// Set animation target
-animator.set_target(&new_backbone_chains, &Transition::smooth());
-
-// Each frame:
-let still_animating = animator.update(Instant::now());
-
-// Get interpolated state
-let visual_backbone = animator.get_backbone();
-let sidechain_positions = animator.get_sidechain_positions();
-let context = animator.interpolation_context();
-```
-
-### Per-Entity Animation
-
-When some groups should animate and others should snap:
-
-```rust
-// Set sidechain targets with transition (call BEFORE set_target)
-animator.set_sidechain_target_with_transition(
-    &positions, &residue_indices, &ca_positions,
-    Some(&my_transition),
-);
-
-// Set backbone target
-animator.set_target(&backbone_chains, &my_transition);
-
-// Snap non-targeted entities
-animator.snap_entities_without_action(&entity_residue_ranges, &active_entities);
-
-// Remove non-targeted residues from the runner
-animator.remove_non_targeted_from_runner(&entity_residue_ranges, &active_entities);
-```
+Interpolation lerps backbone positions linearly, with the easing applied via the phase's easing function.
 
 ## Sidechain Animation
 
-Sidechain animation tracks positions separately from backbone and supports specialized behaviors:
+Sidechain positions are stored as `SidechainAnimPositions` (start + target `Vec<Vec3>`) and lerped with the same `eased_t` as backbone. The animator pre-computes interpolated sidechain positions each frame so queries can read them without recomputing.
 
-- **Standard lerp** -- for smooth transitions, sidechains lerp alongside backbone
-- **Collapse toward CA** -- for mutations, atoms collapse to the CA position then expand to new positions
-- **Hidden during backbone phase** -- for multi-phase transitions, sidechains are invisible while backbone lerps
+Specialized sidechain behaviors:
 
-The animator stores start and target sidechain positions and uses the behavior's `interpolate_position` method, which receives a `collapse_point` (the CA position) for behaviors that need it.
+- **Standard lerp** — for smooth transitions, sidechains lerp alongside backbone
+- **Collapse toward CA** — for mutations, start positions are set to the CA position at setup time; the runner's normal lerp handles the expansion
+- **Hidden during backbone phase** — multi-phase transitions use `include_sidechains: false` on early phases
+
+## Trajectory Playback
+
+DCD trajectory frames are fed through the standard animation pipeline. The `TrajectoryPlayer` (in `engine/trajectory.rs`) is a frame sequencer with no animation dependencies. Each frame it produces is fed through `animate_entity()` with `Transition::snap()`, so trajectory and structural animation share a single code path in `tick_animation()`.
+
+## StructureState
+
+`StructureState` (in `animator.rs`) holds the current and target visual state for the entire structure. It converts between backbone chain format (`Vec<Vec<Vec3>>`) and per-residue `ResidueVisualState` arrays, preserving chain boundaries via `chain_lengths`.
+
+The animator owns a single `StructureState` and per-entity runners write interpolated values into it each frame.
+
+## Easing Functions
+
+Available in `animation/easing.rs`:
+
+| Function | Description |
+|----------|-------------|
+| `Linear` | No easing |
+| `QuadraticIn` | Slow start, fast end |
+| `QuadraticOut` | Fast start, slow end |
+| `SqrtOut` | Fast start, gradual slow |
+| `CubicHermite { c1, c2 }` | Configurable control points (default: ease-out) |
+
+All functions evaluate in <100ns and clamp input to [0, 1].
 
 ## Disabling Animation
 
@@ -226,5 +201,4 @@ The animator stores start and target sidechain positions and uses the behavior's
 animator.set_enabled(false);
 
 // Or use Transition::snap() for individual updates
-engine.sync_scene_to_renderers(Some(Transition::snap()));
 ```

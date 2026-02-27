@@ -33,10 +33,14 @@ impl VisoEngine {
     /// Get the current visual sidechain positions (interpolated during
     /// animation).
     pub fn get_current_sidechain_positions(&self) -> Vec<Vec3> {
-        if self.animator.is_animating() && self.animator.has_sidechain_data() {
-            self.animator.get_sidechain_positions()
+        if self.animator.is_animating() {
+            self.animator
+                .get_aggregated_sidechain_positions()
+                .unwrap_or_else(|| {
+                    self.sc_cache.target_sidechain_positions.clone()
+                })
         } else {
-            self.sc_anim.target_sidechain_positions.clone()
+            self.sc_cache.target_sidechain_positions.clone()
         }
     }
 
@@ -46,12 +50,9 @@ impl VisoEngine {
         &self,
     ) -> Vec<(Vec3, u32)> {
         if self.animator.is_animating() {
-            self.sc_anim.interpolated_backbone_bonds(
-                &self.animator,
-                &self.sc_cache.sidechain_residue_indices,
-            )
+            self.sc_cache.interpolated_backbone_bonds(&self.animator)
         } else {
-            self.sc_anim.target_backbone_sidechain_bonds.clone()
+            self.sc_cache.target_backbone_sidechain_bonds.clone()
         }
     }
 

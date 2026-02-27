@@ -25,7 +25,6 @@ Viewer::builder()
 
 **Rendering**
 
-- Ribbons, tubes, ball-and-stick, capsule sidechains, nucleic acid backbones
 - Ray-marched impostors for pixel-perfect spheres and capsules at any zoom
 - Post-processing pipeline -- SSAO, bloom, FXAA, depth-based outlines, fog, tone mapping
 

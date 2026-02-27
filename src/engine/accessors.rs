@@ -82,7 +82,6 @@ impl VisoEngine {
     ///
     /// This is the authoritative copy of entity data on the engine.
     /// Scene may temporarily differ during animation.
-    #[allow(dead_code)]
     pub fn entities(&self) -> &[MoleculeEntity] {
         &self.entities
     }
@@ -92,7 +91,6 @@ impl VisoEngine {
     /// Each entry maps an entity ID to its start index and count in the
     /// global residue array. Populated when the scene processor delivers
     /// a prepared scene.
-    #[allow(dead_code)]
     pub fn entity_ranges(&self) -> &[EntityResidueRange] {
         &self.entity_ranges
     }
@@ -101,21 +99,17 @@ impl VisoEngine {
     ///
     /// This behavior will be used when the entity is next updated.
     /// Overrides the default smooth transition for the given entity.
-    #[allow(dead_code)]
     pub fn set_entity_behavior(
         &mut self,
         entity_id: u32,
         transition: Transition,
     ) {
-        let _ = self.entity_behaviors.insert(entity_id, transition.clone());
-        self.animator.set_entity_behavior(entity_id, transition);
+        let _ = self.entity_behaviors.insert(entity_id, transition);
     }
 
     /// Clear a per-entity behavior override, reverting to default (smooth).
-    #[allow(dead_code)]
     pub fn clear_entity_behavior(&mut self, entity_id: u32) {
         let _ = self.entity_behaviors.remove(&entity_id);
-        self.animator.clear_entity_behavior(entity_id);
     }
 }
 

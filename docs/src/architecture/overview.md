@@ -221,10 +221,13 @@ viso/src/
 ├── lib.rs                  # Public API (flat re-exports only)
 ├── main.rs                 # Standalone viewer binary
 ├── engine/                 # Core coordinator: frame loop, command dispatch, subsystem wiring
+│   └── trajectory.rs       # TrajectoryPlayer (DCD frame sequencer)
 ├── scene/                  # Entity storage, groups, visibility, SS overrides, dirty flagging
 ├── animation/              # Structural animation system
-│   ├── behaviors/          # How animations look (snap, smooth, collapse/expand, cascade)
-│   └── animator/           # State machines that execute animations (runner, controller, preemption)
+│   ├── animator.rs         # StructureAnimator + StructureState (per-entity runner dispatch)
+│   ├── runner.rs           # AnimationRunner + data types (phase evaluation)
+│   ├── transition.rs       # AnimationPhase, Transition presets (public API)
+│   └── easing.rs           # Easing curves
 ├── input/                  # Raw window events → VisoCommand conversion
 ├── options/                # TOML-serializable runtime options (lighting, camera, colors, display)
 ├── camera/                 # Orbital camera controller, animated transitions, frustum culling
@@ -235,7 +238,7 @@ viso/src/
 │   └── postprocess/        # SSAO, bloom, composite, FXAA
 ├── viewer.rs               # Standalone winit viewer (feature-gated)
 ├── gui/                    # Webview options panel (feature-gated)
-└── util/                   # Easing curves, frame timing, trajectory playback, bond topology
+└── util/                   # Frame timing, sheet adjust, bond topology, score color
 ```
 
 ## Key Design Decisions

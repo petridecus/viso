@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use wgpu::util::DeviceExt;
 
-use crate::util::easing::EasingFunction;
+use crate::animation::easing::EasingFunction;
 
 /// Duration of color transitions in seconds.
 const TRANSITION_DURATION: f32 = 0.3;

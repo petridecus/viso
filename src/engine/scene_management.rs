@@ -32,7 +32,7 @@ impl VisoEngine {
     /// reduce draw calls.
     pub(crate) fn update_frustum_culling(&mut self) {
         // Skip if no sidechain data
-        if self.sc_anim.target_sidechain_positions.is_empty() {
+        if self.sc_cache.target_sidechain_positions.is_empty() {
             return;
         }
 
@@ -87,8 +87,8 @@ impl VisoEngine {
     fn should_update_culling(&self) -> bool {
         const CULL_UPDATE_THRESHOLD: f32 = 5.0;
 
-        let animating =
-            self.animator.is_animating() && self.animator.has_sidechain_data();
+        let animating = self.animator.is_animating()
+            && !self.sc_cache.target_sidechain_positions.is_empty();
         if animating {
             return true;
         }
