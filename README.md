@@ -2,9 +2,9 @@
 
 Viso is a GPU-accelerated 3D protein visualization engine written in Rust. It renders interactive, real-time views of macromolecular structures from PDB and mmCIF files using modern WebGPU graphics via [wgpu](https://wgpu.rs/).
 
-**[Documentation](https://petridecus.github.io/viso/)**
-
 Viso supports multiple representation styles — backbone ribbons, tubes, ball-and-stick, sidechains, and nucleic acids — combined with a full post-processing pipeline (bloom, SSAO, FXAA, tone mapping) and an animation system for smooth structural transitions.
+
+For architecture details, integration guides, and deep dives into individual subsystems, see the [full documentation](https://petridecus.github.io/viso/).
 
 <p align="center">
   <img src="gallery/spike-protein.png" width="32%" />
@@ -121,4 +121,6 @@ RUST_LOG=info cargo run --release -- 1ubq
 
 ## License
 
-Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+All rights reserved. See [LICENSE.md](LICENSE.md) for details.
+
+Contributions are welcome under the terms of the [Contributor License Agreement](CLA.md).
