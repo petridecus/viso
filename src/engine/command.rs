@@ -7,7 +7,7 @@
 
 use glam::{Vec2, Vec3};
 
-// ── Command payload types ────────────────────────────────────────────────
+// ── Constraint payload types ────────────────────────────────────────────
 
 /// Type of constraint band for color coding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,60 +23,98 @@ pub enum BandType {
     HBond,
 }
 
+/// Structural reference to a specific atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomRef {
+    /// 0-based flat residue index.
+    pub residue: u32,
+    /// PDB atom name ("CA", "CB", "N", etc.).
+    pub atom_name: String,
+}
+
+/// One end of a band constraint.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BandTarget {
+    /// Attached to a specific atom.
+    Atom(AtomRef),
+    /// Anchored to a fixed world-space position (space pulls).
+    Position(Vec3),
+}
+
 /// Information about a constraint band to be rendered.
+///
+/// Uses structural references ([`AtomRef`]) instead of world-space
+/// positions. The engine resolves atom positions each frame from Scene
+/// data, so bands auto-track animated atoms.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct BandInfo {
-    /// World-space position of first endpoint (attached to protein).
-    pub endpoint_a: Vec3,
-    /// World-space position of second endpoint.
-    pub endpoint_b: Vec3,
+    /// First endpoint — always an atom.
+    pub anchor_a: AtomRef,
+    /// Second endpoint — atom or fixed position.
+    pub anchor_b: BandTarget,
+    /// Band strength (affects radius and color intensity, default 1.0).
+    pub strength: f32,
+    /// Target length for the band (Angstroms, used for type detection if
+    /// not specified).
+    pub target_length: f32,
+    /// Explicit band type (overrides auto-detection from `target_length`).
+    pub band_type: Option<BandType>,
     /// Whether the band is in pull mode (attracts).
     pub is_pull: bool,
     /// Whether the band is in push mode (repels).
     pub is_push: bool,
     /// Whether the band is disabled.
     pub is_disabled: bool,
-    /// Band strength (affects radius and color intensity, default 1.0).
-    pub strength: f32,
-    /// Target length for the band (Angstroms, used for type detection if not
-    /// specified).
-    pub target_length: f32,
-    /// Residue index for picking (typically the first residue).
-    pub residue_idx: u32,
-    /// Whether this is a "pull" to a point in space (vs between two atoms).
-    /// When true, an anchor sphere is rendered at `endpoint_b`.
-    pub is_space_pull: bool,
-    /// Explicit band type (overrides auto-detection from `target_length`).
-    pub band_type: Option<BandType>,
     /// Whether this band was created by a recipe/script (dimmer appearance).
     pub from_script: bool,
 }
 
-impl Default for BandInfo {
-    fn default() -> Self {
-        Self {
-            endpoint_a: Vec3::ZERO,
-            endpoint_b: Vec3::ZERO,
-            is_pull: true,
-            is_push: false,
-            is_disabled: false,
-            strength: 1.0,
-            target_length: 0.0,
-            residue_idx: 0,
-            is_space_pull: false,
-            band_type: None,
-            from_script: false,
-        }
-    }
-}
-
 /// Information about the active pull constraint.
+///
+/// Uses a structural reference ([`AtomRef`]) for the pulled atom and a
+/// screen-space target. The engine resolves atom position from Scene data
+/// and unprojecs `screen_target` at atom depth each frame, so the pull
+/// auto-tracks the animated atom.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PullInfo {
-    /// Position of the atom being pulled.
+    /// The atom being pulled.
+    pub atom: AtomRef,
+    /// Screen-space drag position (physical pixels).
+    pub screen_target: (f32, f32),
+}
+
+// ── Resolved types (internal, world-space) ──────────────────────────────
+
+/// Resolved band with world-space positions, ready for the renderer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedBand {
+    /// World-space position of first endpoint.
+    pub endpoint_a: Vec3,
+    /// World-space position of second endpoint.
+    pub endpoint_b: Vec3,
+    /// Whether the band is disabled.
+    pub is_disabled: bool,
+    /// Band strength (affects radius and color intensity).
+    pub strength: f32,
+    /// Target length for the band (used for type detection).
+    pub target_length: f32,
+    /// Residue index for picking (from anchor_a).
+    pub residue_idx: u32,
+    /// Whether anchor_b is a fixed position (renders anchor sphere).
+    pub is_space_pull: bool,
+    /// Explicit band type.
+    pub band_type: Option<BandType>,
+    /// Whether this band was created by a script.
+    pub from_script: bool,
+}
+
+/// Resolved pull with world-space positions, ready for the renderer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedPull {
+    /// World-space position of the atom being pulled.
     pub atom_pos: Vec3,
-    /// Target position (mouse position in world space).
+    /// World-space target position.
     pub target_pos: Vec3,
     /// Residue index for picking.
     pub residue_idx: u32,
@@ -94,7 +132,7 @@ pub struct PullInfo {
 /// engine.execute(VisoCommand::ToggleWaters);
 /// engine.execute(VisoCommand::Zoom { delta: 1.0 });
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VisoCommand {
     // ── Camera ──────────────────────────────────────────────────────
     /// Animate the camera to fit the currently focused element.
@@ -158,18 +196,5 @@ pub enum VisoCommand {
         index: i32,
         /// If true, add to the existing selection.
         extend: bool,
-    },
-
-    // ── Constraint visualization ─────────────────────────────────────
-    /// Replace the current set of constraint bands.
-    UpdateBands {
-        /// The complete list of bands to render.
-        bands: Vec<BandInfo>,
-    },
-
-    /// Set or clear the active pull constraint.
-    UpdatePull {
-        /// The pull to render, or `None` to clear.
-        pull: Option<PullInfo>,
     },
 }

@@ -10,12 +10,12 @@
 //!
 //! Only one pull can be active at a time.
 
+use crate::engine::command::ResolvedPull;
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::impostor::{
     CapsuleInstance, ConeInstance, ImpostorPass, ShaderDef,
 };
-use crate::PullInfo;
 
 // Pull visual constants - match band defaults
 const PULL_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - same as BAND_COLOR
@@ -69,7 +69,7 @@ impl PullRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pull: Option<&PullInfo>,
+        pull: Option<&ResolvedPull>,
     ) {
         if let Some(p) = pull {
             let (capsules, cones) = Self::generate_instances(p);
@@ -97,7 +97,7 @@ impl PullRenderer {
     }
 
     fn generate_instances(
-        pull: &PullInfo,
+        pull: &ResolvedPull,
     ) -> (Vec<CapsuleInstance>, Vec<ConeInstance>) {
         let mut capsules = Vec::with_capacity(1);
         let mut cones = Vec::with_capacity(1);

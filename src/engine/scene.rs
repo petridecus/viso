@@ -253,6 +253,22 @@ impl Scene {
         self.entities.iter().find(|e| e.id() == id)
     }
 
+    /// Mutable access to an entity.
+    pub fn entity_mut(&mut self, id: u32) -> Option<&mut SceneEntity> {
+        self.entities.iter_mut().find(|e| e.id() == id)
+    }
+
+    /// Remove an entity by ID. Returns true if the entity existed.
+    pub fn remove_entity(&mut self, id: u32) -> bool {
+        let before = self.entities.len();
+        self.entities.retain(|e| e.id() != id);
+        let removed = self.entities.len() < before;
+        if removed {
+            self.invalidate();
+        }
+        removed
+    }
+
     /// Read access to all entities (insertion order).
     #[must_use]
     pub fn entities(&self) -> &[SceneEntity] {

@@ -213,8 +213,11 @@ impl PanelController {
         if now.duration_since(self.last_stats_push)
             >= Duration::from_millis(250)
         {
-            let buffers = engine.gpu_buffer_stats();
-            webview::push_stats(wv, engine.frame_timing.fps(), &buffers);
+            let mut buffers = Vec::new();
+            buffers.extend(engine.renderers.buffer_info());
+            buffers.extend(engine.pick.selection.buffer_info());
+            buffers.extend(engine.pick.residue_colors.buffer_info());
+            webview::push_stats(wv, engine.fps(), &buffers);
             self.last_stats_push = now;
         }
     }

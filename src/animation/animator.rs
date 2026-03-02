@@ -10,7 +10,7 @@ use super::runner::{
     SidechainAnimPositions,
 };
 use super::transition::Transition;
-use crate::scene::EntityResidueRange;
+use crate::engine::scene::EntityResidueRange;
 
 /// Complete visual output for one animation frame.
 ///

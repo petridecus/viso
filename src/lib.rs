@@ -31,7 +31,6 @@ pub(crate) mod error;
 pub(crate) mod gpu;
 pub(crate) mod input;
 pub(crate) mod renderer;
-pub(crate) mod scene;
 pub(crate) mod util;
 
 /// Runtime display, lighting, camera, and color options.
@@ -45,7 +44,9 @@ pub mod gui;
 
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
-pub use engine::command::{BandInfo, BandType, PullInfo, VisoCommand};
+pub use engine::command::{
+    AtomRef, BandInfo, BandTarget, BandType, PullInfo, VisoCommand,
+};
 pub use engine::VisoEngine;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
@@ -54,6 +55,8 @@ pub use gpu::texture::RenderTarget;
 pub use gui::webview::UiAction;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
+// Picking output
+pub use renderer::picking::PickTarget;
 // Feature-gated
 #[cfg(feature = "viewer")]
 pub use viewer::{Viewer, ViewerBuilder};

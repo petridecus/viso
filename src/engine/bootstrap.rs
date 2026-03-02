@@ -5,10 +5,10 @@ use foldit_conv::render::RenderCoords;
 use foldit_conv::types::entity::{split_into_entities, MoleculeEntity};
 use glam::Vec3;
 
+use super::scene::{get_residue_bonds, is_hydrophobic, Scene, SceneEntity};
 use crate::error::VisoError;
 use crate::options::VisoOptions;
 use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
-use crate::scene::{get_residue_bonds, is_hydrophobic, Scene, SceneEntity};
 
 /// Load a structure file and split into entities, returning a populated Scene
 /// and the derived protein `RenderCoords`.

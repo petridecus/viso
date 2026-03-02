@@ -8,13 +8,19 @@ pub enum PickTarget {
     /// A protein/nucleic-acid residue, identified by its flat index.
     Residue(u32),
     /// A small-molecule atom, identified by entity ID and atom index.
-    Atom { entity_id: u32, atom_idx: u32 },
+    Atom {
+        /// Entity that owns this atom.
+        entity_id: u32,
+        /// Atom index within the entity.
+        atom_idx: u32,
+    },
 }
 
 impl PickTarget {
     /// Convert to the legacy `i32` residue index used by the camera uniform
     /// and input system. Returns the residue index for `Residue`, or `-1`
     /// for `None` and `Atom`.
+    #[must_use]
     pub fn as_residue_i32(&self) -> i32 {
         match *self {
             Self::Residue(idx) => idx as i32,
@@ -23,6 +29,7 @@ impl PickTarget {
     }
 
     /// Returns `true` if this target is `None`.
+    #[must_use]
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }

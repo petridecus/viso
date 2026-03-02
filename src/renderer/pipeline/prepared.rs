@@ -3,10 +3,10 @@ use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
+use crate::engine::scene::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
-use crate::scene::PerEntityData;
 
 // ---------------------------------------------------------------------------
 // Shared sub-structs

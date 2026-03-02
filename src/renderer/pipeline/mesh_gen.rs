@@ -8,6 +8,7 @@ use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     NucleicAcidInstances, PreparedAnimationFrame,
 };
+use crate::engine::scene::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
@@ -16,7 +17,6 @@ use crate::renderer::geometry::{
     BackboneRenderer, BallAndStickRenderer, ChainPair, NucleicAcidRenderer,
     SidechainRenderer, SidechainView,
 };
-use crate::scene::PerEntityData;
 
 /// Generate sidechain capsule instances with sheet-surface adjustment.
 fn generate_sidechain_bytes(

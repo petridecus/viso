@@ -16,11 +16,11 @@
 
 use glam::Vec3;
 
+use crate::engine::command::{BandType, ResolvedBand};
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::ColorOptions;
 use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
-use crate::{BandInfo, BandType};
 
 // Foldit color constants for bands
 const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - default band
@@ -93,7 +93,7 @@ impl BandRenderer {
     }
 
     /// Determine band type from target length if not explicitly specified
-    fn detect_band_type(band: &BandInfo) -> BandType {
+    fn detect_band_type(band: &ResolvedBand) -> BandType {
         if let Some(band_type) = band.band_type {
             return band_type;
         }
@@ -112,7 +112,7 @@ impl BandRenderer {
 
     /// Compute band color based on type, strength, distance (matches Foldit)
     fn compute_color(
-        band: &BandInfo,
+        band: &ResolvedBand,
         band_type: BandType,
         colors: Option<&ColorOptions>,
     ) -> [f32; 3] {
@@ -165,7 +165,7 @@ impl BandRenderer {
 
     /// Generate capsule instances from band data
     fn generate_instances(
-        bands: &[BandInfo],
+        bands: &[ResolvedBand],
         colors: Option<&ColorOptions>,
     ) -> Vec<CapsuleInstance> {
         // Each band gets: 1 cylinder + 2 endpoint spheres = 3 instances
@@ -241,7 +241,7 @@ impl BandRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bands: &[BandInfo],
+        bands: &[ResolvedBand],
         colors: Option<&ColorOptions>,
     ) {
         let instances = Self::generate_instances(bands, colors);

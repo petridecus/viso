@@ -175,15 +175,18 @@ impl MeshCache {
 
     /// Cache stable per-scene data from entities so animation frames can
     /// reference it without cloning every frame.
-    fn cache_stable_data(&mut self, entities: &[crate::scene::PerEntityData]) {
+    fn cache_stable_data(
+        &mut self,
+        entities: &[crate::engine::scene::PerEntityData],
+    ) {
         self.cached_na_chains = entities
             .iter()
             .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
             .collect();
         let ss: Vec<foldit_conv::secondary_structure::SSType> =
-            crate::scene::concatenate_ss_types(
+            crate::engine::scene::concatenate_ss_types(
                 entities,
-                &crate::scene::compute_entity_residue_ranges(entities),
+                &crate::engine::scene::compute_entity_residue_ranges(entities),
             );
         self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
         let colors: Vec<[f32; 3]> = entities
@@ -203,7 +206,7 @@ impl MeshCache {
     /// concatenation.
     fn update(
         &mut self,
-        entities: &[crate::scene::PerEntityData],
+        entities: &[crate::engine::scene::PerEntityData],
         display: &DisplayOptions,
         colors: &ColorOptions,
         geometry: &GeometryOptions,

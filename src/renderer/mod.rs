@@ -29,9 +29,9 @@ use self::geometry::{
     NucleicAcidRenderer, PullRenderer, SidechainRenderer, SidechainView,
 };
 use crate::camera::frustum::Frustum;
+use crate::engine::scene::Scene;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
-use crate::scene::Scene;
 
 /// Bind group layouts shared by all molecular geometry pipelines.
 ///
