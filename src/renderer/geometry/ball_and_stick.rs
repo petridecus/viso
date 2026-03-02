@@ -12,12 +12,11 @@ use foldit_conv::types::entity::{MoleculeEntity, MoleculeType};
 use glam::Vec3;
 
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::{ColorOptions, DisplayOptions};
-use crate::renderer::impostor::capsule::CapsuleInstance;
-use crate::renderer::impostor::sphere::SphereInstance;
-use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::renderer::impostor::{
+    CapsuleInstance, ImpostorPass, ShaderDef, SphereInstance,
+};
 
 /// Radius for bond capsules (thinner than protein sidechains)
 const BOND_RADIUS: f32 = 0.15;

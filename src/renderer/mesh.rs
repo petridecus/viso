@@ -10,8 +10,7 @@
 
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::DynamicBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::pipeline_util;
 
 /// Description of an indexed-mesh render pipeline.

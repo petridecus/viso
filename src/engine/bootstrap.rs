@@ -1,26 +1,14 @@
-//! Free functions for scene loading and engine construction.
+//! Scene loading and engine assembly helpers.
 
 use foldit_conv::adapters::pdb::structure_file_to_coords;
 use foldit_conv::render::RenderCoords;
 use foldit_conv::types::entity::{split_into_entities, MoleculeEntity};
 use glam::Vec3;
 
-use super::picking_system::PickingSystem;
-use super::renderers::Renderers;
-use super::VisoEngine;
-use crate::camera::controller::CameraController;
 use crate::error::VisoError;
-use crate::gpu::lighting::Lighting;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::residue_color::ResidueColorBuffer;
-use crate::gpu::shader_composer::ShaderComposer;
 use crate::options::VisoOptions;
 use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::picking::SelectionBuffer;
-use crate::renderer::postprocess::post_process::PostProcessStack;
-use crate::renderer::PipelineLayouts;
-use crate::scene::{Scene, SceneEntity};
-use crate::util::bond_topology::{get_residue_bonds, is_hydrophobic};
+use crate::scene::{get_residue_bonds, is_hydrophobic, Scene, SceneEntity};
 
 /// Load a structure file and split into entities, returning a populated Scene
 /// and the derived protein `RenderCoords`.
@@ -116,75 +104,11 @@ pub(super) fn initial_chain_colors(
         } else {
             0.0
         };
-        let color = VisoEngine::chain_color(t);
+        let color = crate::options::score_color::chain_color(t);
         let n_residues = chain.len() / 3;
         colors.extend(std::iter::repeat_n(color, n_residues));
     }
     colors
-}
-
-/// Intermediate state holding all initialized GPU subsystems.
-///
-/// Produced by [`init_gpu_pipeline`] and consumed by
-/// [`VisoEngine::assemble`](super::VisoEngine::assemble) to build the final
-/// engine struct.
-pub(super) struct GpuBootstrap {
-    pub shader_composer: ShaderComposer,
-    pub camera_controller: CameraController,
-    pub lighting: Lighting,
-    pub renderers: Renderers,
-    pub pick: PickingSystem,
-    pub post_process: PostProcessStack,
-    pub scene: Scene,
-}
-
-/// Initialize all shared GPU subsystems from a scene and render coords.
-///
-/// This is the common pipeline setup for both empty and loaded constructors.
-pub(super) fn init_gpu_pipeline(
-    context: &RenderContext,
-    scene: Scene,
-    render_coords: &RenderCoords,
-) -> Result<GpuBootstrap, VisoError> {
-    let mut shader_composer = ShaderComposer::new()?;
-    let mut camera_controller = CameraController::new(context);
-    let lighting = Lighting::new(context);
-
-    let n = render_coords.residue_count().max(1);
-    let selection = SelectionBuffer::new(&context.device, n);
-    let residue_colors = ResidueColorBuffer::new(&context.device, n);
-    let layouts = PipelineLayouts {
-        camera: camera_controller.layout.clone(),
-        lighting: lighting.layout.clone(),
-        selection: selection.layout.clone(),
-        color: residue_colors.layout.clone(),
-    };
-    let renderers = Renderers::new(
-        context,
-        &layouts,
-        render_coords,
-        &scene,
-        &mut shader_composer,
-    )?;
-    let pick = PickingSystem::new(
-        context,
-        &camera_controller.layout,
-        selection,
-        residue_colors,
-        &mut shader_composer,
-    )?;
-    let post_process = PostProcessStack::new(context, &mut shader_composer)?;
-    camera_controller.fit_to_positions(&[]);
-
-    Ok(GpuBootstrap {
-        shader_composer,
-        camera_controller,
-        lighting,
-        renderers,
-        pick,
-        post_process,
-        scene,
-    })
 }
 
 /// Collect all atom positions for initial camera fit (protein + ligands + NA).

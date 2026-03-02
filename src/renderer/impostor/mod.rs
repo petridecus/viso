@@ -11,11 +11,14 @@ pub mod polygon;
 pub mod sphere;
 
 use bytemuck::{Pod, Zeroable};
+pub use capsule::CapsuleInstance;
+pub use cone::ConeInstance;
+pub use polygon::ExtrudedPolygonInstance;
+pub use sphere::SphereInstance;
 
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::TypedBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::{pipeline_util, PipelineLayouts};
 
 /// Shader identity for an impostor pass.

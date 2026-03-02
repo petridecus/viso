@@ -12,10 +12,8 @@ use glam::Vec3;
 
 use crate::camera::frustum::Frustum;
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
-use crate::renderer::impostor::capsule::CapsuleInstance;
-use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
+use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
 
 /// Radius used for frustum culling (capsule bounding sphere)
 const CULL_RADIUS: f32 = 5.0;
@@ -222,6 +220,7 @@ impl SidechainRenderer {
     }
 
     /// Update sidechain geometry (no frustum culling).
+    #[allow(dead_code)] // API surface, not yet called by engine
     pub fn update(
         &mut self,
         device: &wgpu::Device,

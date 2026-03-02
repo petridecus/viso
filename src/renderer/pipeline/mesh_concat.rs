@@ -1,16 +1,10 @@
-use std::collections::HashMap;
-
-use foldit_conv::render::sidechain::{SidechainAtomData, SidechainAtoms};
-use foldit_conv::secondary_structure::SSType;
-use foldit_conv::types::entity::{MoleculeEntity, NucleotideRing};
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedEntityMesh,
-    NucleicAcidInstances, PreparedScene, FALLBACK_RESIDUE_COLOR,
+    NucleicAcidInstances, PreparedScene,
 };
-use super::EntityResidueRange;
-use crate::animation::transition::Transition;
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
 
@@ -102,28 +96,14 @@ struct MeshAccumulator {
     na_stem_count: u32,
     na_ring_bytes: Vec<u8>,
     na_ring_count: u32,
-    // Passthrough data
-    backbone_chains: Vec<Vec<Vec3>>,
-    sidechain_atoms: Vec<SidechainAtomData>,
-    sidechain_bonds: Vec<(u32, u32)>,
-    backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    // Non-protein entities (for pick map)
     non_protein: Vec<MoleculeEntity>,
-    na_chains: Vec<Vec<Vec3>>,
-    na_rings: Vec<NucleotideRing>,
-    all_positions: Vec<Vec3>,
-    // SS / color / residue tracking
-    has_any_ss: bool,
-    ss_parts: Vec<(u32, Option<Vec<SSType>>, u32)>,
+    // Residue tracking
     residue_offset: u32,
-    has_any_colors: bool,
-    per_residue_colors: Vec<[f32; 3]>,
-    entity_residue_ranges: Vec<EntityResidueRange>,
 }
 
 impl MeshAccumulator {
-    fn push_entity(&mut self, entity_id: u32, mesh: &CachedEntityMesh) {
-        let sc_atom_offset = self.sidechain_atoms.len() as u32;
-
+    fn push_entity(&mut self, _entity_id: u32, mesh: &CachedEntityMesh) {
         self.push_backbone(mesh);
 
         // Sidechain instances (self-contained)
@@ -141,35 +121,7 @@ impl MeshAccumulator {
             .extend_from_slice(&mesh.na.ring_instances);
         self.na_ring_count += mesh.na.ring_count;
 
-        self.push_passthrough(mesh, sc_atom_offset);
-
-        // SS override tracking
-        if mesh.ss_override.is_some() {
-            self.has_any_ss = true;
-        }
-        self.ss_parts.push((
-            self.residue_offset,
-            mesh.ss_override.clone(),
-            mesh.residue_count,
-        ));
-
-        // Per-residue colors
-        if let Some(ref colors) = mesh.per_residue_colors {
-            self.has_any_colors = true;
-            self.per_residue_colors.extend_from_slice(colors);
-        } else {
-            self.per_residue_colors.extend(std::iter::repeat_n(
-                FALLBACK_RESIDUE_COLOR,
-                mesh.residue_count as usize,
-            ));
-        }
-
-        // Entity residue range
-        self.entity_residue_ranges.push(EntityResidueRange {
-            entity_id,
-            start: self.residue_offset,
-            count: mesh.residue_count,
-        });
+        self.push_non_protein(mesh);
 
         self.residue_offset += mesh.residue_count;
     }
@@ -239,40 +191,9 @@ impl MeshAccumulator {
         }
     }
 
-    fn push_passthrough(
-        &mut self,
-        mesh: &CachedEntityMesh,
-        sc_atom_offset: u32,
-    ) {
-        for chain in &mesh.backbone_chains {
-            self.backbone_chains.push(chain.clone());
-            self.all_positions.extend(chain);
-        }
-        for atom in &mesh.sidechain.atoms {
-            self.all_positions.push(atom.position);
-            self.sidechain_atoms.push(SidechainAtomData {
-                position: atom.position,
-                residue_idx: atom.residue_idx + self.residue_offset,
-                atom_name: atom.atom_name.clone(),
-                is_hydrophobic: atom.is_hydrophobic,
-            });
-        }
-        for &(a, b) in &mesh.sidechain.bonds {
-            self.sidechain_bonds
-                .push((a + sc_atom_offset, b + sc_atom_offset));
-        }
-        for &(ca_pos, cb_idx) in &mesh.sidechain.backbone_bonds {
-            self.backbone_sidechain_bonds
-                .push((ca_pos, cb_idx + sc_atom_offset));
-        }
+    fn push_non_protein(&mut self, mesh: &CachedEntityMesh) {
         self.non_protein
             .extend(mesh.non_protein_entities.iter().cloned());
-        for chain in &mesh.nucleic_acid_chains {
-            self.na_chains.push(chain.clone());
-            self.all_positions.extend(chain);
-        }
-        self.na_rings
-            .extend(mesh.nucleic_acid_rings.iter().cloned());
     }
 
     /// Shift all BnS pick IDs by the global residue offset so they sit
@@ -296,19 +217,9 @@ impl MeshAccumulator {
         PickMap::new(self.residue_offset, atom_entries)
     }
 
-    fn into_prepared_scene(
-        mut self,
-        entity_transitions: HashMap<u32, Transition>,
-    ) -> PreparedScene {
+    fn into_prepared_scene(mut self) -> PreparedScene {
         self.finalize_bns_pick_ids();
-        let ss_types = build_ss_types(
-            self.has_any_ss,
-            &self.ss_parts,
-            self.residue_offset as usize,
-        );
         let pick_map = self.build_pick_map();
-        let per_residue_colors =
-            self.has_any_colors.then_some(self.per_residue_colors);
         let tube_index_count = self.backbone_tube_inds.len() as u32;
         let ribbon_index_count = self.backbone_ribbon_inds.len() as u32;
         PreparedScene {
@@ -339,20 +250,6 @@ impl MeshAccumulator {
                 ring_instances: self.na_ring_bytes,
                 ring_count: self.na_ring_count,
             },
-            backbone_chains: self.backbone_chains,
-            na_chains: self.na_chains,
-            sidechain: SidechainAtoms {
-                atoms: self.sidechain_atoms,
-                bonds: self.sidechain_bonds,
-                backbone_bonds: self.backbone_sidechain_bonds,
-            },
-            ss_types,
-            per_residue_colors,
-            all_positions: self.all_positions,
-            entity_transitions,
-            entity_residue_ranges: self.entity_residue_ranges,
-            non_protein_entities: self.non_protein,
-            nucleic_acid_rings: self.na_rings,
             pick_map,
         }
     }
@@ -378,36 +275,10 @@ fn patch_pick_id_buffer(
 /// Concatenate per-entity cached meshes into a single `PreparedScene`.
 pub fn concatenate_meshes(
     entity_meshes: &[(u32, &CachedEntityMesh)],
-    entity_transitions: HashMap<u32, Transition>,
 ) -> PreparedScene {
     let mut acc = MeshAccumulator::default();
     for &(entity_id, mesh) in entity_meshes {
         acc.push_entity(entity_id, mesh);
     }
-    acc.into_prepared_scene(entity_transitions)
-}
-
-/// Build a flat `SSType` array from per-entity overrides, or `None` if no
-/// entity provided secondary-structure data.
-fn build_ss_types(
-    has_any_ss: bool,
-    ss_parts: &[(u32, Option<Vec<SSType>>, u32)],
-    total: usize,
-) -> Option<Vec<SSType>> {
-    if !has_any_ss {
-        return None;
-    }
-    let mut ss = vec![SSType::Coil; total];
-    for (offset, ss_override, count) in ss_parts {
-        let Some(overrides) = ss_override else {
-            continue;
-        };
-        let start = *offset as usize;
-        let end = (start + *count as usize).min(total);
-        let n = end.saturating_sub(start);
-        for (i, &s) in overrides.iter().enumerate().take(n) {
-            ss[start + i] = s;
-        }
-    }
-    Some(ss)
+    acc.into_prepared_scene()
 }

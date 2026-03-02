@@ -4801,7 +4801,6 @@ dependencies = [
  "toml",
  "triple_buffer",
  "ureq",
- "web-time",
  "wgpu",
  "winit",
  "wry",

@@ -1,14 +1,13 @@
 use glam::Mat4;
 
+use super::{
+    BloomPass, CompositeInputs, CompositePass, FxaaPass, ScreenPass,
+    SsaoRenderer,
+};
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::ShaderComposer;
+use crate::gpu::pipeline_helpers::create_render_texture;
+use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
-use crate::renderer::postprocess::bloom::BloomPass;
-use crate::renderer::postprocess::composite::{CompositeInputs, CompositePass};
-use crate::renderer::postprocess::fxaa::FxaaPass;
-use crate::renderer::postprocess::screen_pass::ScreenPass;
-use crate::renderer::postprocess::ssao::SsaoRenderer;
 
 /// Camera parameters needed for post-processing passes.
 pub struct PostProcessCamera {
@@ -188,50 +187,24 @@ impl PostProcessStack {
     fn create_depth_texture(
         context: &RenderContext,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let size = wgpu::Extent3d {
-            width: context.render_width(),
-            height: context.render_height(),
-            depth_or_array_layers: 1,
-        };
-
-        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
+        create_render_texture(
+            &context.device,
+            context.render_width(),
+            context.render_height(),
+            wgpu::TextureFormat::Depth32Float,
+            "Depth Texture",
+        )
     }
 
     fn create_normal_texture(
         context: &RenderContext,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let size = wgpu::Extent3d {
-            width: context.render_width(),
-            height: context.render_height(),
-            depth_or_array_layers: 1,
-        };
-
-        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Normal G-Buffer"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
+        create_render_texture(
+            &context.device,
+            context.render_width(),
+            context.render_height(),
+            wgpu::TextureFormat::Rgba16Float,
+            "Normal G-Buffer",
+        )
     }
 }

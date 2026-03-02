@@ -237,7 +237,7 @@ impl ViewerApp {
         };
         // Update cursor position for GPU picking
         if let InputEvent::CursorMoved { x, y } = event {
-            engine.set_cursor_pos(x, y);
+            engine.cursor_pos = (x, y);
         }
         if let Some(cmd) =
             self.input.handle_event(event, engine.hovered_target())
@@ -318,19 +318,31 @@ impl ViewerApp {
         // The viewer handles them directly.
         match code {
             KeyCode::KeyI => {
-                engine.toggle_ions();
+                engine.options.display.show_ions =
+                    !engine.options.display.show_ions;
+                engine.refresh_ball_and_stick();
                 return;
             }
             KeyCode::KeyU => {
-                engine.toggle_waters();
+                engine.options.display.show_waters =
+                    !engine.options.display.show_waters;
+                engine.refresh_ball_and_stick();
                 return;
             }
             KeyCode::KeyO => {
-                engine.toggle_solvent();
+                engine.options.display.show_solvent =
+                    !engine.options.display.show_solvent;
+                engine.refresh_ball_and_stick();
                 return;
             }
             KeyCode::KeyL => {
-                engine.toggle_lipids();
+                engine.options.display.lipid_mode =
+                    if engine.options.display.lipid_ball_and_stick() {
+                        crate::options::LipidMode::Coarse
+                    } else {
+                        crate::options::LipidMode::BallAndStick
+                    };
+                engine.refresh_ball_and_stick();
                 return;
             }
             _ => {}
@@ -399,7 +411,7 @@ impl ApplicationHandler for ViewerApp {
             engine.set_options(opts);
         }
 
-        engine.sync_scene_to_renderers(None);
+        engine.sync_scene_to_renderers(std::collections::HashMap::new());
 
         #[cfg(feature = "gui")]
         self.panel.init_webview(

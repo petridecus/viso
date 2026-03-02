@@ -49,9 +49,6 @@ wry = { version = "0.50", optional = true }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
-# Time utilities (wasm-compatible std::time replacement)
-web-time = "1"
-
 # Lock-free triple buffering for scene processor results
 triple_buffer = "8"
 

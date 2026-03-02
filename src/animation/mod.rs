@@ -4,7 +4,8 @@ mod runner;
 pub mod transition;
 
 pub(crate) mod animator;
-pub(crate) mod easing;
 
-pub(crate) use animator::StructureAnimator;
+pub(crate) use animator::{
+    AnimationFrame, EntitySidechainData, StructureAnimator,
+};
 pub(crate) use runner::SidechainAnimPositions;

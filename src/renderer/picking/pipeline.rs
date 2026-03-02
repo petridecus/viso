@@ -10,8 +10,8 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::pipeline_helpers::read_only_storage_buffer;
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::geometry::backbone::backbone_vertex_buffer_layout;
 
 /// Selection buffer for GPU - stores selection state as a bit array
@@ -43,19 +43,7 @@ impl SelectionBuffer {
         let layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Selection Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX
-                        | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage {
-                            read_only: true,
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[read_only_storage_buffer(0)],
             });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -304,58 +292,13 @@ impl Picking {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
-        let shader =
-            shader_composer.compose(&context.device, Shader::PickingCapsule)?;
-
-        let bind_group_layout = storage_bind_group_layout(
-            &context.device,
-            "Picking Capsule Bind Group Layout",
-        );
-
-        let layout = context.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("Picking Capsule Pipeline Layout"),
-                bind_group_layouts: &[
-                    &bind_group_layout,
-                    camera_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            },
-        );
-
-        let pipeline = context.device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Picking Capsule Pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(picking_depth_stencil()),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            },
-        );
-
-        Ok((pipeline, bind_group_layout))
+        Self::create_impostor_picking_pipeline(
+            context,
+            camera_bind_group_layout,
+            shader_composer,
+            Shader::PickingCapsule,
+            "Picking Capsule",
+        )
     }
 
     fn create_sphere_pipeline(
@@ -363,17 +306,34 @@ impl Picking {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
     ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
+        Self::create_impostor_picking_pipeline(
+            context,
+            camera_bind_group_layout,
+            shader_composer,
+            Shader::PickingSphere,
+            "Picking Sphere",
+        )
+    }
+
+    /// Shared pipeline creation for impostor-based picking (capsule, sphere).
+    fn create_impostor_picking_pipeline(
+        context: &RenderContext,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_composer: &mut ShaderComposer,
+        shader_variant: Shader,
+        label: &str,
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), VisoError> {
         let shader =
-            shader_composer.compose(&context.device, Shader::PickingSphere)?;
+            shader_composer.compose(&context.device, shader_variant)?;
 
         let bind_group_layout = storage_bind_group_layout(
             &context.device,
-            "Picking Sphere Bind Group Layout",
+            &format!("{label} Bind Group Layout"),
         );
 
         let layout = context.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
-                label: Some("Picking Sphere Pipeline Layout"),
+                label: Some(&format!("{label} Pipeline Layout")),
                 bind_group_layouts: &[
                     &bind_group_layout,
                     camera_bind_group_layout,
@@ -384,7 +344,7 @@ impl Picking {
 
         let pipeline = context.device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
-                label: Some("Picking Sphere Pipeline"),
+                label: Some(&format!("{label} Pipeline")),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -695,17 +655,7 @@ fn storage_bind_group_layout(
 ) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(label),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX
-                | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
+        entries: &[read_only_storage_buffer(0)],
     })
 }
 

@@ -62,6 +62,34 @@ pub fn non_filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// Vertex+fragment-visible read-only storage buffer binding.
+pub fn read_only_storage_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// Fragment-visible filterable cube texture binding.
+pub fn cube_texture(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::Cube,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
 /// Fragment-visible uniform buffer binding.
 pub fn uniform_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
@@ -132,6 +160,36 @@ pub fn create_screen_space_pipeline(
         multiview: None,
         cache: None,
     })
+}
+
+/// Create a 2D render texture with `RENDER_ATTACHMENT | TEXTURE_BINDING` usage.
+///
+/// Returns the texture and its default view. Covers the common case for all
+/// post-process pass textures (color, depth, SSAO, bloom mips, etc.).
+pub fn create_render_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    label: &str,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    (texture, view)
 }
 
 /// ClampToEdge + Linear sampler (the most common post-process sampler).

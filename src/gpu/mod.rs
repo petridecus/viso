@@ -15,5 +15,8 @@ pub mod render_context;
 pub mod residue_color;
 /// WGSL shader composition with `#import` support via naga-oil.
 pub mod shader_composer;
+
+pub use render_context::RenderContext;
+pub use shader_composer::{Shader, ShaderComposer};
 /// Framework-agnostic render-target texture abstraction.
 pub mod texture;

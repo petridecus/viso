@@ -1,18 +1,12 @@
-use std::collections::HashMap;
-
 use foldit_conv::render::sidechain::SidechainAtoms;
 use foldit_conv::secondary_structure::SSType;
-use foldit_conv::types::entity::{MoleculeEntity, NucleotideRing};
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
-use super::{EntityResidueRange, PerEntityData};
-use crate::animation::transition::Transition;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
-
-/// Fallback color for residues without score data (neutral gray).
-pub const FALLBACK_RESIDUE_COLOR: [f32; 3] = [0.7, 0.7, 0.7];
+use crate::scene::PerEntityData;
 
 // ---------------------------------------------------------------------------
 // Shared sub-structs
@@ -83,10 +77,6 @@ pub enum SceneRequest {
     FullRebuild {
         /// Per-entity data for mesh generation.
         entities: Vec<PerEntityData>,
-        /// Per-entity transitions. Entities in the map animate with
-        /// their transition; entities not in the map snap. Empty map =
-        /// snap all.
-        entity_transitions: HashMap<u32, Transition>,
         /// Current display options for mesh generation.
         display: DisplayOptions,
         /// Current color options for mesh generation.
@@ -95,16 +85,20 @@ pub enum SceneRequest {
         geometry: GeometryOptions,
     },
     /// Per-frame animation mesh generation (backbone + optional sidechains).
+    ///
+    /// `na_chains`, `ss_types`, and `per_residue_colors` are optional; when
+    /// `None` the background thread uses values cached from the last
+    /// `FullRebuild`, avoiding per-frame clones of stable data.
     AnimationFrame {
         /// Interpolated backbone atom chains.
         backbone_chains: Vec<Vec<Vec3>>,
-        /// Nucleic acid P-atom chains for backbone rendering.
-        na_chains: Vec<Vec<Vec3>>,
+        /// Nucleic acid P-atom chains. `None` = use cached from last rebuild.
+        na_chains: Option<Vec<Vec<Vec3>>>,
         /// Optional interpolated sidechain data.
         sidechains: Option<SidechainAtoms>,
-        /// Secondary structure types for the current frame.
+        /// Secondary structure types. `None` = use cached from last rebuild.
         ss_types: Option<Vec<SSType>>,
-        /// Per-residue colors for the current frame.
+        /// Per-residue colors. `None` = use cached from last rebuild.
         per_residue_colors: Option<Vec<[f32; 3]>>,
         /// Geometry options for mesh generation.
         geometry: GeometryOptions,
@@ -130,31 +124,6 @@ pub struct PreparedScene {
     pub bns: BallAndStickInstances,
     /// Nucleic acid instance data.
     pub na: NucleicAcidInstances,
-    /// Backbone chains for animation setup.
-    pub backbone_chains: Vec<Vec<Vec3>>,
-    /// Nucleic acid P-atom chains.
-    pub na_chains: Vec<Vec<Vec3>>,
-    /// CPU-side sidechain data.
-    pub sidechain: SidechainAtoms,
-    /// Flat secondary structure types.
-    pub ss_types: Option<Vec<SSType>>,
-    /// Concatenated per-residue colors (derived from scores, cached for
-    /// animation).
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
-    /// All atom positions for camera fitting.
-    #[allow(dead_code)]
-    pub all_positions: Vec<Vec3>,
-    /// Per-entity transitions. Entities in the map animate; others snap.
-    /// Empty map = snap all (no animation).
-    pub entity_transitions: HashMap<u32, Transition>,
-    /// Where each entity's residues land in the flat concatenated arrays.
-    pub entity_residue_ranges: Vec<EntityResidueRange>,
-    /// Non-protein entities for ball-and-stick rendering.
-    #[allow(dead_code)]
-    pub non_protein_entities: Vec<MoleculeEntity>,
-    /// Base ring geometry from DNA/RNA entities.
-    #[allow(dead_code)]
-    pub nucleic_acid_rings: Vec<NucleotideRing>,
     /// Mapping from raw GPU pick IDs to typed pick targets.
     pub pick_map: PickMap,
 }
@@ -189,18 +158,6 @@ pub(super) struct CachedEntityMesh {
     pub na: NucleicAcidInstances,
     /// Number of residues in this entity.
     pub residue_count: u32,
-    /// Backbone chains (passthrough for animation).
-    pub backbone_chains: Vec<Vec<Vec3>>,
-    /// Nucleic acid chains (passthrough).
-    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
-    /// CPU-side sidechain data.
-    pub sidechain: SidechainAtoms,
-    /// Secondary structure override.
-    pub ss_override: Option<Vec<SSType>>,
-    /// Per-residue colors derived from scores (cached to avoid recomputation).
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
-    /// Non-protein entities.
+    /// Non-protein entities (for BnS pick ID offset calculation).
     pub non_protein_entities: Vec<MoleculeEntity>,
-    /// Nucleotide ring geometry.
-    pub nucleic_acid_rings: Vec<NucleotideRing>,
 }

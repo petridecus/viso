@@ -10,13 +10,12 @@
 //!
 //! Only one pull can be active at a time.
 
-use crate::engine::command::PullInfo;
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
-use crate::renderer::impostor::capsule::CapsuleInstance;
-use crate::renderer::impostor::cone::ConeInstance;
-use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
+use crate::renderer::impostor::{
+    CapsuleInstance, ConeInstance, ImpostorPass, ShaderDef,
+};
+use crate::PullInfo;
 
 // Pull visual constants - match band defaults
 const PULL_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - same as BAND_COLOR
@@ -83,6 +82,7 @@ impl PullRenderer {
     }
 
     /// Clear the pull visualization
+    #[allow(dead_code)] // API surface, not yet called by engine
     pub fn clear(&mut self) {
         self.capsule_pass.instance_count = 0;
         self.cone_pass.instance_count = 0;

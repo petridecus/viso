@@ -61,7 +61,7 @@ impl PanelController {
     ) {
         match webview::create_webview(window, width, height, self.width) {
             Ok((wv, rx)) => {
-                webview::push_schema(&wv, engine.options());
+                webview::push_schema(&wv, &engine.options);
                 webview::push_panel_pinned(&wv, self.pinned);
                 self.webview = Some(wv);
                 self.action_rx = Some(rx);
@@ -163,7 +163,7 @@ impl PanelController {
         while let Ok(action) = rx.try_recv() {
             match action {
                 UiAction::SetOption { path, field, value } => {
-                    let mut opts = engine.options().clone();
+                    let mut opts = engine.options.clone();
                     let Ok(mut root) = serde_json::to_value(&opts) else {
                         continue;
                     };

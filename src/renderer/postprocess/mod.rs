@@ -14,3 +14,10 @@ pub(crate) mod post_process;
 pub(crate) mod screen_pass;
 /// Screen-space ambient occlusion (SSAO) renderer.
 pub mod ssao;
+
+pub(crate) use bloom::BloomPass;
+pub(crate) use composite::{CompositeInputs, CompositePass};
+pub(crate) use fxaa::FxaaPass;
+pub(crate) use post_process::PostProcessStack;
+pub(crate) use screen_pass::ScreenPass;
+pub(crate) use ssao::SsaoRenderer;

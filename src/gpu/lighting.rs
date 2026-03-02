@@ -1,15 +1,18 @@
 use wgpu::util::DeviceExt;
 
-use crate::gpu::render_context::RenderContext;
+use super::RenderContext;
+use crate::gpu::pipeline_helpers::{
+    cube_texture, filtering_sampler, texture_2d, uniform_buffer,
+};
 
 /// Lighting configuration shared across all shaders
 /// NOTE: Must match WGSL struct layout exactly (112 bytes)
 ///
 /// WGSL layout (auto-padded):
-///   light1_dir: `vec3<f32>`     (offset 0,  align 16)
-///   pad1: f32                (offset 12)
-///   light2_dir: `vec3<f32>`     (offset 16, align 16)
-///   pad2: f32                (offset 28)
+///   light1_dir: `vec3<f32>`   (offset 0,  align 16)
+///   pad1: f32                 (offset 12)
+///   light2_dir: `vec3<f32>`   (offset 16, align 16)
+///   pad2: f32                 (offset 28)
 ///   light1_intensity: f32     (offset 32)
 ///   light2_intensity: f32     (offset 36)
 ///   ambient: f32              (offset 40)
@@ -18,14 +21,14 @@ use crate::gpu::render_context::RenderContext;
 ///   rim_power: f32            (offset 52)
 ///   rim_intensity: f32        (offset 56)
 ///   rim_directionality: f32   (offset 60)
-///   rim_color: `vec3<f32>`      (offset 64, align 16)
+///   rim_color: `vec3<f32>`    (offset 64, align 16)
 ///   ibl_strength: f32         (offset 76)
-///   rim_dir: `vec3<f32>`        (offset 80, align 16)
-///   pad3: f32                (offset 92)
+///   rim_dir: `vec3<f32>`      (offset 80, align 16)
+///   pad3: f32                 (offset 92)
 ///   roughness: f32            (offset 96)
 ///   metalness: f32            (offset 100)
-///   pad4: f32                (offset 104)
-///   pad5: f32                (offset 108)
+///   pad4: f32                 (offset 104)
+///   pad5: f32                 (offset 108)
 ///   Total: 112 bytes
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -166,67 +169,11 @@ impl Lighting {
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Lighting Bind Group Layout"),
                 entries: &[
-                    // Binding 0: Lighting uniform buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // Binding 1: Irradiance cubemap texture (diffuse IBL)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Binding 2: Irradiance sampler (shared for all IBL
-                    // textures)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(
-                            wgpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    // Binding 3: Prefiltered environment cubemap (specular
-                    // IBL)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Binding 4: BRDF integration LUT
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
+                    uniform_buffer(0),    // Lighting uniform
+                    cube_texture(1),      // Irradiance cubemap
+                    filtering_sampler(2), // IBL sampler
+                    cube_texture(3),      // Prefiltered cubemap
+                    texture_2d(4),        // BRDF LUT
                 ],
             },
         );
@@ -359,33 +306,35 @@ impl Lighting {
     }
 }
 
-/// Generate a procedural gradient irradiance cubemap for studio-style ambient
-/// lighting.
+/// Configuration for procedural cubemap generation.
+struct CubemapDesc<'a> {
+    /// Debug label for the GPU texture.
+    label: &'a str,
+    /// Texel resolution per face (e.g. 32, 64).
+    base_size: u32,
+    /// Number of mip levels.
+    mip_count: u32,
+}
+
+/// Generate a cubemap where each texel is evaluated by a closure.
 ///
-/// Produces a 32x32-per-face cubemap with:
-/// - Warm white from above (simulating overhead light bounce)
-/// - Cool blue from below (simulating floor/shadow bounce)
-/// - Neutral gray from sides
-///
-/// The irradiance map is sampled by surface normal in the shader to provide
-/// directionally-varying ambient light, replacing the flat ambient term.
-#[allow(clippy::too_many_lines)] // cubemap generation with per-face texture upload
-#[allow(clippy::cast_precision_loss)] // texel indices and small sizes fit in f32
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // color channel clamped to 0..=255
-fn generate_irradiance_cubemap(
+/// Creates an `Rgba8Unorm` cubemap per the descriptor.  For every texel the
+/// closure receives the normalized world-space direction and the mip level,
+/// and returns an RGB color in `[0, 1]`.
+fn generate_cubemap(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    desc: &CubemapDesc,
+    evaluate: impl Fn([f32; 3], u32) -> [f32; 3],
 ) -> (wgpu::Texture, wgpu::TextureView) {
-    let size = 32u32;
-
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Irradiance Cubemap"),
+        label: Some(desc.label),
         size: wgpu::Extent3d {
-            width: size,
-            height: size,
+            width: desc.base_size,
+            height: desc.base_size,
             depth_or_array_layers: 6,
         },
-        mip_level_count: 1,
+        mip_level_count: desc.mip_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
@@ -394,70 +343,122 @@ fn generate_irradiance_cubemap(
         view_formats: &[],
     });
 
-    // Cubemap face order: +X, -X, +Y, -Y, +Z, -Z
-    // For each texel, compute the world-space direction and evaluate the
-    // irradiance gradient
-    for face in 0..6u32 {
-        let mut data = vec![0u8; (size * size * 4) as usize]; // 4 x u8 per texel
-
-        for y in 0..size {
-            for x in 0..size {
-                // Map texel to [-1, 1] range
-                let u = (x as f32 + 0.5) / size as f32 * 2.0 - 1.0;
-                let v = (y as f32 + 0.5) / size as f32 * 2.0 - 1.0;
-
-                // Convert face + UV to world direction
-                let dir = cubemap_face_direction(face, u, v);
-                let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
-                    .sqrt();
-                let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
-
-                // Evaluate irradiance based on direction
-                let irradiance = evaluate_irradiance(dir);
-
-                // Write as Rgba8Unorm (values are in [0, 1])
-                let offset = ((y * size + x) * 4) as usize;
-                data[offset] = (irradiance[0].clamp(0.0, 1.0) * 255.0) as u8;
-                data[offset + 1] =
-                    (irradiance[1].clamp(0.0, 1.0) * 255.0) as u8;
-                data[offset + 2] =
-                    (irradiance[2].clamp(0.0, 1.0) * 255.0) as u8;
-                data[offset + 3] = 255;
-            }
-        }
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: face,
+    for mip in 0..desc.mip_count {
+        let size = desc.base_size >> mip;
+        for face in 0..6u32 {
+            let data = fill_cubemap_face(size, face, mip, &evaluate);
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: mip,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: face,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(size * 4),
-                rows_per_image: Some(size),
-            },
-            wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-        );
+                &data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size * 4),
+                    rows_per_image: Some(size),
+                },
+                wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("Irradiance Cubemap View"),
+        label: Some(&format!("{} View", desc.label)),
         dimension: Some(wgpu::TextureViewDimension::Cube),
         ..Default::default()
     });
 
     (texture, view)
+}
+
+/// Evaluate the closure for every texel of a single cubemap face, returning
+/// the RGBA8 pixel data.
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn fill_cubemap_face(
+    size: u32,
+    face: u32,
+    mip: u32,
+    evaluate: &impl Fn([f32; 3], u32) -> [f32; 3],
+) -> Vec<u8> {
+    let mut data = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let u = (x as f32 + 0.5) / size as f32 * 2.0 - 1.0;
+            let v = (y as f32 + 0.5) / size as f32 * 2.0 - 1.0;
+
+            let dir = cubemap_face_direction(face, u, v);
+            let len =
+                (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+            let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+
+            let color = evaluate(dir, mip);
+
+            let offset = ((y * size + x) * 4) as usize;
+            data[offset] = (color[0].clamp(0.0, 1.0) * 255.0) as u8;
+            data[offset + 1] = (color[1].clamp(0.0, 1.0) * 255.0) as u8;
+            data[offset + 2] = (color[2].clamp(0.0, 1.0) * 255.0) as u8;
+            data[offset + 3] = 255;
+        }
+    }
+    data
+}
+
+/// Generate a procedural gradient irradiance cubemap for studio-style ambient
+/// lighting.
+///
+/// 32x32 per face, single mip. Warm white from above, cool blue from below,
+/// neutral gray from sides.
+fn generate_irradiance_cubemap(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    generate_cubemap(
+        device,
+        queue,
+        &CubemapDesc {
+            label: "Irradiance Cubemap",
+            base_size: 32,
+            mip_count: 1,
+        },
+        |dir, _mip| evaluate_irradiance(dir),
+    )
+}
+
+/// Generate a prefiltered environment cubemap for specular IBL.
+///
+/// 64x64 base, 6 mip levels. Each mip represents a different roughness:
+/// mip 0 = sharp reflections, higher mips = progressively blurred.
+fn generate_prefiltered_cubemap(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let mip_count = 6u32;
+    #[allow(clippy::cast_precision_loss)]
+    generate_cubemap(
+        device,
+        queue,
+        &CubemapDesc {
+            label: "Prefiltered Cubemap",
+            base_size: 64,
+            mip_count,
+        },
+        |dir, mip| {
+            let roughness = mip as f32 / (mip_count - 1) as f32;
+            evaluate_prefiltered(dir, roughness)
+        },
+    )
 }
 
 /// Convert cubemap face index + UV coordinates to a world-space direction.
@@ -476,22 +477,14 @@ fn cubemap_face_direction(face: u32, u: f32, v: f32) -> [f32; 3] {
 
 /// Evaluate studio-style irradiance for a given world-space direction.
 ///
-/// The gradient provides:
-/// - Warm white from above: (0.18, 0.16, 0.13)
-/// - Cool blue from below:  (0.05, 0.06, 0.10)
-/// - Neutral gray from sides: ~(0.10, 0.10, 0.10)
-///
-/// Values are chosen to roughly match the energy of the old flat ambient (0.12)
-/// while adding directional variation for depth cues.
+/// Smooth vertical gradient: warm white from above, cool blue from below.
+/// Values roughly match the energy of the old flat ambient (0.12).
 fn evaluate_irradiance(dir: [f32; 3]) -> [f32; 3] {
-    let y = dir[1]; // Up component
-
-    // Smooth vertical gradient: map y from [-1, 1] to [0, 1]
+    let y = dir[1];
     let t = y * 0.5 + 0.5;
     // Smooth-step for softer transitions
     let t = t * t * (3.0 - 2.0 * t);
 
-    // Top: warm white, Bottom: cool blue
     let top = [0.18f32, 0.16, 0.13];
     let bottom = [0.05f32, 0.06, 0.10];
 
@@ -500,103 +493,6 @@ fn evaluate_irradiance(dir: [f32; 3]) -> [f32; 3] {
         bottom[1] + (top[1] - bottom[1]) * t,
         bottom[2] + (top[2] - bottom[2]) * t,
     ]
-}
-
-/// Generate a prefiltered environment cubemap for specular IBL.
-///
-/// Each mip level represents a different roughness: mip 0 = sharp reflections,
-/// higher mips = progressively blurred (rougher) reflections.
-/// 64x64 base, 6 mip levels.
-#[allow(clippy::too_many_lines)] // cubemap mip-chain generation with per-face texture upload
-#[allow(clippy::cast_precision_loss)] // texel indices and small mip sizes fit in f32
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // color channel clamped to 0..=255
-fn generate_prefiltered_cubemap(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let base_size = 64u32;
-    let mip_count = 6u32;
-
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Prefiltered Cubemap"),
-        size: wgpu::Extent3d {
-            width: base_size,
-            height: base_size,
-            depth_or_array_layers: 6,
-        },
-        mip_level_count: mip_count,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-
-    for mip in 0..mip_count {
-        let mip_size = base_size >> mip;
-        let roughness = mip as f32 / (mip_count - 1) as f32;
-
-        for face in 0..6u32 {
-            let mut data = vec![0u8; (mip_size * mip_size * 4) as usize];
-
-            for y in 0..mip_size {
-                for x in 0..mip_size {
-                    let u = (x as f32 + 0.5) / mip_size as f32 * 2.0 - 1.0;
-                    let v = (y as f32 + 0.5) / mip_size as f32 * 2.0 - 1.0;
-
-                    let dir = cubemap_face_direction(face, u, v);
-                    let len =
-                        (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2])
-                            .sqrt();
-                    let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
-
-                    // Evaluate blurred irradiance based on roughness
-                    // At roughness=0, sharp environment; at roughness=1, very
-                    // blurred
-                    let color = evaluate_prefiltered(dir, roughness);
-
-                    let offset = ((y * mip_size + x) * 4) as usize;
-                    data[offset] = (color[0].clamp(0.0, 1.0) * 255.0) as u8;
-                    data[offset + 1] = (color[1].clamp(0.0, 1.0) * 255.0) as u8;
-                    data[offset + 2] = (color[2].clamp(0.0, 1.0) * 255.0) as u8;
-                    data[offset + 3] = 255;
-                }
-            }
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: mip,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: face,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(mip_size * 4),
-                    rows_per_image: Some(mip_size),
-                },
-                wgpu::Extent3d {
-                    width: mip_size,
-                    height: mip_size,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-    }
-
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("Prefiltered Cubemap View"),
-        dimension: Some(wgpu::TextureViewDimension::Cube),
-        ..Default::default()
-    });
-
-    (texture, view)
 }
 
 /// Evaluate prefiltered environment color for a given direction and roughness.

@@ -6,14 +6,13 @@
 
 use wgpu::util::DeviceExt;
 
-use super::screen_pass::ScreenPass;
+use super::screen_pass::{run_screen_pass, ScreenPass, ScreenPassDesc};
 use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
-    create_screen_space_pipeline, filtering_sampler, linear_sampler,
-    texture_2d, uniform_buffer, ScreenSpacePipelineDef,
+    create_render_texture, create_screen_space_pipeline, filtering_sampler,
+    linear_sampler, texture_2d, uniform_buffer, ScreenSpacePipelineDef,
 };
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 
 /// Blur direction params — must match WGSL struct
 #[repr(C)]
@@ -377,23 +376,13 @@ impl BloomPass {
         height: u32,
         label: &str,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: BLOOM_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        (texture, view)
+        create_render_texture(
+            &context.device,
+            width,
+            height,
+            BLOOM_FORMAT,
+            label,
+        )
     }
 
     fn create_mip_chain(
@@ -584,28 +573,16 @@ impl BloomPass {
         }
 
         // Step 1: Threshold extraction → mip[0] (half-res)
-        {
-            let mut pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Bloom Threshold"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.mip_views[0],
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                });
-            pass.set_pipeline(&self.threshold_pipeline);
-            pass.set_bind_group(0, &self.threshold_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "Bloom Threshold",
+                view: &self.mip_views[0],
+                pipeline: &self.threshold_pipeline,
+                bind_group: &self.threshold_bind_group,
+                clear_color: wgpu::Color::BLACK,
+            },
+        );
 
         // Step 2: Progressive downsample — copy mip[i-1] into mip[i] via blur
         // For simplicity, the first blur pass at each level also acts as the
@@ -629,52 +606,27 @@ impl BloomPass {
     /// Separable Gaussian blur at a given mip level (in-place via ping-pong)
     fn blur_level(&self, encoder: &mut wgpu::CommandEncoder, level: usize) {
         // Horizontal: mip[level] → ping[level]
-        {
-            let mut pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Bloom Blur H"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.ping_views[level],
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                });
-            pass.set_pipeline(&self.blur_pipeline);
-            pass.set_bind_group(0, &self.blur_bind_groups[level][0], &[]);
-            pass.draw(0..3, 0..1);
-        }
-
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "Bloom Blur H",
+                view: &self.ping_views[level],
+                pipeline: &self.blur_pipeline,
+                bind_group: &self.blur_bind_groups[level][0],
+                clear_color: wgpu::Color::BLACK,
+            },
+        );
         // Vertical: ping[level] → mip[level]
-        {
-            let mut pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Bloom Blur V"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.mip_views[level],
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                });
-            pass.set_pipeline(&self.blur_pipeline);
-            pass.set_bind_group(0, &self.blur_bind_groups[level][1], &[]);
-            pass.draw(0..3, 0..1);
-        }
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "Bloom Blur V",
+                view: &self.mip_views[level],
+                pipeline: &self.blur_pipeline,
+                bind_group: &self.blur_bind_groups[level][1],
+                clear_color: wgpu::Color::BLACK,
+            },
+        );
     }
 
     /// Get the bloom output view for the composite pass to sample

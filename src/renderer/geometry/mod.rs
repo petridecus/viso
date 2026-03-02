@@ -15,5 +15,16 @@ pub mod band;
 pub mod nucleic_acid;
 /// Interactive pull arrow renderer.
 pub mod pull;
+/// Sheet-surface sidechain position adjustment.
+pub(crate) mod sheet_adjust;
 /// Capsule sidechain renderer.
 pub mod sidechain;
+
+pub use backbone::{
+    BackboneRenderer, BackboneUpdateData, ChainPair, PreparedBackboneData,
+};
+pub use ball_and_stick::{BallAndStickRenderer, PreparedBallAndStickData};
+pub use band::BandRenderer;
+pub use nucleic_acid::NucleicAcidRenderer;
+pub use pull::PullRenderer;
+pub use sidechain::{SidechainRenderer, SidechainView};

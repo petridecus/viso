@@ -53,8 +53,7 @@ impl BackboneMeshOutput {
 use crate::camera::frustum::Frustum;
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::DynamicBuffer;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::GeometryOptions;
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef};
@@ -353,7 +352,7 @@ impl BackboneRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh: crate::scene::prepared::BackboneMeshData,
+        mesh: crate::renderer::pipeline::prepared::BackboneMeshData,
     ) {
         if !mesh.vertices.is_empty() {
             let _ =

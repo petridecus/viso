@@ -8,16 +8,15 @@ use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     NucleicAcidInstances, PreparedAnimationFrame,
 };
-use super::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
-use crate::renderer::geometry::backbone::{BackboneRenderer, ChainPair};
-use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
-use crate::renderer::geometry::nucleic_acid::NucleicAcidRenderer;
-use crate::renderer::geometry::sidechain::{SidechainRenderer, SidechainView};
-use crate::util::score_color;
-use crate::util::sheet_adjust::{
+use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
+use crate::renderer::geometry::{
+    BackboneRenderer, BallAndStickRenderer, ChainPair, NucleicAcidRenderer,
+    SidechainRenderer, SidechainView,
+};
+use crate::scene::PerEntityData;
 
 /// Generate sidechain capsule instances with sheet-surface adjustment.
 fn generate_sidechain_bytes(
@@ -98,28 +97,13 @@ pub fn generate_entity_mesh(
     colors: &ColorOptions,
     geometry: &GeometryOptions,
 ) -> CachedEntityMesh {
-    use crate::options::BackboneColorMode;
-    let per_residue_colors = match display.backbone_color_mode {
-        BackboneColorMode::Score => g
-            .per_residue_scores
-            .as_ref()
-            .map(|s| score_color::per_residue_score_colors(s)),
-        BackboneColorMode::ScoreRelative => g
-            .per_residue_scores
-            .as_ref()
-            .map(|s| score_color::per_residue_score_colors_relative(s)),
-        BackboneColorMode::SecondaryStructure | BackboneColorMode::Chain => {
-            None
-        }
-    };
-
     let backbone_mesh = BackboneRenderer::generate_mesh_colored(
         &ChainPair {
             protein: &g.backbone_chains,
             na: &g.nucleic_acid_chains,
         },
         g.ss_override.as_deref(),
-        per_residue_colors.as_deref(),
+        g.per_residue_colors.as_deref(),
         geometry,
         None,
     );
@@ -142,13 +126,7 @@ pub fn generate_entity_mesh(
         bns,
         na,
         residue_count: g.residue_count,
-        backbone_chains: g.backbone_chains.clone(),
-        nucleic_acid_chains: g.nucleic_acid_chains.clone(),
-        sidechain: g.sidechains.clone(),
-        ss_override: g.ss_override.clone(),
-        per_residue_colors,
         non_protein_entities: g.non_protein_entities.clone(),
-        nucleic_acid_rings: g.nucleic_acid_rings.clone(),
     }
 }
 

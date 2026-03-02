@@ -7,14 +7,13 @@
 
 use wgpu::util::DeviceExt;
 
-use super::screen_pass::ScreenPass;
+use super::screen_pass::{run_screen_pass, ScreenPass, ScreenPassDesc};
 use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
-    create_screen_space_pipeline, filtering_sampler, linear_sampler,
-    texture_2d, uniform_buffer, ScreenSpacePipelineDef,
+    create_render_texture, create_screen_space_pipeline, filtering_sampler,
+    linear_sampler, texture_2d, uniform_buffer, ScreenSpacePipelineDef,
 };
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 
 /// FXAA (Fast Approximate Anti-Aliasing) post-process pass.
 pub struct FxaaPass {
@@ -125,23 +124,13 @@ impl FxaaPass {
         width: u32,
         height: u32,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("FXAA Input Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: context.config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        (texture, view)
+        create_render_texture(
+            &context.device,
+            width,
+            height,
+            context.config.format,
+            "FXAA Input Texture",
+        )
     }
 
     fn create_bind_group(
@@ -191,24 +180,16 @@ impl ScreenPass for FxaaPass {
         let Some(output_view) = &self.output_view else {
             return;
         };
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("FXAA Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "FXAA Pass",
                 view: output_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
-
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..3, 0..1);
+                pipeline: &self.pipeline,
+                bind_group: &self.bind_group,
+                clear_color: wgpu::Color::BLACK,
+            },
+        );
     }
 
     fn resize(&mut self, context: &RenderContext) {

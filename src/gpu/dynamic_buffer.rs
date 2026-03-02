@@ -69,46 +69,16 @@ impl DynamicBuffer {
         }
     }
 
-    /// Write data to buffer, growing if necessary
+    /// Write data to buffer, growing if necessary.
     ///
-    /// Returns `true` if buffer was reallocated (bind groups need recreation)
+    /// Returns `true` if buffer was reallocated (bind groups need recreation).
     pub fn write<T: bytemuck::Pod>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &[T],
     ) -> bool {
-        let data_bytes = bytemuck::cast_slice(data);
-        let needed = data_bytes.len();
-
-        let reallocated = if needed > self.capacity {
-            // Cap the growth factor so we don't exceed the wgpu 256 MB
-            // max buffer size.
-            const MAX_BUFFER: usize = 256 * 1024 * 1024;
-            let new_capacity = (needed * 2)
-                .max(self.capacity + 1024)
-                .min(MAX_BUFFER)
-                .max(needed);
-
-            self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&self.label),
-                size: new_capacity as u64,
-                usage: self.usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-
-            self.capacity = new_capacity;
-            true
-        } else {
-            false
-        };
-
-        if needed > 0 {
-            queue.write_buffer(&self.buffer, 0, data_bytes);
-        }
-        self.len = needed;
-
-        reallocated
+        self.write_bytes(device, queue, bytemuck::cast_slice(data))
     }
 
     /// Write raw bytes to buffer, growing if necessary.

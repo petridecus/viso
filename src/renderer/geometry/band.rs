@@ -16,13 +16,11 @@
 
 use glam::Vec3;
 
-use crate::engine::command::{BandInfo, BandType};
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::ColorOptions;
-use crate::renderer::impostor::capsule::CapsuleInstance;
-use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
+use crate::{BandInfo, BandType};
 
 // Foldit color constants for bands
 const BAND_COLOR: [f32; 3] = [0.5, 0.0, 0.5]; // Purple - default band
@@ -251,6 +249,7 @@ impl BandRenderer {
     }
 
     /// Clear all bands
+    #[allow(dead_code)] // API surface, not yet called by engine
     pub fn clear(&mut self) {
         self.pass.instance_count = 0;
     }

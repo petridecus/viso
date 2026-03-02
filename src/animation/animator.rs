@@ -12,6 +12,35 @@ use super::runner::{
 use super::transition::Transition;
 use crate::scene::EntityResidueRange;
 
+/// Complete visual output for one animation frame.
+///
+/// Returned by [`StructureAnimator::get_frame`]. Bundles backbone,
+/// sidechain positions, and backbone-sidechain bonds so the engine
+/// no longer stitches them from separate subsystems.
+pub(crate) struct AnimationFrame {
+    /// Interpolated backbone chains (per-chain Vec of N/CA/C atoms).
+    pub backbone_chains: Vec<Vec<Vec3>>,
+    /// Interpolated sidechain atom positions (flat, topology order).
+    /// `None` when no interpolated data is available from runners.
+    pub sidechain_positions: Option<Vec<Vec3>>,
+    /// Interpolated CA-CB backbone-sidechain bonds.
+    /// `None` when no bond data is available from runners.
+    pub backbone_sidechain_bonds: Option<Vec<(Vec3, u32)>>,
+    /// Whether the current animation phase allows sidechains to be visible.
+    pub sidechains_visible: bool,
+}
+
+/// Per-entity sidechain data for animation setup.
+///
+/// Bundles sidechain interpolation positions and backbone-sidechain
+/// bond topology so they can be passed as one argument.
+pub(crate) struct EntitySidechainData {
+    /// Sidechain atom positions (start/target) for interpolation.
+    pub positions: Option<SidechainAnimPositions>,
+    /// Target backbone-sidechain bonds (CA pos, CB atom index).
+    pub backbone_bonds: Vec<(Vec3, u32)>,
+}
+
 /// Animation state for a single entity.
 ///
 /// Pairs an [`AnimationRunner`] with the residue range it owns in the
@@ -24,6 +53,8 @@ struct EntityAnimationState {
     /// Current interpolated sidechain positions (computed each frame in
     /// `update()`). Pre-computed so queries can read without recomputing.
     sidechain_current: Option<Vec<Vec3>>,
+    /// Per-entity target backbone-sidechain bonds (CA pos, CB atom index).
+    target_backbone_bonds: Vec<(Vec3, u32)>,
 }
 
 /// Manages per-entity animation runners that interpolate backbone and
@@ -34,6 +65,10 @@ pub struct StructureAnimator {
     /// Per-entity animation runners. Each entity interpolates its own
     /// residue range with its own behavior and timing.
     entity_runners: HashMap<u32, EntityAnimationState>,
+    /// Global sidechain residue indices (maps atom index to residue index).
+    /// Set once per scene update, used by
+    /// [`Self::compute_interpolated_bonds`].
+    sidechain_residue_indices: Vec<u32>,
 }
 
 impl StructureAnimator {
@@ -43,6 +78,7 @@ impl StructureAnimator {
             state: StructureState::new(),
             enabled: true,
             entity_runners: HashMap::new(),
+            sidechain_residue_indices: Vec::new(),
         }
     }
 
@@ -118,11 +154,6 @@ impl StructureAnimator {
         self.entity_runners.clear();
     }
 
-    /// Get the current visual backbone state as chains.
-    pub fn get_backbone(&self) -> Vec<Vec<Vec3>> {
-        self.state.to_backbone_chains()
-    }
-
     /// Total number of residues in the structure.
     #[allow(dead_code)] // public API, not yet called internally
     pub fn residue_count(&self) -> usize {
@@ -148,6 +179,73 @@ impl StructureAnimator {
             }
         }
         true
+    }
+
+    /// Set the global sidechain residue index mapping.
+    ///
+    /// Called once per scene update (before per-entity `animate_entity()`
+    /// calls) so that [`Self::compute_interpolated_bonds`] can resolve
+    /// each bond's sidechain atom index to a residue index.
+    pub fn set_sidechain_residue_indices(&mut self, indices: Vec<u32>) {
+        self.sidechain_residue_indices = indices;
+    }
+
+    /// Get the complete visual output for the current animation frame.
+    ///
+    /// Bundles backbone, sidechain, and backbone-sidechain bonds into a
+    /// single [`AnimationFrame`] so the engine no longer stitches them
+    /// from separate subsystems.
+    pub fn get_frame(&self) -> AnimationFrame {
+        let backbone_chains = self.state.to_backbone_chains();
+        let visible = self.should_include_sidechains();
+
+        if !visible {
+            return AnimationFrame {
+                backbone_chains,
+                sidechain_positions: None,
+                backbone_sidechain_bonds: None,
+                sidechains_visible: false,
+            };
+        }
+
+        AnimationFrame {
+            backbone_chains,
+            sidechain_positions: self.get_aggregated_sidechain_positions(),
+            backbone_sidechain_bonds: self.compute_interpolated_bonds(),
+            sidechains_visible: true,
+        }
+    }
+
+    /// Compute interpolated backbone-sidechain bonds from per-entity data.
+    ///
+    /// For each entity's target bonds, maps the CA endpoint to the
+    /// animator's current interpolated CA position. Returns `None` when
+    /// no entity runner carries bond data.
+    fn compute_interpolated_bonds(&self) -> Option<Vec<(Vec3, u32)>> {
+        let has_any = self
+            .entity_runners
+            .values()
+            .any(|es| !es.target_backbone_bonds.is_empty());
+        if !has_any {
+            return None;
+        }
+
+        let mut all_bonds = Vec::new();
+        for entity_state in self.entity_runners.values() {
+            for &(target_ca_pos, cb_idx) in &entity_state.target_backbone_bonds
+            {
+                let res_idx = self
+                    .sidechain_residue_indices
+                    .get(cb_idx as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                let ca_pos =
+                    self.get_ca_position(res_idx).unwrap_or(target_ca_pos);
+                all_bonds.push((ca_pos, cb_idx));
+            }
+        }
+
+        Some(all_bonds)
     }
 
     /// Snap an entity's residue range so `current = target`.
@@ -183,7 +281,7 @@ impl StructureAnimator {
         range: &EntityResidueRange,
         new_backbone: &[Vec<Vec3>],
         transition: &Transition,
-        sidechain: Option<SidechainAnimPositions>,
+        sc_data: EntitySidechainData,
     ) {
         if !self.enabled {
             return;
@@ -208,7 +306,8 @@ impl StructureAnimator {
         }
 
         // Check if sidechains changed (even if backbone didn't)
-        let sc_changed = sidechain
+        let sc_changed = sc_data
+            .positions
             .as_ref()
             .is_some_and(|sc| !sc.start.is_empty() || !sc.target.is_empty());
 
@@ -224,7 +323,7 @@ impl StructureAnimator {
         // If preempting a previous animation, use its current sidechain
         // positions as the new start (smooth handoff). Only valid when
         // atom counts match.
-        let sidechain = match (sidechain, prev_sidechain) {
+        let sidechain = match (sc_data.positions, prev_sidechain) {
             (Some(mut sc), Some(prev_positions))
                 if sc.start.len() == prev_positions.len() =>
             {
@@ -247,6 +346,7 @@ impl StructureAnimator {
                 runner,
                 range: *range,
                 sidechain_current: initial_sc,
+                target_backbone_bonds: sc_data.backbone_bonds,
             },
         );
     }

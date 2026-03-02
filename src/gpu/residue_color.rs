@@ -9,7 +9,8 @@ use std::time::Instant;
 
 use wgpu::util::DeviceExt;
 
-use crate::animation::easing::EasingFunction;
+use crate::gpu::pipeline_helpers::read_only_storage_buffer;
+use crate::util::easing::EasingFunction;
 
 /// Duration of color transitions in seconds.
 const TRANSITION_DURATION: f32 = 0.3;
@@ -43,43 +44,16 @@ impl ResidueColorBuffer {
     /// Initializes all residues to default gray `[0.5, 0.5, 0.5]`.
     pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
         let capacity = max_residues.max(1);
-        let default_color = [0.5f32, 0.5, 0.5, 1.0];
-        let data: Vec<[f32; 4]> = vec![default_color; capacity];
-
-        let buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Residue Color Buffer"),
-                contents: bytemuck::cast_slice(&data),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST,
-            });
+        let data: Vec<[f32; 4]> = vec![DEFAULT_RESIDUE_COLOR; capacity];
 
         let layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Residue Color Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX
-                        | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage {
-                            read_only: true,
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[read_only_storage_buffer(0)],
             });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Residue Color Bind Group"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-        });
+        let (buffer, bind_group) =
+            create_buffer_and_bind_group(device, &layout, &data);
 
         Self {
             buffer,
@@ -178,29 +152,13 @@ impl ResidueColorBuffer {
             return;
         }
 
-        let new_capacity = required;
-        let default_color = [0.5f32, 0.5, 0.5, 1.0];
-        let data: Vec<[f32; 4]> = vec![default_color; new_capacity];
+        let data: Vec<[f32; 4]> = vec![DEFAULT_RESIDUE_COLOR; required];
+        let (buffer, bind_group) =
+            create_buffer_and_bind_group(device, &self.layout, &data);
 
-        self.buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Residue Color Buffer"),
-                contents: bytemuck::cast_slice(&data),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST,
-            });
-
-        self.bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Residue Color Bind Group"),
-                layout: &self.layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.buffer.as_entire_binding(),
-                }],
-            });
-
-        self.capacity = new_capacity;
+        self.buffer = buffer;
+        self.bind_group = bind_group;
+        self.capacity = required;
         self.current_colors.clone_from(&data);
         self.start_colors.clone_from(&data);
         self.target_colors = data;
@@ -212,4 +170,28 @@ impl ResidueColorBuffer {
         let bytes = self.capacity * 16; // [f32; 4] = 16 bytes per residue
         vec![("Residue Color", bytes, bytes)]
     }
+}
+
+/// Create a storage buffer and bind group for residue color data.
+fn create_buffer_and_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    data: &[[f32; 4]],
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Residue Color Buffer"),
+        contents: bytemuck::cast_slice(data),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Residue Color Bind Group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+
+    (buffer, bind_group)
 }

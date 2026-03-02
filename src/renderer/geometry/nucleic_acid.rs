@@ -11,11 +11,11 @@ use foldit_conv::types::entity::NucleotideRing;
 use glam::Vec3;
 
 use crate::error::VisoError;
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
-use crate::renderer::impostor::capsule::CapsuleInstance;
-use crate::renderer::impostor::polygon::ExtrudedPolygonInstance;
-use crate::renderer::impostor::{ImpostorPass, ShaderDef};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
+use crate::renderer::geometry::backbone::spline::catmull_rom;
+use crate::renderer::impostor::{
+    CapsuleInstance, ExtrudedPolygonInstance, ImpostorPass, ShaderDef,
+};
 use crate::util::hash::{hash_vec3, hash_vec3_slice_summary};
 
 /// Spline subdivision per P-atom span (used for stem anchor lookup)
@@ -100,7 +100,7 @@ impl NucleicAcidRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        na: &crate::scene::prepared::NucleicAcidInstances,
+        na: &crate::renderer::pipeline::prepared::NucleicAcidInstances,
     ) {
         let _ = self.stem_pass.write_bytes(
             device,
@@ -264,61 +264,6 @@ fn make_polygon_instance(
         normal: [normal.x, normal.y, normal.z, 0.0],
         color: [color[0], color[1], color[2], 0.0],
     });
-}
-
-/// Catmull-Rom spline: interpolates through every control point.
-fn catmull_rom(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
-    let n = points.len();
-    if n < 2 {
-        return points.to_vec();
-    }
-    if n < 3 {
-        return linear_interpolate(points, segments_per_span);
-    }
-
-    // Pad with reflected endpoints so the curve starts/ends at the first/last
-    // point
-    let mut padded = Vec::with_capacity(n + 2);
-    padded.push(points[0] * 2.0 - points[1]);
-    padded.extend_from_slice(points);
-    padded.push(points[n - 1] * 2.0 - points[n - 2]);
-
-    let mut result = Vec::new();
-    for i in 0..n - 1 {
-        let p0 = padded[i];
-        let p1 = padded[i + 1];
-        let p2 = padded[i + 2];
-        let p3 = padded[i + 3];
-
-        for j in 0..segments_per_span {
-            let t = j as f32 / segments_per_span as f32;
-            let t2 = t * t;
-            let t3 = t2 * t;
-            // Catmull-Rom basis (tau = 0.5)
-            let pos = 0.5
-                * ((2.0 * p1)
-                    + (-p0 + p2) * t
-                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
-            result.push(pos);
-        }
-    }
-    result.push(points[n - 1]);
-    result
-}
-
-fn linear_interpolate(points: &[Vec3], segments_per_span: usize) -> Vec<Vec3> {
-    let mut result = Vec::new();
-    for i in 0..points.len() - 1 {
-        for j in 0..segments_per_span {
-            let t = j as f32 / segments_per_span as f32;
-            result.push(points[i].lerp(points[i + 1], t));
-        }
-    }
-    if let Some(&last) = points.last() {
-        result.push(last);
-    }
-    result
 }
 
 fn closest_point(points: &[Vec3], target: Vec3) -> Option<&Vec3> {

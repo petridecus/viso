@@ -2,15 +2,14 @@ use glam::Mat4;
 use rand::Rng;
 use wgpu::util::DeviceExt;
 
-use super::screen_pass::ScreenPass;
+use super::screen_pass::{run_screen_pass, ScreenPass, ScreenPassDesc};
 use crate::error::VisoError;
 use crate::gpu::pipeline_helpers::{
-    create_screen_space_pipeline, depth_texture_2d, filtering_sampler,
-    linear_sampler, non_filtering_sampler, texture_2d, texture_2d_unfilterable,
-    uniform_buffer, ScreenSpacePipelineDef,
+    create_render_texture, create_screen_space_pipeline, depth_texture_2d,
+    filtering_sampler, linear_sampler, non_filtering_sampler, texture_2d,
+    texture_2d_unfilterable, uniform_buffer, ScreenSpacePipelineDef,
 };
-use crate::gpu::render_context::RenderContext;
-use crate::gpu::shader_composer::{Shader, ShaderComposer};
+use crate::gpu::{RenderContext, Shader, ShaderComposer};
 
 /// SSAO parameters uniform - must match WGSL struct
 #[repr(C)]
@@ -163,10 +162,10 @@ fn create_ssao_textures(
     width: u32,
     height: u32,
 ) -> SsaoTextures {
-    let ssao = SsaoRenderer::create_ssao_texture(context, width, height);
-    let ssao_view = ssao.create_view(&Default::default());
-    let blurred = SsaoRenderer::create_ssao_texture(context, width, height);
-    let blurred_view = blurred.create_view(&Default::default());
+    let (ssao, ssao_view) =
+        SsaoRenderer::create_ssao_texture(context, width, height);
+    let (blurred, blurred_view) =
+        SsaoRenderer::create_ssao_texture(context, width, height);
     SsaoTextures {
         ssao,
         ssao_view,
@@ -380,22 +379,14 @@ impl SsaoRenderer {
         context: &RenderContext,
         width: u32,
         height: u32,
-    ) -> wgpu::Texture {
-        context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("SSAO Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        create_render_texture(
+            &context.device,
+            width,
+            height,
+            wgpu::TextureFormat::R8Unorm,
+            "SSAO Texture",
+        )
     }
 
     fn generate_kernel() -> [[f32; 4]; KERNEL_SIZE] {
@@ -629,55 +620,26 @@ impl SsaoRenderer {
 
     /// Render SSAO (call after geometry pass)
     pub fn render_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
-        // SSAO pass
-        {
-            let mut pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SSAO Pass"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.ssao_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                });
-
-            pass.set_pipeline(&self.ssao_pipeline);
-            pass.set_bind_group(0, &self.ssao_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // Blur pass
-        {
-            let mut pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SSAO Blur Pass"),
-                    color_attachments: &[Some(
-                        wgpu::RenderPassColorAttachment {
-                            view: &self.ssao_blurred_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        },
-                    )],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                });
-
-            pass.set_pipeline(&self.blur_pipeline);
-            pass.set_bind_group(0, &self.blur_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "SSAO Pass",
+                view: &self.ssao_view,
+                pipeline: &self.ssao_pipeline,
+                bind_group: &self.ssao_bind_group,
+                clear_color: wgpu::Color::WHITE,
+            },
+        );
+        run_screen_pass(
+            encoder,
+            &ScreenPassDesc {
+                label: "SSAO Blur Pass",
+                view: &self.ssao_blurred_view,
+                pipeline: &self.blur_pipeline,
+                bind_group: &self.blur_bind_group,
+                clear_color: wgpu::Color::WHITE,
+            },
+        );
     }
 
     /// Get the final (blurred) SSAO texture view for the composite pass.
@@ -701,13 +663,14 @@ impl ScreenPass for SsaoRenderer {
         self.width = context.render_width();
         self.height = context.render_height();
 
-        self.ssao_texture =
+        let (ssao_texture, ssao_view) =
             Self::create_ssao_texture(context, self.width, self.height);
-        self.ssao_view = self.ssao_texture.create_view(&Default::default());
-        self.ssao_blurred_texture =
+        self.ssao_texture = ssao_texture;
+        self.ssao_view = ssao_view;
+        let (blurred_texture, blurred_view) =
             Self::create_ssao_texture(context, self.width, self.height);
-        self.ssao_blurred_view =
-            self.ssao_blurred_texture.create_view(&Default::default());
+        self.ssao_blurred_texture = blurred_texture;
+        self.ssao_blurred_view = blurred_view;
 
         self.ssao_bind_group = Self::create_ssao_bind_group(
             context,

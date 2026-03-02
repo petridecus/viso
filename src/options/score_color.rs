@@ -117,3 +117,79 @@ pub fn per_residue_score_colors_relative_with_ramp(
         })
         .collect()
 }
+
+/// Compute a rainbow chain color for parameter `t` in \[0, 1\].
+///
+/// Maps from red (t=0) through yellow, green, cyan, to blue (t=1).
+pub(crate) fn chain_color(t: f32) -> [f32; 3] {
+    let hue = (1.0 - t) * 240.0;
+    let sector = hue / 60.0;
+    let frac = sector - sector.floor();
+    match sector as u32 {
+        0 => [1.0, frac, 0.0],       // red → yellow
+        1 => [1.0 - frac, 1.0, 0.0], // yellow → green
+        2 => [0.0, 1.0, frac],       // green → cyan
+        3 => [0.0, 1.0 - frac, 1.0], // cyan → blue
+        _ => [0.0, 0.0, 1.0],        // blue
+    }
+}
+
+/// Compute per-residue colors based on backbone color mode.
+///
+/// Supports chain coloring (rainbow), secondary structure coloring, and
+/// score-based coloring (absolute or relative).
+pub(crate) fn compute_per_residue_colors(
+    backbone_chains: &[Vec<glam::Vec3>],
+    ss_types: &[foldit_conv::secondary_structure::SSType],
+    per_residue_scores: &[Option<&[f64]>],
+    color_mode: &super::BackboneColorMode,
+) -> Vec<[f32; 3]> {
+    use foldit_conv::secondary_structure::SSType;
+
+    let residue_count = ss_types.len().max(1);
+    match color_mode {
+        super::BackboneColorMode::Score
+        | super::BackboneColorMode::ScoreRelative => {
+            let mut all_scores: Vec<f64> = Vec::new();
+            for &s in per_residue_scores.iter().flatten() {
+                all_scores.extend_from_slice(s);
+            }
+            if all_scores.is_empty() {
+                return vec![[0.5, 0.5, 0.5]; residue_count];
+            }
+            match color_mode {
+                super::BackboneColorMode::Score => {
+                    per_residue_score_colors(&all_scores)
+                }
+                _ => per_residue_score_colors_relative(&all_scores),
+            }
+        }
+        super::BackboneColorMode::SecondaryStructure => {
+            if ss_types.is_empty() {
+                vec![[0.5, 0.5, 0.5]; residue_count]
+            } else {
+                ss_types.iter().map(SSType::color).collect()
+            }
+        }
+        super::BackboneColorMode::Chain => {
+            let num_chains = backbone_chains.len();
+            if num_chains == 0 {
+                return vec![[0.5, 0.5, 0.5]; residue_count];
+            }
+            let mut colors = Vec::with_capacity(residue_count);
+            for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+                let t = if num_chains > 1 {
+                    chain_idx as f32 / (num_chains - 1) as f32
+                } else {
+                    0.0
+                };
+                let color = chain_color(t);
+                let n_residues = chain.len() / 3;
+                for _ in 0..n_residues {
+                    colors.push(color);
+                }
+            }
+            colors
+        }
+    }
+}

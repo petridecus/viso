@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::easing::EasingFunction;
+use crate::util::easing::EasingFunction;
 
 /// A single phase of an animation sequence.
 ///

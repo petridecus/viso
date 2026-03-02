@@ -187,26 +187,9 @@ impl ShaderComposer {
         device: &wgpu::Device,
         shader: Shader,
     ) -> Result<wgpu::ShaderModule, VisoError> {
-        let label = shader.label();
-        let path = shader.path();
-        let source = shader.source();
-
-        let naga_module = self
-            .composer
-            .make_naga_module(NagaModuleDescriptor {
-                source,
-                file_path: path,
-                shader_type: ShaderType::Wgsl,
-                ..Default::default()
-            })
-            .map_err(|e| {
-                VisoError::Shader(format!(
-                    "failed to compose shader '{path}': {e}"
-                ))
-            })?;
-
+        let naga_module = self.make_naga(shader)?;
         Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
+            label: Some(shader.label()),
             source: wgpu::ShaderSource::Naga(Cow::Owned(naga_module)),
         }))
     }
@@ -219,12 +202,15 @@ impl ShaderComposer {
         &mut self,
         shader: Shader,
     ) -> Result<naga::Module, VisoError> {
-        let path = shader.path();
-        let source = shader.source();
+        self.make_naga(shader)
+    }
 
+    /// Build a `naga::Module` from a shader variant.
+    fn make_naga(&mut self, shader: Shader) -> Result<naga::Module, VisoError> {
+        let path = shader.path();
         self.composer
             .make_naga_module(NagaModuleDescriptor {
-                source,
+                source: shader.source(),
                 file_path: path,
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()

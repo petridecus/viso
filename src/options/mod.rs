@@ -15,6 +15,8 @@ mod display;
 mod geometry;
 mod lighting;
 mod post_processing;
+/// Score-to-color gradient mapping.
+pub(crate) mod score_color;
 
 use std::path::Path;
 

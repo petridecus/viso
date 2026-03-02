@@ -90,17 +90,15 @@ impl SceneProcessor {
                 SceneRequest::Shutdown => break,
                 SceneRequest::FullRebuild {
                     entities,
-                    entity_transitions,
                     display,
                     colors,
                     geometry,
                 } => {
+                    cache.cache_stable_data(&entities);
                     let entity_meshes =
                         cache.update(&entities, &display, &colors, &geometry);
-                    let prepared = super::mesh_concat::concatenate_meshes(
-                        &entity_meshes,
-                        entity_transitions,
-                    );
+                    let prepared =
+                        super::mesh_concat::concatenate_meshes(&entity_meshes);
                     scene_input.write(Some(prepared));
                 }
                 SceneRequest::AnimationFrame {
@@ -112,13 +110,21 @@ impl SceneProcessor {
                     geometry,
                     per_chain_lod,
                 } => {
+                    let na =
+                        na_chains.as_deref().unwrap_or(&cache.cached_na_chains);
+                    let ss = ss_types
+                        .as_deref()
+                        .or(cache.cached_ss_types.as_deref());
+                    let colors = per_residue_colors
+                        .as_deref()
+                        .or(cache.cached_per_residue_colors.as_deref());
                     let prepared = super::mesh_gen::process_animation_frame(
                         &super::mesh_gen::AnimationFrameInput {
                             backbone_chains: &backbone_chains,
-                            na_chains: &na_chains,
+                            na_chains: na,
                             sidechains: sidechains.as_ref(),
-                            ss_types: ss_types.as_deref(),
-                            per_residue_colors: per_residue_colors.as_deref(),
+                            ss_types: ss,
+                            per_residue_colors: colors,
                             geometry: &geometry,
                             per_chain_lod: per_chain_lod.as_deref(),
                         },
@@ -137,11 +143,21 @@ impl Drop for SceneProcessor {
 }
 
 /// Per-entity mesh cache with settings-based invalidation.
+///
+/// Also caches stable per-scene data (NA chains, SS types, per-residue
+/// colors) so that `AnimationFrame` requests can send `None` and avoid
+/// cloning this data every frame.
 struct MeshCache {
     meshes: HashMap<u32, (u64, CachedEntityMesh)>,
     last_display: Option<DisplayOptions>,
     last_colors: Option<ColorOptions>,
     last_geometry: Option<GeometryOptions>,
+    /// Cached NA chains from the last `FullRebuild`.
+    cached_na_chains: Vec<Vec<glam::Vec3>>,
+    /// Cached SS types from the last `FullRebuild`.
+    cached_ss_types: Option<Vec<foldit_conv::secondary_structure::SSType>>,
+    /// Cached per-residue colors from the last `FullRebuild`.
+    cached_per_residue_colors: Option<Vec<[f32; 3]>>,
 }
 
 impl MeshCache {
@@ -151,14 +167,43 @@ impl MeshCache {
             last_display: None,
             last_colors: None,
             last_geometry: None,
+            cached_na_chains: Vec::new(),
+            cached_ss_types: None,
+            cached_per_residue_colors: None,
         }
+    }
+
+    /// Cache stable per-scene data from entities so animation frames can
+    /// reference it without cloning every frame.
+    fn cache_stable_data(&mut self, entities: &[crate::scene::PerEntityData]) {
+        self.cached_na_chains = entities
+            .iter()
+            .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
+            .collect();
+        let ss: Vec<foldit_conv::secondary_structure::SSType> =
+            crate::scene::concatenate_ss_types(
+                entities,
+                &crate::scene::compute_entity_residue_ranges(entities),
+            );
+        self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
+        let colors: Vec<[f32; 3]> = entities
+            .iter()
+            .flat_map(|e| {
+                e.per_residue_colors.iter().flat_map(|c| c.iter().copied())
+            })
+            .collect();
+        self.cached_per_residue_colors = if colors.is_empty() {
+            None
+        } else {
+            Some(colors)
+        };
     }
 
     /// Update cached meshes and return entity-ordered references for
     /// concatenation.
     fn update(
         &mut self,
-        entities: &[super::entity_data::PerEntityData],
+        entities: &[crate::scene::PerEntityData],
         display: &DisplayOptions,
         colors: &ColorOptions,
         geometry: &GeometryOptions,
