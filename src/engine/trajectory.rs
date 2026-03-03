@@ -122,17 +122,6 @@ impl TrajectoryPlayer {
         }
     }
 
-    /// Set playback speed in frames per second (clamped to >= 0.1).
-    pub fn set_fps(&mut self, fps: f32) {
-        self.frame_duration =
-            Duration::from_secs_f64(1.0 / fps.max(0.1) as f64);
-    }
-
-    /// Enable or disable looping at the end of the trajectory.
-    pub fn set_looping(&mut self, looping: bool) {
-        self.looping = looping;
-    }
-
     /// Index of the current frame.
     pub fn current_frame(&self) -> usize {
         self.current_frame

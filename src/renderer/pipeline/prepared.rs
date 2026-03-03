@@ -3,7 +3,7 @@ use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
-use crate::engine::scene::PerEntityData;
+use crate::engine::scene_data::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;

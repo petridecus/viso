@@ -177,16 +177,16 @@ impl MeshCache {
     /// reference it without cloning every frame.
     fn cache_stable_data(
         &mut self,
-        entities: &[crate::engine::scene::PerEntityData],
+        entities: &[crate::engine::scene_data::PerEntityData],
     ) {
         self.cached_na_chains = entities
             .iter()
             .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
             .collect();
         let ss: Vec<foldit_conv::secondary_structure::SSType> =
-            crate::engine::scene::concatenate_ss_types(
+            crate::engine::scene_data::concatenate_ss_types(
                 entities,
-                &crate::engine::scene::compute_entity_residue_ranges(entities),
+                &crate::engine::scene_data::compute_entity_residue_ranges(entities),
             );
         self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
         let colors: Vec<[f32; 3]> = entities
@@ -206,7 +206,7 @@ impl MeshCache {
     /// concatenation.
     fn update(
         &mut self,
-        entities: &[crate::engine::scene::PerEntityData],
+        entities: &[crate::engine::scene_data::PerEntityData],
         display: &DisplayOptions,
         colors: &ColorOptions,
         geometry: &GeometryOptions,

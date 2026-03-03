@@ -25,12 +25,12 @@ impl VisoEngine {
         entity_id: u32,
         transition: Transition,
     ) {
-        let _ = self.entity_behaviors.insert(entity_id, transition);
+        let _ = self.entities.behaviors.insert(entity_id, transition);
     }
 
     /// Clear a per-entity behavior override, reverting to default (smooth).
     pub fn clear_entity_behavior(&mut self, entity_id: u32) {
-        let _ = self.entity_behaviors.remove(&entity_id);
+        let _ = self.entities.behaviors.remove(&entity_id);
     }
 }
 
@@ -45,15 +45,15 @@ impl VisoEngine {
         fit_camera: bool,
     ) -> Vec<u32> {
         // Store canonical copy on the engine (source of truth)
-        self.entities.clone_from(&entities);
+        self.entities.source.clone_from(&entities);
 
-        let ids = self.scene.add_entities(entities);
+        let ids = self.entities.add_entities(entities);
         if fit_camera {
             // Sync immediately so entity data is available for camera fit
             let snap_transitions: HashMap<u32, Transition> =
                 ids.iter().map(|&id| (id, Transition::snap())).collect();
             self.sync_scene_to_renderers(snap_transitions);
-            let positions = self.scene.all_positions();
+            let positions = self.entities.all_positions();
             if !positions.is_empty() {
                 self.camera_controller.fit_to_positions(&positions);
             }
@@ -64,8 +64,8 @@ impl VisoEngine {
     /// Update backbone with new chains (regenerates the backbone mesh)
     /// Use this for designed backbones from ML models like RFDiffusion3
     pub fn update_backbone(&mut self, backbone_chains: &[Vec<Vec3>]) {
-        self.renderers.backbone.update(
-            &self.context,
+        self.gpu.renderers.backbone.update(
+            &self.gpu.context,
             &BackboneUpdateData {
                 protein_chains: backbone_chains,
                 na_chains: &[],
@@ -78,8 +78,8 @@ impl VisoEngine {
     /// Set SS override (from puzzle.toml annotation). Updates cached types
     /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
-        self.scene.ss_types = ss_types.to_vec();
-        self.renderers
+        self.topology.ss_types = ss_types.to_vec();
+        self.gpu.renderers
             .backbone
             .set_ss_override(Some(ss_types.to_vec()));
         let camera_eye = self.camera_controller.camera.eye;
@@ -119,9 +119,9 @@ impl VisoEngine {
             .iter()
             .filter_map(|b| self.resolve_band(b))
             .collect();
-        self.renderers.band.update(
-            &self.context.device,
-            &self.context.queue,
+        self.gpu.renderers.band.update(
+            &self.gpu.context.device,
+            &self.gpu.context.queue,
             &resolved_bands,
             Some(&self.options.colors),
         );
@@ -129,9 +129,9 @@ impl VisoEngine {
         // Pull
         let resolved_pull =
             self.pull_spec.as_ref().and_then(|p| self.resolve_pull(p));
-        self.renderers.pull.update(
-            &self.context.device,
-            &self.context.queue,
+        self.gpu.renderers.pull.update(
+            &self.gpu.context.device,
+            &self.gpu.context.queue,
             resolved_pull.as_ref(),
         );
     }
@@ -164,8 +164,8 @@ impl VisoEngine {
         let target_pos = self.camera_controller.screen_to_world_at_depth(
             glam::Vec2::new(pull.screen_target.0, pull.screen_target.1),
             glam::UVec2::new(
-                self.context.config.width,
-                self.context.config.height,
+                self.gpu.context.config.width,
+                self.gpu.context.config.height,
             ),
             atom_pos,
         );
@@ -192,11 +192,11 @@ impl VisoEngine {
                 "C" => 2,
                 _ => return None,
             };
-            let chains = if self.scene.visual_backbone_chains.is_empty() {
+            let chains = if self.visual.backbone_chains.is_empty() {
                 // Before first animation, fall back to renderer cache
-                self.renderers.backbone.cached_chains()
+                self.gpu.renderers.backbone.cached_chains()
             } else {
-                &self.scene.visual_backbone_chains
+                &self.visual.backbone_chains
             };
             let mut current_idx: u32 = 0;
             for chain in chains {
@@ -211,16 +211,17 @@ impl VisoEngine {
         }
 
         // Sidechain atoms — look up in visual_sidechain_positions
-        let positions = if self.scene.visual_sidechain_positions.is_empty() {
-            &self.scene.target_sidechain_positions
+        let positions = if self.visual.sidechain_positions.is_empty() {
+            &self.topology.sidechain_topology.target_positions
         } else {
-            &self.scene.visual_sidechain_positions
+            &self.visual.sidechain_positions
         };
         for (i, (res_idx, sc_name)) in self
-            .scene
-            .sidechain_residue_indices
+            .topology
+            .sidechain_topology
+            .residue_indices
             .iter()
-            .zip(self.scene.sidechain_atom_names.iter())
+            .zip(self.topology.sidechain_topology.atom_names.iter())
             .enumerate()
         {
             if *res_idx == atom.residue && sc_name == name {
@@ -248,7 +249,7 @@ impl VisoEngine {
     ) {
         // 1. Update source-of-truth on the engine
         if let Some(entity) =
-            self.entities.iter_mut().find(|e| e.entity_id == id)
+            self.entities.source.iter_mut().find(|e| e.entity_id == id)
         {
             let mut entities = vec![entity.clone()];
             foldit_conv::types::assembly::update_protein_entities(
@@ -260,12 +261,13 @@ impl VisoEngine {
             }
         }
 
-        // 2. Update Scene (derived copy)
-        self.scene.update_entity_protein_coords(id, coords);
+        // 2. Update scene entities (rendering copy)
+        self.entities.update_entity_protein_coords(id, coords);
 
         // 3. Look up per-entity behavior override
         let effective_transition = self
-            .entity_behaviors
+            .entities
+            .behaviors
             .get(&id)
             .cloned()
             .unwrap_or(transition);
@@ -294,17 +296,18 @@ impl VisoEngine {
 
             // Update engine source-of-truth
             if let Some(slot) =
-                self.entities.iter_mut().find(|e| e.entity_id == id)
+                self.entities.source.iter_mut().find(|e| e.entity_id == id)
             {
                 *slot = new_entity.clone();
             }
 
-            // Update Scene (derived copy)
-            self.scene.replace_entity(new_entity);
+            // Update scene entities (rendering copy)
+            self.entities.replace_entity(new_entity);
 
             // Resolve per-entity behavior override
             let transition = self
-                .entity_behaviors
+                .entities
+                .behaviors
                 .get(&id)
                 .cloned()
                 .unwrap_or_else(|| default_transition.clone());
@@ -321,11 +324,11 @@ impl VisoEngine {
     /// Hidden entities are excluded from rendering but remain in the scene.
     /// Forces a full scene sync.
     pub fn set_entity_visible(&mut self, id: u32, visible: bool) {
-        if let Some(se) = self.scene.entity_mut(id) {
+        if let Some(se) = self.entities.entity_mut(id) {
             if se.visible != visible {
                 se.visible = visible;
                 se.invalidate_render_cache();
-                self.scene.force_dirty();
+                self.entities.force_dirty();
                 self.sync_scene_to_renderers(HashMap::new());
             }
         }
@@ -340,10 +343,10 @@ impl VisoEngine {
         id: u32,
         scores: Option<Vec<f64>>,
     ) {
-        if let Some(se) = self.scene.entity_mut(id) {
+        if let Some(se) = self.entities.entity_mut(id) {
             se.per_residue_scores = scores;
             se.invalidate_render_cache();
-            self.scene.force_dirty();
+            self.entities.force_dirty();
             self.sync_scene_to_renderers(HashMap::new());
         }
     }
@@ -353,9 +356,9 @@ impl VisoEngine {
     /// Removes from both the engine's source-of-truth and the Scene.
     /// Forces a full scene resync.
     pub fn remove_entity(&mut self, id: u32) {
-        self.entities.retain(|e| e.entity_id != id);
-        let _ = self.entity_behaviors.remove(&id);
-        if self.scene.remove_entity(id) {
+        self.entities.source.retain(|e| e.entity_id != id);
+        let _ = self.entities.behaviors.remove(&id);
+        if self.entities.remove_entity(id) {
             self.sync_scene_to_renderers(HashMap::new());
         }
     }

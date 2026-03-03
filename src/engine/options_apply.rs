@@ -21,13 +21,13 @@ impl VisoEngine {
         self.lighting.uniform.ibl_strength = lo.ibl_strength;
         self.lighting.uniform.roughness = lo.roughness;
         self.lighting.uniform.metalness = lo.metalness;
-        self.lighting.update_gpu(&self.context.queue);
+        self.lighting.update_gpu(&self.gpu.context.queue);
     }
 
     /// Push post-processing options to the composite pass.
     pub(super) fn apply_post_processing(&mut self) {
-        self.post_process
-            .apply_options(&self.options, &self.context.queue);
+        self.gpu.post_process
+            .apply_options(&self.options, &self.gpu.context.queue);
     }
 
     /// Push camera options to the controller.
@@ -45,54 +45,54 @@ impl VisoEngine {
     pub(super) fn apply_debug(&mut self) {
         self.camera_controller.uniform.debug_mode =
             u32::from(self.options.debug.show_normals);
-        self.camera_controller.update_gpu(&self.context.queue);
+        self.camera_controller.update_gpu(&self.gpu.context.queue);
     }
 
     /// Recompute backbone per-residue colors from current options and
     /// push them to the GPU color buffer.
     pub(super) fn recompute_backbone_colors(&mut self) {
-        let chains = self.renderers.backbone.cached_chains().to_vec();
+        let chains = self.gpu.renderers.backbone.cached_chains().to_vec();
         let per_entity_scores: Vec<Option<&[f64]>> = self
-            .scene
+            .entities
             .entities()
             .iter()
             .map(|e| e.per_residue_scores.as_deref())
             .collect();
         let new_colors = score_color::compute_per_residue_colors(
             &chains,
-            &self.scene.ss_types,
+            &self.topology.ss_types,
             &per_entity_scores,
             &self.options.display.backbone_color_mode,
         );
-        self.pick.residue_colors.set_target_colors(&new_colors);
-        self.scene.per_residue_colors = Some(new_colors);
+        self.gpu.pick.residue_colors.set_target_colors(&new_colors);
+        self.topology.per_residue_colors = Some(new_colors);
     }
 
     /// Refresh ball-and-stick renderer with current visibility flags.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
         // Collect all ligand entities (not protein, not nucleic acid)
         let entities: Vec<MoleculeEntity> = self
-            .scene
+            .entities
             .ligand_entities()
             .iter()
             .map(|se| se.entity.clone())
             .collect();
-        self.renderers.ball_and_stick.update_from_entities(
-            &self.context,
+        self.gpu.renderers.ball_and_stick.update_from_entities(
+            &self.gpu.context,
             &entities,
             &self.options.display,
             Some(&self.options.colors),
         );
         // Recreate picking bind groups
-        self.pick.groups.rebuild_bns_bond(
-            &self.pick.picking,
-            &self.context.device,
-            &self.renderers.ball_and_stick,
+        self.gpu.pick.groups.rebuild_bns_bond(
+            &self.gpu.pick.picking,
+            &self.gpu.context.device,
+            &self.gpu.renderers.ball_and_stick,
         );
-        self.pick.groups.rebuild_bns_sphere(
-            &self.pick.picking,
-            &self.context.device,
-            &self.renderers.ball_and_stick,
+        self.gpu.pick.groups.rebuild_bns_sphere(
+            &self.gpu.pick.picking,
+            &self.gpu.context.device,
+            &self.gpu.renderers.ball_and_stick,
         );
     }
 }

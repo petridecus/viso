@@ -8,7 +8,7 @@ use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::engine::scene::PerEntityData;
+use crate::engine::scene_data::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,

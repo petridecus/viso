@@ -214,9 +214,9 @@ impl PanelController {
             >= Duration::from_millis(250)
         {
             let mut buffers = Vec::new();
-            buffers.extend(engine.renderers.buffer_info());
-            buffers.extend(engine.pick.selection.buffer_info());
-            buffers.extend(engine.pick.residue_colors.buffer_info());
+            buffers.extend(engine.gpu.renderers.buffer_info());
+            buffers.extend(engine.gpu.pick.selection.buffer_info());
+            buffers.extend(engine.gpu.pick.residue_colors.buffer_info());
             webview::push_stats(wv, engine.fps(), &buffers);
             self.last_stats_push = now;
         }

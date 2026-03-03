@@ -2,8 +2,11 @@ mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub mod command;
 mod entity;
+pub(crate) mod entity_store;
 mod options_apply;
 pub(crate) mod scene;
+/// Entity data types, bond topology, and scene aggregation functions.
+pub(crate) mod scene_data;
 mod sync;
 pub(crate) mod trajectory;
 
@@ -12,9 +15,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use foldit_conv::render::RenderCoords;
-use foldit_conv::types::entity::MoleculeEntity;
 use glam::{Mat4, Vec3};
-use scene::{Focus, Scene, SceneEntity};
+use entity_store::EntityStore;
+use scene::{Focus, SceneTopology, VisualState};
+use scene_data::SceneEntity;
 
 use self::trajectory::TrajectoryPlayer;
 use crate::animation::transition::Transition;
@@ -33,6 +37,44 @@ use crate::renderer::{GeometryPassInput, PipelineLayouts, Renderers};
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
+
+// ---------------------------------------------------------------------------
+// AnimationState
+// ---------------------------------------------------------------------------
+
+/// Grouped animation fields: structural animator, trajectory player, and
+/// pending per-entity transitions.
+pub(crate) struct AnimationState {
+    /// Structural animation driver (per-entity interpolation).
+    pub animator: StructureAnimator,
+    /// Multi-frame trajectory player, if loaded.
+    pub trajectory_player: Option<TrajectoryPlayer>,
+    /// Transitions pending from the last sync (avoids round-trip through
+    /// the background thread). Empty when no sync is pending.
+    pub pending_transitions: HashMap<u32, Transition>,
+}
+
+// ---------------------------------------------------------------------------
+// GpuPipeline
+// ---------------------------------------------------------------------------
+
+/// All GPU infrastructure grouped together: device/queue, renderers,
+/// picking, background mesh processor, and post-processing.
+pub(crate) struct GpuPipeline {
+    /// Core wgpu device, queue, and surface.
+    pub context: RenderContext,
+    /// All geometry renderers (backbone, sidechain, band, pull,
+    /// ball-and-stick, nucleic acid).
+    pub renderers: Renderers,
+    /// GPU picking, selection, and per-residue color buffers.
+    pub pick: PickingSystem,
+    /// Background thread for off-main-thread mesh generation.
+    pub scene_processor: SceneProcessor,
+    /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
+    pub post_process: PostProcessStack,
+    /// Shader composer (kept alive for pipeline lifetime).
+    _shader_composer: ShaderComposer,
+}
 
 // ---------------------------------------------------------------------------
 // FrameTiming
@@ -108,15 +150,15 @@ struct GpuBootstrap {
     renderers: Renderers,
     pick: PickingSystem,
     post_process: PostProcessStack,
-    scene: Scene,
+    entities: EntityStore,
 }
 
-/// Initialize all shared GPU subsystems from a scene and render coords.
+/// Initialize all shared GPU subsystems from entity data and render coords.
 ///
 /// This is the common pipeline setup for both empty and loaded constructors.
 fn init_gpu_pipeline(
     context: &RenderContext,
-    scene: Scene,
+    entities: EntityStore,
     render_coords: &RenderCoords,
 ) -> Result<GpuBootstrap, VisoError> {
     let mut shader_composer = ShaderComposer::new()?;
@@ -136,7 +178,7 @@ fn init_gpu_pipeline(
         context,
         &layouts,
         render_coords,
-        &scene,
+        &entities,
         &mut shader_composer,
     )?;
     let pick = PickingSystem::new(
@@ -156,7 +198,7 @@ fn init_gpu_pipeline(
         renderers,
         pick,
         post_process,
-        scene,
+        entities,
     })
 }
 
@@ -191,12 +233,9 @@ fn init_gpu_pipeline(
 /// Structural changes are animated via the internal `StructureAnimator`.
 /// Animation transitions are managed internally by the engine pipeline.
 pub struct VisoEngine {
-    /// Core wgpu device, queue, and surface.
-    pub context: RenderContext,
-    _shader_composer: ShaderComposer,
+    /// All GPU infrastructure (device, renderers, picking, post-process).
+    pub(crate) gpu: GpuPipeline,
 
-    /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
-    pub(crate) post_process: PostProcessStack,
     /// Current cursor position in physical pixels (set by the viewer /
     /// input processor each frame for GPU picking).
     pub(crate) cursor_pos: (f32, f32),
@@ -207,37 +246,24 @@ pub struct VisoEngine {
     pub camera_controller: CameraController,
     /// GPU lighting uniform and bind group.
     pub lighting: Lighting,
-    /// Scene graph holding all entities.
-    pub(crate) scene: Scene,
-    /// Canonical entity data (source of truth). Scene is derived from this.
-    pub(crate) entities: Vec<MoleculeEntity>,
-    /// Per-entity animation behavior overrides (default = smooth).
-    pub(crate) entity_behaviors: HashMap<u32, Transition>,
-    /// Transitions pending from the last sync (avoids round-trip through
-    /// the background thread). Empty when no sync is pending.
-    pending_transitions: HashMap<u32, Transition>,
+    /// Derived topology (SS types, residue ranges, sidechain topology).
+    pub(crate) topology: SceneTopology,
+    /// Animation output buffer (interpolated positions).
+    pub(crate) visual: VisualState,
+    /// Consolidated entity ownership (source + scene entities + behaviors).
+    pub(crate) entities: EntityStore,
     /// Stored band constraint specs (resolved to world-space each frame).
     pub(crate) band_specs: Vec<command::BandInfo>,
     /// Stored pull constraint spec (resolved to world-space each frame).
     pub(crate) pull_spec: Option<command::PullInfo>,
-    /// Background thread for off-main-thread mesh generation.
-    pub(crate) scene_processor: SceneProcessor,
-    /// Structural animation driver.
-    pub(crate) animator: StructureAnimator,
+    /// Structural animation, trajectory, and pending transitions.
+    pub(crate) animation: AnimationState,
     /// Runtime display, lighting, color, and geometry options.
     pub(crate) options: VisoOptions,
     /// Currently applied options preset name, if any.
     pub(crate) active_preset: Option<String>,
     /// Per-frame timing and FPS tracking.
     pub(crate) frame_timing: FrameTiming,
-    /// Multi-frame trajectory player, if loaded.
-    pub trajectory_player: Option<TrajectoryPlayer>,
-
-    /// All geometry renderers (backbone, sidechain, band, pull,
-    /// ball-and-stick, nucleic acid).
-    pub(crate) renderers: Renderers,
-    /// GPU picking, selection, and per-residue color buffers.
-    pub(crate) pick: PickingSystem,
 }
 
 // ── Construction ──
@@ -324,10 +350,10 @@ impl VisoEngine {
     /// Shared empty-init logic.
     fn init_empty(context: RenderContext) -> Result<Self, VisoError> {
         let render_coords = bootstrap::empty_render_coords();
-        let scene = Scene::new();
-        let bootstrap = init_gpu_pipeline(&context, scene, &render_coords)?;
+        let entities = EntityStore::new();
+        let bootstrap = init_gpu_pipeline(&context, entities, &render_coords)?;
         let options = VisoOptions::default();
-        Self::assemble(context, options, bootstrap, Vec::new())
+        Self::assemble(context, options, bootstrap)
     }
 
     /// Shared construction logic for both windowed and headless modes.
@@ -335,13 +361,15 @@ impl VisoEngine {
         context: RenderContext,
         cif_path: &str,
     ) -> Result<Self, VisoError> {
-        let (scene, render_coords) = bootstrap::load_scene_from_file(cif_path)?;
+        let (entities, render_coords) =
+            bootstrap::load_scene_from_file(cif_path)?;
         let options = VisoOptions::default();
 
-        let mut bootstrap = init_gpu_pipeline(&context, scene, &render_coords)?;
+        let mut bootstrap =
+            init_gpu_pipeline(&context, entities, &render_coords)?;
         bootstrap.renderers.init_ball_and_stick_entities(
             &context,
-            &bootstrap.scene,
+            &bootstrap.entities,
             &options,
         );
         let initial_colors = bootstrap::initial_chain_colors(
@@ -359,50 +387,55 @@ impl VisoEngine {
         );
         let positions = bootstrap::collect_all_positions(
             &render_coords,
-            &bootstrap.scene,
+            &bootstrap.entities,
             &options,
         );
         bootstrap.camera_controller.fit_to_positions(&positions);
 
-        let entities: Vec<MoleculeEntity> = bootstrap
-            .scene
-            .entities()
-            .iter()
-            .map(|se| se.entity.clone())
-            .collect();
-        Self::assemble(context, options, bootstrap, entities)
+        Self::assemble(context, options, bootstrap)
     }
 
     /// Build the final `VisoEngine` from initialized GPU subsystems.
     fn assemble(
         context: RenderContext,
         options: VisoOptions,
-        bootstrap: GpuBootstrap,
-        entities: Vec<MoleculeEntity>,
+        mut bootstrap: GpuBootstrap,
     ) -> Result<Self, VisoError> {
+        // Populate source-of-truth from scene entities
+        bootstrap.entities.source = bootstrap
+            .entities
+            .entities()
+            .iter()
+            .map(|se| se.entity.clone())
+            .collect();
+
         Ok(Self {
-            context,
-            _shader_composer: bootstrap.shader_composer,
-            post_process: bootstrap.post_process,
+            gpu: GpuPipeline {
+                context,
+                renderers: bootstrap.renderers,
+                pick: bootstrap.pick,
+                scene_processor: SceneProcessor::new()
+                    .map_err(VisoError::ThreadSpawn)?,
+                post_process: bootstrap.post_process,
+                _shader_composer: bootstrap.shader_composer,
+            },
             cursor_pos: (0.0, 0.0),
             last_cull_camera_eye: Vec3::ZERO,
             camera_controller: bootstrap.camera_controller,
             lighting: bootstrap.lighting,
-            scene: bootstrap.scene,
-            entities,
-            entity_behaviors: HashMap::new(),
-            pending_transitions: HashMap::new(),
+            topology: SceneTopology::new(),
+            visual: VisualState::new(),
+            entities: bootstrap.entities,
             band_specs: Vec::new(),
             pull_spec: None,
-            scene_processor: SceneProcessor::new()
-                .map_err(VisoError::ThreadSpawn)?,
-            animator: StructureAnimator::new(),
+            animation: AnimationState {
+                animator: StructureAnimator::new(),
+                trajectory_player: None,
+                pending_transitions: HashMap::new(),
+            },
             options,
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
-            trajectory_player: None,
-            renderers: bootstrap.renderers,
-            pick: bootstrap.pick,
         })
     }
 }
@@ -417,26 +450,26 @@ impl VisoEngine {
 
         // Camera uniform (hover state from GPU picking)
         self.camera_controller.uniform.hovered_residue =
-            self.pick.hovered_target.as_residue_i32();
-        self.camera_controller.update_gpu(&self.context.queue);
+            self.gpu.pick.hovered_target.as_residue_i32();
+        self.camera_controller.update_gpu(&self.gpu.context.queue);
 
         // Depth-buffer fog from camera distance
         let fog_start = self.camera_controller.distance();
         let fog_density =
             2.0 / self.camera_controller.bounding_radius().max(10.0);
-        self.post_process.update_fog(
-            &self.context.queue,
+        self.gpu.post_process.update_fog(
+            &self.gpu.context.queue,
             fog_start,
             fog_density,
         );
 
         self.check_and_submit_lod();
-        self.pick.update_selection_buffer(&self.context.queue);
+        self.gpu.pick.update_selection_buffer(&self.gpu.context.queue);
         let _color_transitioning =
-            self.pick.residue_colors.update(&self.context.queue);
+            self.gpu.pick.residue_colors.update(&self.gpu.context.queue);
         self.lighting
             .update_headlamp_from_camera(&self.camera_controller.camera);
-        self.lighting.update_gpu(&self.context.queue);
+        self.lighting.update_gpu(&self.gpu.context.queue);
         self.update_frustum_culling();
 
         // Resolve band/pull specs to world-space each frame (auto-tracks
@@ -459,24 +492,24 @@ impl VisoEngine {
         // animation so it converges with the standard path.
         self.advance_trajectory(now);
 
-        if !self.animator.update(now) {
+        if !self.animation.animator.update(now) {
             return;
         }
 
-        let frame = self.animator.get_frame();
-        self.scene.update_visual_state(
+        let frame = self.animation.animator.get_frame();
+        self.visual.update(
             frame.backbone_chains.clone(),
             frame.sidechain_positions.clone().unwrap_or_else(|| {
-                self.scene.target_sidechain_positions.clone()
+                self.topology.sidechain_topology.target_positions.clone()
             }),
             frame.backbone_sidechain_bonds.clone().unwrap_or_else(|| {
-                self.scene.target_backbone_sidechain_bonds.clone()
+                self.topology.sidechain_topology.target_backbone_bonds.clone()
             }),
         );
 
         // Only submit if the previous animation frame has been consumed
         // by the renderer — avoids flooding the background thread.
-        if self.scene.is_position_dirty() {
+        if self.visual.is_dirty() {
             self.submit_animation_frame_from(&frame);
         }
     }
@@ -487,23 +520,23 @@ impl VisoEngine {
         &mut self,
         view: &wgpu::TextureView,
     ) -> wgpu::CommandEncoder {
-        let mut encoder = self.context.create_encoder();
+        let mut encoder = self.gpu.context.create_encoder();
 
         // Geometry pass
         let input = GeometryPassInput {
-            color: self.post_process.color_view(),
-            normal: &self.post_process.normal_view,
-            depth: &self.post_process.depth_view,
+            color: self.gpu.post_process.color_view(),
+            normal: &self.gpu.post_process.normal_view,
+            depth: &self.gpu.post_process.depth_view,
             show_sidechains: self.options.display.show_sidechains,
         };
         let bind_groups = DrawBindGroups {
             camera: &self.camera_controller.bind_group,
             lighting: &self.lighting.bind_group,
-            selection: &self.pick.selection.bind_group,
-            color: Some(&self.pick.residue_colors.bind_group),
+            selection: &self.gpu.pick.selection.bind_group,
+            color: Some(&self.gpu.pick.residue_colors.bind_group),
         };
         let frustum = self.camera_controller.frustum();
-        self.renderers.encode_geometry_pass(
+        self.gpu.renderers.encode_geometry_pass(
             &mut encoder,
             &input,
             &bind_groups,
@@ -512,9 +545,9 @@ impl VisoEngine {
 
         // Post-processing: SSAO → bloom → composite → FXAA
         let camera = &self.camera_controller.camera;
-        self.post_process.render(
+        self.gpu.post_process.render(
             &mut encoder,
-            &self.context.queue,
+            &self.gpu.context.queue,
             &crate::renderer::postprocess::post_process::PostProcessCamera {
                 proj: camera.build_projection(),
                 view_matrix: Mat4::look_at_rh(
@@ -529,11 +562,11 @@ impl VisoEngine {
         );
 
         // GPU Picking pass
-        let picking_geometry = self.pick.build_geometry(
-            &self.renderers,
+        let picking_geometry = self.gpu.pick.build_geometry(
+            &self.gpu.renderers,
             self.options.display.show_sidechains,
         );
-        self.pick.picking.render(
+        self.gpu.pick.picking.render(
             &mut encoder,
             &self.camera_controller.bind_group,
             &picking_geometry,
@@ -558,19 +591,19 @@ impl VisoEngine {
 
         self.pre_render();
 
-        let frame = self.context.get_next_frame()?;
+        let frame = self.gpu.context.get_next_frame()?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let encoder = self.render_to_view(&view);
-        self.context.submit(encoder);
+        self.gpu.context.submit(encoder);
 
         // Start async GPU picking readback (non-blocking)
-        self.pick.picking.start_readback();
+        self.gpu.pick.picking.start_readback();
 
         // Try to complete any pending readback from previous frame
         // (non-blocking poll)
-        self.pick.poll_and_resolve(&self.context.device);
+        self.gpu.pick.poll_and_resolve(&self.gpu.context.device);
 
         frame.present();
 
@@ -585,7 +618,7 @@ impl VisoEngine {
     pub fn render_to_texture(&mut self, view: &wgpu::TextureView) {
         self.pre_render();
         let encoder = self.render_to_view(view);
-        self.context.submit(encoder);
+        self.gpu.context.submit(encoder);
         self.frame_timing.end_frame();
     }
 
@@ -593,12 +626,12 @@ impl VisoEngine {
     /// window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.context.resize(width, height);
+            self.gpu.context.resize(width, height);
             self.camera_controller.resize(width, height);
-            self.post_process.resize(&self.context);
-            self.pick
+            self.gpu.post_process.resize(&self.gpu.context);
+            self.gpu.pick
                 .picking
-                .resize(&self.context.device, width, height);
+                .resize(&self.gpu.context.device, width, height);
         }
     }
 }
@@ -641,35 +674,35 @@ impl VisoEngine {
 
             // ── Focus ──
             VisoCommand::CycleFocus => {
-                let _ = self.scene.cycle_focus();
+                let _ = self.entities.cycle_focus();
                 self.fit_camera_to_focus();
                 false
             }
             VisoCommand::ResetFocus => {
-                self.scene.set_focus(Focus::Session);
+                self.entities.set_focus(Focus::Session);
                 self.fit_camera_to_focus();
                 false
             }
 
             // ── Playback ──
             VisoCommand::ToggleTrajectory => {
-                if self.trajectory_player.is_some() {
+                if self.animation.trajectory_player.is_some() {
                     self.toggle_trajectory();
                 }
                 false
             }
 
             // ── Selection ──
-            VisoCommand::ClearSelection => self.pick.clear_selection(),
+            VisoCommand::ClearSelection => self.gpu.pick.clear_selection(),
             VisoCommand::SelectResidue { index, extend } => {
-                self.pick.picking.handle_click(index, extend)
+                self.gpu.pick.picking.handle_click(index, extend)
             }
             VisoCommand::SelectSegment { index, extend } => self
-                .pick
-                .select_segment(index, &self.scene.ss_types, extend),
+                .gpu.pick
+                .select_segment(index, &self.topology.ss_types, extend),
             VisoCommand::SelectChain { index, extend } => {
-                let chains = self.renderers.backbone.cached_chains();
-                self.pick.select_chain(index, chains, extend)
+                let chains = self.gpu.renderers.backbone.cached_chains();
+                self.gpu.pick.select_chain(index, chains, extend)
             }
         }
     }
@@ -693,7 +726,7 @@ impl VisoEngine {
 
     /// Stop the background scene processor thread.
     pub fn shutdown(&mut self) {
-        self.scene_processor.shutdown();
+        self.gpu.scene_processor.shutdown();
     }
 }
 
@@ -702,16 +735,16 @@ impl VisoEngine {
 impl VisoEngine {
     /// Fit camera to the currently focused element.
     pub fn fit_camera_to_focus(&mut self) {
-        match *self.scene.focus() {
+        match *self.entities.focus() {
             Focus::Session => {
-                let positions = self.scene.all_positions();
+                let positions = self.entities.all_positions();
                 if !positions.is_empty() {
                     self.camera_controller
                         .fit_to_positions_animated(&positions);
                 }
             }
             Focus::Entity(eid) => {
-                if let Some(se) = self.scene.entity(eid) {
+                if let Some(se) = self.entities.entity(eid) {
                     let positions = se.entity.positions();
                     if !positions.is_empty() {
                         self.camera_controller
@@ -729,13 +762,13 @@ impl VisoEngine {
     /// The pick target currently under the cursor (resolved from the
     /// previous frame's GPU picking pass).
     pub fn hovered_target(&self) -> crate::renderer::picking::PickTarget {
-        self.pick.hovered_target
+        self.gpu.pick.hovered_target
     }
 
     /// The currently focused entity ID, or `None` when focus is session-wide.
     #[must_use]
     pub fn focused_entity(&self) -> Option<u32> {
-        match *self.scene.focus() {
+        match *self.entities.focus() {
             Focus::Entity(id) => Some(id),
             Focus::Session => None,
         }
@@ -779,7 +812,7 @@ impl VisoEngine {
             self.apply_debug();
         }
         if display_changed || geometry_changed || colors_changed {
-            self.scene.force_dirty();
+            self.entities.force_dirty();
         }
         if display_changed {
             self.refresh_ball_and_stick();
@@ -851,7 +884,7 @@ impl VisoEngine {
 
     /// Set the GPU render scale (supersampling factor).
     pub fn set_render_scale(&mut self, scale: u32) {
-        self.context.render_scale = scale;
+        self.gpu.context.render_scale = scale;
     }
 }
 
@@ -876,7 +909,7 @@ impl VisoEngine {
         // Get protein coords from the first visible entity to build backbone
         // mapping
         let protein_coords = self
-            .scene
+            .entities
             .entities()
             .iter()
             .filter(|e| e.visible)
@@ -918,7 +951,7 @@ impl VisoEngine {
             &backbone_chains,
             backbone_indices,
         );
-        self.trajectory_player = Some(player);
+        self.animation.trajectory_player = Some(player);
 
         log::info!(
             "Trajectory loaded: {num_frames} frames, {num_atoms} atoms, \
@@ -928,7 +961,7 @@ impl VisoEngine {
 
     /// Toggle trajectory playback (play/pause). No-op if no trajectory loaded.
     pub fn toggle_trajectory(&mut self) {
-        if let Some(ref mut player) = self.trajectory_player {
+        if let Some(ref mut player) = self.animation.trajectory_player {
             player.toggle_playback();
             let state = if player.is_playing() {
                 "playing"

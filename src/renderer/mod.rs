@@ -29,7 +29,7 @@ use self::geometry::{
     NucleicAcidRenderer, PullRenderer, SidechainRenderer, SidechainView,
 };
 use crate::camera::frustum::Frustum;
-use crate::engine::scene::Scene;
+use crate::engine::entity_store::EntityStore;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
 
@@ -75,15 +75,15 @@ pub(crate) struct Renderers {
 }
 
 impl Renderers {
-    /// Create all geometry renderers from the loaded scene data.
+    /// Create all geometry renderers from the loaded entity data.
     pub fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
         render_coords: &RenderCoords,
-        scene: &Scene,
+        store: &EntityStore,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, crate::error::VisoError> {
-        let na_chains: Vec<Vec<Vec3>> = scene
+        let na_chains: Vec<Vec<Vec3>> = store
             .nucleic_acid_entities()
             .iter()
             .flat_map(|se| se.entity.extract_p_atom_chains())
@@ -117,7 +117,7 @@ impl Renderers {
         let pull = PullRenderer::new(context, layouts, shader_composer)?;
         let ball_and_stick =
             BallAndStickRenderer::new(context, layouts, shader_composer)?;
-        let na_rings: Vec<foldit_conv::types::entity::NucleotideRing> = scene
+        let na_rings: Vec<foldit_conv::types::entity::NucleotideRing> = store
             .nucleic_acid_entities()
             .iter()
             .flat_map(|se| se.entity.extract_base_rings())
@@ -143,10 +143,10 @@ impl Renderers {
     pub fn init_ball_and_stick_entities(
         &mut self,
         context: &RenderContext,
-        scene: &Scene,
+        store: &EntityStore,
         options: &VisoOptions,
     ) {
-        let non_protein_refs: Vec<MoleculeEntity> = scene
+        let non_protein_refs: Vec<MoleculeEntity> = store
             .entities()
             .iter()
             .filter(|se| !se.is_protein())
