@@ -25,15 +25,15 @@ pub struct CameraController {
     target_bounding_radius: Option<f32>,
 
     /// The underlying perspective camera.
-    pub camera: Camera,
+    pub(crate) camera: Camera,
     /// GPU uniform data for the camera.
-    pub uniform: CameraUniform,
+    pub(crate) uniform: CameraUniform,
     /// GPU buffer holding the camera uniform.
-    pub buffer: wgpu::Buffer,
+    pub(crate) buffer: wgpu::Buffer,
     /// Bind group layout for the camera uniform.
-    pub layout: wgpu::BindGroupLayout,
+    pub(crate) layout: wgpu::BindGroupLayout,
     /// Bind group for the camera uniform.
-    pub bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: wgpu::BindGroup,
 
     /// When Some, the camera spins around the captured axis (camera up at
     /// toggle time).

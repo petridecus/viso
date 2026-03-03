@@ -113,13 +113,13 @@ impl Default for LightingUniform {
 /// GPU lighting uniform, buffer, and bind group.
 pub struct Lighting {
     /// Current lighting uniform data.
-    pub uniform: LightingUniform,
+    pub(crate) uniform: LightingUniform,
     /// GPU buffer holding the lighting uniform.
-    pub buffer: wgpu::Buffer,
+    pub(crate) buffer: wgpu::Buffer,
     /// Bind group layout for the lighting uniform.
-    pub layout: wgpu::BindGroupLayout,
+    pub(crate) layout: wgpu::BindGroupLayout,
     /// Bind group referencing the lighting buffer.
-    pub bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: wgpu::BindGroup,
 }
 
 impl Lighting {

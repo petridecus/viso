@@ -19,13 +19,13 @@ use crate::animation::transition::Transition;
 /// structural dirty tracking all live here.
 pub(crate) struct EntityStore {
     /// Source-of-truth entity data (from callers).
-    pub source: Vec<MoleculeEntity>,
+    pub(crate) source: Vec<MoleculeEntity>,
     /// Scene entities (rendering copy with visibility, SS override, scores).
     scene_entities: Vec<SceneEntity>,
     /// Entity ID → index in `scene_entities` for O(1) lookup.
     id_index: FxHashMap<u32, usize>,
     /// Per-entity animation behavior overrides.
-    pub behaviors: FxHashMap<u32, Transition>,
+    pub(crate) behaviors: FxHashMap<u32, Transition>,
     focus: Focus,
     next_entity_id: u32,
     /// Monotonically increasing generation; bumped on any structural mutation
