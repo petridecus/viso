@@ -138,6 +138,71 @@ impl TrajectoryPlayer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VisoEngine trajectory loading
+// ---------------------------------------------------------------------------
+
+impl super::VisoEngine {
+    /// Load a DCD trajectory file and begin playback.
+    pub fn load_trajectory(&mut self, path: &std::path::Path) {
+        use foldit_conv::adapters::dcd::dcd_file_to_frames;
+        use foldit_conv::ops::transform::protein_only;
+
+        use super::scene_data::SceneEntity;
+
+        let (header, frames) = match dcd_file_to_frames(path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to load DCD trajectory: {e}");
+                return;
+            }
+        };
+
+        // Get protein coords from the first visible entity to build backbone
+        // mapping
+        let protein_coords = self
+            .entities
+            .entities()
+            .iter()
+            .filter(|e| e.visible)
+            .find_map(SceneEntity::protein_coords);
+
+        let protein_coords = if let Some(c) = protein_coords {
+            protein_only(&c)
+        } else {
+            log::error!("No protein structure loaded — cannot play trajectory");
+            return;
+        };
+
+        // Validate atom count
+        if (header.num_atoms as usize) < protein_coords.num_atoms {
+            log::error!(
+                "DCD atom count ({}) is less than protein atom count ({})",
+                header.num_atoms,
+                protein_coords.num_atoms,
+            );
+            return;
+        }
+
+        // Build backbone atom index mapping
+        let backbone_indices = build_backbone_atom_indices(&protein_coords);
+
+        // Get current backbone chains for topology
+        let backbone_chains =
+            foldit_conv::ops::transform::extract_backbone_chains(
+                &protein_coords,
+            );
+
+        let num_atoms = header.num_atoms as usize;
+        self.animation.load_trajectory(
+            frames,
+            num_atoms,
+            &backbone_chains,
+            backbone_indices,
+        );
+    }
+}
+
 /// Build the backbone atom index mapping from a `Coords` struct.
 ///
 /// For each backbone atom (N, CA, C) that would appear in the backbone_chains

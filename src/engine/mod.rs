@@ -11,153 +11,24 @@ mod sync;
 pub(crate) mod trajectory;
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+pub(crate) use bootstrap::FrameTiming;
 use entity_store::EntityStore;
-use foldit_conv::render::RenderCoords;
-use glam::Vec3;
 use scene::{Focus, SceneTopology, VisualState};
-use scene_data::SceneEntity;
 
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
-use crate::error::VisoError;
-use crate::gpu::lighting::Lighting;
-use crate::gpu::residue_color::ResidueColorBuffer;
-use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
-use crate::renderer::picking::{PickingSystem, SelectionBuffer};
-use crate::renderer::pipeline::SceneProcessor;
-use crate::renderer::postprocess::PostProcessStack;
-use crate::renderer::{GpuPipeline, PipelineLayouts, Renderers};
+use crate::renderer::GpuPipeline;
 
-/// Target FPS limit
-const TARGET_FPS: u32 = 300;
-
-// ---------------------------------------------------------------------------
-// FrameTiming
-// ---------------------------------------------------------------------------
-
-/// Frame timing with FPS calculation and optional frame limiting.
-pub(crate) struct FrameTiming {
-    target_fps: u32,
-    min_frame_duration: Duration,
-    last_frame: Instant,
-    smoothed_fps: f32,
-    smoothing: f32,
-}
-
-impl FrameTiming {
-    /// Create a new frame timer with the given FPS target (0 = unlimited).
-    fn new(target_fps: u32) -> Self {
-        let min_frame_duration = if target_fps > 0 {
-            Duration::from_secs_f64(1.0 / f64::from(target_fps))
-        } else {
-            Duration::ZERO
-        };
-        Self {
-            target_fps,
-            min_frame_duration,
-            last_frame: Instant::now(),
-            smoothed_fps: 60.0,
-            smoothing: 0.05,
-        }
-    }
-
-    /// Returns true if enough time has passed to render the next frame.
-    fn should_render(&self) -> bool {
-        if self.target_fps == 0 {
-            return true;
-        }
-        self.last_frame.elapsed() >= self.min_frame_duration
-    }
-
-    /// Update timing after rendering a frame.
-    fn end_frame(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_frame);
-        self.last_frame = now;
-
-        let frame_time = elapsed.as_secs_f32();
-        if frame_time > 0.0 {
-            let instant_fps = 1.0 / frame_time;
-            self.smoothed_fps = self
-                .smoothed_fps
-                .mul_add(1.0 - self.smoothing, instant_fps * self.smoothing);
-        }
-    }
-
-    /// Current smoothed FPS.
-    pub fn fps(&self) -> f32 {
-        self.smoothed_fps
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GpuBootstrap — intermediate state for GPU pipeline initialization
-// ---------------------------------------------------------------------------
-
-/// Intermediate state holding all initialized GPU subsystems.
-///
-/// Produced by [`init_gpu_pipeline`] and consumed by
-/// [`VisoEngine::assemble`] to build the final engine struct.
-struct GpuBootstrap {
-    shader_composer: ShaderComposer,
-    camera_controller: CameraController,
-    lighting: Lighting,
-    renderers: Renderers,
-    pick: PickingSystem,
-    post_process: PostProcessStack,
-    entities: EntityStore,
-}
-
-/// Initialize all shared GPU subsystems from entity data and render coords.
-///
-/// This is the common pipeline setup for both empty and loaded constructors.
-fn init_gpu_pipeline(
-    context: &RenderContext,
-    entities: EntityStore,
-    render_coords: &RenderCoords,
-) -> Result<GpuBootstrap, VisoError> {
-    let mut shader_composer = ShaderComposer::new()?;
-    let mut camera_controller = CameraController::new(context);
-    let lighting = Lighting::new(context);
-
-    let n = render_coords.residue_count().max(1);
-    let selection = SelectionBuffer::new(&context.device, n);
-    let residue_colors = ResidueColorBuffer::new(&context.device, n);
-    let layouts = PipelineLayouts {
-        camera: camera_controller.layout.clone(),
-        lighting: lighting.layout.clone(),
-        selection: selection.layout.clone(),
-        color: residue_colors.layout.clone(),
-    };
-    let renderers = Renderers::new(
-        context,
-        &layouts,
-        render_coords,
-        &entities,
-        &mut shader_composer,
-    )?;
-    let pick = PickingSystem::new(
-        context,
-        &camera_controller.layout,
-        selection,
-        residue_colors,
-        &mut shader_composer,
-    )?;
-    let post_process = PostProcessStack::new(context, &mut shader_composer)?;
-    camera_controller.fit_to_sphere(Vec3::ZERO, 0.0);
-
-    Ok(GpuBootstrap {
-        shader_composer,
-        camera_controller,
-        lighting,
-        renderers,
-        pick,
-        post_process,
-        entities,
-    })
+/// Stored constraint specifications (bands + pull), resolved to world-space
+/// each frame.
+pub(crate) struct ConstraintSpecs {
+    /// Band constraint specs.
+    pub band_specs: Vec<command::BandInfo>,
+    /// Pull constraint spec.
+    pub pull_spec: Option<command::PullInfo>,
 }
 
 /// The core rendering engine for protein visualization.
@@ -194,7 +65,6 @@ pub struct VisoEngine {
     /// All GPU infrastructure (device, renderers, picking, post-process,
     /// lighting, cursor, culling state).
     pub(crate) gpu: GpuPipeline,
-
     /// Orbital camera controller.
     pub camera_controller: CameraController,
     /// Derived topology (SS types, residue ranges, sidechain topology).
@@ -203,10 +73,8 @@ pub struct VisoEngine {
     pub(crate) visual: VisualState,
     /// Consolidated entity ownership (source + scene entities + behaviors).
     pub(crate) entities: EntityStore,
-    /// Stored band constraint specs (resolved to world-space each frame).
-    pub(crate) band_specs: Vec<command::BandInfo>,
-    /// Stored pull constraint spec (resolved to world-space each frame).
-    pub(crate) pull_spec: Option<command::PullInfo>,
+    /// Stored band/pull constraint specs.
+    pub(crate) constraints: ConstraintSpecs,
     /// Structural animation, trajectory, and pending transitions.
     pub(crate) animation: AnimationState,
     /// Runtime display, lighting, color, and geometry options.
@@ -215,165 +83,6 @@ pub struct VisoEngine {
     pub(crate) active_preset: Option<String>,
     /// Per-frame timing and FPS tracking.
     pub(crate) frame_timing: FrameTiming,
-}
-
-// ── Construction ──
-
-impl VisoEngine {
-    /// Engine with a default molecule path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VisoError`] if GPU initialization
-    /// or structure loading fails.
-    pub async fn new(
-        window: impl Into<wgpu::SurfaceTarget<'static>>,
-        size: (u32, u32),
-        scale_factor: f64,
-    ) -> Result<Self, VisoError> {
-        Self::new_with_path(
-            window,
-            size,
-            scale_factor,
-            "assets/models/4pnk.cif",
-        )
-        .await
-    }
-
-    /// Engine with a specified molecule path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VisoError`] if GPU initialization
-    /// or structure loading fails.
-    pub async fn new_with_path(
-        window: impl Into<wgpu::SurfaceTarget<'static>>,
-        size: (u32, u32),
-        scale_factor: f64,
-        cif_path: &str,
-    ) -> Result<Self, VisoError> {
-        let mut context = RenderContext::new(window, size).await?;
-
-        // 2x supersampling on standard-DPI displays to compensate for low pixel
-        // density
-        if scale_factor < 2.0 {
-            context.render_scale = 2;
-        }
-
-        Self::init_with_context(context, cif_path)
-    }
-
-    /// Engine from a pre-built [`RenderContext`] (for embedding in dioxus,
-    /// headless rendering, etc.).
-    ///
-    /// Use [`RenderContext::from_device`] to create a surface-less context
-    /// from an externally-owned `wgpu::Device` and `wgpu::Queue`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VisoError`] if structure loading
-    /// fails.
-    pub fn new_from_context(
-        mut context: RenderContext,
-        scale_factor: f64,
-        cif_path: &str,
-    ) -> Result<Self, VisoError> {
-        if scale_factor < 2.0 {
-            context.render_scale = 2;
-        }
-
-        Self::init_with_context(context, cif_path)
-    }
-
-    /// Engine with an empty scene (no entities loaded).
-    ///
-    /// Initializes all GPU resources but starts with no visible geometry.
-    /// Entities can be loaded later via [`load_entities`](Self::load_entities)
-    /// or [`sync_scene_to_renderers`](Self::sync_scene_to_renderers).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VisoError`] if GPU pipeline initialization fails.
-    pub fn new_empty(context: RenderContext) -> Result<Self, VisoError> {
-        Self::init_empty(context)
-    }
-
-    /// Shared empty-init logic.
-    fn init_empty(context: RenderContext) -> Result<Self, VisoError> {
-        let render_coords = bootstrap::empty_render_coords();
-        let entities = EntityStore::new();
-        let bootstrap = init_gpu_pipeline(&context, entities, &render_coords)?;
-        let options = VisoOptions::default();
-        Self::assemble(context, options, bootstrap)
-    }
-
-    /// Shared construction logic for both windowed and headless modes.
-    fn init_with_context(
-        context: RenderContext,
-        cif_path: &str,
-    ) -> Result<Self, VisoError> {
-        let (entities, render_coords) =
-            bootstrap::load_scene_from_file(cif_path)?;
-        let options = VisoOptions::default();
-
-        let mut bootstrap =
-            init_gpu_pipeline(&context, entities, &render_coords)?;
-        bootstrap.renderers.init_ball_and_stick_entities(
-            &context,
-            &bootstrap.entities,
-            &options,
-        );
-        let initial_colors = bootstrap::initial_chain_colors(
-            &render_coords.backbone_chains,
-            render_coords
-                .backbone_chains
-                .iter()
-                .map(|c| c.len() / 3)
-                .sum(),
-        );
-        bootstrap.pick.init_colors_and_groups(
-            &context,
-            &initial_colors,
-            &bootstrap.renderers,
-        );
-        if let Some((centroid, radius)) = bootstrap.entities.bounding_sphere() {
-            bootstrap.camera_controller.fit_to_sphere(centroid, radius);
-        }
-
-        Self::assemble(context, options, bootstrap)
-    }
-
-    /// Build the final `VisoEngine` from initialized GPU subsystems.
-    fn assemble(
-        context: RenderContext,
-        options: VisoOptions,
-        bootstrap: GpuBootstrap,
-    ) -> Result<Self, VisoError> {
-        Ok(Self {
-            gpu: GpuPipeline {
-                context,
-                renderers: bootstrap.renderers,
-                pick: bootstrap.pick,
-                scene_processor: SceneProcessor::new()
-                    .map_err(VisoError::ThreadSpawn)?,
-                post_process: bootstrap.post_process,
-                lighting: bootstrap.lighting,
-                cursor_pos: (0.0, 0.0),
-                last_cull_camera_eye: Vec3::ZERO,
-                shader_composer: bootstrap.shader_composer,
-            },
-            camera_controller: bootstrap.camera_controller,
-            topology: SceneTopology::new(),
-            visual: VisualState::new(),
-            entities: bootstrap.entities,
-            band_specs: Vec::new(),
-            pull_spec: None,
-            animation: AnimationState::new(),
-            options,
-            active_preset: None,
-            frame_timing: FrameTiming::new(TARGET_FPS),
-        })
-    }
 }
 
 // ── Frame loop ──
@@ -410,7 +119,9 @@ impl VisoEngine {
 
         // Resolve band/pull specs to world-space each frame (auto-tracks
         // animated atoms)
-        if !self.band_specs.is_empty() || self.pull_spec.is_some() {
+        if !self.constraints.band_specs.is_empty()
+            || self.constraints.pull_spec.is_some()
+        {
             self.resolve_and_render_constraints();
         }
     }
@@ -762,68 +473,5 @@ impl VisoEngine {
     /// Set the GPU render scale (supersampling factor).
     pub fn set_render_scale(&mut self, scale: u32) {
         self.gpu.context.render_scale = scale;
-    }
-}
-
-// ── Public API: trajectory ──
-
-impl VisoEngine {
-    /// Load a DCD trajectory file and begin playback.
-    pub fn load_trajectory(&mut self, path: &Path) {
-        use foldit_conv::adapters::dcd::dcd_file_to_frames;
-        use foldit_conv::ops::transform::protein_only;
-
-        use self::trajectory::build_backbone_atom_indices;
-
-        let (header, frames) = match dcd_file_to_frames(path) {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("Failed to load DCD trajectory: {e}");
-                return;
-            }
-        };
-
-        // Get protein coords from the first visible entity to build backbone
-        // mapping
-        let protein_coords = self
-            .entities
-            .entities()
-            .iter()
-            .filter(|e| e.visible)
-            .find_map(SceneEntity::protein_coords);
-
-        let protein_coords = if let Some(c) = protein_coords {
-            protein_only(&c)
-        } else {
-            log::error!("No protein structure loaded — cannot play trajectory");
-            return;
-        };
-
-        // Validate atom count
-        if (header.num_atoms as usize) < protein_coords.num_atoms {
-            log::error!(
-                "DCD atom count ({}) is less than protein atom count ({})",
-                header.num_atoms,
-                protein_coords.num_atoms,
-            );
-            return;
-        }
-
-        // Build backbone atom index mapping
-        let backbone_indices = build_backbone_atom_indices(&protein_coords);
-
-        // Get current backbone chains for topology
-        let backbone_chains =
-            foldit_conv::ops::transform::extract_backbone_chains(
-                &protein_coords,
-            );
-
-        let num_atoms = header.num_atoms as usize;
-        self.animation.load_trajectory(
-            frames,
-            num_atoms,
-            &backbone_chains,
-            backbone_indices,
-        );
     }
 }

@@ -16,20 +16,14 @@ impl VisoEngine {
 
     /// Push camera options to the controller.
     pub(super) fn apply_camera(&mut self) {
-        let co = &self.options.camera;
-        self.camera_controller.camera.fovy = co.fovy;
-        self.camera_controller.camera.znear = co.znear;
-        self.camera_controller.camera.zfar = co.zfar;
-        self.camera_controller.rotate_speed = co.rotate_speed * 0.02;
-        self.camera_controller.pan_speed = co.pan_speed * 0.2;
-        self.camera_controller.zoom_speed = co.zoom_speed * 0.5;
+        self.camera_controller
+            .apply_camera_options(&self.options.camera);
     }
 
     /// Push debug options to the camera uniform.
     pub(super) fn apply_debug(&mut self) {
-        self.camera_controller.uniform.debug_mode =
-            u32::from(self.options.debug.show_normals);
-        self.camera_controller.update_gpu(&self.gpu.context.queue);
+        self.camera_controller
+            .apply_debug_options(&self.options.debug, &self.gpu.context.queue);
     }
 
     /// Recompute backbone per-residue colors from current options and

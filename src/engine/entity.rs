@@ -88,7 +88,7 @@ impl VisoEngine {
     /// Bands use structural references ([`AtomRef`]) and are resolved to
     /// world-space positions each frame, so they auto-track animated atoms.
     pub fn update_bands(&mut self, bands: Vec<BandInfo>) {
-        self.band_specs = bands;
+        self.constraints.band_specs = bands;
         self.resolve_and_render_constraints();
     }
 
@@ -97,7 +97,7 @@ impl VisoEngine {
     /// Pulls use a structural reference for the atom and a screen-space
     /// target. The engine resolves positions each frame.
     pub fn update_pull(&mut self, pull: Option<PullInfo>) {
-        self.pull_spec = pull;
+        self.constraints.pull_spec = pull;
         self.resolve_and_render_constraints();
     }
 }
@@ -112,6 +112,7 @@ impl VisoEngine {
     pub(super) fn resolve_and_render_constraints(&mut self) {
         // Bands
         let resolved_bands: Vec<ResolvedBand> = self
+            .constraints
             .band_specs
             .iter()
             .filter_map(|b| self.resolve_band(b))
@@ -124,8 +125,11 @@ impl VisoEngine {
         );
 
         // Pull
-        let resolved_pull =
-            self.pull_spec.as_ref().and_then(|p| self.resolve_pull(p));
+        let resolved_pull = self
+            .constraints
+            .pull_spec
+            .as_ref()
+            .and_then(|p| self.resolve_pull(p));
         self.gpu.renderers.pull.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
