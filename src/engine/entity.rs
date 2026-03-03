@@ -44,9 +44,6 @@ impl VisoEngine {
         entities: Vec<MoleculeEntity>,
         fit_camera: bool,
     ) -> Vec<u32> {
-        // Store canonical copy on the engine (source of truth)
-        self.entities.source.clone_from(&entities);
-
         let ids = self.entities.add_entities(entities);
         if fit_camera {
             // Sync immediately so entity data is available for camera fit
@@ -239,30 +236,14 @@ impl VisoEngine {
 impl VisoEngine {
     /// Update protein coords for a specific entity.
     ///
-    /// Updates the engine's source-of-truth entities first, then derives
-    /// Scene from them. Uses the entity's per-entity behavior override if
-    /// set, otherwise falls back to the provided transition.
+    /// Uses the entity's per-entity behavior override if set, otherwise
+    /// falls back to the provided transition.
     pub fn update_entity_coords(
         &mut self,
         id: u32,
         coords: foldit_conv::types::coords::Coords,
         transition: Transition,
     ) {
-        // 1. Update source-of-truth on the engine
-        if let Some(entity) =
-            self.entities.source.iter_mut().find(|e| e.entity_id == id)
-        {
-            let mut entities = vec![entity.clone()];
-            foldit_conv::types::assembly::update_protein_entities(
-                &mut entities,
-                coords.clone(),
-            );
-            if let Some(updated) = entities.into_iter().next() {
-                *entity = updated;
-            }
-        }
-
-        // 2. Update scene entities (rendering copy)
         self.entities.update_entity_protein_coords(id, coords);
 
         // 3. Look up per-entity behavior override
@@ -281,10 +262,9 @@ impl VisoEngine {
 
     /// Replace one or more entities with new `MoleculeEntity` data.
     ///
-    /// Each entity is matched by `entity_id`. The engine's source-of-truth
-    /// and Scene are both updated, then a targeted sync is triggered for all
-    /// changed entities. Per-entity behavior overrides are used when set,
-    /// otherwise `default_transition` is applied.
+    /// Each entity is matched by `entity_id`. A targeted sync is triggered
+    /// for all changed entities. Per-entity behavior overrides are used when
+    /// set, otherwise `default_transition` is applied.
     pub fn update_entities(
         &mut self,
         updated: Vec<MoleculeEntity>,
@@ -294,15 +274,6 @@ impl VisoEngine {
 
         for new_entity in updated {
             let id = new_entity.entity_id;
-
-            // Update engine source-of-truth
-            if let Some(slot) =
-                self.entities.source.iter_mut().find(|e| e.entity_id == id)
-            {
-                *slot = new_entity.clone();
-            }
-
-            // Update scene entities (rendering copy)
             self.entities.replace_entity(new_entity);
 
             // Resolve per-entity behavior override
@@ -354,10 +325,8 @@ impl VisoEngine {
 
     /// Remove an entity from the engine and scene entirely.
     ///
-    /// Removes from both the engine's source-of-truth and the Scene.
     /// Forces a full scene resync.
     pub fn remove_entity(&mut self, id: u32) {
-        self.entities.source.retain(|e| e.entity_id != id);
         let _ = self.entities.behaviors.remove(&id);
         if self.entities.remove_entity(id) {
             self.sync_scene_to_renderers(HashMap::new());

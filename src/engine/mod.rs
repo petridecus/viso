@@ -399,16 +399,8 @@ impl VisoEngine {
     fn assemble(
         context: RenderContext,
         options: VisoOptions,
-        mut bootstrap: GpuBootstrap,
+        bootstrap: GpuBootstrap,
     ) -> Result<Self, VisoError> {
-        // Populate source-of-truth from scene entities
-        bootstrap.entities.source = bootstrap
-            .entities
-            .entities()
-            .iter()
-            .map(|se| se.entity.clone())
-            .collect();
-
         Ok(Self {
             gpu: GpuPipeline {
                 context,

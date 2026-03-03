@@ -1,5 +1,5 @@
-//! Consolidated entity ownership: source-of-truth data, rendering copies,
-//! per-entity behaviors, focus state, and structural dirty tracking.
+//! Consolidated entity ownership, per-entity behaviors, focus state, and
+//! structural dirty tracking.
 
 use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
@@ -14,12 +14,9 @@ use crate::animation::transition::Transition;
 
 /// Consolidated entity storage.
 ///
-/// Owns both the caller's source-of-truth entities and the rendering copies
-/// (scene entities). Per-entity animation behaviors, focus state, and
-/// structural dirty tracking all live here.
+/// Owns scene entities (the single source of truth), per-entity animation
+/// behaviors, focus state, and structural dirty tracking.
 pub(crate) struct EntityStore {
-    /// Source-of-truth entity data (from callers).
-    pub(crate) source: Vec<MoleculeEntity>,
     /// Scene entities (rendering copy with visibility, SS override, scores).
     scene_entities: Vec<SceneEntity>,
     /// Entity ID → index in `scene_entities` for O(1) lookup.
@@ -39,7 +36,6 @@ impl EntityStore {
     /// Create an empty entity store.
     pub fn new() -> Self {
         Self {
-            source: Vec::new(),
             scene_entities: Vec::new(),
             id_index: FxHashMap::default(),
             behaviors: FxHashMap::default(),
