@@ -2,16 +2,14 @@
 // Each sphere is a billboard quad with per-pixel ray-sphere intersection
 
 #import viso::camera::CameraUniform
-#import viso::lighting::{LightingUniform, PI, distribution_ggx, geometry_smith, fresnel_schlick, compute_rim}
+#import viso::lighting::{LightingUniform, compute_rim}
+#import viso::ray::intersect_sphere
+#import viso::selection::check_selection
+#import viso::highlight::{apply_highlight, apply_selection_edge}
+#import viso::pbr::pbr_direct_light
 
-// Selection bit-array lookup (inlined — requires global `selection` storage buffer)
 fn is_selected(residue_idx: u32) -> bool {
-    let word_idx = residue_idx / 32u;
-    let bit_idx = residue_idx % 32u;
-    if (word_idx >= arrayLength(&selection)) {
-        return false;
-    }
-    return (selection[word_idx] & (1u << bit_idx)) != 0u;
+    return check_selection(residue_idx, arrayLength(&selection), selection[residue_idx / 32u]);
 }
 
 // Per-instance data for sphere
@@ -94,19 +92,8 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let ray_origin = camera.position;
     let ray_dir = normalize(in.world_pos - camera.position);
 
-    // Ray-sphere intersection
-    let oc = ray_origin - in.sphere_center;
-    let a = dot(ray_dir, ray_dir);
-    let b = 2.0 * dot(oc, ray_dir);
-    let c = dot(oc, oc) - in.radius * in.radius;
-    let disc = b * b - 4.0 * a * c;
-
-    if (disc < 0.0) {
-        discard;
-    }
-
-    let t = (-b - sqrt(disc)) / (2.0 * a);
-    if (t < 0.001) {
+    let t = intersect_sphere(ray_origin, ray_dir, in.sphere_center, in.radius);
+    if (t < 0.0) {
         discard;
     }
 
@@ -114,24 +101,15 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let normal = normalize(world_hit - in.sphere_center);
     let view_dir = normalize(camera.position - world_hit);
 
-    // Base color
-    var base_color = in.color;
-
-    // Hover highlight
-    if (camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.entity_id) {
-        base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);
-    }
-
-    // Selection highlight
-    var outline_factor = 0.0;
-    if (is_selected(in.entity_id)) {
-        base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
-        outline_factor = 1.0;
-    }
+    // Highlight
+    let hovered = camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.entity_id;
+    let highlighted = apply_highlight(in.color, hovered, is_selected(in.entity_id));
+    var base_color = highlighted.xyz;
+    let outline_factor = highlighted.w;
 
     let NdotV = max(dot(normal, view_dir), 0.0);
 
-    // PBR: Fresnel reflectance at normal incidence
+    // PBR setup
     let F0 = mix(vec3<f32>(0.04), base_color, lighting.metalness);
     let roughness = lighting.roughness;
 
@@ -145,51 +123,12 @@ fn fs_main(in: VertexOutput) -> FragOut {
 
     // PBR direct lighting
     var Lo = vec3<f32>(0.0);
+    Lo += pbr_direct_light(normal, view_dir, lighting.light1_dir, lighting.light1_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
+    Lo += pbr_direct_light(normal, view_dir, lighting.light2_dir, lighting.light2_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
 
-    // Key light
-    {
-        let L = lighting.light1_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light1_intensity * NdotL;
-    }
-
-    // Fill light
-    {
-        let L = lighting.light2_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light2_intensity * NdotL;
-    }
-
-    // Separate ambient and direct contributions for ambient-only AO
-    // Specular IBL: sample prefiltered environment map at roughness-dependent mip
+    // Specular IBL
     let R = reflect(-view_dir, normal);
-    let max_mip = 5.0; // 6 mip levels (0-5)
+    let max_mip = 5.0;
     let prefiltered_color = textureSampleLevel(prefiltered_map, env_sampler, R, roughness * max_mip).rgb;
     let brdf_sample = textureSample(brdf_lut, env_sampler, vec2<f32>(NdotV, roughness)).rg;
     let specular_ibl = prefiltered_color * (F0 * brdf_sample.x + brdf_sample.y) * lighting.ibl_strength;
@@ -199,13 +138,9 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let lit_color = ambient_contribution + direct_contribution;
 
     // Edge darkening for selected
-    var final_color = lit_color;
-    if (outline_factor > 0.0) {
-        let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
-        final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
-    }
+    let final_color = apply_selection_edge(lit_color, normal, view_dir, outline_factor);
 
-    // Compute ambient ratio for ambient-only AO in composite pass
+    // Ambient ratio for ambient-only AO in composite pass
     let total_lum = max(dot(final_color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
     let ambient_lum = dot(ambient_contribution, vec3<f32>(0.2126, 0.7152, 0.0722));
     let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);
@@ -213,7 +148,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
     let ndc_depth = clip_pos.z / clip_pos.w;
 
-    // SDF edge AA: smooth alpha at sphere boundary for alpha-to-coverage MSAA
+    // SDF edge AA
     let sdf = length(in.world_pos - in.sphere_center) - in.radius;
     let aa_edge = fwidth(sdf);
     let alpha = smoothstep(aa_edge, -aa_edge, sdf);

@@ -1,7 +1,7 @@
 // Picking shader for capsule impostors - renders residue indices to a picking buffer
 
 #import viso::camera::CameraUniform
-#import viso::sdf::intersect_capsule
+#import viso::ray::intersect_capsule
 
 struct CapsuleInstance {
     endpoint_a: vec4<f32>,

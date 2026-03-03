@@ -1,14 +1,11 @@
 #import viso::camera::CameraUniform
-#import viso::lighting::{LightingUniform, PI, distribution_ggx, geometry_smith, fresnel_schlick, compute_rim}
+#import viso::lighting::{LightingUniform, compute_rim}
+#import viso::selection::check_selection
+#import viso::highlight::{apply_highlight, apply_selection_edge}
+#import viso::pbr::pbr_direct_light
 
-// Selection bit-array lookup (inlined — requires global `selection` storage buffer)
 fn is_selected(residue_idx: u32) -> bool {
-    let word_idx = residue_idx / 32u;
-    let bit_idx = residue_idx % 32u;
-    if (word_idx >= arrayLength(&selection)) {
-        return false;
-    }
-    return (selection[word_idx] & (1u << bit_idx)) != 0u;
+    return check_selection(residue_idx, arrayLength(&selection), selection[residue_idx / 32u]);
 }
 
 struct VertexInput {
@@ -21,7 +18,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) center_pos: vec3<f32>,
+    @location(0) world_normal: vec3<f32>,
     @location(1) world_position: vec3<f32>,
     @location(2) vertex_color: vec3<f32>,
     @location(3) @interpolate(flat) residue_idx: u32,
@@ -34,6 +31,14 @@ struct VertexOutput {
 @group(1) @binding(3) var prefiltered_map: texture_cube<f32>;
 @group(1) @binding(4) var brdf_lut: texture_2d<f32>;
 @group(2) @binding(0) var<storage, read> selection: array<u32>;
+@group(3) @binding(0) var<storage, read> residue_colors: array<vec4<f32>>;
+
+fn lookup_residue_color(residue_idx: u32) -> vec3<f32> {
+    if (residue_idx < arrayLength(&residue_colors)) {
+        return residue_colors[residue_idx].xyz;
+    }
+    return vec3<f32>(0.5, 0.5, 0.5);
+}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -46,9 +51,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     }
 
     out.clip_position = camera.view_proj * vec4<f32>(position, 1.0);
-    out.center_pos = in.center_pos;
+    out.world_normal = in.normal;
     out.world_position = position;
-    out.vertex_color = in.color;
+    out.vertex_color = lookup_residue_color(in.residue_idx);
     out.residue_idx = in.residue_idx;
     return out;
 }
@@ -60,32 +65,22 @@ struct FragOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
-    // Per-pixel cylindrical normal: exact outward direction from tube centerline
-    let normal = normalize(in.world_position - in.center_pos);
+    let normal = normalize(in.world_normal);
     let view_dir = normalize(camera.position - in.world_position);
+
+    // Highlight
+    let hovered = camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx;
+    let highlighted = apply_highlight(in.vertex_color, hovered, is_selected(in.residue_idx));
+    var base_color = highlighted.xyz;
+    let outline_factor = highlighted.w;
 
     let NdotV = max(dot(normal, view_dir), 0.0);
 
-    // Start with vertex color
-    var base_color = in.vertex_color;
-
-    // Hover highlight: make brighter with additive white
-    if (camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx) {
-        base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);
-    }
-
-    // Selection highlight: blend original color with blue (matches Foldit)
-    var outline_factor = 0.0;
-    if (is_selected(in.residue_idx)) {
-        base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
-        outline_factor = 1.0;
-    }
-
-    // PBR: Fresnel reflectance at normal incidence
+    // PBR setup
     let F0 = mix(vec3<f32>(0.04), base_color, lighting.metalness);
     let roughness = lighting.roughness;
 
-    // IBL diffuse: sample irradiance cubemap with surface normal
+    // IBL diffuse
     let irradiance = textureSample(irradiance_map, env_sampler, normal).rgb;
     let ibl_diffuse = irradiance * lighting.ibl_strength;
     let ambient_light = mix(vec3(lighting.ambient), ibl_diffuse, lighting.ibl_strength);
@@ -93,53 +88,14 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     // Rim lighting
     let rim = compute_rim(normal, view_dir, lighting.rim_power, lighting.rim_intensity, lighting.rim_directionality, lighting.rim_color, lighting.rim_dir);
 
-    // PBR direct lighting: accumulate from both lights
+    // PBR direct lighting
     var Lo = vec3<f32>(0.0);
+    Lo += pbr_direct_light(normal, view_dir, lighting.light1_dir, lighting.light1_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
+    Lo += pbr_direct_light(normal, view_dir, lighting.light2_dir, lighting.light2_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
 
-    // Key light
-    {
-        let L = lighting.light1_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light1_intensity * NdotL;
-    }
-
-    // Fill light
-    {
-        let L = lighting.light2_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light2_intensity * NdotL;
-    }
-
-    // Separate ambient and direct contributions for ambient-only AO
-    // Specular IBL: sample prefiltered environment map at roughness-dependent mip
+    // Specular IBL
     let R = reflect(-view_dir, normal);
-    let max_mip = 5.0; // 6 mip levels (0-5)
+    let max_mip = 5.0;
     let prefiltered_color = textureSampleLevel(prefiltered_map, env_sampler, R, roughness * max_mip).rgb;
     let brdf_sample = textureSample(brdf_lut, env_sampler, vec2<f32>(NdotV, roughness)).rg;
     let specular_ibl = prefiltered_color * (F0 * brdf_sample.x + brdf_sample.y) * lighting.ibl_strength;
@@ -148,14 +104,10 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let direct_contribution = Lo + rim;
     let lit_color = ambient_contribution + direct_contribution;
 
-    // For selected residues, add dark edge effect
-    var final_color = lit_color;
-    if (outline_factor > 0.0) {
-        let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
-        final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
-    }
+    // Edge darkening for selected
+    let final_color = apply_selection_edge(lit_color, normal, view_dir, outline_factor);
 
-    // Compute ambient ratio for ambient-only AO in composite pass
+    // Ambient ratio for ambient-only AO in composite pass
     let total_lum = max(dot(final_color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
     let ambient_lum = dot(ambient_contribution, vec3<f32>(0.2126, 0.7152, 0.0722));
     let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);

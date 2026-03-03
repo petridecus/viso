@@ -12,16 +12,13 @@
 // draw(0..72, 0..instance_count)
 
 #import viso::camera::CameraUniform
-#import viso::lighting::{LightingUniform, PI, distribution_ggx, geometry_smith, fresnel_schlick, compute_rim}
+#import viso::lighting::{LightingUniform, compute_rim}
+#import viso::selection::check_selection
+#import viso::highlight::{apply_highlight, apply_selection_edge}
+#import viso::pbr::pbr_direct_light
 
-// Selection bit-array lookup
 fn is_selected(residue_idx: u32) -> bool {
-    let word_idx = residue_idx / 32u;
-    let bit_idx = residue_idx % 32u;
-    if (word_idx >= arrayLength(&selection)) {
-        return false;
-    }
-    return (selection[word_idx] & (1u << bit_idx)) != 0u;
+    return check_selection(residue_idx, arrayLength(&selection), selection[residue_idx / 32u]);
 }
 
 struct PolygonInstance {
@@ -168,23 +165,15 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let normal = normalize(in.world_normal);
     let view_dir = normalize(camera.position - in.world_pos);
 
-    var base_color = in.base_color;
-
-    // Hover highlight
-    if (camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx) {
-        base_color = base_color + vec3<f32>(0.3, 0.3, 0.3);
-    }
-
-    // Selection highlight
-    var outline_factor = 0.0;
-    if (is_selected(in.residue_idx)) {
-        base_color = base_color * 0.5 + vec3<f32>(0.0, 0.0, 1.0);
-        outline_factor = 1.0;
-    }
+    // Highlight
+    let hovered = camera.hovered_residue >= 0 && u32(camera.hovered_residue) == in.residue_idx;
+    let highlighted = apply_highlight(in.base_color, hovered, is_selected(in.residue_idx));
+    var base_color = highlighted.xyz;
+    let outline_factor = highlighted.w;
 
     let NdotV = max(dot(normal, view_dir), 0.0);
 
-    // PBR: Fresnel reflectance at normal incidence
+    // PBR setup
     let F0 = mix(vec3<f32>(0.04), base_color, lighting.metalness);
     let roughness = lighting.roughness;
 
@@ -196,47 +185,10 @@ fn fs_main(in: VertexOutput) -> FragOut {
     // Rim lighting
     let rim = compute_rim(normal, view_dir, lighting.rim_power, lighting.rim_intensity, lighting.rim_directionality, lighting.rim_color, lighting.rim_dir);
 
+    // PBR direct lighting
     var Lo = vec3<f32>(0.0);
-
-    // Key light
-    {
-        let L = lighting.light1_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light1_intensity * NdotL;
-    }
-
-    // Fill light
-    {
-        let L = lighting.light2_dir;
-        let H = normalize(L + view_dir);
-        let NdotL = max(dot(normal, L), 0.0);
-        let NdotH = max(dot(normal, H), 0.0);
-        let HdotV = max(dot(H, view_dir), 0.0);
-
-        let D = distribution_ggx(NdotH, roughness);
-        let G = geometry_smith(NdotV, NdotL, roughness);
-        let F = fresnel_schlick(HdotV, F0);
-
-        let numerator = D * G * F;
-        let denominator = 4.0 * NdotV * NdotL + 0.0001;
-        let specular = numerator / denominator;
-
-        let kD = (vec3<f32>(1.0) - F) * (1.0 - lighting.metalness);
-        Lo += (kD * base_color / PI + specular) * lighting.light2_intensity * NdotL;
-    }
+    Lo += pbr_direct_light(normal, view_dir, lighting.light1_dir, lighting.light1_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
+    Lo += pbr_direct_light(normal, view_dir, lighting.light2_dir, lighting.light2_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
 
     // Specular IBL
     let R = reflect(-view_dir, normal);
@@ -249,12 +201,10 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let direct_contribution = Lo + rim;
     let lit_color = ambient_contribution + direct_contribution;
 
-    var final_color = lit_color;
-    if (outline_factor > 0.0) {
-        let edge = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
-        final_color = mix(final_color, vec3<f32>(0.0, 0.0, 0.0), edge * 0.6);
-    }
+    // Edge darkening for selected
+    let final_color = apply_selection_edge(lit_color, normal, view_dir, outline_factor);
 
+    // Ambient ratio for ambient-only AO in composite pass
     let total_lum = max(dot(final_color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
     let ambient_lum = dot(ambient_contribution, vec3<f32>(0.2126, 0.7152, 0.0722));
     let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);

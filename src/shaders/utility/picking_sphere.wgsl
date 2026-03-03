@@ -1,6 +1,7 @@
 // Picking shader for sphere impostors - renders pick IDs to a picking buffer
 
 #import viso::camera::CameraUniform
+#import viso::ray::intersect_sphere
 
 struct SphereInstance {
     center: vec4<f32>,
@@ -69,19 +70,8 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let ray_origin = camera.position;
     let ray_dir = normalize(in.world_pos - camera.position);
 
-    // Ray-sphere intersection
-    let oc = ray_origin - in.sphere_center;
-    let a = dot(ray_dir, ray_dir);
-    let b = 2.0 * dot(oc, ray_dir);
-    let c = dot(oc, oc) - in.radius * in.radius;
-    let disc = b * b - 4.0 * a * c;
-
-    if (disc < 0.0) {
-        discard;
-    }
-
-    let t = (-b - sqrt(disc)) / (2.0 * a);
-    if (t < 0.001) {
+    let t = intersect_sphere(ray_origin, ray_dir, in.sphere_center, in.radius);
+    if (t < 0.0) {
         discard;
     }
 

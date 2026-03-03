@@ -134,16 +134,25 @@ const MODULE_PATHS: &[(&str, &str)] = &[
         include_str!("../shaders/modules/lighting.wgsl"),
     ),
     (
-        "modules/sdf.wgsl",
-        include_str!("../shaders/modules/sdf.wgsl"),
-    ),
-    (
-        "modules/raymarch.wgsl",
-        include_str!("../shaders/modules/raymarch.wgsl"),
+        "modules/ray.wgsl",
+        include_str!("../shaders/modules/ray.wgsl"),
     ),
     (
         "modules/volume.wgsl",
         include_str!("../shaders/modules/volume.wgsl"),
+    ),
+    (
+        "modules/selection.wgsl",
+        include_str!("../shaders/modules/selection.wgsl"),
+    ),
+    (
+        "modules/highlight.wgsl",
+        include_str!("../shaders/modules/highlight.wgsl"),
+    ),
+    // pbr depends on lighting — must come after it.
+    (
+        "modules/pbr.wgsl",
+        include_str!("../shaders/modules/pbr.wgsl"),
     ),
 ];
 
@@ -242,6 +251,7 @@ mod tests {
             Shader::Capsule,
             Shader::Sphere,
             Shader::Cone,
+            Shader::Polygon,
             Shader::PickingMesh,
             Shader::PickingCapsule,
             Shader::PickingSphere,
