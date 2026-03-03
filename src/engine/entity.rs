@@ -6,10 +6,8 @@ use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
-use super::command::{
-    AtomRef, BandInfo, BandTarget, PullInfo, ResolvedBand, ResolvedPull,
-};
-use super::VisoEngine;
+use super::command::{BandInfo, PullInfo};
+use super::{constraint, VisoEngine};
 use crate::animation::transition::Transition;
 use crate::renderer::geometry::BackboneUpdateData;
 
@@ -85,8 +83,9 @@ impl VisoEngine {
 
     /// Replace the current set of constraint bands.
     ///
-    /// Bands use structural references ([`AtomRef`]) and are resolved to
-    /// world-space positions each frame, so they auto-track animated atoms.
+    /// Bands use structural references ([`super::command::AtomRef`]) and are
+    /// resolved to world-space positions each frame, so they auto-track
+    /// animated atoms.
     pub fn update_bands(&mut self, bands: Vec<BandInfo>) {
         self.constraints.band_specs = bands;
         self.resolve_and_render_constraints();
@@ -110,12 +109,18 @@ impl VisoEngine {
     /// Called each frame from `pre_render` and immediately after
     /// `update_bands` / `update_pull` for instant visual feedback.
     pub(super) fn resolve_and_render_constraints(&mut self) {
+        let scene = constraint::ScenePositions {
+            visual: &self.visual,
+            topology: &self.topology,
+            cached_chains: self.gpu.renderers.backbone.cached_chains(),
+        };
+
         // Bands
-        let resolved_bands: Vec<ResolvedBand> = self
+        let resolved_bands: Vec<_> = self
             .constraints
             .band_specs
             .iter()
-            .filter_map(|b| self.resolve_band(b))
+            .filter_map(|b| constraint::resolve_band(&scene, b))
             .collect();
         self.gpu.renderers.band.update(
             &self.gpu.context.device,
@@ -125,112 +130,23 @@ impl VisoEngine {
         );
 
         // Pull
-        let resolved_pull = self
-            .constraints
-            .pull_spec
-            .as_ref()
-            .and_then(|p| self.resolve_pull(p));
+        let viewport = (
+            self.gpu.context.config.width,
+            self.gpu.context.config.height,
+        );
+        let resolved_pull = self.constraints.pull_spec.as_ref().and_then(|p| {
+            constraint::resolve_pull(
+                &scene,
+                &self.camera_controller,
+                viewport,
+                p,
+            )
+        });
         self.gpu.renderers.pull.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
             resolved_pull.as_ref(),
         );
-    }
-
-    /// Resolve a single band spec to world-space positions.
-    fn resolve_band(&self, band: &BandInfo) -> Option<ResolvedBand> {
-        let endpoint_a = self.resolve_atom_ref(&band.anchor_a)?;
-        let endpoint_b = match &band.anchor_b {
-            BandTarget::Atom(atom) => self.resolve_atom_ref(atom)?,
-            BandTarget::Position(pos) => *pos,
-        };
-        let is_space_pull = matches!(band.anchor_b, BandTarget::Position(_));
-
-        Some(ResolvedBand {
-            endpoint_a,
-            endpoint_b,
-            is_disabled: band.is_disabled,
-            strength: band.strength,
-            target_length: band.target_length,
-            residue_idx: band.anchor_a.residue,
-            is_space_pull,
-            band_type: band.band_type,
-            from_script: band.from_script,
-        })
-    }
-
-    /// Resolve a pull spec to world-space positions.
-    fn resolve_pull(&self, pull: &PullInfo) -> Option<ResolvedPull> {
-        let atom_pos = self.resolve_atom_ref(&pull.atom)?;
-        let target_pos = self.camera_controller.screen_to_world_at_depth(
-            glam::Vec2::new(pull.screen_target.0, pull.screen_target.1),
-            glam::UVec2::new(
-                self.gpu.context.config.width,
-                self.gpu.context.config.height,
-            ),
-            atom_pos,
-        );
-
-        Some(ResolvedPull {
-            atom_pos,
-            target_pos,
-            residue_idx: pull.atom.residue,
-        })
-    }
-
-    /// Resolve an [`AtomRef`] to a world-space position from Scene data.
-    ///
-    /// Uses interpolated visual positions during animation so constraints
-    /// track animated atoms.
-    fn resolve_atom_ref(&self, atom: &AtomRef) -> Option<Vec3> {
-        let name = atom.atom_name.as_str();
-
-        // Backbone atoms: N, CA, C — look up in visual_backbone_chains
-        if name == "N" || name == "CA" || name == "C" {
-            let offset = match name {
-                "N" => 0,
-                "CA" => 1,
-                "C" => 2,
-                _ => return None,
-            };
-            let chains = if self.visual.backbone_chains.is_empty() {
-                // Before first animation, fall back to renderer cache
-                self.gpu.renderers.backbone.cached_chains()
-            } else {
-                &self.visual.backbone_chains
-            };
-            let mut current_idx: u32 = 0;
-            for chain in chains {
-                let residues_in_chain = (chain.len() / 3) as u32;
-                if atom.residue < current_idx + residues_in_chain {
-                    let local = (atom.residue - current_idx) as usize;
-                    return chain.get(local * 3 + offset).copied();
-                }
-                current_idx += residues_in_chain;
-            }
-            return None;
-        }
-
-        // Sidechain atoms — look up in visual_sidechain_positions
-        let positions = if self.visual.sidechain_positions.is_empty() {
-            &self.topology.sidechain_topology.target_positions
-        } else {
-            &self.visual.sidechain_positions
-        };
-        for (i, (res_idx, sc_name)) in self
-            .topology
-            .sidechain_topology
-            .residue_indices
-            .iter()
-            .zip(self.topology.sidechain_topology.atom_names.iter())
-            .enumerate()
-        {
-            if *res_idx == atom.residue && sc_name == name {
-                return positions.get(i).copied();
-            }
-        }
-
-        None
     }
 }
 
@@ -250,11 +166,8 @@ impl VisoEngine {
         self.entities.update_entity_protein_coords(id, coords);
 
         // 3. Look up per-entity behavior override
-        let effective_transition = self
-            .entities
-            .behavior(id)
-            .cloned()
-            .unwrap_or(transition);
+        let effective_transition =
+            self.entities.behavior(id).cloned().unwrap_or(transition);
 
         // 4. Sync with per-entity transition
         let mut entity_transitions = HashMap::new();

@@ -1,6 +1,7 @@
 mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub mod command;
+mod constraint;
 mod entity;
 pub(crate) mod entity_store;
 mod options_apply;
