@@ -30,33 +30,12 @@ use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::picking::{PickingSystem, SelectionBuffer};
 use crate::renderer::pipeline::SceneProcessor;
 use crate::renderer::postprocess::PostProcessStack;
-use crate::renderer::{GeometryPassInput, PipelineLayouts, Renderers};
+use crate::renderer::{
+    GeometryPassInput, GpuPipeline, PipelineLayouts, Renderers,
+};
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
-
-// ---------------------------------------------------------------------------
-// GpuPipeline
-// ---------------------------------------------------------------------------
-
-/// All GPU infrastructure grouped together: device/queue, renderers,
-/// picking, background mesh processor, and post-processing.
-pub(crate) struct GpuPipeline {
-    /// Core wgpu device, queue, and surface.
-    pub context: RenderContext,
-    /// All geometry renderers (backbone, sidechain, band, pull,
-    /// ball-and-stick, nucleic acid).
-    pub renderers: Renderers,
-    /// GPU picking, selection, and per-residue color buffers.
-    pub pick: PickingSystem,
-    /// Background thread for off-main-thread mesh generation.
-    pub scene_processor: SceneProcessor,
-    /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
-    pub post_process: PostProcessStack,
-    /// Retained so compiled shader modules stay alive for the engine lifetime.
-    #[allow(dead_code)]
-    shader_composer: ShaderComposer,
-}
 
 // ---------------------------------------------------------------------------
 // FrameTiming
@@ -215,19 +194,12 @@ fn init_gpu_pipeline(
 /// Structural changes are animated via the internal `StructureAnimator`.
 /// Animation transitions are managed internally by the engine pipeline.
 pub struct VisoEngine {
-    /// All GPU infrastructure (device, renderers, picking, post-process).
+    /// All GPU infrastructure (device, renderers, picking, post-process,
+    /// lighting, cursor, culling state).
     pub(crate) gpu: GpuPipeline,
-
-    /// Current cursor position in physical pixels (set by the viewer /
-    /// input processor each frame for GPU picking).
-    pub(crate) cursor_pos: (f32, f32),
-    /// Camera eye position at the last frustum-culling update.
-    pub(crate) last_cull_camera_eye: Vec3,
 
     /// Orbital camera controller.
     pub camera_controller: CameraController,
-    /// GPU lighting uniform and bind group.
-    pub lighting: Lighting,
     /// Derived topology (SS types, residue ranges, sidechain topology).
     pub(crate) topology: SceneTopology,
     /// Animation output buffer (interpolated positions).
@@ -388,12 +360,12 @@ impl VisoEngine {
                 scene_processor: SceneProcessor::new()
                     .map_err(VisoError::ThreadSpawn)?,
                 post_process: bootstrap.post_process,
+                lighting: bootstrap.lighting,
+                cursor_pos: (0.0, 0.0),
+                last_cull_camera_eye: Vec3::ZERO,
                 shader_composer: bootstrap.shader_composer,
             },
-            cursor_pos: (0.0, 0.0),
-            last_cull_camera_eye: Vec3::ZERO,
             camera_controller: bootstrap.camera_controller,
-            lighting: bootstrap.lighting,
             topology: SceneTopology::new(),
             visual: VisualState::new(),
             entities: bootstrap.entities,
@@ -436,9 +408,10 @@ impl VisoEngine {
             .update_selection_buffer(&self.gpu.context.queue);
         let _color_transitioning =
             self.gpu.pick.residue_colors.update(&self.gpu.context.queue);
-        self.lighting
+        self.gpu
+            .lighting
             .update_headlamp_from_camera(&self.camera_controller.camera);
-        self.lighting.update_gpu(&self.gpu.context.queue);
+        self.gpu.lighting.update_gpu(&self.gpu.context.queue);
         self.update_frustum_culling();
 
         // Resolve band/pull specs to world-space each frame (auto-tracks
@@ -495,7 +468,7 @@ impl VisoEngine {
         };
         let bind_groups = DrawBindGroups {
             camera: &self.camera_controller.bind_group,
-            lighting: &self.lighting.bind_group,
+            lighting: &self.gpu.lighting.bind_group,
             selection: &self.gpu.pick.selection.bind_group,
             color: Some(&self.gpu.pick.residue_colors.bind_group),
         };
@@ -534,7 +507,7 @@ impl VisoEngine {
             &mut encoder,
             &self.camera_controller.bind_group,
             &picking_geometry,
-            (self.cursor_pos.0 as u32, self.cursor_pos.1 as u32),
+            (self.gpu.cursor_pos.0 as u32, self.gpu.cursor_pos.1 as u32),
         );
 
         encoder

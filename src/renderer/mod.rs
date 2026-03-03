@@ -5,6 +5,9 @@
 
 /// Bind groups shared across all molecular draw calls.
 pub mod draw_context;
+/// All GPU infrastructure grouped together (device, renderers, picking, etc.).
+pub(crate) mod gpu_pipeline;
+pub(crate) use gpu_pipeline::GpuPipeline;
 /// Molecular geometry assemblers (backbone, sidechain, ball-and-stick, etc.).
 pub mod geometry;
 /// Reusable impostor-pass primitives and instance types.

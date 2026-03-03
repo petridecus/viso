@@ -8,20 +8,9 @@ use crate::options::score_color;
 impl VisoEngine {
     /// Push lighting options to the GPU uniform.
     pub(super) fn apply_lighting(&mut self) {
-        let lo = &self.options.lighting;
-        self.lighting.uniform.light1_intensity = lo.light1_intensity;
-        self.lighting.uniform.light2_intensity = lo.light2_intensity;
-        self.lighting.uniform.ambient = lo.ambient;
-        self.lighting.uniform.specular_intensity = lo.specular_intensity;
-        self.lighting.uniform.shininess = lo.shininess;
-        self.lighting.uniform.rim_power = lo.rim_power;
-        self.lighting.uniform.rim_intensity = lo.rim_intensity;
-        self.lighting.uniform.rim_directionality = lo.rim_directionality;
-        self.lighting.uniform.rim_color = glam::Vec3::from(lo.rim_color);
-        self.lighting.uniform.ibl_strength = lo.ibl_strength;
-        self.lighting.uniform.roughness = lo.roughness;
-        self.lighting.uniform.metalness = lo.metalness;
-        self.lighting.update_gpu(&self.gpu.context.queue);
+        self.gpu
+            .lighting
+            .apply_options(&self.options.lighting, &self.gpu.context.queue);
     }
 
     /// Push post-processing options to the composite pass.

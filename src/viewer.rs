@@ -237,7 +237,7 @@ impl ViewerApp {
         };
         // Update cursor position for GPU picking
         if let InputEvent::CursorMoved { x, y } = event {
-            engine.cursor_pos = (x, y);
+            engine.gpu.cursor_pos = (x, y);
         }
         if let Some(cmd) =
             self.input.handle_event(event, engine.hovered_target())
