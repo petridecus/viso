@@ -33,18 +33,12 @@ impl ResidueVisualState {
     /// Linear interpolation between two states.
     pub fn lerp(&self, other: &Self, t: f32) -> Self {
         let backbone = [
-            lerp_vec3(t, self.backbone[0], other.backbone[0]),
-            lerp_vec3(t, self.backbone[1], other.backbone[1]),
-            lerp_vec3(t, self.backbone[2], other.backbone[2]),
+            self.backbone[0].lerp(other.backbone[0], t),
+            self.backbone[1].lerp(other.backbone[1], t),
+            self.backbone[2].lerp(other.backbone[2], t),
         ];
         Self { backbone }
     }
-}
-
-/// Linear interpolation between two Vec3 positions.
-#[inline]
-pub fn lerp_vec3(t: f32, start: Vec3, end: Vec3) -> Vec3 {
-    start + (end - start) * t
 }
 
 /// Data for animating a single residue.
@@ -193,7 +187,7 @@ impl AnimationRunner {
             sc.start
                 .iter()
                 .zip(sc.target.iter())
-                .map(|(s, e)| lerp_vec3(eased, *s, *e))
+                .map(|(s, e)| s.lerp(*e, eased))
                 .collect(),
         )
     }

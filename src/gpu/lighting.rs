@@ -1,3 +1,4 @@
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use super::RenderContext;
@@ -82,10 +83,10 @@ impl Default for LightingUniform {
     fn default() -> Self {
         Self {
             // Primary light: upper-left for strong directional contrast
-            light1_dir: normalize([-0.3, 0.9, -0.3]),
+            light1_dir: Vec3::from([-0.3, 0.9, -0.3]).normalize().to_array(),
             pad1: 0.0,
             // Secondary light: upper-right-front for fill
-            light2_dir: normalize([0.3, 0.6, -0.4]),
+            light2_dir: Vec3::from([0.3, 0.6, -0.4]).normalize().to_array(),
             pad2: 0.0,
             // Values match LightingOptions::default()
             light1_intensity: 2.0,
@@ -99,7 +100,7 @@ impl Default for LightingUniform {
             rim_color: [1.0, 0.85, 0.7],
             ibl_strength: 0.6,
             // Rim back-light: below-behind relative to camera
-            rim_dir: normalize([0.0, -0.7, 0.5]),
+            rim_dir: Vec3::from([0.0, -0.7, 0.5]).normalize().to_array(),
             pad3: 0.0,
             roughness: 0.35,
             metalness: 0.15,
@@ -107,11 +108,6 @@ impl Default for LightingUniform {
             pad5: 0.0,
         }
     }
-}
-
-fn normalize(v: [f32; 3]) -> [f32; 3] {
-    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    [v[0] / len, v[1] / len, v[2] / len]
 }
 
 /// GPU lighting uniform, buffer, and bind group.
@@ -272,14 +268,14 @@ impl Lighting {
     /// Call this each frame after camera updates
     pub fn update_headlamp(
         &mut self,
-        camera_right: glam::Vec3,
-        camera_up: glam::Vec3,
-        camera_forward: glam::Vec3,
+        camera_right: Vec3,
+        camera_up: Vec3,
+        camera_forward: Vec3,
     ) {
         // Primary light: upper-left relative to camera view
         // In camera space: (-0.3, 0.9, -0.3) = left, up, toward viewer
         // Negative z ensures surfaces facing camera receive light
-        let light1_camera = glam::Vec3::new(-0.3, 0.9, -0.3).normalize();
+        let light1_camera = Vec3::new(-0.3, 0.9, -0.3).normalize();
 
         // Transform from camera space to world space
         let light1_world = camera_right * light1_camera.x
@@ -289,7 +285,7 @@ impl Lighting {
         self.uniform.light1_dir = light1_world.normalize().to_array();
 
         // Secondary fill light: upper-right relative to camera
-        let light2_camera = glam::Vec3::new(0.3, 0.6, -0.4).normalize();
+        let light2_camera = Vec3::new(0.3, 0.6, -0.4).normalize();
         let light2_world = camera_right * light2_camera.x
             + camera_up * light2_camera.y
             + camera_forward * light2_camera.z;
@@ -297,7 +293,7 @@ impl Lighting {
         self.uniform.light2_dir = light2_world.normalize().to_array();
 
         // Rim back-light: below-behind relative to camera
-        let rim_camera = glam::Vec3::new(0.0, -0.7, 0.5).normalize();
+        let rim_camera = Vec3::new(0.0, -0.7, 0.5).normalize();
         let rim_world = camera_right * rim_camera.x
             + camera_up * rim_camera.y
             + camera_forward * rim_camera.z;
