@@ -1,3 +1,4 @@
+use encase::ShaderType;
 use glam::{Mat4, Vec3};
 
 /// Perspective camera defined by eye position, target, and projection
@@ -19,26 +20,26 @@ pub struct Camera {
     pub zfar: f32,
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 /// GPU uniform buffer holding the view-projection matrix and camera metadata.
+///
+/// Layout matches the WGSL `CameraUniform` struct (112 bytes, std140).
+/// Padding is handled automatically by encase.
+#[derive(Debug, Copy, Clone, ShaderType)]
 pub struct CameraUniform {
     /// Combined view-projection matrix.
-    pub view_proj: [[f32; 4]; 4],
+    pub view_proj: Mat4,
     /// Camera world-space position.
-    pub position: [f32; 3],
+    pub position: Vec3,
     /// Viewport aspect ratio.
     pub aspect: f32,
     /// Camera forward direction for lighting.
-    pub forward: [f32; 3],
+    pub forward: Vec3,
     /// Vertical field of view in degrees.
     pub fovy: f32,
     /// Currently hovered residue index (-1 if none).
     pub hovered_residue: i32,
     /// Debug visualization mode (0 = off, 1 = show normals).
     pub debug_mode: u32,
-    /// Padding for GPU alignment.
-    pub(crate) _pad: [f32; 2],
 }
 
 impl Camera {
@@ -79,25 +80,22 @@ impl CameraUniform {
     /// Create a new camera uniform with identity view-projection.
     pub fn new() -> Self {
         Self {
-            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            position: [0.0; 3],
+            view_proj: Mat4::IDENTITY,
+            position: Vec3::ZERO,
             aspect: 1.6,
-            forward: [0.0, 0.0, -1.0],
+            forward: Vec3::new(0.0, 0.0, -1.0),
             fovy: 45.0,
             hovered_residue: -1,
             debug_mode: 0,
-            _pad: [0.0; 2],
         }
     }
 
     /// Update uniform fields from the given camera's current state.
     pub fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.build_matrix().to_cols_array_2d();
-        self.position = camera.eye.to_array();
+        self.view_proj = camera.build_matrix();
+        self.position = camera.eye;
         self.aspect = camera.aspect;
-        // Compute actual camera forward direction (from eye toward target)
-        let forward = (camera.target - camera.eye).normalize();
-        self.forward = forward.to_array();
+        self.forward = (camera.target - camera.eye).normalize();
         self.fovy = camera.fovy;
     }
 }

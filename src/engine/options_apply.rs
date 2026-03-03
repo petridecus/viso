@@ -17,7 +17,7 @@ impl VisoEngine {
         self.lighting.uniform.rim_power = lo.rim_power;
         self.lighting.uniform.rim_intensity = lo.rim_intensity;
         self.lighting.uniform.rim_directionality = lo.rim_directionality;
-        self.lighting.uniform.rim_color = lo.rim_color;
+        self.lighting.uniform.rim_color = glam::Vec3::from(lo.rim_color);
         self.lighting.uniform.ibl_strength = lo.ibl_strength;
         self.lighting.uniform.roughness = lo.roughness;
         self.lighting.uniform.metalness = lo.metalness;

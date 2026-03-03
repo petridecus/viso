@@ -1,3 +1,4 @@
+use encase::ShaderType;
 use glam::Vec3;
 use wgpu::util::DeviceExt;
 
@@ -6,42 +7,16 @@ use crate::gpu::pipeline_helpers::{
     cube_texture, filtering_sampler, texture_2d, uniform_buffer,
 };
 
-/// Lighting configuration shared across all shaders
-/// NOTE: Must match WGSL struct layout exactly (112 bytes)
+/// Lighting configuration shared across all shaders.
 ///
-/// WGSL layout (auto-padded):
-///   light1_dir: `vec3<f32>`   (offset 0,  align 16)
-///   pad1: f32                 (offset 12)
-///   light2_dir: `vec3<f32>`   (offset 16, align 16)
-///   pad2: f32                 (offset 28)
-///   light1_intensity: f32     (offset 32)
-///   light2_intensity: f32     (offset 36)
-///   ambient: f32              (offset 40)
-///   specular_intensity: f32   (offset 44)
-///   shininess: f32            (offset 48)
-///   rim_power: f32            (offset 52)
-///   rim_intensity: f32        (offset 56)
-///   rim_directionality: f32   (offset 60)
-///   rim_color: `vec3<f32>`    (offset 64, align 16)
-///   ibl_strength: f32         (offset 76)
-///   rim_dir: `vec3<f32>`      (offset 80, align 16)
-///   pad3: f32                 (offset 92)
-///   roughness: f32            (offset 96)
-///   metalness: f32            (offset 100)
-///   pad4: f32                 (offset 104)
-///   pad5: f32                 (offset 108)
-///   Total: 112 bytes
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+/// Layout matches the WGSL `LightingUniform` struct (112 bytes, std140).
+/// Padding is handled automatically by encase.
+#[derive(Debug, Copy, Clone, ShaderType)]
 pub struct LightingUniform {
     /// Primary light direction (normalized)
-    pub light1_dir: [f32; 3],
-    /// Padding for GPU alignment.
-    pub pad1: f32,
+    pub light1_dir: Vec3,
     /// Secondary light direction (normalized)
-    pub light2_dir: [f32; 3],
-    /// Padding for GPU alignment.
-    pub pad2: f32,
+    pub light2_dir: Vec3,
     /// Primary light intensity
     pub light1_intensity: f32,
     /// Secondary light intensity
@@ -61,33 +36,25 @@ pub struct LightingUniform {
     /// back-light
     pub rim_directionality: f32,
     /// Rim light tint color
-    pub rim_color: [f32; 3],
+    pub rim_color: Vec3,
     /// IBL diffuse strength (0.0 = use flat ambient, 1.0 = full IBL)
     pub ibl_strength: f32,
     /// Rim back-light direction (normalized, points toward the rim light
     /// source)
-    pub rim_dir: [f32; 3],
-    /// Padding for GPU alignment.
-    pub pad3: f32,
+    pub rim_dir: Vec3,
     /// Surface roughness (0.05 = mirror-like, 1.0 = completely matte)
     pub roughness: f32,
     /// Surface metalness (0.0 = dielectric, 1.0 = metal)
     pub metalness: f32,
-    /// Padding for GPU alignment.
-    pub pad4: f32,
-    /// Padding for GPU alignment.
-    pub pad5: f32,
 }
 
 impl Default for LightingUniform {
     fn default() -> Self {
         Self {
             // Primary light: upper-left for strong directional contrast
-            light1_dir: Vec3::from([-0.3, 0.9, -0.3]).normalize().to_array(),
-            pad1: 0.0,
+            light1_dir: Vec3::new(-0.3, 0.9, -0.3).normalize(),
             // Secondary light: upper-right-front for fill
-            light2_dir: Vec3::from([0.3, 0.6, -0.4]).normalize().to_array(),
-            pad2: 0.0,
+            light2_dir: Vec3::new(0.3, 0.6, -0.4).normalize(),
             // Values match LightingOptions::default()
             light1_intensity: 2.0,
             light2_intensity: 1.1,
@@ -97,15 +64,12 @@ impl Default for LightingUniform {
             rim_power: 5.0,
             rim_intensity: 0.3,
             rim_directionality: 0.3,
-            rim_color: [1.0, 0.85, 0.7],
+            rim_color: Vec3::new(1.0, 0.85, 0.7),
             ibl_strength: 0.6,
             // Rim back-light: below-behind relative to camera
-            rim_dir: Vec3::from([0.0, -0.7, 0.5]).normalize().to_array(),
-            pad3: 0.0,
+            rim_dir: Vec3::new(0.0, -0.7, 0.5).normalize(),
             roughness: 0.35,
             metalness: 0.15,
-            pad4: 0.0,
-            pad5: 0.0,
         }
     }
 }
@@ -128,10 +92,12 @@ impl Lighting {
     pub fn new(context: &RenderContext) -> Self {
         let uniform = LightingUniform::default();
 
+        let mut buf = encase::UniformBuffer::new(Vec::new());
+        let _ = buf.write(&uniform);
         let buffer = context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Lighting Buffer"),
-                contents: bytemuck::cast_slice(&[uniform]),
+                contents: &buf.into_inner(),
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST,
             },
@@ -234,7 +200,7 @@ impl Lighting {
         self.uniform.rim_power = opts.rim_power;
         self.uniform.rim_intensity = opts.rim_intensity;
         self.uniform.rim_directionality = opts.rim_directionality;
-        self.uniform.rim_color = opts.rim_color;
+        self.uniform.rim_color = Vec3::from(opts.rim_color);
         self.uniform.ibl_strength = opts.ibl_strength;
         self.uniform.roughness = opts.roughness;
         self.uniform.metalness = opts.metalness;
@@ -243,11 +209,9 @@ impl Lighting {
 
     /// Write the current lighting uniform to the GPU buffer.
     pub fn update_gpu(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::cast_slice(&[self.uniform]),
-        );
+        let mut buf = encase::UniformBuffer::new(Vec::new());
+        let _ = buf.write(&self.uniform);
+        queue.write_buffer(&self.buffer, 0, &buf.into_inner());
     }
 
     /// Compute camera basis vectors and update headlamp directions.
@@ -282,7 +246,7 @@ impl Lighting {
             + camera_up * light1_camera.y
             + camera_forward * light1_camera.z;
 
-        self.uniform.light1_dir = light1_world.normalize().to_array();
+        self.uniform.light1_dir = light1_world.normalize();
 
         // Secondary fill light: upper-right relative to camera
         let light2_camera = Vec3::new(0.3, 0.6, -0.4).normalize();
@@ -290,7 +254,7 @@ impl Lighting {
             + camera_up * light2_camera.y
             + camera_forward * light2_camera.z;
 
-        self.uniform.light2_dir = light2_world.normalize().to_array();
+        self.uniform.light2_dir = light2_world.normalize();
 
         // Rim back-light: below-behind relative to camera
         let rim_camera = Vec3::new(0.0, -0.7, 0.5).normalize();
@@ -298,7 +262,7 @@ impl Lighting {
             + camera_up * rim_camera.y
             + camera_forward * rim_camera.z;
 
-        self.uniform.rim_dir = rim_world.normalize().to_array();
+        self.uniform.rim_dir = rim_world.normalize();
     }
 }
 

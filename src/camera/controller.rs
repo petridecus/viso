@@ -53,10 +53,12 @@ impl CameraController {
         context: &RenderContext,
         uniform: &CameraUniform,
     ) -> (wgpu::Buffer, wgpu::BindGroupLayout, wgpu::BindGroup) {
+        let mut buf = encase::UniformBuffer::new(Vec::new());
+        let _ = buf.write(uniform);
         let buffer = context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
-                contents: bytemuck::cast_slice(&[*uniform]),
+                contents: &buf.into_inner(),
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST,
             },
@@ -266,11 +268,9 @@ impl CameraController {
     /// Write the current camera uniform to the GPU buffer.
     pub fn update_gpu(&mut self, queue: &wgpu::Queue) {
         self.uniform.update_view_proj(&self.camera);
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::cast_slice(&[self.uniform]),
-        );
+        let mut buf = encase::UniformBuffer::new(Vec::new());
+        let _ = buf.write(&self.uniform);
+        queue.write_buffer(&self.buffer, 0, &buf.into_inner());
     }
 
     /// Apply camera options from the configuration.
