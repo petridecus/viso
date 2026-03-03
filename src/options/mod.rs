@@ -24,7 +24,7 @@ pub use camera::CameraOptions;
 pub use colors::ColorOptions;
 pub use debug::DebugOptions;
 pub use display::{
-    BackboneColorMode, DisplayOptions, LipidMode, NaColorMode,
+    BackboneColorMode, DisplayOptions, LipidMode, NaColorMode, PresentMode,
     SidechainColorMode,
 };
 pub use geometry::{

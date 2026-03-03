@@ -8,6 +8,7 @@
 use foldit_conv::render::sidechain::{SidechainAtomData, SidechainAtoms};
 use foldit_conv::secondary_structure::SSType;
 use glam::Vec3;
+use rustc_hash::FxHashMap;
 
 use super::scene_data::EntityResidueRange;
 
@@ -45,6 +46,8 @@ pub(crate) struct SidechainTopology {
     pub target_positions: Vec<Vec3>,
     /// Target backbone-sidechain bond endpoints (CA pos, CB atom index).
     pub target_backbone_bonds: Vec<(Vec3, u32)>,
+    /// (residue_idx, atom_name) → flat index for O(1) sidechain lookup.
+    pub atom_index: FxHashMap<(u32, String), usize>,
 }
 
 impl SidechainTopology {
@@ -57,6 +60,7 @@ impl SidechainTopology {
             atom_names: Vec::new(),
             target_positions: Vec::new(),
             target_backbone_bonds: Vec::new(),
+            atom_index: FxHashMap::default(),
         }
     }
 
@@ -175,6 +179,10 @@ pub struct SceneTopology {
     /// Sidechain bond topology, per-atom metadata, and target positions.
     pub(crate) sidechain_topology: SidechainTopology,
 
+    /// Cumulative residue offset per backbone chain (for O(log n) lookup).
+    /// Element `i` is the total number of residues in chains `0..i`.
+    pub(crate) backbone_chain_offsets: Vec<u32>,
+
     // -- Render-derived state --
     /// Per-residue secondary structure types (flat across all chains).
     pub(crate) ss_types: Vec<SSType>,
@@ -190,6 +198,7 @@ impl SceneTopology {
             na_chains: Vec::new(),
             entity_residue_ranges: Vec::new(),
             sidechain_topology: SidechainTopology::new(),
+            backbone_chain_offsets: Vec::new(),
             ss_types: Vec::new(),
             per_residue_colors: None,
         }
@@ -211,6 +220,18 @@ impl SceneTopology {
             .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
             .collect();
         self.entity_residue_ranges = ranges;
+
+        // Precompute backbone chain offsets for O(log n) constraint lookup
+        let mut offset = 0u32;
+        self.backbone_chain_offsets = entities
+            .iter()
+            .flat_map(|e| &e.backbone_chains)
+            .map(|chain| {
+                let start = offset;
+                offset += (chain.len() / 3) as u32;
+                start
+            })
+            .collect();
     }
 
     /// Update sidechain topology and target positions from prepared data.
@@ -226,5 +247,15 @@ impl SceneTopology {
         self.sidechain_topology.hydrophobicity = sidechain.hydrophobicity();
         self.sidechain_topology.residue_indices = sidechain.residue_indices();
         self.sidechain_topology.atom_names = sidechain.atom_names();
+
+        // Build O(1) sidechain atom lookup
+        self.sidechain_topology.atom_index = self
+            .sidechain_topology
+            .residue_indices
+            .iter()
+            .zip(self.sidechain_topology.atom_names.iter())
+            .enumerate()
+            .map(|(i, (&res_idx, name))| ((res_idx, name.clone()), i))
+            .collect();
     }
 }

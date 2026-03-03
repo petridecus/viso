@@ -53,6 +53,45 @@ pub enum LipidMode {
     BallAndStick,
 }
 
+/// Surface presentation mode.
+///
+/// Not all modes are supported on every platform. If the requested mode is
+/// unavailable, the engine falls back to [`PresentMode::Fifo`] (always
+/// supported).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Default,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentMode {
+    /// VSync — capped to display refresh rate, no tearing.
+    #[default]
+    Fifo,
+    /// Immediate — lowest latency, may tear.
+    Immediate,
+    /// Mailbox — low-latency VSync (triple-buffered).
+    Mailbox,
+}
+
+impl PresentMode {
+    /// Convert to the corresponding wgpu present mode.
+    #[must_use]
+    pub fn to_wgpu(self) -> wgpu::PresentMode {
+        match self {
+            Self::Fifo => wgpu::PresentMode::Fifo,
+            Self::Immediate => wgpu::PresentMode::Immediate,
+            Self::Mailbox => wgpu::PresentMode::Mailbox,
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
@@ -88,6 +127,9 @@ pub struct DisplayOptions {
     /// Nucleic acid coloring strategy.
     #[schemars(title = "Nucleic Acid Color")]
     pub na_color_mode: NaColorMode,
+    /// Surface presentation mode (VSync, immediate, mailbox).
+    #[schemars(title = "Present Mode")]
+    pub present_mode: PresentMode,
 }
 
 impl DisplayOptions {

@@ -53,6 +53,8 @@ pub struct RenderContext {
     pub config: wgpu::SurfaceConfiguration,
     /// Supersampling scale factor (1 = native, 2 = 2x SSAA).
     pub render_scale: u32,
+    /// Present modes supported by the adapter+surface combination.
+    supported_present_modes: Vec<wgpu::PresentMode>,
 }
 
 impl RenderContext {
@@ -91,6 +93,8 @@ impl RenderContext {
             .await
             .map_err(RenderContextError::DeviceRequest)?;
 
+        let capabilities = surface.get_capabilities(&adapter);
+
         let mut config = surface
             .get_default_config(&adapter, initial_size.0, initial_size.1)
             .ok_or(RenderContextError::UnsupportedSurface)?;
@@ -106,6 +110,7 @@ impl RenderContext {
             surface: Some(surface),
             config,
             render_scale: 1,
+            supported_present_modes: capabilities.present_modes,
         })
     }
 
@@ -135,6 +140,7 @@ impl RenderContext {
             surface: None,
             config,
             render_scale: 1,
+            supported_present_modes: vec![wgpu::PresentMode::Fifo],
         }
     }
 
@@ -165,8 +171,39 @@ impl RenderContext {
         }
     }
 
-    /// Set the surface DPI scale factor (currently a no-op placeholder).
-    pub fn set_surface_scale(&self, _scale: f64) {}
+    /// Set the surface present mode, falling back to Fifo if unsupported.
+    pub fn set_present_mode(&mut self, mode: wgpu::PresentMode) {
+        let effective = if self.supported_present_modes.contains(&mode) {
+            mode
+        } else {
+            log::warn!(
+                "Present mode {mode:?} not supported by adapter, falling back \
+                 to Fifo"
+            );
+            wgpu::PresentMode::Fifo
+        };
+        if self.config.present_mode == effective {
+            return;
+        }
+        self.config.present_mode = effective;
+        if let Some(ref surface) = self.surface {
+            surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Update the SSAA render scale from a DPI scale factor.
+    ///
+    /// Low-DPI displays (scale < 2.0) get 2x supersampling; HiDPI displays
+    /// (scale >= 2.0) render at native resolution. Returns `true` if the
+    /// render scale actually changed (caller should resize render targets).
+    pub fn set_surface_scale(&mut self, scale: f64) -> bool {
+        let new_scale = if scale < 2.0 { 2 } else { 1 };
+        if self.render_scale == new_scale {
+            return false;
+        }
+        self.render_scale = new_scale;
+        true
+    }
 
     /// Acquire the next swapchain texture for rendering.
     ///

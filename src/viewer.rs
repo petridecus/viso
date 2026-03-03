@@ -183,9 +183,7 @@ impl ViewerApp {
         let Some(engine) = &mut self.engine else {
             return;
         };
-        #[allow(clippy::cast_possible_truncation)]
-        let render_scale = if scale_factor < 2.0 { 2 } else { 1 };
-        engine.set_render_scale(render_scale);
+        engine.set_surface_scale(scale_factor);
         let (vp_w, vp_h) = viewport_size(inner);
         engine.resize(vp_w, vp_h);
     }

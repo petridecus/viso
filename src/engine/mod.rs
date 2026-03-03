@@ -380,7 +380,15 @@ impl VisoEngine {
         let post_changed = old.post_processing != new.post_processing;
         let camera_changed = old.camera != new.camera;
         let debug_changed = old.debug != new.debug;
-        let display_changed = old.display != new.display;
+        let present_mode_changed =
+            old.display.present_mode != new.display.present_mode;
+        // Compare display options excluding present_mode (which only
+        // affects surface configuration, not scene geometry).
+        let display_changed = {
+            let mut old_d = old.display.clone();
+            old_d.present_mode = new.display.present_mode;
+            old_d != new.display
+        };
         let color_mode_changed =
             old.display.backbone_color_mode != new.display.backbone_color_mode;
         let geometry_changed = old.geometry != new.geometry;
@@ -399,6 +407,11 @@ impl VisoEngine {
         }
         if debug_changed {
             self.apply_debug();
+        }
+        if present_mode_changed {
+            self.gpu
+                .context
+                .set_present_mode(self.options.display.present_mode.to_wgpu());
         }
         if display_changed || geometry_changed || colors_changed {
             self.entities.force_dirty();
@@ -420,6 +433,9 @@ impl VisoEngine {
 
     /// Force-refresh all subsystems from current options (escape hatch).
     pub fn apply_options(&mut self) {
+        self.gpu
+            .context
+            .set_present_mode(self.options.display.present_mode.to_wgpu());
         self.apply_lighting();
         self.apply_post_processing();
         self.apply_camera();
@@ -474,5 +490,18 @@ impl VisoEngine {
     /// Set the GPU render scale (supersampling factor).
     pub fn set_render_scale(&mut self, scale: u32) {
         self.gpu.context.render_scale = scale;
+    }
+
+    /// Update render scale from a DPI scale factor and resize if needed.
+    ///
+    /// Low-DPI displays (scale < 2.0) get 2x SSAA; HiDPI (>= 2.0) renders
+    /// at native resolution. Triggers a full render target resize when the
+    /// scale changes.
+    pub fn set_surface_scale(&mut self, scale: f64) {
+        if self.gpu.context.set_surface_scale(scale) {
+            let w = self.gpu.context.config.width;
+            let h = self.gpu.context.config.height;
+            self.gpu.resize(w, h);
+        }
     }
 }

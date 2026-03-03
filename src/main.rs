@@ -1,5 +1,7 @@
 //! CLI binary for the Viso protein visualization engine.
 
+use std::process::ExitCode;
+
 fn resolve_structure_path(input: &str) -> Result<String, String> {
     if std::path::Path::new(input).exists() {
         return Ok(input.to_owned());
@@ -23,15 +25,23 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
         let url = format!("https://files.rcsb.org/download/{pdb_id}.cif");
         log::info!("Downloading {} from RCSB...", pdb_id.to_uppercase());
 
-        let content = ureq::get(&url)
+        let agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build(),
+        );
+        let content = agent
+            .get(&url)
             .call()
-            .map_err(|e| format!("Failed to download {pdb_id}: {e}"))?
+            .map_err(|e| format!("Network error downloading {pdb_id}: {e}"))?
             .into_body()
+            .with_config()
+            .limit(50 * 1024 * 1024)
             .read_to_string()
-            .map_err(|e| format!("Failed to read response: {e}"))?;
+            .map_err(|e| format!("Failed to read response body: {e}"))?;
 
         std::fs::write(&local_path, &content)
-            .map_err(|e| format!("Failed to save CIF file: {e}"))?;
+            .map_err(|e| format!("I/O error saving CIF file: {e}"))?;
 
         log::info!("Downloaded to {}", local_path.display());
         return Ok(local_path.to_string_lossy().into_owned());
@@ -40,24 +50,26 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
     Err(format!("File not found and not a valid PDB code: {input}"))
 }
 
-fn main() {
+fn main() -> ExitCode {
     env_logger::init();
 
     let Some(input) = std::env::args().nth(1) else {
         log::error!("Usage: viso <PDB_ID or path>");
-        std::process::exit(1);
+        return ExitCode::from(2);
     };
 
     let cif_path = match resolve_structure_path(&input) {
         Ok(path) => path,
         Err(e) => {
             log::error!("{e}");
-            std::process::exit(1);
+            return ExitCode::FAILURE;
         }
     };
 
     if let Err(e) = viso::Viewer::builder().with_path(cif_path).build().run() {
         log::error!("Viewer error: {e}");
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
+
+    ExitCode::SUCCESS
 }

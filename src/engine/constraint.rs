@@ -69,13 +69,16 @@ pub(super) fn resolve_pull(
 /// Uses interpolated visual positions during animation so constraints
 /// track animated atoms. Falls back to `cached_chains` (from the backbone
 /// renderer) before the first animation frame is available.
+///
+/// Backbone atoms (N, CA, C) use precomputed chain offsets for O(log n)
+/// lookup. Sidechain atoms use a hash map for O(1) lookup.
 fn resolve_atom_ref(
     scene: &ScenePositions<'_>,
     atom: &AtomRef,
 ) -> Option<Vec3> {
     let name = atom.atom_name.as_str();
 
-    // Backbone atoms: N, CA, C — look up in visual_backbone_chains
+    // Backbone atoms: N, CA, C — use chain offset index
     if name == "N" || name == "CA" || name == "C" {
         let offset = match name {
             "N" => 0,
@@ -84,41 +87,32 @@ fn resolve_atom_ref(
             _ => return None,
         };
         let chains = if scene.visual.backbone_chains.is_empty() {
-            // Before first animation, fall back to renderer cache
             scene.cached_chains
         } else {
             &scene.visual.backbone_chains
         };
-        let mut current_idx: u32 = 0;
-        for chain in chains {
-            let residues_in_chain = (chain.len() / 3) as u32;
-            if atom.residue < current_idx + residues_in_chain {
-                let local = (atom.residue - current_idx) as usize;
-                return chain.get(local * 3 + offset).copied();
-            }
-            current_idx += residues_in_chain;
-        }
-        return None;
+        let offsets = &scene.topology.backbone_chain_offsets;
+        // Binary search: find the chain containing this residue
+        let chain_idx = match offsets.binary_search(&atom.residue) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        let chain = chains.get(chain_idx)?;
+        let chain_start = offsets.get(chain_idx).copied().unwrap_or(0);
+        let local = (atom.residue - chain_start) as usize;
+        return chain.get(local * 3 + offset).copied();
     }
 
-    // Sidechain atoms — look up in visual_sidechain_positions
+    // Sidechain atoms — O(1) hash lookup
     let positions = if scene.visual.sidechain_positions.is_empty() {
         &scene.topology.sidechain_topology.target_positions
     } else {
         &scene.visual.sidechain_positions
     };
-    for (i, (res_idx, sc_name)) in scene
+    let idx = scene
         .topology
         .sidechain_topology
-        .residue_indices
-        .iter()
-        .zip(scene.topology.sidechain_topology.atom_names.iter())
-        .enumerate()
-    {
-        if *res_idx == atom.residue && sc_name == name {
-            return positions.get(i).copied();
-        }
-    }
-
-    None
+        .atom_index
+        .get(&(atom.residue, name.to_owned()))?;
+    positions.get(*idx).copied()
 }
