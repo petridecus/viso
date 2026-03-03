@@ -8,8 +8,9 @@
 //! being regenerated. Global settings changes (view mode, display,
 //! colors) clear the entire cache.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::prepared::{
     CachedEntityMesh, PreparedAnimationFrame, PreparedScene, SceneRequest,
@@ -148,7 +149,7 @@ impl Drop for SceneProcessor {
 /// colors) so that `AnimationFrame` requests can send `None` and avoid
 /// cloning this data every frame.
 struct MeshCache {
-    meshes: HashMap<u32, (u64, CachedEntityMesh)>,
+    meshes: FxHashMap<u32, (u64, CachedEntityMesh)>,
     last_display: Option<DisplayOptions>,
     last_colors: Option<ColorOptions>,
     last_geometry: Option<GeometryOptions>,
@@ -163,7 +164,7 @@ struct MeshCache {
 impl MeshCache {
     fn new() -> Self {
         Self {
-            meshes: HashMap::new(),
+            meshes: FxHashMap::default(),
             last_display: None,
             last_colors: None,
             last_geometry: None,
@@ -251,7 +252,7 @@ impl MeshCache {
         }
 
         // Evict removed entities
-        let active_ids: HashSet<u32> = entities.iter().map(|e| e.id).collect();
+        let active_ids: FxHashSet<u32> = entities.iter().map(|e| e.id).collect();
         self.meshes.retain(|id, _| active_ids.contains(id));
 
         // Collect references in entity order

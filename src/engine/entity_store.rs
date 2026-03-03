@@ -1,8 +1,6 @@
 //! Consolidated entity ownership: source-of-truth data, rendering copies,
 //! per-entity behaviors, focus state, and structural dirty tracking.
 
-use std::collections::HashMap;
-
 use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
 use foldit_conv::types::entity::MoleculeEntity;
@@ -10,6 +8,8 @@ use glam::Vec3;
 
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
+use rustc_hash::FxHashMap;
+
 use crate::animation::transition::Transition;
 
 /// Consolidated entity storage.
@@ -23,7 +23,7 @@ pub(crate) struct EntityStore {
     /// Scene entities (rendering copy with visibility, SS override, scores).
     scene_entities: Vec<SceneEntity>,
     /// Per-entity animation behavior overrides.
-    pub behaviors: HashMap<u32, Transition>,
+    pub behaviors: FxHashMap<u32, Transition>,
     focus: Focus,
     next_entity_id: u32,
     /// Monotonically increasing generation; bumped on any structural mutation
@@ -39,7 +39,7 @@ impl EntityStore {
         Self {
             source: Vec::new(),
             scene_entities: Vec::new(),
-            behaviors: HashMap::new(),
+            behaviors: FxHashMap::default(),
             focus: Focus::Session,
             next_entity_id: 0,
             generation: 0,

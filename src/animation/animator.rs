@@ -1,9 +1,9 @@
 //! Structure animator for per-entity backbone/sidechain transitions.
 
-use std::collections::HashMap;
 use std::time::Instant;
 
 use glam::Vec3;
+use rustc_hash::FxHashMap;
 
 use super::runner::{
     AnimationRunner, ResidueAnimationData, ResidueVisualState,
@@ -64,7 +64,7 @@ pub struct StructureAnimator {
     enabled: bool,
     /// Per-entity animation runners. Each entity interpolates its own
     /// residue range with its own behavior and timing.
-    entity_runners: HashMap<u32, EntityAnimationState>,
+    entity_runners: FxHashMap<u32, EntityAnimationState>,
     /// Global sidechain residue indices (maps atom index to residue index).
     /// Set once per scene update, used by
     /// [`Self::compute_interpolated_bonds`].
@@ -77,7 +77,7 @@ impl StructureAnimator {
         Self {
             state: StructureState::new(),
             enabled: true,
-            entity_runners: HashMap::new(),
+            entity_runners: FxHashMap::default(),
             sidechain_residue_indices: Vec::new(),
         }
     }
