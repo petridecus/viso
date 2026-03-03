@@ -25,12 +25,12 @@ impl VisoEngine {
         entity_id: u32,
         transition: Transition,
     ) {
-        let _ = self.entities.behaviors.insert(entity_id, transition);
+        self.entities.set_behavior(entity_id, transition);
     }
 
     /// Clear a per-entity behavior override, reverting to default (smooth).
     pub fn clear_entity_behavior(&mut self, entity_id: u32) {
-        let _ = self.entities.behaviors.remove(&entity_id);
+        self.entities.clear_behavior(entity_id);
     }
 }
 
@@ -252,8 +252,7 @@ impl VisoEngine {
         // 3. Look up per-entity behavior override
         let effective_transition = self
             .entities
-            .behaviors
-            .get(&id)
+            .behavior(id)
             .cloned()
             .unwrap_or(transition);
 
@@ -282,8 +281,7 @@ impl VisoEngine {
             // Resolve per-entity behavior override
             let transition = self
                 .entities
-                .behaviors
-                .get(&id)
+                .behavior(id)
                 .cloned()
                 .unwrap_or_else(|| default_transition.clone());
             let _ = entity_transitions.insert(id, transition);
@@ -330,7 +328,7 @@ impl VisoEngine {
     ///
     /// Forces a full scene resync.
     pub fn remove_entity(&mut self, id: u32) {
-        let _ = self.entities.behaviors.remove(&id);
+        self.entities.clear_behavior(id);
         if self.entities.remove_entity(id) {
             self.sync_scene_to_renderers(HashMap::new());
         }

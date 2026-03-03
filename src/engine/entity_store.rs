@@ -21,7 +21,7 @@ pub(crate) struct EntityStore {
     /// Entity ID → index in `scene_entities` for O(1) lookup.
     id_index: FxHashMap<u32, usize>,
     /// Per-entity animation behavior overrides.
-    pub(crate) behaviors: FxHashMap<u32, Transition>,
+    behaviors: FxHashMap<u32, Transition>,
     focus: Focus,
     next_entity_id: u32,
     /// Monotonically increasing generation; bumped on any structural mutation
@@ -174,6 +174,24 @@ impl EntityStore {
         self.scene_entities
             .iter()
             .filter(|e| e.visible && e.is_ligand())
+    }
+
+    // -- Per-entity behavior --
+
+    /// Set the animation behavior override for a specific entity.
+    pub fn set_behavior(&mut self, entity_id: u32, transition: Transition) {
+        let _ = self.behaviors.insert(entity_id, transition);
+    }
+
+    /// Clear a per-entity behavior override, reverting to default.
+    pub fn clear_behavior(&mut self, entity_id: u32) {
+        let _ = self.behaviors.remove(&entity_id);
+    }
+
+    /// Look up a per-entity behavior override.
+    #[must_use]
+    pub fn behavior(&self, entity_id: u32) -> Option<&Transition> {
+        self.behaviors.get(&entity_id)
     }
 
     // -- Per-entity data --
