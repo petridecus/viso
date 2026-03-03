@@ -75,7 +75,6 @@ impl VisoEngine {
         let entities: Vec<MoleculeEntity> = self
             .entities
             .ligand_entities()
-            .iter()
             .map(|se| se.entity.clone())
             .collect();
         self.gpu.renderers.ball_and_stick.update_from_entities(

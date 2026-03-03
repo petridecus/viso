@@ -85,7 +85,6 @@ impl Renderers {
     ) -> Result<Self, crate::error::VisoError> {
         let na_chains: Vec<Vec<Vec3>> = store
             .nucleic_acid_entities()
-            .iter()
             .flat_map(|se| se.entity.extract_p_atom_chains())
             .collect();
         let backbone = BackboneRenderer::new(
@@ -119,7 +118,6 @@ impl Renderers {
             BallAndStickRenderer::new(context, layouts, shader_composer)?;
         let na_rings: Vec<foldit_conv::types::entity::NucleotideRing> = store
             .nucleic_acid_entities()
-            .iter()
             .flat_map(|se| se.entity.extract_base_rings())
             .collect();
         let nucleic_acid = NucleicAcidRenderer::new(

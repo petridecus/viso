@@ -131,7 +131,6 @@ pub(super) fn collect_all_positions(
     ));
     for chain in store
         .nucleic_acid_entities()
-        .iter()
         .flat_map(|se| se.entity.extract_p_atom_chains())
     {
         positions.extend(&chain);

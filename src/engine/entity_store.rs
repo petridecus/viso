@@ -176,21 +176,17 @@ impl EntityStore {
     // -- Filtered entity access --
 
     /// Visible nucleic acid (DNA/RNA) entities.
-    #[must_use]
-    pub fn nucleic_acid_entities(&self) -> Vec<&SceneEntity> {
+    pub fn nucleic_acid_entities(&self) -> impl Iterator<Item = &SceneEntity> {
         self.scene_entities
             .iter()
             .filter(|e| e.visible && e.is_nucleic_acid())
-            .collect()
     }
 
     /// Visible ligand entities (not protein, not nucleic acid).
-    #[must_use]
-    pub fn ligand_entities(&self) -> Vec<&SceneEntity> {
+    pub fn ligand_entities(&self) -> impl Iterator<Item = &SceneEntity> {
         self.scene_entities
             .iter()
             .filter(|e| e.visible && e.is_ligand())
-            .collect()
     }
 
     // -- Per-entity data --
