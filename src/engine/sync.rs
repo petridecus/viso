@@ -2,13 +2,12 @@
 //! setup, frustum culling, LOD management.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 use glam::Vec3;
 
 use super::{scene_data, VisoEngine};
 use crate::animation::transition::Transition;
-use crate::animation::{AnimationFrame, EntitySidechainData};
+use crate::animation::AnimationFrame;
 use crate::renderer::geometry::{
     PreparedBackboneData, PreparedBallAndStickData, SidechainView,
 };
@@ -189,8 +188,14 @@ impl VisoEngine {
         let animating = !entity_transitions.is_empty();
 
         if animating {
-            self.setup_per_entity_animation(&entity_transitions);
-            let frame = self.animation.animator.get_frame();
+            let backbone = self.visual.backbone_chains.clone();
+            let frame = self.animation.setup_per_entity(
+                &entity_transitions,
+                &backbone,
+                &self.topology.sidechain_topology,
+                &self.topology.entity_residue_ranges.clone(),
+            );
+            self.ensure_gpu_capacity_and_colors(&backbone);
             self.submit_animation_frame_from(&frame);
         } else {
             self.snap_from_prepared();
@@ -277,75 +282,14 @@ impl VisoEngine {
 // ── Animation setup ──
 
 impl VisoEngine {
-    /// Set up per-entity animation from prepared scene data.
-    ///
-    /// For each entity with a transition, dispatches to
-    /// `animator.animate_entity()` so each entity gets its own runner.
-    /// Entities without transitions are not animated.
-    fn setup_per_entity_animation(
+    /// Ensure GPU buffer capacity and update colors after animation setup.
+    fn ensure_gpu_capacity_and_colors(
         &mut self,
-        entity_transitions: &HashMap<u32, Transition>,
+        backbone_chains: &[Vec<Vec3>],
     ) {
-        let new_backbone = self.visual.backbone_chains.clone();
-
-        // Read sidechain data from Scene (already computed on main thread
-        // in prepare_scene_metadata)
-        let ca_positions =
-            foldit_conv::render::backbone::ca_positions_from_chains(
-                &new_backbone,
-            );
-        let sidechain_positions =
-            self.topology.sidechain_topology.target_positions.clone();
-        let sidechain_residue_indices =
-            self.topology.sidechain_topology.residue_indices.clone();
-        let sidechain_backbone_bonds = self
-            .topology
-            .sidechain_topology
-            .target_backbone_bonds
-            .clone();
-
-        // Set global sidechain residue indices on animator (once per scene
-        // update) so compute_interpolated_bonds() can resolve CB → residue.
-        self.animation
-            .animator
-            .set_sidechain_residue_indices(sidechain_residue_indices.clone());
-
-        // Dispatch per-entity animation with sidechain data
-        for range in &self.topology.entity_residue_ranges.clone() {
-            let transition = entity_transitions
-                .get(&range.entity_id)
-                .cloned()
-                .unwrap_or_default();
-
-            let positions = scene_data::extract_entity_sidechain(
-                &sidechain_positions,
-                &sidechain_residue_indices,
-                &ca_positions,
-                range,
-                entity_transitions.get(&range.entity_id),
-            );
-
-            let backbone_bonds = scene_data::extract_entity_backbone_bonds(
-                &sidechain_backbone_bonds,
-                &sidechain_residue_indices,
-                range,
-            );
-
-            self.animation.animator.animate_entity(
-                range,
-                &new_backbone,
-                &transition,
-                EntitySidechainData {
-                    positions,
-                    backbone_bonds,
-                },
-            );
-        }
-
-        // Ensure selection/color buffers have capacity and update colors
         let total_residues =
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
-                &new_backbone,
+                backbone_chains,
             );
         self.gpu
             .pick
@@ -356,8 +300,6 @@ impl VisoEngine {
             .residue_colors
             .ensure_capacity(&self.gpu.context.device, total_residues);
 
-        // Animate colors to new target (already computed in
-        // prepare_scene_metadata)
         if let Some(ref colors) = self.topology.per_residue_colors {
             self.gpu.pick.residue_colors.set_target_colors(colors);
         }
@@ -397,30 +339,6 @@ impl VisoEngine {
                 geometry: self.options.geometry.clone(),
                 per_chain_lod: None,
             });
-    }
-
-    /// Feed the current trajectory frame (if any) through per-entity
-    /// animation with `Transition::snap()`.
-    pub(super) fn advance_trajectory(&mut self, now: Instant) {
-        let Some(ref mut player) = self.animation.trajectory_player else {
-            return;
-        };
-        let Some(backbone_chains) = player.tick(now) else {
-            return;
-        };
-
-        let snap = Transition::snap();
-        for range in &self.topology.entity_residue_ranges {
-            self.animation.animator.animate_entity(
-                range,
-                &backbone_chains,
-                &snap,
-                EntitySidechainData {
-                    positions: None,
-                    backbone_bonds: Vec::new(),
-                },
-            );
-        }
     }
 }
 

@@ -50,8 +50,7 @@ impl VisoEngine {
             let snap_transitions: HashMap<u32, Transition> =
                 ids.iter().map(|&id| (id, Transition::snap())).collect();
             self.sync_scene_to_renderers(snap_transitions);
-            if let Some((centroid, radius)) = self.entities.bounding_sphere()
-            {
+            if let Some((centroid, radius)) = self.entities.bounding_sphere() {
                 self.camera_controller.fit_to_sphere(centroid, radius);
             }
         }

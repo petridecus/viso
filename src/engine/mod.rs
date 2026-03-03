@@ -10,7 +10,6 @@ pub(crate) mod scene_data;
 mod sync;
 pub(crate) mod trajectory;
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -20,9 +19,7 @@ use glam::{Mat4, Vec3};
 use scene::{Focus, SceneTopology, VisualState};
 use scene_data::SceneEntity;
 
-use self::trajectory::TrajectoryPlayer;
-use crate::animation::transition::Transition;
-use crate::animation::StructureAnimator;
+use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
 use crate::error::VisoError;
 use crate::gpu::lighting::Lighting;
@@ -37,22 +34,6 @@ use crate::renderer::{GeometryPassInput, PipelineLayouts, Renderers};
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
-
-// ---------------------------------------------------------------------------
-// AnimationState
-// ---------------------------------------------------------------------------
-
-/// Grouped animation fields: structural animator, trajectory player, and
-/// pending per-entity transitions.
-pub(crate) struct AnimationState {
-    /// Structural animation driver (per-entity interpolation).
-    pub animator: StructureAnimator,
-    /// Multi-frame trajectory player, if loaded.
-    pub trajectory_player: Option<TrajectoryPlayer>,
-    /// Transitions pending from the last sync (avoids round-trip through
-    /// the background thread). Empty when no sync is pending.
-    pub pending_transitions: HashMap<u32, Transition>,
-}
 
 // ---------------------------------------------------------------------------
 // GpuPipeline
@@ -386,8 +367,7 @@ impl VisoEngine {
             &initial_colors,
             &bootstrap.renderers,
         );
-        if let Some((centroid, radius)) = bootstrap.entities.bounding_sphere()
-        {
+        if let Some((centroid, radius)) = bootstrap.entities.bounding_sphere() {
             bootstrap.camera_controller.fit_to_sphere(centroid, radius);
         }
 
@@ -419,11 +399,7 @@ impl VisoEngine {
             entities: bootstrap.entities,
             band_specs: Vec::new(),
             pull_spec: None,
-            animation: AnimationState {
-                animator: StructureAnimator::new(),
-                trajectory_player: None,
-                pending_transitions: HashMap::new(),
-            },
+            animation: AnimationState::new(),
             options,
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
@@ -480,16 +456,11 @@ impl VisoEngine {
     /// animator's update loop.
     fn tick_animation(&mut self) {
         let now = Instant::now();
-
-        // If a trajectory is active, feed its frame through per-entity
-        // animation so it converges with the standard path.
-        self.advance_trajectory(now);
-
-        if !self.animation.animator.update(now) {
+        self.animation
+            .advance_trajectory(now, &self.topology.entity_residue_ranges);
+        let Some(frame) = self.animation.tick(now) else {
             return;
-        }
-
-        let frame = self.animation.animator.get_frame();
+        };
         self.visual.update(
             frame.backbone_chains.clone(),
             frame.sidechain_positions.clone().unwrap_or_else(|| {
@@ -502,9 +473,6 @@ impl VisoEngine {
                     .clone()
             }),
         );
-
-        // Only submit if the previous animation frame has been consumed
-        // by the renderer — avoids flooding the background thread.
         if self.visual.is_dirty() {
             self.submit_animation_frame_from(&frame);
         }
@@ -684,9 +652,7 @@ impl VisoEngine {
 
             // ── Playback ──
             VisoCommand::ToggleTrajectory => {
-                if self.animation.trajectory_player.is_some() {
-                    self.toggle_trajectory();
-                }
+                self.animation.toggle_trajectory();
                 false
             }
 
@@ -941,37 +907,11 @@ impl VisoEngine {
             );
 
         let num_atoms = header.num_atoms as usize;
-        let num_frames = frames.len();
-        let duration_secs = num_frames as f64 / 30.0;
-
-        let player = TrajectoryPlayer::new(
+        self.animation.load_trajectory(
             frames,
             num_atoms,
             &backbone_chains,
             backbone_indices,
         );
-        self.animation.trajectory_player = Some(player);
-
-        log::info!(
-            "Trajectory loaded: {num_frames} frames, {num_atoms} atoms, \
-             ~{duration_secs:.1}s at 30fps",
-        );
-    }
-
-    /// Toggle trajectory playback (play/pause). No-op if no trajectory loaded.
-    pub fn toggle_trajectory(&mut self) {
-        if let Some(ref mut player) = self.animation.trajectory_player {
-            player.toggle_playback();
-            let state = if player.is_playing() {
-                "playing"
-            } else {
-                "paused"
-            };
-            log::info!(
-                "Trajectory {state} (frame {}/{})",
-                player.current_frame(),
-                player.total_frames()
-            );
-        }
     }
 }

@@ -327,7 +327,8 @@ impl BackboneRenderer {
         self.cached_chains.clear();
         self.cached_chains.extend_from_slice(data.cached_chains);
         self.cached_na_chains.clear();
-        self.cached_na_chains.extend_from_slice(data.cached_na_chains);
+        self.cached_na_chains
+            .extend_from_slice(data.cached_na_chains);
         self.last_hash =
             combined_hash(&self.cached_chains, &self.cached_na_chains);
         if let Some(ss) = data.ss_override {

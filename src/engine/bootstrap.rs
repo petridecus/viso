@@ -109,5 +109,3 @@ pub(super) fn initial_chain_colors(
     }
     colors
 }
-
-
