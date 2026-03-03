@@ -2,14 +2,12 @@
 
 use foldit_conv::adapters::pdb::structure_file_to_coords;
 use foldit_conv::render::RenderCoords;
-use foldit_conv::types::entity::{split_into_entities, MoleculeEntity};
+use foldit_conv::types::entity::split_into_entities;
 use glam::Vec3;
 
 use super::entity_store::EntityStore;
 use super::scene_data::{get_residue_bonds, is_hydrophobic, SceneEntity};
 use crate::error::VisoError;
-use crate::options::VisoOptions;
-use crate::renderer::geometry::ball_and_stick::BallAndStickRenderer;
 
 /// Load a structure file and split into entities, returning a populated
 /// [`EntityStore`] and the derived protein `RenderCoords`.
@@ -112,28 +110,4 @@ pub(super) fn initial_chain_colors(
     colors
 }
 
-/// Collect all atom positions for initial camera fit (protein + ligands + NA).
-pub(super) fn collect_all_positions(
-    render_coords: &RenderCoords,
-    store: &EntityStore,
-    options: &VisoOptions,
-) -> Vec<Vec3> {
-    let mut positions = render_coords.all_positions.clone();
-    let non_protein: Vec<MoleculeEntity> = store
-        .entities()
-        .iter()
-        .filter(|se| !se.is_protein())
-        .map(|se| se.entity.clone())
-        .collect();
-    positions.extend(BallAndStickRenderer::collect_positions(
-        &non_protein,
-        &options.display,
-    ));
-    for chain in store
-        .nucleic_acid_entities()
-        .flat_map(|se| se.entity.extract_p_atom_chains())
-    {
-        positions.extend(&chain);
-    }
-    positions
-}
+

@@ -627,29 +627,6 @@ impl BallAndStickRenderer {
         ]
     }
 
-    /// Get all non-protein atom positions for camera fitting.
-    pub fn collect_positions(
-        entities: &[MoleculeEntity],
-        display: &DisplayOptions,
-    ) -> Vec<Vec3> {
-        let mut positions = Vec::new();
-        for entity in entities {
-            let visible = match entity.molecule_type {
-                MoleculeType::Ligand
-                | MoleculeType::Cofactor
-                | MoleculeType::Lipid => true,
-                MoleculeType::Ion => display.show_ions,
-                MoleculeType::Water => display.show_waters,
-                MoleculeType::Solvent => display.show_solvent,
-                _ => false,
-            };
-            if visible {
-                positions.extend(atom_positions(&entity.coords));
-            }
-        }
-        positions
-    }
-
     /// Infer bonds per-residue to avoid O(n²) on large multi-molecule entities.
     /// For single-residue entities (typical ligands), this is identical to
     /// `infer_bonds`. For multi-residue entities (e.g. all lipids lumped

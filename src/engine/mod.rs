@@ -190,7 +190,7 @@ fn init_gpu_pipeline(
         &mut shader_composer,
     )?;
     let post_process = PostProcessStack::new(context, &mut shader_composer)?;
-    camera_controller.fit_to_positions(&[]);
+    camera_controller.fit_to_sphere(Vec3::ZERO, 0.0);
 
     Ok(GpuBootstrap {
         shader_composer,
@@ -386,12 +386,10 @@ impl VisoEngine {
             &initial_colors,
             &bootstrap.renderers,
         );
-        let positions = bootstrap::collect_all_positions(
-            &render_coords,
-            &bootstrap.entities,
-            &options,
-        );
-        bootstrap.camera_controller.fit_to_positions(&positions);
+        if let Some((centroid, radius)) = bootstrap.entities.bounding_sphere()
+        {
+            bootstrap.camera_controller.fit_to_sphere(centroid, radius);
+        }
 
         Self::assemble(context, options, bootstrap)
     }
@@ -738,19 +736,19 @@ impl VisoEngine {
     pub fn fit_camera_to_focus(&mut self) {
         match *self.entities.focus() {
             Focus::Session => {
-                let positions = self.entities.all_positions();
-                if !positions.is_empty() {
+                if let Some((centroid, radius)) =
+                    self.entities.bounding_sphere()
+                {
                     self.camera_controller
-                        .fit_to_positions_animated(&positions);
+                        .fit_to_sphere_animated(centroid, radius);
                 }
             }
             Focus::Entity(eid) => {
                 if let Some(se) = self.entities.entity(eid) {
-                    let positions = se.entity.positions();
-                    if !positions.is_empty() {
-                        self.camera_controller
-                            .fit_to_positions_animated(&positions);
-                    }
+                    self.camera_controller.fit_to_sphere_animated(
+                        se.cached_centroid,
+                        se.cached_bounding_radius,
+                    );
                 }
             }
         }
