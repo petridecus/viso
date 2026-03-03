@@ -27,99 +27,53 @@ pub enum Shader {
     PickingSphere,
 }
 
-impl Shader {
-    /// Pipeline label for wgpu debug markers.
-    fn label(self) -> &'static str {
-        match self {
-            Self::BloomThreshold => "Bloom Threshold Shader",
-            Self::BloomBlur => "Bloom Blur Shader",
-            Self::BloomUpsample => "Bloom Upsample Shader",
-            Self::Fxaa => "FXAA Shader",
-            Self::Composite => "Composite Shader",
-            Self::Ssao => "SSAO Shader",
-            Self::SsaoBlur => "SSAO Blur Shader",
-            Self::BackboneTube => "Backbone Tube",
-            Self::Capsule => "Capsule Impostor",
-            Self::Sphere => "Sphere Impostor",
-            Self::Cone => "Cone Impostor",
-            Self::Polygon => "Polygon Impostor",
-            Self::PickingMesh => "Picking Tube Shader",
-            Self::PickingCapsule => "Picking Capsule Shader",
-            Self::PickingSphere => "Picking Sphere Shader",
-        }
-    }
+/// Expands each `Variant => "path"` into a match arm returning
+/// `("path", include_str!("../shaders/path"))`, and collects variants
+/// into a `const ALL` slice.
+macro_rules! shader_registry {
+    ($( $variant:ident => $path:literal ),+ $(,)?) => {
+        impl Shader {
+            /// Every composable shader variant, for exhaustive iteration.
+            #[cfg(test)]
+            const ALL: &[Self] = &[ $( Self::$variant ),+ ];
 
-    /// Path relative to the shaders directory (internal).
-    fn path(self) -> &'static str {
-        match self {
-            Self::BloomThreshold => "screen/bloom_threshold.wgsl",
-            Self::BloomBlur => "screen/bloom_blur.wgsl",
-            Self::BloomUpsample => "screen/bloom_upsample.wgsl",
-            Self::Fxaa => "screen/fxaa.wgsl",
-            Self::Composite => "screen/composite.wgsl",
-            Self::Ssao => "screen/ssao.wgsl",
-            Self::SsaoBlur => "screen/ssao_blur.wgsl",
-            Self::BackboneTube => "raster/mesh/backbone_tube.wgsl",
-            Self::Capsule => "raster/impostor/capsule.wgsl",
-            Self::Sphere => "raster/impostor/sphere.wgsl",
-            Self::Cone => "raster/impostor/cone.wgsl",
-            Self::Polygon => "raster/impostor/polygon.wgsl",
-            Self::PickingMesh => "utility/picking_mesh.wgsl",
-            Self::PickingCapsule => "utility/picking_capsule.wgsl",
-            Self::PickingSphere => "utility/picking_sphere.wgsl",
-        }
-    }
-
-    /// Source code via `include_str!`.
-    fn source(self) -> &'static str {
-        match self {
-            Self::BloomThreshold => {
-                include_str!("../shaders/screen/bloom_threshold.wgsl")
-            }
-            Self::BloomBlur => {
-                include_str!("../shaders/screen/bloom_blur.wgsl")
-            }
-            Self::BloomUpsample => {
-                include_str!("../shaders/screen/bloom_upsample.wgsl")
-            }
-            Self::Fxaa => include_str!("../shaders/screen/fxaa.wgsl"),
-            Self::Composite => {
-                include_str!("../shaders/screen/composite.wgsl")
-            }
-            Self::Ssao => include_str!("../shaders/screen/ssao.wgsl"),
-            Self::SsaoBlur => {
-                include_str!("../shaders/screen/ssao_blur.wgsl")
-            }
-            Self::BackboneTube => {
-                include_str!("../shaders/raster/mesh/backbone_tube.wgsl")
-            }
-            Self::Capsule => {
-                include_str!("../shaders/raster/impostor/capsule.wgsl")
-            }
-            Self::Sphere => {
-                include_str!("../shaders/raster/impostor/sphere.wgsl")
-            }
-            Self::Cone => {
-                include_str!("../shaders/raster/impostor/cone.wgsl")
-            }
-            Self::Polygon => {
-                include_str!("../shaders/raster/impostor/polygon.wgsl")
-            }
-            Self::PickingMesh => {
-                include_str!("../shaders/utility/picking_mesh.wgsl")
-            }
-            Self::PickingCapsule => {
-                include_str!("../shaders/utility/picking_capsule.wgsl")
-            }
-            Self::PickingSphere => {
-                include_str!("../shaders/utility/picking_sphere.wgsl")
+            /// (error-context path, WGSL source).
+            ///
+            /// The path string is NOT a filesystem path — naga-oil resolves
+            /// imports via `#define_import_path` directives in WGSL source.
+            /// The path is used as the wgpu debug label and in error messages.
+            fn info(self) -> (&'static str, &'static str) {
+                match self {
+                    $( Self::$variant => ($path, include_str!(concat!("../shaders/", $path))) ),+
+                }
             }
         }
-    }
+    };
 }
 
-/// Paths of shared modules that are registered with naga_oil for `#import`
-/// support. Order matters — modules with no dependencies first.
+shader_registry! {
+    BloomThreshold => "screen/bloom_threshold.wgsl",
+    BloomBlur      => "screen/bloom_blur.wgsl",
+    BloomUpsample  => "screen/bloom_upsample.wgsl",
+    Fxaa           => "screen/fxaa.wgsl",
+    Composite      => "screen/composite.wgsl",
+    Ssao           => "screen/ssao.wgsl",
+    SsaoBlur       => "screen/ssao_blur.wgsl",
+    BackboneTube   => "raster/mesh/backbone_tube.wgsl",
+    Capsule        => "raster/impostor/capsule.wgsl",
+    Sphere         => "raster/impostor/sphere.wgsl",
+    Cone           => "raster/impostor/cone.wgsl",
+    Polygon        => "raster/impostor/polygon.wgsl",
+    PickingMesh    => "utility/picking_mesh.wgsl",
+    PickingCapsule => "utility/picking_capsule.wgsl",
+    PickingSphere  => "utility/picking_sphere.wgsl",
+}
+
+/// Shared shader modules registered with naga-oil for `#import` support.
+///
+/// Order matters: modules with no dependencies first. The path strings
+/// are error-context labels, not filesystem paths — naga-oil resolves
+/// imports via `#define_import_path` directives in WGSL source.
 const MODULE_PATHS: &[(&str, &str)] = &[
     (
         "modules/constants.wgsl",
@@ -214,8 +168,9 @@ impl ShaderComposer {
         shader: Shader,
     ) -> Result<wgpu::ShaderModule, VisoError> {
         let naga_module = self.make_naga(shader)?;
+        let (path, _) = shader.info();
         Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(shader.label()),
+            label: Some(path),
             source: wgpu::ShaderSource::Naga(Cow::Owned(naga_module)),
         }))
     }
@@ -233,10 +188,10 @@ impl ShaderComposer {
 
     /// Build a `naga::Module` from a shader variant.
     fn make_naga(&mut self, shader: Shader) -> Result<naga::Module, VisoError> {
-        let path = shader.path();
+        let (path, source) = shader.info();
         self.composer
             .make_naga_module(NagaModuleDescriptor {
-                source: shader.source(),
+                source,
                 file_path: path,
                 shader_type: ShaderType::Wgsl,
                 ..Default::default()
@@ -254,31 +209,10 @@ impl ShaderComposer {
 mod tests {
     use super::*;
 
-    /// All composable (non-module) shaders.
-    fn composable_shaders() -> Vec<Shader> {
-        vec![
-            Shader::BloomThreshold,
-            Shader::BloomBlur,
-            Shader::BloomUpsample,
-            Shader::Fxaa,
-            Shader::Composite,
-            Shader::Ssao,
-            Shader::SsaoBlur,
-            Shader::BackboneTube,
-            Shader::Capsule,
-            Shader::Sphere,
-            Shader::Cone,
-            Shader::Polygon,
-            Shader::PickingMesh,
-            Shader::PickingCapsule,
-            Shader::PickingSphere,
-        ]
-    }
-
     #[test]
     fn test_all_shaders_compose() {
         let mut composer = ShaderComposer::new().expect("ShaderComposer::new");
-        for shader in composable_shaders() {
+        for &shader in Shader::ALL {
             let _ = composer.compose_naga(shader).unwrap_or_else(|e| {
                 panic!("Shader '{shader:?}' failed to compose: {e}")
             });

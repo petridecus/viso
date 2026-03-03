@@ -252,7 +252,8 @@ impl MeshCache {
         }
 
         // Evict removed entities
-        let active_ids: FxHashSet<u32> = entities.iter().map(|e| e.id).collect();
+        let active_ids: FxHashSet<u32> =
+            entities.iter().map(|e| e.id).collect();
         self.meshes.retain(|id, _| active_ids.contains(id));
 
         // Collect references in entity order

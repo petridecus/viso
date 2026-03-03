@@ -5,11 +5,10 @@ use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
+use rustc_hash::FxHashMap;
 
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
-use rustc_hash::FxHashMap;
-
 use crate::animation::transition::Transition;
 
 /// Consolidated entity storage.
@@ -97,9 +96,7 @@ impl EntityStore {
     /// Read access to a scene entity.
     #[must_use]
     pub fn entity(&self, id: u32) -> Option<&SceneEntity> {
-        self.id_index
-            .get(&id)
-            .map(|&idx| &self.scene_entities[idx])
+        self.id_index.get(&id).map(|&idx| &self.scene_entities[idx])
     }
 
     /// Mutable access to a scene entity.
