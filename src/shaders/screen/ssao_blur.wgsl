@@ -2,6 +2,7 @@
 // Uses a 7x7 kernel with Gaussian spatial weights, depth similarity, and normal similarity
 
 #import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+#import viso::depth::{SsaoParams, linearize_depth}
 
 // Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
 fn load_depth(uv: vec2<f32>) -> f32 {
@@ -9,19 +10,6 @@ fn load_depth(uv: vec2<f32>) -> f32 {
     let texel = vec2<i32>(clamp(uv * dims, vec2<f32>(0.0), dims - 1.0));
     return textureLoad(depth_texture, texel, 0);
 }
-
-struct SsaoParams {
-    inv_proj: mat4x4<f32>,
-    proj: mat4x4<f32>,
-    view: mat4x4<f32>,
-    screen_size: vec2<f32>,
-    near: f32,
-    far: f32,
-    radius: f32,
-    bias: f32,
-    power: f32,
-    _pad: f32,
-};
 
 @group(0) @binding(0) var ssao_texture: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;
@@ -33,11 +21,6 @@ struct SsaoParams {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
     return fullscreen_vertex(vertex_index);
-}
-
-// Linearize depth from NDC to view-space distance
-fn linearize_depth(d: f32) -> f32 {
-    return params.near * params.far / (params.far - d * (params.far - params.near));
 }
 
 // Load normal from G-buffer
@@ -58,7 +41,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
 
     // Center sample
     let center_ao = textureSample(ssao_texture, tex_sampler, in.uv).r;
-    let center_depth = linearize_depth(load_depth(in.uv));
+    let center_depth = linearize_depth(load_depth(in.uv), params.near, params.far);
     let center_normal = load_normal(in.uv);
 
     // Skip background
@@ -80,7 +63,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
 
             // Sample AO, depth, and normal
             let sample_ao = textureSample(ssao_texture, tex_sampler, sample_uv).r;
-            let sample_depth = linearize_depth(load_depth(sample_uv));
+            let sample_depth = linearize_depth(load_depth(sample_uv), params.near, params.far);
             let sample_normal = load_normal(sample_uv);
 
             // Depth similarity weight: reject samples at very different depths

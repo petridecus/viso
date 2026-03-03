@@ -335,8 +335,8 @@ impl Picking {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{label} Pipeline Layout")),
                 bind_group_layouts: &[
-                    &bind_group_layout,
                     camera_bind_group_layout,
+                    &bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             },
@@ -708,8 +708,8 @@ fn draw_picking_geometry(
     if let Some(capsule_bg) = geometry.capsule_bind_group {
         if geometry.capsule_count > 0 {
             render_pass.set_pipeline(&picking.capsule_pipeline);
-            render_pass.set_bind_group(0, capsule_bg, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(1, capsule_bg, &[]);
             render_pass.draw(0..6, 0..geometry.capsule_count);
         }
     }
@@ -718,8 +718,8 @@ fn draw_picking_geometry(
     if let Some(bns_bg) = geometry.bns_capsule_bind_group {
         if geometry.bns_capsule_count > 0 {
             render_pass.set_pipeline(&picking.capsule_pipeline);
-            render_pass.set_bind_group(0, bns_bg, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(1, bns_bg, &[]);
             render_pass.draw(0..6, 0..geometry.bns_capsule_count);
         }
     }
@@ -728,8 +728,8 @@ fn draw_picking_geometry(
     if let Some(bns_sphere_bg) = geometry.bns_sphere_bind_group {
         if geometry.bns_sphere_count > 0 {
             render_pass.set_pipeline(&picking.sphere_pipeline);
-            render_pass.set_bind_group(0, bns_sphere_bg, &[]);
-            render_pass.set_bind_group(1, camera_bind_group, &[]);
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(1, bns_sphere_bg, &[]);
             render_pass.draw(0..6, 0..geometry.bns_sphere_count);
         }
     }

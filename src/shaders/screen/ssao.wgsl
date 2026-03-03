@@ -2,6 +2,7 @@
 // Works in VIEW SPACE for camera-independent results
 
 #import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+#import viso::depth::SsaoParams
 
 // Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
 fn load_depth(uv: vec2<f32>) -> f32 {
@@ -12,25 +13,6 @@ fn load_depth(uv: vec2<f32>) -> f32 {
 
 struct Kernel {
     samples: array<vec4<f32>, 32>,
-};
-
-struct SsaoParams {
-    // Inverse projection matrix for reconstructing view-space positions
-    inv_proj: mat4x4<f32>,
-    // Projection matrix for projecting samples back to screen
-    proj: mat4x4<f32>,
-    // View matrix for transforming world-space normals to view-space
-    view: mat4x4<f32>,
-    // Screen dimensions
-    screen_size: vec2<f32>,
-    // Near/far planes
-    near: f32,
-    far: f32,
-    // Tunable SSAO parameters
-    radius: f32,
-    bias: f32,
-    power: f32,
-    _pad: f32,
 };
 
 @group(0) @binding(0) var depth_texture: texture_depth_2d;

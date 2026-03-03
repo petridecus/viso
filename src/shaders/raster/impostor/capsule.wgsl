@@ -2,27 +2,17 @@
 // Capsules = cylinders with hemispherical caps
 
 #import viso::camera::CameraUniform
-#import viso::lighting::{LightingUniform, compute_rim}
+#import viso::lighting::LightingUniform
 #import viso::ray::{intersect_capsule, capsule_normal}
 #import viso::selection::check_selection
-#import viso::highlight::{apply_highlight, apply_selection_edge}
-#import viso::pbr::pbr_direct_light
+#import viso::highlight::apply_highlight
+#import viso::shade::{shade_geometry, ShadingResult}
+#import viso::constants::{MAX_IBL_MIP, BILLBOARD_SCALE, TUBE_RADIUS}
+#import viso::impostor_types::CapsuleInstance
 
 fn is_selected(residue_idx: u32) -> bool {
     return check_selection(residue_idx, arrayLength(&selection), selection[residue_idx / 32u]);
 }
-
-// Per-instance data for capsule
-// endpoint_a: xyz = position, w = radius
-// endpoint_b: xyz = position, w = residue_idx (packed as float)
-// color_a: xyz = RGB at endpoint A, w = unused
-// color_b: xyz = RGB at endpoint B, w = unused
-struct CapsuleInstance {
-    endpoint_a: vec4<f32>,
-    endpoint_b: vec4<f32>,
-    color_a: vec4<f32>,
-    color_b: vec4<f32>,
-};
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -41,16 +31,14 @@ struct FragOut {
     @location(1) normal: vec4<f32>,
 };
 
-const TUBE_RADIUS: f32 = 0.3;
-
-@group(0) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
-@group(1) @binding(0) var<uniform> camera: CameraUniform;
-@group(2) @binding(0) var<uniform> lighting: LightingUniform;
-@group(2) @binding(1) var irradiance_map: texture_cube<f32>;
-@group(2) @binding(2) var env_sampler: sampler;
-@group(2) @binding(3) var prefiltered_map: texture_cube<f32>;
-@group(2) @binding(4) var brdf_lut: texture_2d<f32>;
-@group(3) @binding(0) var<storage, read> selection: array<u32>;
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<uniform> lighting: LightingUniform;
+@group(1) @binding(1) var irradiance_map: texture_cube<f32>;
+@group(1) @binding(2) var env_sampler: sampler;
+@group(1) @binding(3) var prefiltered_map: texture_cube<f32>;
+@group(1) @binding(4) var brdf_lut: texture_2d<f32>;
+@group(2) @binding(0) var<storage, read> selection: array<u32>;
+@group(3) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
 
 @vertex
 fn vs_main(
@@ -100,8 +88,8 @@ fn vs_main(
 
     let up = axis_dir;
 
-    let half_width = radius * 1.6;
-    let half_height = seg_length * 0.5 + radius * 1.6;
+    let half_width = radius * BILLBOARD_SCALE;
+    let half_height = seg_length * 0.5 + radius * BILLBOARD_SCALE;
 
     let local_uv = quad[vidx];
     let world_offset = right * local_uv.x * half_width + up * local_uv.y * half_height;
@@ -149,43 +137,18 @@ fn fs_main(in: VertexOutput) -> FragOut {
     var base_color = highlighted.xyz;
     let outline_factor = highlighted.w;
 
+    // Pre-sample IBL textures (modules cannot reference bindings)
     let NdotV = max(dot(normal, view_dir), 0.0);
-
-    // PBR setup
-    let F0 = mix(vec3<f32>(0.04), base_color, lighting.metalness);
-    let roughness = lighting.roughness;
-
-    // IBL diffuse
-    let irradiance = textureSample(irradiance_map, env_sampler, normal).rgb;
-    let ibl_diffuse = irradiance * lighting.ibl_strength;
-    let ambient_light = mix(vec3(lighting.ambient), ibl_diffuse, lighting.ibl_strength);
-
-    // Rim lighting
-    let rim = compute_rim(normal, view_dir, lighting.rim_power, lighting.rim_intensity, lighting.rim_directionality, lighting.rim_color, lighting.rim_dir);
-
-    // PBR direct lighting
-    var Lo = vec3<f32>(0.0);
-    Lo += pbr_direct_light(normal, view_dir, lighting.light1_dir, lighting.light1_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
-    Lo += pbr_direct_light(normal, view_dir, lighting.light2_dir, lighting.light2_intensity, F0, roughness, lighting.metalness, NdotV, base_color);
-
-    // Specular IBL
     let R = reflect(-view_dir, normal);
-    let max_mip = 5.0;
-    let prefiltered_color = textureSampleLevel(prefiltered_map, env_sampler, R, roughness * max_mip).rgb;
-    let brdf_sample = textureSample(brdf_lut, env_sampler, vec2<f32>(NdotV, roughness)).rg;
-    let specular_ibl = prefiltered_color * (F0 * brdf_sample.x + brdf_sample.y) * lighting.ibl_strength;
+    let irradiance = textureSample(irradiance_map, env_sampler, normal).rgb;
+    let prefiltered = textureSampleLevel(prefiltered_map, env_sampler, R,
+        lighting.roughness * MAX_IBL_MIP).rgb;
+    let brdf = textureSample(brdf_lut, env_sampler, vec2<f32>(NdotV, lighting.roughness)).rg;
 
-    let ambient_contribution = base_color * ambient_light + specular_ibl;
-    let direct_contribution = Lo + rim;
-    let lit_color = ambient_contribution + direct_contribution;
-
-    // Edge darkening for selected
-    let final_color = apply_selection_edge(lit_color, normal, view_dir, outline_factor);
-
-    // Ambient ratio for ambient-only AO in composite pass
-    let total_lum = max(dot(final_color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
-    let ambient_lum = dot(ambient_contribution, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let ambient_ratio = clamp(ambient_lum / total_lum, 0.0, 1.0);
+    let result = shade_geometry(normal, view_dir, base_color, outline_factor,
+        lighting, irradiance, prefiltered, brdf);
+    let final_color = result.color;
+    let ambient_ratio = result.ambient_ratio;
 
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
     let ndc_depth = clip_pos.z / clip_pos.w;

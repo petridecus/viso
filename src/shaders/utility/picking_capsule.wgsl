@@ -2,13 +2,8 @@
 
 #import viso::camera::CameraUniform
 #import viso::ray::intersect_capsule
-
-struct CapsuleInstance {
-    endpoint_a: vec4<f32>,
-    endpoint_b: vec4<f32>,
-    color_a: vec4<f32>,
-    color_b: vec4<f32>,
-};
+#import viso::impostor_types::CapsuleInstance
+#import viso::constants::{BILLBOARD_SCALE, TUBE_RADIUS}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -24,10 +19,8 @@ struct FragOut {
     @location(0) residue_id: u32,
 };
 
-const TUBE_RADIUS: f32 = 0.3;
-
-@group(0) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
-@group(1) @binding(0) var<uniform> camera: CameraUniform;
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<storage, read> capsules: array<CapsuleInstance>;
 
 @vertex
 fn vs_main(
@@ -64,8 +57,8 @@ fn vs_main(
 
     let up = axis_dir;
 
-    let half_width = radius * 1.6;
-    let half_height = seg_length * 0.5 + radius * 1.6;
+    let half_width = radius * BILLBOARD_SCALE;
+    let half_height = seg_length * 0.5 + radius * BILLBOARD_SCALE;
 
     let local_uv = quad[vidx];
     let world_offset = right * local_uv.x * half_width + up * local_uv.y * half_height;

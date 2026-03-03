@@ -30,10 +30,10 @@ pub struct ShaderDef {
 /// A single impostor draw pass: pipeline + typed storage buffer + bind group.
 ///
 /// All impostor shaders use the same bind group layout convention:
-/// - group(0): storage buffer (instances)
-/// - group(1): camera uniform
-/// - group(2): lighting uniform + textures
-/// - group(3): selection storage
+/// - group(0): camera uniform
+/// - group(1): lighting uniform + textures
+/// - group(2): selection storage
+/// - group(3): storage buffer (instances)
 pub struct ImpostorPass<T: Pod + Zeroable> {
     pipeline: wgpu::RenderPipeline,
     instance_buffer: TypedBuffer<T>,
@@ -137,10 +137,10 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{label} Pipeline Layout")),
                 bind_group_layouts: &[
-                    bind_group_layout,
                     &layouts.camera,
                     &layouts.lighting,
                     &layouts.selection,
+                    bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             },
@@ -242,10 +242,10 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
             return;
         }
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_bind_group(1, bind_groups.camera, &[]);
-        render_pass.set_bind_group(2, bind_groups.lighting, &[]);
-        render_pass.set_bind_group(3, bind_groups.selection, &[]);
+        render_pass.set_bind_group(0, bind_groups.camera, &[]);
+        render_pass.set_bind_group(1, bind_groups.lighting, &[]);
+        render_pass.set_bind_group(2, bind_groups.selection, &[]);
+        render_pass.set_bind_group(3, &self.bind_group, &[]);
         render_pass.draw(0..self.vertices_per_instance, 0..self.instance_count);
     }
 

@@ -72,8 +72,9 @@ pub(crate) struct GpuPipeline {
     pub scene_processor: SceneProcessor,
     /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
     pub post_process: PostProcessStack,
-    /// Shader composer (kept alive for pipeline lifetime).
-    _shader_composer: ShaderComposer,
+    /// Retained so compiled shader modules stay alive for the engine lifetime.
+    #[allow(dead_code)]
+    shader_composer: ShaderComposer,
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +410,7 @@ impl VisoEngine {
                 scene_processor: SceneProcessor::new()
                     .map_err(VisoError::ThreadSpawn)?,
                 post_process: bootstrap.post_process,
-                _shader_composer: bootstrap.shader_composer,
+                shader_composer: bootstrap.shader_composer,
             },
             cursor_pos: (0.0, 0.0),
             last_cull_camera_eye: Vec3::ZERO,

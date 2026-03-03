@@ -122,6 +122,18 @@ impl Shader {
 /// support. Order matters — modules with no dependencies first.
 const MODULE_PATHS: &[(&str, &str)] = &[
     (
+        "modules/constants.wgsl",
+        include_str!("../shaders/modules/constants.wgsl"),
+    ),
+    (
+        "modules/depth.wgsl",
+        include_str!("../shaders/modules/depth.wgsl"),
+    ),
+    (
+        "modules/impostor_types.wgsl",
+        include_str!("../shaders/modules/impostor_types.wgsl"),
+    ),
+    (
         "modules/fullscreen.wgsl",
         include_str!("../shaders/modules/fullscreen.wgsl"),
     ),
@@ -153,6 +165,11 @@ const MODULE_PATHS: &[(&str, &str)] = &[
     (
         "modules/pbr.wgsl",
         include_str!("../shaders/modules/pbr.wgsl"),
+    ),
+    // shade depends on lighting, pbr, highlight, constants.
+    (
+        "modules/shade.wgsl",
+        include_str!("../shaders/modules/shade.wgsl"),
     ),
 ];
 

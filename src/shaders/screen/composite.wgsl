@@ -1,6 +1,8 @@
 // Composite pass - applies SSAO, outlines, fog, tone mapping to the rendered scene
 
 #import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+#import viso::depth::linearize_depth
+#import viso::constants::LUMINANCE_REC709
 
 // Load raw depth via textureLoad (bypasses sampler — works on Vulkan and GL/GLES)
 fn load_depth(uv: vec2<f32>) -> f32 {
@@ -40,11 +42,6 @@ struct CompositeParams {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
     return fullscreen_vertex(vertex_index);
-}
-
-// Linearize depth from NDC to view-space distance
-fn linearize_depth(d: f32, near: f32, far: f32) -> f32 {
-    return near * far / (far - d * (far - near));
 }
 
 // Depth-relative edge detection with adaptive threshold
@@ -109,7 +106,7 @@ fn tonemap_pbr_neutral(color: vec3<f32>) -> vec3<f32> {
     }
 
     // Slight desaturation in highlights
-    let lum = dot(x, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum = dot(x, LUMINANCE_REC709);
     let sat_factor = 1.0 - desaturation * max(lum - start_compression, 0.0) / max(1.0 - start_compression, 0.0001);
     x = mix(vec3<f32>(lum), x, sat_factor);
 

@@ -1,6 +1,7 @@
 // Bloom threshold extraction - extracts bright pixels from HDR color buffer
 
 #import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+#import viso::constants::LUMINANCE_REC709
 
 @group(0) @binding(0) var color_texture: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;
@@ -14,7 +15,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
 @fragment
 fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(color_texture, tex_sampler, in.uv).rgb;
-    let luminance = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let luminance = dot(color, LUMINANCE_REC709);
 
     // Soft knee: gradually ramp up contribution above threshold
     let knee = 0.1;

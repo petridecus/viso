@@ -4,6 +4,7 @@
 // Performs luminance-based edge detection and sub-pixel anti-aliasing.
 
 #import viso::fullscreen::{FullscreenVertexOutput, fullscreen_vertex}
+#import viso::constants::LUMINANCE_REC709
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;
@@ -15,9 +16,8 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
     return fullscreen_vertex(vertex_index);
 }
 
-// Perceptual luminance (Rec. 709)
 fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.299, 0.587, 0.114));
+    return dot(color, LUMINANCE_REC709);
 }
 
 // FXAA quality settings

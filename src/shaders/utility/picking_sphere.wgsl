@@ -2,11 +2,8 @@
 
 #import viso::camera::CameraUniform
 #import viso::ray::intersect_sphere
-
-struct SphereInstance {
-    center: vec4<f32>,
-    color: vec4<f32>,
-};
+#import viso::impostor_types::SphereInstance
+#import viso::constants::BILLBOARD_SCALE
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -21,8 +18,8 @@ struct FragOut {
     @location(0) pick_id: u32,
 };
 
-@group(0) @binding(0) var<storage, read> spheres: array<SphereInstance>;
-@group(1) @binding(0) var<uniform> camera: CameraUniform;
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<storage, read> spheres: array<SphereInstance>;
 
 @vertex
 fn vs_main(
@@ -49,7 +46,7 @@ fn vs_main(
     right = normalize(right);
     let up = normalize(cross(right, to_camera));
 
-    let half_size = radius * 1.6;
+    let half_size = radius * BILLBOARD_SCALE;
 
     let local_uv = quad[vidx];
     let world_offset = right * local_uv.x * half_size + up * local_uv.y * half_size;
