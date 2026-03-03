@@ -30,7 +30,6 @@ machete:
     cargo machete
 
 # Check file lengths (max 800 lines)
-# TODO: lower to 500 once large files are split
 file-lengths:
     #!/usr/bin/env bash
     failed=0
