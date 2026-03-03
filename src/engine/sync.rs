@@ -23,31 +23,17 @@ impl VisoEngine {
     ) -> (Vec<scene_data::PerEntityData>, HashMap<u32, Transition>) {
         let mut entities = self.entities.per_entity_data();
 
-        // Compute entity residue ranges on main thread
-        let ranges = scene_data::compute_entity_residue_ranges(&entities);
-        self.topology.set_entity_residue_ranges(ranges.clone());
+        // Rebuild structural topology (residue ranges, sidechain topology,
+        // SS types, NA chains) from entity data.
+        self.topology.rebuild(&entities);
 
-        // Compute concatenated sidechain topology on main thread
-        let sidechain =
-            scene_data::concatenate_sidechain_atoms(&entities, &ranges);
-        self.topology.update_sidechain_topology(&sidechain);
-
-        // Compute concatenated SS types on main thread
-        self.topology.ss_types =
-            scene_data::concatenate_ss_types(&entities, &ranges);
-
-        // Concatenate backbone and NA chains on main thread
+        // Concatenate backbone chains and store on visual state for
+        // animation / apply_pending_scene.
         let backbone_chains: Vec<Vec<Vec3>> = entities
             .iter()
             .flat_map(|e| e.backbone_chains.iter().cloned())
             .collect();
-        let na_chains: Vec<Vec<Vec3>> = entities
-            .iter()
-            .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
-            .collect();
-        // Store on Scene for use by apply_pending_scene / animation
         self.visual.backbone_chains.clone_from(&backbone_chains);
-        self.topology.na_chains = na_chains;
 
         // Compute per-residue colors on main thread and distribute to
         // entities for vertex coloring (avoids background round-trip)
@@ -63,7 +49,10 @@ impl VisoEngine {
             &per_entity_scores,
             &self.options.display.backbone_color_mode,
         );
-        for (e, range) in entities.iter_mut().zip(&ranges) {
+        for (e, range) in entities
+            .iter_mut()
+            .zip(&self.topology.entity_residue_ranges)
+        {
             let start = range.start as usize;
             let end = range.end() as usize;
             e.per_residue_colors = colors.get(start..end).map(<[_]>::to_vec);

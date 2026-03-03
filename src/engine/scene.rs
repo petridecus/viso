@@ -195,11 +195,29 @@ impl SceneTopology {
         }
     }
 
+    /// Rebuild structural metadata from visible entity data.
+    ///
+    /// Recomputes entity residue ranges, sidechain topology, secondary
+    /// structure types, and nucleic acid chains. Call when entities change.
+    pub fn rebuild(&mut self, entities: &[super::scene_data::PerEntityData]) {
+        let ranges = super::scene_data::compute_entity_residue_ranges(entities);
+        let sidechain =
+            super::scene_data::concatenate_sidechain_atoms(entities, &ranges);
+        self.update_sidechain_topology(&sidechain);
+        self.ss_types =
+            super::scene_data::concatenate_ss_types(entities, &ranges);
+        self.na_chains = entities
+            .iter()
+            .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
+            .collect();
+        self.entity_residue_ranges = ranges;
+    }
+
     /// Update sidechain topology and target positions from prepared data.
     ///
     /// Called when the scene changes (new entities, coord updates).
     /// Populates bond topology, target positions, and per-atom metadata.
-    pub fn update_sidechain_topology(&mut self, sidechain: &SidechainAtoms) {
+    fn update_sidechain_topology(&mut self, sidechain: &SidechainAtoms) {
         self.sidechain_topology.target_positions = sidechain.positions();
         self.sidechain_topology
             .target_backbone_bonds
@@ -208,13 +226,5 @@ impl SceneTopology {
         self.sidechain_topology.hydrophobicity = sidechain.hydrophobicity();
         self.sidechain_topology.residue_indices = sidechain.residue_indices();
         self.sidechain_topology.atom_names = sidechain.atom_names();
-    }
-
-    /// Set entity residue ranges (populated from prepared scene data).
-    pub fn set_entity_residue_ranges(
-        &mut self,
-        ranges: Vec<EntityResidueRange>,
-    ) {
-        self.entity_residue_ranges = ranges;
     }
 }
