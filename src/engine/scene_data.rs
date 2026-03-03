@@ -17,6 +17,29 @@ use crate::animation::transition::Transition;
 use crate::animation::SidechainAnimPositions;
 
 // ---------------------------------------------------------------------------
+// Bounding sphere
+// ---------------------------------------------------------------------------
+
+/// Compute (centroid, radius) for a molecule entity's atom positions.
+/// Returns `(Vec3::ZERO, 0.0)` when the entity has no atoms.
+fn compute_bounding_sphere(entity: &MoleculeEntity) -> (Vec3, f32) {
+    let atoms = &entity.coords.atoms;
+    if atoms.is_empty() {
+        return (Vec3::ZERO, 0.0);
+    }
+    let n = atoms.len() as f32;
+    let centroid = atoms
+        .iter()
+        .fold(Vec3::ZERO, |acc, a| acc + Vec3::new(a.x, a.y, a.z))
+        / n;
+    let radius = atoms
+        .iter()
+        .map(|a| (Vec3::new(a.x, a.y, a.z) - centroid).length())
+        .fold(0.0f32, f32::max);
+    (centroid, radius)
+}
+
+// ---------------------------------------------------------------------------
 // SceneEntity
 // ---------------------------------------------------------------------------
 
@@ -33,9 +56,34 @@ pub struct SceneEntity {
     /// Cached per-residue energy scores from Rosetta (raw data for viz).
     pub per_residue_scores: Option<Vec<f64>>,
     pub(crate) mesh_version: u64,
+    /// Cached centroid of all atom positions.
+    pub(crate) cached_centroid: Vec3,
+    /// Cached bounding sphere radius around `cached_centroid`.
+    pub(crate) cached_bounding_radius: f32,
 }
 
 impl SceneEntity {
+    /// Create a new `SceneEntity` with pre-computed bounding sphere.
+    pub(crate) fn new(entity: MoleculeEntity) -> Self {
+        let (centroid, radius) = compute_bounding_sphere(&entity);
+        Self {
+            entity,
+            visible: true,
+            ss_override: None,
+            per_residue_scores: None,
+            mesh_version: 0,
+            cached_centroid: centroid,
+            cached_bounding_radius: radius,
+        }
+    }
+
+    /// Recompute the cached bounding sphere from current atom positions.
+    pub(crate) fn recompute_bounds(&mut self) {
+        let (centroid, radius) = compute_bounding_sphere(&self.entity);
+        self.cached_centroid = centroid;
+        self.cached_bounding_radius = radius;
+    }
+
     /// Entity identifier (delegates to `entity.entity_id`).
     #[must_use]
     pub fn id(&self) -> u32 {

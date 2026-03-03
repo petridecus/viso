@@ -347,77 +347,34 @@ impl CameraController {
         self.update_camera_pos();
     }
 
-    /// Calculate fit parameters for the given positions.
-    /// Returns (centroid, radius, fit_distance).
-    fn calculate_fit_params(
-        &self,
-        positions: &[Vec3],
-    ) -> Option<(Vec3, f32, f32)> {
-        if positions.is_empty() {
-            return None;
-        }
-
-        // Calculate centroid
-        let centroid: Vec3 =
-            positions.iter().copied().sum::<Vec3>() / positions.len() as f32;
-
-        // Calculate bounding sphere radius from centroid
-        let radius = positions
-            .iter()
-            .map(|p| (*p - centroid).length())
-            .fold(0.0f32, f32::max);
-
-        // Minimum effective radius so small molecules (ions, ligands) don't
-        // zoom in too close
+    /// Calculate the camera distance needed to frame a bounding sphere.
+    fn fit_distance_for_radius(&self, radius: f32) -> f32 {
         let effective_radius = radius.max(5.0);
-
-        // Set distance to fit the bounding sphere in view
-        // Account for both vertical and horizontal FOV to fill viewport
-        // maximally
         let fovy_rad = self.camera.fovy.to_radians();
         let fovx_rad = fovy_rad * self.camera.aspect;
-
-        // Calculate required distance for each axis
-        let fit_distance_y = effective_radius / (fovy_rad / 2.0).tan();
-        let fit_distance_x = effective_radius / (fovx_rad / 2.0).tan();
-
-        // Use the larger distance (tighter constraint) to ensure fit on both
-        // axes
-        let fit_distance = fit_distance_y.max(fit_distance_x);
-
-        // Minimal padding (1.05x) to fill viewport without clipping
-        Some((centroid, radius, fit_distance * 1.05))
+        let fit_y = effective_radius / (fovy_rad / 2.0).tan();
+        let fit_x = effective_radius / (fovx_rad / 2.0).tan();
+        fit_y.max(fit_x) * 1.05
     }
 
-    /// Adjust camera to fit the given positions instantly (no animation).
-    /// Used for initial load.
-    pub fn fit_to_positions(&mut self, positions: &[Vec3]) {
-        if let Some((centroid, radius, fit_distance)) =
-            self.calculate_fit_params(positions)
-        {
-            self.focus_point = centroid;
-            self.bounding_radius = radius;
-            self.distance = fit_distance;
+    /// Adjust camera to frame a pre-computed bounding sphere instantly.
+    pub fn fit_to_sphere(&mut self, centroid: Vec3, radius: f32) {
+        self.focus_point = centroid;
+        self.bounding_radius = radius;
+        self.distance = self.fit_distance_for_radius(radius);
 
-            // Clear any pending animation
-            self.target_focus_point = None;
-            self.target_distance = None;
-            self.target_bounding_radius = None;
+        self.target_focus_point = None;
+        self.target_distance = None;
+        self.target_bounding_radius = None;
 
-            self.update_camera_pos();
-        }
+        self.update_camera_pos();
     }
 
-    /// Adjust camera to fit the given positions with smooth animation.
-    /// Used when new designs are added to the scene.
-    pub fn fit_to_positions_animated(&mut self, positions: &[Vec3]) {
-        if let Some((centroid, radius, fit_distance)) =
-            self.calculate_fit_params(positions)
-        {
-            self.target_focus_point = Some(centroid);
-            self.target_bounding_radius = Some(radius);
-            self.target_distance = Some(fit_distance);
-        }
+    /// Adjust camera to frame a pre-computed bounding sphere with animation.
+    pub fn fit_to_sphere_animated(&mut self, centroid: Vec3, radius: f32) {
+        self.target_focus_point = Some(centroid);
+        self.target_bounding_radius = Some(radius);
+        self.target_distance = Some(self.fit_distance_for_radius(radius));
     }
 
     /// Convert screen delta (pixels) to world-space offset.

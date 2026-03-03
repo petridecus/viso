@@ -541,6 +541,12 @@ impl VisoEngine {
     /// Submit a backbone-only remesh with per-chain LOD to the background
     /// thread. Each chain gets its own `(spr, csv)` based on its distance
     /// from the camera. No sidechains — they don't change with LOD.
+    ///
+    /// The base geometry is first clamped via
+    /// [`GeometryOptions::clamped_for_residues`] to stay within the 256 MB
+    /// buffer limit, then each chain is further scaled by its distance tier.
+    /// For very large structures (>50 K residues) this per-chain scaling is
+    /// critical — without it the vertex buffer can exceed GPU limits.
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
         use crate::options::{lod_scaled, select_chain_lod_tier};
 

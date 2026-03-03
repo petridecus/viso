@@ -94,6 +94,18 @@ impl GeometryOptions {
 
     /// Clamp detail so the estimated vertex buffer stays under the wgpu 256 MB
     /// max buffer size. Returns `self` unchanged for small structures.
+    ///
+    /// The backbone vertex buffer scales as
+    /// `SPR × CSV × residues × 52 bytes/vertex` (with a 1.15× overhead
+    /// factor). For 5 000 residues at default settings (SPR = 8, CSV = 16)
+    /// this is ~33 MB — well within the 256 MB limit. When the estimate
+    /// exceeds the limit this method progressively applies LOD tiers
+    /// (halving SPR each step) until the buffer fits.
+    ///
+    /// Beyond ~50 000 residues even the most aggressive tier (SPR = 4,
+    /// CSV = 16) may approach the limit, so per-chain LOD
+    /// ([`VisoEngine::check_and_submit_lod`](crate::engine::VisoEngine)) is
+    /// essential at that scale.
     #[must_use]
     pub fn clamped_for_residues(&self, total_residues: usize) -> Self {
         const MAX_BUFFER_BYTES: usize = 256 * 1024 * 1024;

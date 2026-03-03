@@ -79,13 +79,7 @@ impl EntityStore {
             self.next_entity_id += 1;
             entity.entity_id = id;
             let idx = self.scene_entities.len();
-            self.scene_entities.push(SceneEntity {
-                entity,
-                visible: true,
-                ss_override: None,
-                per_residue_scores: None,
-                mesh_version: 0,
-            });
+            self.scene_entities.push(SceneEntity::new(entity));
             let _ = self.id_index.insert(id, idx);
             ids.push(id);
         }
@@ -193,31 +187,59 @@ impl EntityStore {
             .collect()
     }
 
-    /// All atom positions across all visible entities (for camera fitting).
+    /// Aggregate bounding sphere across all visible entities.
+    ///
+    /// Returns `None` when no visible entities have atoms. Merges per-entity
+    /// cached bounding spheres into a single enclosing sphere (centroid is the
+    /// weighted average of entity centroids; radius is the max distance from
+    /// that centroid to any entity's outer edge).
     #[must_use]
-    pub fn all_positions(&self) -> Vec<Vec3> {
-        self.scene_entities
+    pub fn bounding_sphere(&self) -> Option<(Vec3, f32)> {
+        let visible: Vec<&SceneEntity> =
+            self.scene_entities.iter().filter(|e| e.visible).collect();
+        if visible.is_empty() {
+            return None;
+        }
+
+        // Weighted centroid (weight = atom count).
+        let mut total_weight: f32 = 0.0;
+        let mut weighted_sum = Vec3::ZERO;
+        for e in &visible {
+            let w = e.entity.coords.atoms.len() as f32;
+            if w > 0.0 {
+                weighted_sum += e.cached_centroid * w;
+                total_weight += w;
+            }
+        }
+        if total_weight == 0.0 {
+            return None;
+        }
+        let centroid = weighted_sum / total_weight;
+
+        // Radius: max distance from the combined centroid to each entity's
+        // outer edge (entity centroid offset + entity radius).
+        let radius = visible
             .iter()
-            .filter(|e| e.visible)
-            .flat_map(|e| {
-                e.entity
-                    .coords
-                    .atoms
-                    .iter()
-                    .map(|a| Vec3::new(a.x, a.y, a.z))
+            .map(|e| {
+                (e.cached_centroid - centroid).length()
+                    + e.cached_bounding_radius
             })
-            .collect()
+            .fold(0.0f32, f32::max);
+
+        Some((centroid, radius))
     }
 
     // -- Entity mutation --
 
     /// Replace the `MoleculeEntity` for an existing entity by id.
     ///
-    /// Bumps mesh version and invalidates the generation counter.
+    /// Bumps mesh version, recomputes bounds, and invalidates the generation
+    /// counter.
     pub fn replace_entity(&mut self, entity: MoleculeEntity) {
         if let Some(&idx) = self.id_index.get(&entity.entity_id) {
             let se = &mut self.scene_entities[idx];
             se.entity = entity;
+            se.recompute_bounds();
             se.invalidate_render_cache();
         }
         self.invalidate();
@@ -232,6 +254,7 @@ impl EntityStore {
             if let Some(updated) = entities.into_iter().next() {
                 se.entity = updated;
             }
+            se.recompute_bounds();
             se.invalidate_render_cache();
         }
         self.invalidate();
