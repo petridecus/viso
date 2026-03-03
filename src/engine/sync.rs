@@ -8,7 +8,6 @@ use glam::Vec3;
 use super::{scene_data, VisoEngine};
 use crate::animation::transition::Transition;
 use crate::animation::AnimationFrame;
-use crate::renderer::geometry::SidechainView;
 use crate::renderer::gpu_pipeline::SceneChainData;
 use crate::renderer::pipeline::{PreparedScene, SceneRequest};
 
@@ -215,65 +214,16 @@ impl VisoEngine {
     /// significantly. This filters out sidechains behind the camera to
     /// reduce draw calls.
     pub(crate) fn update_frustum_culling(&mut self) {
-        // Skip if no sidechain data
         if self.topology.sidechain_topology.target_positions.is_empty() {
             return;
         }
-
-        // Only update culling when camera moves more than 5 units.
-        // Exception: always update during animation so sidechain positions
-        // reflect the interpolated state.
         if !self.should_update_culling() {
             return;
         }
-
-        let camera_eye = self.camera_controller.camera.eye;
-        self.gpu.last_cull_camera_eye = camera_eye;
-
-        let frustum = self.camera_controller.frustum();
-        // Read visual state from Scene (populated by tick_animation or
-        // snap_from_prepared).
-        let positions = if self.visual.sidechain_positions.is_empty() {
-            &self.topology.sidechain_topology.target_positions
-        } else {
-            &self.visual.sidechain_positions
-        };
-        let bs_bonds = if self.visual.backbone_sidechain_bonds.is_empty() {
-            self.topology
-                .sidechain_topology
-                .target_backbone_bonds
-                .clone()
-        } else {
-            self.visual.backbone_sidechain_bonds.clone()
-        };
-
-        // Translate sidechains onto sheet surface and apply frustum culling
-        let offset_map = self.sheet_offset_map();
-        let raw_view = SidechainView {
-            positions,
-            bonds: &self.topology.sidechain_topology.bonds,
-            backbone_bonds: &bs_bonds,
-            hydrophobicity: &self.topology.sidechain_topology.hydrophobicity,
-            residue_indices: &self.topology.sidechain_topology.residue_indices,
-        };
-        let adjusted =
-            crate::renderer::geometry::sheet_adjust::sheet_adjusted_view(
-                &raw_view,
-                &offset_map,
-            );
-
-        self.gpu.renderers.sidechain.update_with_frustum(
-            &self.gpu.context.device,
-            &self.gpu.context.queue,
-            &adjusted.as_view(),
-            Some(&frustum),
-        );
-
-        // Recreate picking bind group since buffer may have changed
-        self.gpu.pick.groups.rebuild_capsule(
-            &self.gpu.pick.picking,
-            &self.gpu.context.device,
-            &self.gpu.renderers.sidechain,
+        self.gpu.update_frustum_culling(
+            &self.camera_controller,
+            &self.visual,
+            &self.topology,
         );
     }
 
@@ -310,16 +260,5 @@ impl VisoEngine {
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
         self.gpu
             .submit_lod_remesh(camera_eye, &self.options.geometry);
-    }
-
-    /// Build a map of sheet residue offsets (residue_idx -> offset vector).
-    pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.gpu
-            .renderers
-            .backbone
-            .sheet_offsets()
-            .iter()
-            .copied()
-            .collect()
     }
 }

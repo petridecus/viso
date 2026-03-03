@@ -1,5 +1,7 @@
 //! All GPU infrastructure grouped together.
 
+use std::collections::HashMap;
+
 use foldit_conv::secondary_structure::SSType;
 use foldit_conv::types::entity::MoleculeEntity;
 use glam::{Mat4, Vec3};
@@ -7,7 +9,7 @@ use glam::{Mat4, Vec3};
 use crate::animation::AnimationFrame;
 use crate::camera::controller::CameraController;
 use crate::camera::core::Camera;
-use crate::engine::scene::SidechainTopology;
+use crate::engine::scene::{SceneTopology, SidechainTopology, VisualState};
 use crate::gpu::lighting::Lighting;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::{
@@ -15,7 +17,7 @@ use crate::options::{
 };
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::{
-    PreparedBackboneData, PreparedBallAndStickData,
+    PreparedBackboneData, PreparedBallAndStickData, SidechainView,
 };
 use crate::renderer::picking::PickingSystem;
 use crate::renderer::pipeline::prepared::PreparedScene;
@@ -421,5 +423,68 @@ impl GpuPipeline {
     /// Set target per-residue colors (animated transition).
     pub(crate) fn set_target_colors(&mut self, colors: &[[f32; 3]]) {
         self.pick.residue_colors.set_target_colors(colors);
+    }
+
+    /// Update sidechain instances with frustum culling.
+    ///
+    /// Builds the sidechain view from visual/topology state, applies
+    /// sheet-surface adjustment, frustum-culls, and uploads to GPU.
+    /// Rebuilds the capsule pick bind group afterward.
+    pub(crate) fn update_frustum_culling(
+        &mut self,
+        camera: &CameraController,
+        visual: &VisualState,
+        topology: &SceneTopology,
+    ) {
+        self.last_cull_camera_eye = camera.camera.eye;
+
+        let frustum = camera.frustum();
+        let positions = if visual.sidechain_positions.is_empty() {
+            &topology.sidechain_topology.target_positions
+        } else {
+            &visual.sidechain_positions
+        };
+        let bs_bonds = if visual.backbone_sidechain_bonds.is_empty() {
+            topology.sidechain_topology.target_backbone_bonds.clone()
+        } else {
+            visual.backbone_sidechain_bonds.clone()
+        };
+
+        // Build sheet offset map from backbone renderer state
+        let offset_map: HashMap<u32, Vec3> = self
+            .renderers
+            .backbone
+            .sheet_offsets()
+            .iter()
+            .copied()
+            .collect();
+
+        // Translate sidechains onto sheet surface and apply frustum culling
+        let raw_view = SidechainView {
+            positions,
+            bonds: &topology.sidechain_topology.bonds,
+            backbone_bonds: &bs_bonds,
+            hydrophobicity: &topology.sidechain_topology.hydrophobicity,
+            residue_indices: &topology.sidechain_topology.residue_indices,
+        };
+        let adjusted =
+            crate::renderer::geometry::sheet_adjust::sheet_adjusted_view(
+                &raw_view,
+                &offset_map,
+            );
+
+        self.renderers.sidechain.update_with_frustum(
+            &self.context.device,
+            &self.context.queue,
+            &adjusted.as_view(),
+            Some(&frustum),
+        );
+
+        // Recreate picking bind group since buffer may have changed
+        self.pick.groups.rebuild_capsule(
+            &self.pick.picking,
+            &self.context.device,
+            &self.renderers.sidechain,
+        );
     }
 }
