@@ -30,11 +30,13 @@ impl VisoEngine {
         self.topology.set_entity_residue_ranges(ranges.clone());
 
         // Compute concatenated sidechain topology on main thread
-        let sidechain = scene_data::concatenate_sidechain_atoms(&entities, &ranges);
+        let sidechain =
+            scene_data::concatenate_sidechain_atoms(&entities, &ranges);
         self.topology.update_sidechain_topology(&sidechain);
 
         // Compute concatenated SS types on main thread
-        self.topology.ss_types = scene_data::concatenate_ss_types(&entities, &ranges);
+        self.topology.ss_types =
+            scene_data::concatenate_ss_types(&entities, &ranges);
 
         // Concatenate backbone and NA chains on main thread
         let backbone_chains: Vec<Vec<Vec3>> = entities
@@ -184,7 +186,8 @@ impl VisoEngine {
             return;
         };
 
-        let entity_transitions = std::mem::take(&mut self.animation.pending_transitions);
+        let entity_transitions =
+            std::mem::take(&mut self.animation.pending_transitions);
         let animating = !entity_transitions.is_empty();
 
         if animating {
@@ -212,23 +215,29 @@ impl VisoEngine {
         self.visual.update(
             self.visual.backbone_chains.clone(),
             self.topology.sidechain_topology.target_positions.clone(),
-            self.topology.sidechain_topology.target_backbone_bonds.clone(),
+            self.topology
+                .sidechain_topology
+                .target_backbone_bonds
+                .clone(),
         );
 
         let total_residues =
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
                 &self.visual.backbone_chains,
             );
-        self.gpu.pick
+        self.gpu
+            .pick
             .selection
             .ensure_capacity(&self.gpu.context.device, total_residues);
-        self.gpu.pick
+        self.gpu
+            .pick
             .residue_colors
             .ensure_capacity(&self.gpu.context.device, total_residues);
 
         // Colors already computed in prepare_scene_metadata
         if let Some(ref colors) = self.topology.per_residue_colors {
-            self.gpu.pick
+            self.gpu
+                .pick
                 .residue_colors
                 .set_colors_immediate(&self.gpu.context.queue, colors);
         }
@@ -236,7 +245,8 @@ impl VisoEngine {
 
     /// Apply any pending animation frame from the background thread.
     pub(crate) fn apply_pending_animation(&mut self) {
-        let Some(prepared) = self.gpu.scene_processor.try_recv_animation() else {
+        let Some(prepared) = self.gpu.scene_processor.try_recv_animation()
+        else {
             return;
         };
 
@@ -290,12 +300,16 @@ impl VisoEngine {
             self.topology.sidechain_topology.target_positions.clone();
         let sidechain_residue_indices =
             self.topology.sidechain_topology.residue_indices.clone();
-        let sidechain_backbone_bonds =
-            self.topology.sidechain_topology.target_backbone_bonds.clone();
+        let sidechain_backbone_bonds = self
+            .topology
+            .sidechain_topology
+            .target_backbone_bonds
+            .clone();
 
         // Set global sidechain residue indices on animator (once per scene
         // update) so compute_interpolated_bonds() can resolve CB → residue.
-        self.animation.animator
+        self.animation
+            .animator
             .set_sidechain_residue_indices(sidechain_residue_indices.clone());
 
         // Dispatch per-entity animation with sidechain data
@@ -335,10 +349,12 @@ impl VisoEngine {
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
                 &new_backbone,
             );
-        self.gpu.pick
+        self.gpu
+            .pick
             .selection
             .ensure_capacity(&self.gpu.context.device, total_residues);
-        self.gpu.pick
+        self.gpu
+            .pick
             .residue_colors
             .ensure_capacity(&self.gpu.context.device, total_residues);
 
@@ -352,32 +368,37 @@ impl VisoEngine {
     /// Submit an animation frame to the background thread for mesh
     /// generation, using a unified [`AnimationFrame`] from the animator.
     pub(crate) fn submit_animation_frame_from(&self, frame: &AnimationFrame) {
-        let has_sc = !self.topology.sidechain_topology.target_positions.is_empty()
-            && frame.sidechains_visible;
+        let has_sc =
+            !self.topology.sidechain_topology.target_positions.is_empty()
+                && frame.sidechains_visible;
 
         let sidechains = if has_sc {
             let positions = frame
                 .sidechain_positions
                 .as_deref()
                 .unwrap_or(&self.topology.sidechain_topology.target_positions);
-            let bonds = frame
-                .backbone_sidechain_bonds
-                .as_deref()
-                .unwrap_or(&self.topology.sidechain_topology.target_backbone_bonds);
-            Some(self.topology.to_interpolated_sidechain_atoms(positions, bonds))
+            let bonds = frame.backbone_sidechain_bonds.as_deref().unwrap_or(
+                &self.topology.sidechain_topology.target_backbone_bonds,
+            );
+            Some(
+                self.topology
+                    .to_interpolated_sidechain_atoms(positions, bonds),
+            )
         } else {
             None
         };
 
-        self.gpu.scene_processor.submit(SceneRequest::AnimationFrame {
-            backbone_chains: frame.backbone_chains.clone(),
-            na_chains: None,
-            sidechains,
-            ss_types: None,
-            per_residue_colors: None,
-            geometry: self.options.geometry.clone(),
-            per_chain_lod: None,
-        });
+        self.gpu
+            .scene_processor
+            .submit(SceneRequest::AnimationFrame {
+                backbone_chains: frame.backbone_chains.clone(),
+                na_chains: None,
+                sidechains,
+                ss_types: None,
+                per_residue_colors: None,
+                geometry: self.options.geometry.clone(),
+                per_chain_lod: None,
+            });
     }
 
     /// Feed the current trajectory frame (if any) through per-entity
@@ -436,7 +457,10 @@ impl VisoEngine {
             &self.visual.sidechain_positions
         };
         let bs_bonds = if self.visual.backbone_sidechain_bonds.is_empty() {
-            self.topology.sidechain_topology.target_backbone_bonds.clone()
+            self.topology
+                .sidechain_topology
+                .target_backbone_bonds
+                .clone()
         } else {
             self.visual.backbone_sidechain_bonds.clone()
         };
@@ -495,7 +519,8 @@ impl VisoEngine {
     pub(crate) fn check_and_submit_lod(&mut self) {
         let camera_eye = self.camera_controller.camera.eye;
         let per_chain_tiers: Vec<u8> = self
-            .gpu.renderers
+            .gpu
+            .renderers
             .backbone
             .chain_ranges()
             .iter()
@@ -507,7 +532,8 @@ impl VisoEngine {
             })
             .collect();
         if per_chain_tiers != self.gpu.renderers.backbone.cached_lod_tiers() {
-            self.gpu.renderers
+            self.gpu
+                .renderers
                 .backbone
                 .set_cached_lod_tiers(per_chain_tiers);
             self.submit_per_chain_lod_remesh(camera_eye);
@@ -525,7 +551,8 @@ impl VisoEngine {
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
                 self.gpu.renderers.backbone.cached_chains(),
             ) + self
-                .gpu.renderers
+                .gpu
+                .renderers
                 .backbone
                 .cached_na_chains()
                 .iter()
@@ -537,7 +564,8 @@ impl VisoEngine {
         let max_csv = base_geo.cross_section_verts;
 
         let per_chain_lod: Vec<(usize, usize)> = self
-            .gpu.renderers
+            .gpu
+            .renderers
             .backbone
             .chain_ranges()
             .iter()
@@ -547,20 +575,28 @@ impl VisoEngine {
             })
             .collect();
 
-        self.gpu.scene_processor.submit(SceneRequest::AnimationFrame {
-            backbone_chains: self.gpu.renderers.backbone.cached_chains().to_vec(),
-            na_chains: None,
-            sidechains: None,
-            ss_types: None,
-            per_residue_colors: None,
-            geometry: base_geo,
-            per_chain_lod: Some(per_chain_lod),
-        });
+        self.gpu
+            .scene_processor
+            .submit(SceneRequest::AnimationFrame {
+                backbone_chains: self
+                    .gpu
+                    .renderers
+                    .backbone
+                    .cached_chains()
+                    .to_vec(),
+                na_chains: None,
+                sidechains: None,
+                ss_types: None,
+                per_residue_colors: None,
+                geometry: base_geo,
+                per_chain_lod: Some(per_chain_lod),
+            });
     }
 
     /// Build a map of sheet residue offsets (residue_idx -> offset vector).
     pub(crate) fn sheet_offset_map(&self) -> HashMap<u32, Vec3> {
-        self.gpu.renderers
+        self.gpu
+            .renderers
             .backbone
             .sheet_offsets()
             .iter()

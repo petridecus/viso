@@ -79,7 +79,8 @@ impl VisoEngine {
     /// and forces backbone renderer regeneration.
     pub fn set_ss_override(&mut self, ss_types: &[SSType]) {
         self.topology.ss_types = ss_types.to_vec();
-        self.gpu.renderers
+        self.gpu
+            .renderers
             .backbone
             .set_ss_override(Some(ss_types.to_vec()));
         let camera_eye = self.camera_controller.camera.eye;

@@ -26,7 +26,8 @@ impl VisoEngine {
 
     /// Push post-processing options to the composite pass.
     pub(super) fn apply_post_processing(&mut self) {
-        self.gpu.post_process
+        self.gpu
+            .post_process
             .apply_options(&self.options, &self.gpu.context.queue);
     }
 

@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use entity_store::EntityStore;
 use foldit_conv::render::RenderCoords;
 use glam::{Mat4, Vec3};
-use entity_store::EntityStore;
 use scene::{Focus, SceneTopology, VisualState};
 use scene_data::SceneEntity;
 
@@ -464,7 +464,9 @@ impl VisoEngine {
         );
 
         self.check_and_submit_lod();
-        self.gpu.pick.update_selection_buffer(&self.gpu.context.queue);
+        self.gpu
+            .pick
+            .update_selection_buffer(&self.gpu.context.queue);
         let _color_transitioning =
             self.gpu.pick.residue_colors.update(&self.gpu.context.queue);
         self.lighting
@@ -503,7 +505,10 @@ impl VisoEngine {
                 self.topology.sidechain_topology.target_positions.clone()
             }),
             frame.backbone_sidechain_bonds.clone().unwrap_or_else(|| {
-                self.topology.sidechain_topology.target_backbone_bonds.clone()
+                self.topology
+                    .sidechain_topology
+                    .target_backbone_bonds
+                    .clone()
             }),
         );
 
@@ -629,9 +634,11 @@ impl VisoEngine {
             self.gpu.context.resize(width, height);
             self.camera_controller.resize(width, height);
             self.gpu.post_process.resize(&self.gpu.context);
-            self.gpu.pick
-                .picking
-                .resize(&self.gpu.context.device, width, height);
+            self.gpu.pick.picking.resize(
+                &self.gpu.context.device,
+                width,
+                height,
+            );
         }
     }
 }
@@ -698,7 +705,8 @@ impl VisoEngine {
                 self.gpu.pick.picking.handle_click(index, extend)
             }
             VisoCommand::SelectSegment { index, extend } => self
-                .gpu.pick
+                .gpu
+                .pick
                 .select_segment(index, &self.topology.ss_types, extend),
             VisoCommand::SelectChain { index, extend } => {
                 let chains = self.gpu.renderers.backbone.cached_chains();

@@ -186,7 +186,9 @@ impl MeshCache {
         let ss: Vec<foldit_conv::secondary_structure::SSType> =
             crate::engine::scene_data::concatenate_ss_types(
                 entities,
-                &crate::engine::scene_data::compute_entity_residue_ranges(entities),
+                &crate::engine::scene_data::compute_entity_residue_ranges(
+                    entities,
+                ),
             );
         self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
         let colors: Vec<[f32; 3]> = entities
