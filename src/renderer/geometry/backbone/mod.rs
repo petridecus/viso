@@ -133,8 +133,8 @@ pub struct PreparedBackboneData<'a> {
     pub ribbon_index_count: u32,
     pub sheet_offsets: Vec<(u32, Vec3)>,
     pub chain_ranges: Vec<ChainRange>,
-    pub cached_chains: Vec<Vec<Vec3>>,
-    pub cached_na_chains: Vec<Vec<Vec3>>,
+    pub cached_chains: &'a [Vec<Vec3>],
+    pub cached_na_chains: &'a [Vec<Vec3>],
     pub ss_override: Option<Vec<SSType>>,
 }
 
@@ -324,8 +324,10 @@ impl BackboneRenderer {
         }
         self.sheet_offsets = data.sheet_offsets;
         self.chain_ranges = data.chain_ranges;
-        self.cached_chains = data.cached_chains;
-        self.cached_na_chains = data.cached_na_chains;
+        self.cached_chains.clear();
+        self.cached_chains.extend_from_slice(data.cached_chains);
+        self.cached_na_chains.clear();
+        self.cached_na_chains.extend_from_slice(data.cached_na_chains);
         self.last_hash =
             combined_hash(&self.cached_chains, &self.cached_na_chains);
         if let Some(ss) = data.ss_override {
@@ -335,12 +337,14 @@ impl BackboneRenderer {
 
     pub fn update_metadata(
         &mut self,
-        cached_chains: Vec<Vec<Vec3>>,
-        cached_na_chains: Vec<Vec<Vec3>>,
+        cached_chains: &[Vec<Vec3>],
+        cached_na_chains: &[Vec<Vec3>],
         ss_override: Option<Vec<SSType>>,
     ) {
-        self.cached_chains = cached_chains;
-        self.cached_na_chains = cached_na_chains;
+        self.cached_chains.clear();
+        self.cached_chains.extend_from_slice(cached_chains);
+        self.cached_na_chains.clear();
+        self.cached_na_chains.extend_from_slice(cached_na_chains);
         self.last_hash =
             combined_hash(&self.cached_chains, &self.cached_na_chains);
         if let Some(ss) = ss_override {

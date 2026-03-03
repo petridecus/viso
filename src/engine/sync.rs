@@ -112,13 +112,11 @@ impl VisoEngine {
         } else {
             Some(self.topology.ss_types.clone())
         };
-        let backbone_chains = self.visual.backbone_chains.clone();
-        let na_chains = self.topology.na_chains.clone();
 
         if animating {
             self.gpu.renderers.backbone.update_metadata(
-                backbone_chains,
-                na_chains,
+                &self.visual.backbone_chains,
+                &self.topology.na_chains,
                 ss_types,
             );
         } else {
@@ -133,8 +131,8 @@ impl VisoEngine {
                     ribbon_index_count: prepared.backbone.ribbon_index_count,
                     sheet_offsets: prepared.backbone.sheet_offsets.clone(),
                     chain_ranges: prepared.backbone.chain_ranges.clone(),
-                    cached_chains: backbone_chains,
-                    cached_na_chains: na_chains,
+                    cached_chains: &self.visual.backbone_chains,
+                    cached_na_chains: &self.topology.na_chains,
                     ss_override: ss_types,
                 },
             );
