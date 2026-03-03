@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use entity_store::EntityStore;
 use foldit_conv::render::RenderCoords;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use scene::{Focus, SceneTopology, VisualState};
 use scene_data::SceneEntity;
 
@@ -26,13 +26,10 @@ use crate::gpu::lighting::Lighting;
 use crate::gpu::residue_color::ResidueColorBuffer;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
-use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::picking::{PickingSystem, SelectionBuffer};
 use crate::renderer::pipeline::SceneProcessor;
 use crate::renderer::postprocess::PostProcessStack;
-use crate::renderer::{
-    GeometryPassInput, GpuPipeline, PipelineLayouts, Renderers,
-};
+use crate::renderer::{GpuPipeline, PipelineLayouts, Renderers};
 
 /// Target FPS limit
 const TARGET_FPS: u32 = 300;
@@ -408,10 +405,7 @@ impl VisoEngine {
             .update_selection_buffer(&self.gpu.context.queue);
         let _color_transitioning =
             self.gpu.pick.residue_colors.update(&self.gpu.context.queue);
-        self.gpu
-            .lighting
-            .update_headlamp_from_camera(&self.camera_controller.camera);
-        self.gpu.lighting.update_gpu(&self.gpu.context.queue);
+        self.gpu.update_headlamp(&self.camera_controller.camera);
         self.update_frustum_culling();
 
         // Resolve band/pull specs to world-space each frame (auto-tracks
@@ -457,60 +451,11 @@ impl VisoEngine {
         &mut self,
         view: &wgpu::TextureView,
     ) -> wgpu::CommandEncoder {
-        let mut encoder = self.gpu.context.create_encoder();
-
-        // Geometry pass
-        let input = GeometryPassInput {
-            color: self.gpu.post_process.color_view(),
-            normal: &self.gpu.post_process.normal_view,
-            depth: &self.gpu.post_process.depth_view,
-            show_sidechains: self.options.display.show_sidechains,
-        };
-        let bind_groups = DrawBindGroups {
-            camera: &self.camera_controller.bind_group,
-            lighting: &self.gpu.lighting.bind_group,
-            selection: &self.gpu.pick.selection.bind_group,
-            color: Some(&self.gpu.pick.residue_colors.bind_group),
-        };
-        let frustum = self.camera_controller.frustum();
-        self.gpu.renderers.encode_geometry_pass(
-            &mut encoder,
-            &input,
-            &bind_groups,
-            &frustum,
-        );
-
-        // Post-processing: SSAO → bloom → composite → FXAA
-        let camera = &self.camera_controller.camera;
-        self.gpu.post_process.render(
-            &mut encoder,
-            &self.gpu.context.queue,
-            &crate::renderer::postprocess::post_process::PostProcessCamera {
-                proj: camera.build_projection(),
-                view_matrix: Mat4::look_at_rh(
-                    camera.eye,
-                    camera.target,
-                    camera.up,
-                ),
-                znear: camera.znear,
-                zfar: camera.zfar,
-            },
-            view.clone(),
-        );
-
-        // GPU Picking pass
-        let picking_geometry = self.gpu.pick.build_geometry(
-            &self.gpu.renderers,
+        self.gpu.render_to_view(
+            view,
+            &self.camera_controller,
             self.options.display.show_sidechains,
-        );
-        self.gpu.pick.picking.render(
-            &mut encoder,
-            &self.camera_controller.bind_group,
-            &picking_geometry,
-            (self.gpu.cursor_pos.0 as u32, self.gpu.cursor_pos.1 as u32),
-        );
-
-        encoder
+        )
     }
 
     /// Execute one frame: update animations, run the geometry pass,
@@ -563,14 +508,8 @@ impl VisoEngine {
     /// window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.gpu.context.resize(width, height);
+            self.gpu.resize(width, height);
             self.camera_controller.resize(width, height);
-            self.gpu.post_process.resize(&self.gpu.context);
-            self.gpu.pick.picking.resize(
-                &self.gpu.context.device,
-                width,
-                height,
-            );
         }
     }
 }
@@ -664,7 +603,7 @@ impl VisoEngine {
 
     /// Stop the background scene processor thread.
     pub fn shutdown(&mut self) {
-        self.gpu.scene_processor.shutdown();
+        self.gpu.shutdown();
     }
 }
 

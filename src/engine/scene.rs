@@ -59,6 +59,38 @@ impl SidechainTopology {
             target_backbone_bonds: Vec::new(),
         }
     }
+
+    /// Build a [`SidechainAtoms`] from interpolated positions and bonds,
+    /// using this topology's metadata.
+    #[must_use]
+    pub fn to_interpolated_atoms(
+        &self,
+        positions: &[Vec3],
+        backbone_bonds: &[(Vec3, u32)],
+    ) -> SidechainAtoms {
+        SidechainAtoms {
+            atoms: positions
+                .iter()
+                .enumerate()
+                .map(|(i, &pos)| SidechainAtomData {
+                    position: pos,
+                    residue_idx: self
+                        .residue_indices
+                        .get(i)
+                        .copied()
+                        .unwrap_or(0),
+                    atom_name: String::new(),
+                    is_hydrophobic: self
+                        .hydrophobicity
+                        .get(i)
+                        .copied()
+                        .unwrap_or(false),
+                })
+                .collect(),
+            bonds: self.bonds.clone(),
+            backbone_bonds: backbone_bonds.to_vec(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,43 +208,6 @@ impl SceneTopology {
         self.sidechain_topology.hydrophobicity = sidechain.hydrophobicity();
         self.sidechain_topology.residue_indices = sidechain.residue_indices();
         self.sidechain_topology.atom_names = sidechain.atom_names();
-    }
-
-    /// Build a [`SidechainAtoms`] from interpolated positions and bonds,
-    /// using this scene's topology metadata.
-    ///
-    /// Used when submitting animation frames to the background mesh
-    /// generator.
-    #[must_use]
-    pub fn to_interpolated_sidechain_atoms(
-        &self,
-        positions: &[Vec3],
-        backbone_bonds: &[(Vec3, u32)],
-    ) -> SidechainAtoms {
-        SidechainAtoms {
-            atoms: positions
-                .iter()
-                .enumerate()
-                .map(|(i, &pos)| SidechainAtomData {
-                    position: pos,
-                    residue_idx: self
-                        .sidechain_topology
-                        .residue_indices
-                        .get(i)
-                        .copied()
-                        .unwrap_or(0),
-                    atom_name: String::new(),
-                    is_hydrophobic: self
-                        .sidechain_topology
-                        .hydrophobicity
-                        .get(i)
-                        .copied()
-                        .unwrap_or(false),
-                })
-                .collect(),
-            bonds: self.sidechain_topology.bonds.clone(),
-            backbone_bonds: backbone_bonds.to_vec(),
-        }
     }
 
     /// Set entity residue ranges (populated from prepared scene data).

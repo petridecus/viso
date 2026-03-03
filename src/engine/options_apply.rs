@@ -1,23 +1,17 @@
 //! Options application: push runtime config to GPU subsystems.
 
-use foldit_conv::types::entity::MoleculeEntity;
-
 use super::VisoEngine;
 use crate::options::score_color;
 
 impl VisoEngine {
     /// Push lighting options to the GPU uniform.
     pub(super) fn apply_lighting(&mut self) {
-        self.gpu
-            .lighting
-            .apply_options(&self.options.lighting, &self.gpu.context.queue);
+        self.gpu.apply_lighting(&self.options.lighting);
     }
 
     /// Push post-processing options to the composite pass.
     pub(super) fn apply_post_processing(&mut self) {
-        self.gpu
-            .post_process
-            .apply_options(&self.options, &self.gpu.context.queue);
+        self.gpu.apply_post_processing(&self.options);
     }
 
     /// Push camera options to the controller.
@@ -54,34 +48,18 @@ impl VisoEngine {
             &per_entity_scores,
             &self.options.display.backbone_color_mode,
         );
-        self.gpu.pick.residue_colors.set_target_colors(&new_colors);
+        self.gpu.set_target_colors(&new_colors);
         self.topology.per_residue_colors = Some(new_colors);
     }
 
     /// Refresh ball-and-stick renderer with current visibility flags.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
-        // Collect all ligand entities (not protein, not nucleic acid)
-        let entities: Vec<MoleculeEntity> = self
-            .entities
-            .ligand_entities()
-            .map(|se| se.entity.clone())
-            .collect();
-        self.gpu.renderers.ball_and_stick.update_from_entities(
-            &self.gpu.context,
-            &entities,
+        let entities =
+            self.entities.ligand_entities().map(|se| se.entity.clone());
+        self.gpu.refresh_ball_and_stick(
+            entities,
             &self.options.display,
             Some(&self.options.colors),
-        );
-        // Recreate picking bind groups
-        self.gpu.pick.groups.rebuild_bns_bond(
-            &self.gpu.pick.picking,
-            &self.gpu.context.device,
-            &self.gpu.renderers.ball_and_stick,
-        );
-        self.gpu.pick.groups.rebuild_bns_sphere(
-            &self.gpu.pick.picking,
-            &self.gpu.context.device,
-            &self.gpu.renderers.ball_and_stick,
         );
     }
 }
