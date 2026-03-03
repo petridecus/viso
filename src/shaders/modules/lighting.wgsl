@@ -2,9 +2,7 @@
 
 struct LightingUniform {
     light1_dir: vec3<f32>,
-    light1_dir_w: f32,
     light2_dir: vec3<f32>,
-    light2_dir_w: f32,
     light1_intensity: f32,
     light2_intensity: f32,
     ambient: f32,
@@ -16,11 +14,8 @@ struct LightingUniform {
     rim_color: vec3<f32>,
     ibl_strength: f32,
     rim_dir: vec3<f32>,
-    rim_dir_w: f32,
     roughness: f32,
     metalness: f32,
-    metalness_align_a: f32,
-    metalness_align_b: f32,
 };
 
 // --- PBR functions ---

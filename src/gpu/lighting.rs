@@ -9,7 +9,7 @@ use crate::gpu::pipeline_helpers::{
 
 /// Lighting configuration shared across all shaders.
 ///
-/// Layout matches the WGSL `LightingUniform` struct (112 bytes, std140).
+/// Layout matches the WGSL `LightingUniform` struct (std140).
 /// Padding is handled automatically by encase.
 #[derive(Debug, Copy, Clone, ShaderType)]
 pub struct LightingUniform {
