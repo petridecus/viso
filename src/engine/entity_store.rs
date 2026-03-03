@@ -22,6 +22,8 @@ pub(crate) struct EntityStore {
     pub source: Vec<MoleculeEntity>,
     /// Scene entities (rendering copy with visibility, SS override, scores).
     scene_entities: Vec<SceneEntity>,
+    /// Entity ID → index in `scene_entities` for O(1) lookup.
+    id_index: FxHashMap<u32, usize>,
     /// Per-entity animation behavior overrides.
     pub behaviors: FxHashMap<u32, Transition>,
     focus: Focus,
@@ -39,6 +41,7 @@ impl EntityStore {
         Self {
             source: Vec::new(),
             scene_entities: Vec::new(),
+            id_index: FxHashMap::default(),
             behaviors: FxHashMap::default(),
             focus: Focus::Session,
             next_entity_id: 0,
@@ -80,6 +83,7 @@ impl EntityStore {
             let id = self.next_entity_id;
             self.next_entity_id += 1;
             entity.entity_id = id;
+            let idx = self.scene_entities.len();
             self.scene_entities.push(SceneEntity {
                 entity,
                 visible: true,
@@ -87,6 +91,7 @@ impl EntityStore {
                 per_residue_scores: None,
                 mesh_version: 0,
             });
+            let _ = self.id_index.insert(id, idx);
             ids.push(id);
         }
         self.invalidate();
@@ -96,23 +101,31 @@ impl EntityStore {
     /// Read access to a scene entity.
     #[must_use]
     pub fn entity(&self, id: u32) -> Option<&SceneEntity> {
-        self.scene_entities.iter().find(|e| e.id() == id)
+        self.id_index
+            .get(&id)
+            .map(|&idx| &self.scene_entities[idx])
     }
 
     /// Mutable access to a scene entity.
     pub fn entity_mut(&mut self, id: u32) -> Option<&mut SceneEntity> {
-        self.scene_entities.iter_mut().find(|e| e.id() == id)
+        self.id_index
+            .get(&id)
+            .map(|&idx| &mut self.scene_entities[idx])
     }
 
     /// Remove an entity by ID. Returns true if the entity existed.
     pub fn remove_entity(&mut self, id: u32) -> bool {
-        let before = self.scene_entities.len();
-        self.scene_entities.retain(|e| e.id() != id);
-        let removed = self.scene_entities.len() < before;
-        if removed {
-            self.invalidate();
+        let Some(idx) = self.id_index.remove(&id) else {
+            return false;
+        };
+        drop(self.scene_entities.swap_remove(idx));
+        // If swap_remove moved the last element into `idx`, update its index.
+        if idx < self.scene_entities.len() {
+            let swapped_id = self.scene_entities[idx].id();
+            let _ = self.id_index.insert(swapped_id, idx);
         }
-        removed
+        self.invalidate();
+        true
     }
 
     /// Read access to all scene entities (insertion order).
@@ -213,11 +226,8 @@ impl EntityStore {
     ///
     /// Bumps mesh version and invalidates the generation counter.
     pub fn replace_entity(&mut self, entity: MoleculeEntity) {
-        if let Some(se) = self
-            .scene_entities
-            .iter_mut()
-            .find(|e| e.entity.entity_id == entity.entity_id)
-        {
+        if let Some(&idx) = self.id_index.get(&entity.entity_id) {
+            let se = &mut self.scene_entities[idx];
             se.entity = entity;
             se.invalidate_render_cache();
         }
@@ -226,11 +236,8 @@ impl EntityStore {
 
     /// Update protein entity coords in a specific scene entity.
     pub fn update_entity_protein_coords(&mut self, id: u32, coords: Coords) {
-        if let Some(se) = self
-            .scene_entities
-            .iter_mut()
-            .find(|e| e.entity.entity_id == id)
-        {
+        if let Some(&idx) = self.id_index.get(&id) {
+            let se = &mut self.scene_entities[idx];
             let mut entities = vec![se.entity.clone()];
             update_protein_entities(&mut entities, coords);
             if let Some(updated) = entities.into_iter().next() {
