@@ -225,17 +225,19 @@ impl MeshCache {
             .sum();
         let geometry = geometry.clamped_for_residues(total_residues);
 
-        // Clear cache if global settings changed
-        let settings_changed = self.last_display.as_ref() != Some(display)
-            || self.last_colors.as_ref() != Some(colors)
-            || self.last_geometry.as_ref() != Some(&geometry);
+        // Split invalidation: geometry changes clear entire cache,
+        // color/display changes only regenerate instance data.
+        let geometry_changed =
+            self.last_geometry.as_ref() != Some(&geometry);
+        let instances_changed = self.last_display.as_ref() != Some(display)
+            || self.last_colors.as_ref() != Some(colors);
 
-        if settings_changed {
+        if geometry_changed {
             self.meshes.clear();
-            self.last_display = Some(display.clone());
-            self.last_colors = Some(colors.clone());
-            self.last_geometry = Some(geometry.clone());
         }
+        self.last_display = Some(display.clone());
+        self.last_colors = Some(colors.clone());
+        self.last_geometry = Some(geometry.clone());
 
         // Generate or reuse per-entity meshes
         for e in entities {
@@ -248,6 +250,12 @@ impl MeshCache {
                     e, display, colors, &geometry,
                 );
                 drop(self.meshes.insert(e.id, (e.mesh_version, mesh)));
+            } else if instances_changed {
+                if let Some((_, mesh)) = self.meshes.get_mut(&e.id) {
+                    super::mesh_gen::regenerate_instances(
+                        mesh, e, display, colors,
+                    );
+                }
             }
         }
 

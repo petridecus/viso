@@ -90,6 +90,26 @@ fn generate_non_backbone_bytes(
     )
 }
 
+/// Regenerate only instance data (sidechains, ball-and-stick, nucleic acid)
+/// for a cached entity mesh, keeping the expensive backbone geometry intact.
+///
+/// Used when only `ColorOptions` or `DisplayOptions` changed but
+/// `GeometryOptions` stayed the same.
+pub fn regenerate_instances(
+    mesh: &mut CachedEntityMesh,
+    entity: &PerEntityData,
+    display: &DisplayOptions,
+    colors: &ColorOptions,
+) {
+    let (sc_bytes, sc_count) =
+        generate_sidechain_bytes(entity, &mesh.backbone.sheet_offsets, colors);
+    mesh.sidechain_instances = sc_bytes;
+    mesh.sidechain_instance_count = sc_count;
+    let (bns, na) = generate_non_backbone_bytes(entity, display, colors);
+    mesh.bns = bns;
+    mesh.na = na;
+}
+
 /// Generate mesh for a single entity.
 pub fn generate_entity_mesh(
     g: &PerEntityData,
