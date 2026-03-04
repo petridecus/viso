@@ -62,6 +62,17 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     window_height: u32,
     panel_width: u32,
 ) -> Result<(WebView, mpsc::Receiver<UiAction>), wry::Error> {
+    // If the embedded dist is just the placeholder (no WASM files), skip the
+    // webview entirely so the user doesn't see a blank white panel.
+    let has_wasm = UiAssets::iter().any(|name| name.ends_with(".wasm"));
+    if !has_wasm {
+        log::warn!(
+            "viso-ui was not built (no .wasm in embedded assets). \
+             Run `trunk build` in crates/viso-ui/ to enable the GUI panel."
+        );
+        return Err(wry::Error::MessageSender);
+    }
+
     let (tx, rx) = mpsc::channel();
 
     let bounds = panel_bounds(window_width, window_height, panel_width);

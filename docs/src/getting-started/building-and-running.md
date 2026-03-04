@@ -6,6 +6,24 @@
 - **A GPU with WebGPU support** -- Metal (macOS), Vulkan (Linux/Windows), or DX12 (Windows)
 - **Internet access** (optional, for RCSB downloads)
 
+### GUI panel (viso-ui)
+
+The default build embeds a WASM-based options panel. On first `cargo build`, the
+build script runs [Trunk](https://trunkrs.dev/) automatically to compile it. Two
+extra tools are required:
+
+```sh
+# WASM compilation target
+rustup target add wasm32-unknown-unknown
+
+# Trunk (WASM bundler)
+cargo install trunk
+```
+
+If Trunk or the WASM target is missing, the build still succeeds but the panel
+will be non-functional. To skip the GUI entirely, build with
+`--no-default-features --features viewer`.
+
 ## Building
 
 From the repository root:

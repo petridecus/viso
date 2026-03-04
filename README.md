@@ -50,6 +50,24 @@ cargo --version
 cargo +nightly fmt --version
 ```
 
+### GUI panel (viso-ui)
+
+The default build embeds a WASM-based options panel. On first `cargo build`, the
+build script runs [Trunk](https://trunkrs.dev/) automatically to compile it. Two
+extra tools are required:
+
+```sh
+# WASM compilation target
+rustup target add wasm32-unknown-unknown
+
+# Trunk (WASM bundler) — install once
+cargo install trunk
+```
+
+If Trunk or the WASM target is missing, the build still succeeds but the panel
+will be non-functional. To skip the GUI entirely, build with
+`--no-default-features --features viewer`.
+
 ### Platform-specific dependencies
 
 **Linux** — the default build includes a GUI webview panel, which requires GTK3 and WebKit2GTK:
@@ -65,9 +83,8 @@ sudo dnf install gtk3-devel webkit2gtk4.1-devel
 sudo pacman -S gtk3 webkit2gtk-4.1
 ```
 
-**macOS** and **Windows** require no additional system dependencies.
-
-To build without the GUI (and skip these dependencies), use `--no-default-features --features viewer`.
+**macOS** and **Windows** require no additional system dependencies beyond those
+listed in [GUI panel](#gui-panel-viso-ui) above.
 
 ## Building
 
