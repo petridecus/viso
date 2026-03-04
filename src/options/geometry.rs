@@ -8,51 +8,51 @@ use serde::{Deserialize, Serialize};
 /// Geometry detail options for molecular rendering primitives.
 pub struct GeometryOptions {
     /// Helix ribbon half-width in angstroms.
-    #[schemars(title = "Helix Width", range(min = 0.2, max = 3.0), extend("step" = 0.1))]
+    #[schemars(title = "Helix Width", range(min = 0.2, max = 3.0), extend("step" = 0.1), extend("x-group" = "Helix"))]
     pub helix_width: f32,
     /// Helix ribbon thickness.
-    #[schemars(title = "Helix Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "Helix Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05), extend("x-group" = "Helix"))]
     pub helix_thickness: f32,
     /// Helix cross-section roundness (0 = flat ribbon, 1 = circular tube).
-    #[schemars(title = "Helix Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "Helix Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05), extend("x-group" = "Helix"))]
     pub helix_roundness: f32,
 
     /// Sheet ribbon half-width in angstroms.
-    #[schemars(title = "Sheet Width", range(min = 0.2, max = 3.0), extend("step" = 0.1))]
+    #[schemars(title = "Sheet Width", range(min = 0.2, max = 3.0), extend("step" = 0.1), extend("x-group" = "Sheet"))]
     pub sheet_width: f32,
     /// Sheet ribbon thickness.
-    #[schemars(title = "Sheet Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "Sheet Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05), extend("x-group" = "Sheet"))]
     pub sheet_thickness: f32,
     /// Sheet cross-section roundness (0 = flat ribbon, 1 = circular tube).
-    #[schemars(title = "Sheet Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "Sheet Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05), extend("x-group" = "Sheet"))]
     pub sheet_roundness: f32,
 
     /// Coil tube width (diameter).
-    #[schemars(title = "Coil Width", range(min = 0.1, max = 1.5), extend("step" = 0.05))]
+    #[schemars(title = "Coil Width", range(min = 0.1, max = 1.5), extend("step" = 0.05), extend("x-group" = "Coil"))]
     pub coil_width: f32,
     /// Coil tube thickness.
-    #[schemars(title = "Coil Thickness", range(min = 0.1, max = 1.5), extend("step" = 0.05))]
+    #[schemars(title = "Coil Thickness", range(min = 0.1, max = 1.5), extend("step" = 0.05), extend("x-group" = "Coil"))]
     pub coil_thickness: f32,
     /// Coil cross-section roundness (0 = flat ribbon, 1 = circular tube).
-    #[schemars(title = "Coil Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "Coil Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05), extend("x-group" = "Coil"))]
     pub coil_roundness: f32,
 
     /// Nucleic acid backbone ribbon width.
-    #[schemars(title = "NA Width", range(min = 0.2, max = 3.0), extend("step" = 0.1))]
+    #[schemars(title = "NA Width", range(min = 0.2, max = 3.0), extend("step" = 0.1), extend("x-group" = "Nucleic Acid"))]
     pub na_width: f32,
     /// Nucleic acid backbone ribbon thickness.
-    #[schemars(title = "NA Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "NA Thickness", range(min = 0.05, max = 1.0), extend("step" = 0.05), extend("x-group" = "Nucleic Acid"))]
     pub na_thickness: f32,
     /// Nucleic acid backbone roundness (0 = flat ribbon, 1 = circular tube).
-    #[schemars(title = "NA Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05))]
+    #[schemars(title = "NA Roundness", range(min = 0.0, max = 1.0), extend("step" = 0.05), extend("x-group" = "Nucleic Acid"))]
     pub na_roundness: f32,
 
     /// Spline segments per residue (higher = smoother curves, more GPU cost).
-    #[schemars(title = "Spline Detail", range(min = 4, max = 32), extend("step" = 4))]
+    #[schemars(title = "Spline Detail", range(min = 4, max = 32), extend("step" = 4), extend("x-group" = "Quality"))]
     pub segments_per_residue: usize,
     /// Vertices per cross-section ring (higher = rounder tubes, more GPU
     /// cost).
-    #[schemars(title = "Cross-Section Detail", range(min = 4, max = 16), extend("step" = 2))]
+    #[schemars(title = "Cross-Section Detail", range(min = 4, max = 16), extend("step" = 2), extend("x-group" = "Quality"))]
     pub cross_section_verts: usize,
 
     /// Solvent sphere radius in angstroms.

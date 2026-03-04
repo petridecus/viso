@@ -107,7 +107,7 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
                     .unwrap_or_else(|_| Response::new(Cow::from(Vec::new()))),
             }
         })
-        .with_url("viso://localhost/")
+        .with_url(dev_or_embedded_url())
         .with_initialization_script(BRIDGE_JS)
         .with_ipc_handler(move |req| {
             let body = req.body();
@@ -286,6 +286,20 @@ const BRIDGE_JS: &str = r"
     };
 })();
 ";
+
+/// Use the trunk dev server when `VISO_UI_DEV` is set, otherwise load
+/// from the embedded assets via the custom protocol.
+///
+/// For hot-reload during UI development, run `trunk serve` in
+/// `crates/viso-ui/` and launch viso with `VISO_UI_DEV=1 cargo run`.
+fn dev_or_embedded_url() -> &'static str {
+    if std::env::var("VISO_UI_DEV").is_ok() {
+        log::info!("VISO_UI_DEV set — loading UI from trunk dev server");
+        "http://localhost:8080/"
+    } else {
+        "viso://localhost/"
+    }
+}
 
 /// Parse an IPC message from the WASM side into a [`UiAction`].
 fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {

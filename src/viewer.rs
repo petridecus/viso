@@ -175,9 +175,10 @@ impl ViewerApp {
             return;
         };
         engine.resize(vp_w, vp_h);
-        let Some(window) = &self.window else { return };
         #[cfg(feature = "gui")]
-        self.panel.apply_layout(window);
+        if let Some(window) = &self.window {
+            self.panel.apply_layout(window);
+        }
     }
 
     fn handle_scale_factor_changed(&mut self, scale_factor: f64) {
@@ -225,6 +226,10 @@ impl ViewerApp {
         self.panel.push_stats_if_due(now, engine);
 
         let Some(w) = &self.window else { return };
+
+        #[cfg(feature = "gui")]
+        self.panel.tick_slide(dt, w);
+
         w.request_redraw();
     }
 
@@ -306,8 +311,9 @@ impl ViewerApp {
         #[cfg(feature = "gui")]
         if code == KeyCode::Backslash {
             self.panel.toggle();
-            let Some(window) = &self.window else { return };
-            self.panel.apply_layout(window);
+            if let Some(window) = &self.window {
+                self.panel.apply_layout(window);
+            }
             return;
         }
 

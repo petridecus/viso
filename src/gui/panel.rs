@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use winit::window::Window;
+use wry::dpi;
 
 use super::webview::{self, UiAction};
 use crate::VisoEngine;
@@ -23,6 +24,9 @@ pub(crate) struct PanelController {
     peek: bool,
     /// Current panel width in physical pixels.
     width: u32,
+    /// Animated x-position of the panel (physical px, left edge).
+    /// Only used for the unpinned slide; pinned mode ignores this.
+    slide_x: f32,
 }
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -34,6 +38,14 @@ impl PanelController {
     const MIN_PANEL_WIDTH: u32 = 220;
     /// Maximum panel width for resize.
     const MAX_PANEL_WIDTH: u32 = 700;
+    /// How many pixels from the right edge trigger a peek.
+    const EDGE_ZONE: f32 = 24.0;
+    /// Extra grace pixels past the panel's left edge before it hides.
+    const PEEK_GRACE: f32 = 40.0;
+    /// Lerp speed for the peek slide (fraction per second).
+    const SLIDE_SPEED: f32 = 12.0;
+    /// Snap when within this many pixels of the target.
+    const SNAP_PX: f32 = 0.5;
 }
 
 // ── Construction ─────────────────────────────────────────────────────────
@@ -48,6 +60,7 @@ impl PanelController {
             pinned: true,
             peek: false,
             width: webview::PANEL_WIDTH,
+            slide_x: 0.0,
         }
     }
 
@@ -65,10 +78,12 @@ impl PanelController {
                 webview::push_panel_pinned(&wv, self.pinned);
                 self.webview = Some(wv);
                 self.action_rx = Some(rx);
+                // Start the slide position at the correct spot.
+                self.slide_x = width as f32;
+                self.apply_layout(window);
             }
             Err(e) => {
                 log::error!("Failed to create webview: {e}");
-                // Continue without GUI panel
             }
         }
     }
@@ -86,40 +101,65 @@ impl PanelController {
         }
     }
 
-    /// Position the webview according to the current pinned/peek state.
+    /// Set the webview bounds directly.  Used by pinned mode and resize.
     pub(crate) fn apply_layout(&self, window: &Window) {
         let inner = window.inner_size();
         let Some(ref wv) = self.webview else {
             return;
         };
 
-        let visible = self.pinned || self.peek;
-        if visible {
-            let bounds = if self.pinned {
-                webview::panel_bounds(inner.width, inner.height, self.width)
-            } else {
-                webview::panel_bounds_floating(
-                    inner.width,
-                    inner.height,
-                    self.width,
-                    Self::PANEL_MARGIN,
-                )
-            };
-            let _ = wv.set_bounds(bounds);
-        } else {
-            // Park off-screen to the right.
-            use wry::dpi;
-            let _ = wv.set_bounds(wry::Rect {
-                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-                    inner.width as i32,
-                    0,
-                )),
-                size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                    self.width,
-                    inner.height,
-                )),
-            });
+        if self.pinned {
+            let _ = wv.set_bounds(webview::panel_bounds(
+                inner.width,
+                inner.height,
+                self.width,
+            ));
         }
+        // Unpinned positioning is handled by `tick_slide`.
+    }
+
+    /// Advance the unpinned slide animation by `dt` seconds.
+    /// Call every frame from `handle_redraw`.  Does nothing when pinned.
+    pub(crate) fn tick_slide(&mut self, dt: f32, window: &Window) {
+        if self.pinned {
+            return;
+        }
+        let inner = window.inner_size();
+        let Some(ref wv) = self.webview else {
+            return;
+        };
+
+        let w = inner.width as f32;
+        let margin = Self::PANEL_MARGIN as f32;
+
+        // Where the panel should end up.
+        let target = if self.peek {
+            w - self.width as f32 - margin
+        } else {
+            w // off-screen right
+        };
+
+        // Lerp toward target.
+        let diff = target - self.slide_x;
+        if diff.abs() < Self::SNAP_PX {
+            self.slide_x = target;
+        } else {
+            self.slide_x += diff * (Self::SLIDE_SPEED * dt).min(1.0);
+        }
+
+        #[allow(clippy::cast_possible_truncation)]
+        let x = self.slide_x.round() as i32;
+        let margin_i = Self::PANEL_MARGIN as i32;
+
+        let _ = wv.set_bounds(wry::Rect {
+            position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                x, margin_i,
+            )),
+            size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                self.width.min(inner.width),
+                inner.height.saturating_sub(Self::PANEL_MARGIN * 2),
+            )),
+        });
     }
 
     /// Check if the mouse is near the right edge and temporarily reveal the
@@ -128,26 +168,20 @@ impl PanelController {
         if self.pinned {
             return;
         }
-        let inner = window.inner_size();
-        let edge_zone = 6.0;
+        let w = window.inner_size().width as f32;
 
-        let near_edge = mouse_x >= (inner.width as f32 - edge_zone);
+        let near_edge = mouse_x >= (w - Self::EDGE_ZONE);
         let in_panel = mouse_x
-            >= (inner.width as f32
-                - self.width as f32
-                - Self::PANEL_MARGIN as f32);
+            >= (w - self.width as f32
+                - Self::PANEL_MARGIN as f32
+                - Self::PEEK_GRACE);
 
-        let should_peek = near_edge || (self.peek && in_panel);
-
-        if should_peek != self.peek {
-            self.peek = should_peek;
-            self.apply_layout(window);
-        }
+        self.peek = near_edge || (self.peek && in_panel);
+        // Slide is driven by `tick_slide` each frame.
     }
 
     /// Drain IPC actions from the webview, apply them to the engine, and
-    /// handle panel toggle/resize.  Returns `true` if the panel layout
-    /// changed (so the caller can request a redraw of the layout).
+    /// handle panel toggle/resize.
     pub(crate) fn drain_and_apply(
         &mut self,
         engine: &mut VisoEngine,
