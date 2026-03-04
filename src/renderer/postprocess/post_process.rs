@@ -10,24 +10,24 @@ use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::VisoOptions;
 
 /// Camera parameters needed for post-processing passes.
-pub struct PostProcessCamera {
-    pub proj: Mat4,
-    pub view_matrix: Mat4,
-    pub znear: f32,
-    pub zfar: f32,
+pub(crate) struct PostProcessCamera {
+    pub(crate) proj: Mat4,
+    pub(crate) view_matrix: Mat4,
+    pub(crate) znear: f32,
+    pub(crate) zfar: f32,
 }
 
 /// Owns the full post-processing pipeline: depth/normal G-buffers,
 /// SSAO, bloom, composite, and FXAA passes.
 pub(crate) struct PostProcessStack {
-    pub depth_texture: wgpu::Texture,
-    pub depth_view: wgpu::TextureView,
-    pub normal_texture: wgpu::Texture,
-    pub normal_view: wgpu::TextureView,
-    pub ssao_renderer: SsaoRenderer,
-    pub bloom_pass: BloomPass,
-    pub composite_pass: CompositePass,
-    pub fxaa_pass: FxaaPass,
+    pub(crate) depth_texture: wgpu::Texture,
+    pub(crate) depth_view: wgpu::TextureView,
+    pub(crate) normal_texture: wgpu::Texture,
+    pub(crate) normal_view: wgpu::TextureView,
+    pub(crate) ssao_renderer: SsaoRenderer,
+    pub(crate) bloom_pass: BloomPass,
+    pub(crate) composite_pass: CompositePass,
+    pub(crate) fxaa_pass: FxaaPass,
 }
 
 impl PostProcessStack {

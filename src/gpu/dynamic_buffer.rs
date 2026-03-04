@@ -1,20 +1,30 @@
 //! Dynamic GPU buffer management with automatic resizing
 //!
 //! Provides buffers that grow automatically when data exceeds capacity,
-//! using a 2x growth strategy to minimize reallocations.
+//! using a 2x growth strategy to minimize reallocations.  Buffers also
+//! shrink after sustained underutilization to reclaim VRAM.
 
 use wgpu::util::DeviceExt;
 
-/// A GPU buffer that can grow dynamically
+/// Consecutive underutilized writes before shrinking (~1 s at 60 fps).
+const SHRINK_AFTER_WRITES: u32 = 60;
+
+/// Minimum capacity below which shrinking is not worth the overhead.
+const SHRINK_MIN_CAPACITY: usize = 4096;
+
+/// A GPU buffer that grows and shrinks dynamically.
 ///
-/// Uses a 2x growth strategy when capacity is exceeded.
-/// Never shrinks (GPU buffers cannot be resized in place).
+/// Uses a 2× growth strategy when capacity is exceeded.  Shrinks when
+/// utilization stays below 25 % of capacity for [`SHRINK_AFTER_WRITES`]
+/// consecutive writes, reallocating to 2× the used size.
 pub struct DynamicBuffer {
     buffer: wgpu::Buffer,
     capacity: usize, // Capacity in bytes
     len: usize,      // Current data length in bytes
     usage: wgpu::BufferUsages,
     label: String,
+    /// Consecutive writes where `len < capacity / 4`.
+    writes_underutilized: u32,
 }
 
 impl DynamicBuffer {
@@ -40,6 +50,7 @@ impl DynamicBuffer {
             len: 0,
             usage,
             label: label.to_owned(),
+            writes_underutilized: 0,
         }
     }
 
@@ -66,6 +77,7 @@ impl DynamicBuffer {
             len: data_bytes.len(),
             usage,
             label: label.to_owned(),
+            writes_underutilized: 0,
         }
     }
 
@@ -81,7 +93,7 @@ impl DynamicBuffer {
         self.write_bytes(device, queue, bytemuck::cast_slice(data))
     }
 
-    /// Write raw bytes to buffer, growing if necessary.
+    /// Write raw bytes to buffer, growing or shrinking as needed.
     ///
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
     pub fn write_bytes(
@@ -92,23 +104,36 @@ impl DynamicBuffer {
     ) -> bool {
         let needed = data.len();
 
+        // Track sustained underutilization for shrink policy.
+        if needed < self.capacity / 4 && self.capacity > SHRINK_MIN_CAPACITY {
+            self.writes_underutilized += 1;
+        } else {
+            self.writes_underutilized = 0;
+        }
+
         let reallocated = if needed > self.capacity {
-            // Cap the growth factor so we don't exceed the wgpu 256 MB
-            // max buffer size.
+            // Growth: 2× with a 256 MB hard cap.
             const MAX_BUFFER: usize = 256 * 1024 * 1024;
             let new_capacity = (needed * 2)
                 .max(self.capacity + 1024)
                 .min(MAX_BUFFER)
                 .max(needed);
 
-            self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&self.label),
-                size: new_capacity as u64,
-                usage: self.usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-
-            self.capacity = new_capacity;
+            self.reallocate(device, new_capacity);
+            self.writes_underutilized = 0;
+            true
+        } else if self.writes_underutilized >= SHRINK_AFTER_WRITES {
+            // Shrink: utilization has been <25 % long enough.
+            let new_capacity = (needed * 2).max(64);
+            log::debug!(
+                "Shrinking buffer '{}': {} → {} bytes (used: {})",
+                self.label,
+                self.capacity,
+                new_capacity,
+                needed,
+            );
+            self.reallocate(device, new_capacity);
+            self.writes_underutilized = 0;
             true
         } else {
             false
@@ -120,6 +145,17 @@ impl DynamicBuffer {
         self.len = needed;
 
         reallocated
+    }
+
+    /// Replace the backing buffer with one of `new_capacity` bytes.
+    fn reallocate(&mut self, device: &wgpu::Device, new_capacity: usize) {
+        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&self.label),
+            size: new_capacity as u64,
+            usage: self.usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.capacity = new_capacity;
     }
 
     /// Returns a reference to the underlying `wgpu::Buffer`.

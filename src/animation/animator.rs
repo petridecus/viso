@@ -19,15 +19,15 @@ use crate::engine::scene_data::EntityResidueRange;
 /// no longer stitches them from separate subsystems.
 pub(crate) struct AnimationFrame {
     /// Interpolated backbone chains (per-chain Vec of N/CA/C atoms).
-    pub backbone_chains: Vec<Vec<Vec3>>,
+    pub(crate) backbone_chains: Vec<Vec<Vec3>>,
     /// Interpolated sidechain atom positions (flat, topology order).
     /// `None` when no interpolated data is available from runners.
-    pub sidechain_positions: Option<Vec<Vec3>>,
+    pub(crate) sidechain_positions: Option<Vec<Vec3>>,
     /// Interpolated CA-CB backbone-sidechain bonds.
     /// `None` when no bond data is available from runners.
-    pub backbone_sidechain_bonds: Option<Vec<(Vec3, u32)>>,
+    pub(crate) backbone_sidechain_bonds: Option<Vec<(Vec3, u32)>>,
     /// Whether the current animation phase allows sidechains to be visible.
-    pub sidechains_visible: bool,
+    pub(crate) sidechains_visible: bool,
 }
 
 /// Per-entity sidechain data for animation setup.
@@ -36,9 +36,9 @@ pub(crate) struct AnimationFrame {
 /// bond topology so they can be passed as one argument.
 pub(crate) struct EntitySidechainData {
     /// Sidechain atom positions (start/target) for interpolation.
-    pub positions: Option<SidechainAnimPositions>,
+    pub(crate) positions: Option<SidechainAnimPositions>,
     /// Target backbone-sidechain bonds (CA pos, CB atom index).
-    pub backbone_bonds: Vec<(Vec3, u32)>,
+    pub(crate) backbone_bonds: Vec<(Vec3, u32)>,
 }
 
 /// Animation state for a single entity.

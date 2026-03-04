@@ -14,27 +14,27 @@ use crate::gpu::{RenderContext, Shader, ShaderComposer};
 /// SSAO parameters uniform - must match WGSL struct
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct SsaoParams {
+pub(crate) struct SsaoParams {
     /// Inverse projection matrix.
-    pub inv_proj: [[f32; 4]; 4],
+    pub(crate) inv_proj: [[f32; 4]; 4],
     /// Projection matrix.
-    pub proj: [[f32; 4]; 4],
+    pub(crate) proj: [[f32; 4]; 4],
     /// View matrix.
-    pub view: [[f32; 4]; 4],
+    pub(crate) view: [[f32; 4]; 4],
     /// Screen dimensions in pixels `[width, height]`.
-    pub screen_size: [f32; 2],
+    pub(crate) screen_size: [f32; 2],
     /// Near clipping plane distance.
-    pub near: f32,
+    pub(crate) near: f32,
     /// Far clipping plane distance.
-    pub far: f32,
+    pub(crate) far: f32,
     /// SSAO sampling radius in view space.
-    pub radius: f32,
+    pub(crate) radius: f32,
     /// Depth bias to prevent self-occlusion.
-    pub bias: f32,
+    pub(crate) bias: f32,
     /// Exponent applied to the AO factor.
-    pub power: f32,
+    pub(crate) power: f32,
     /// Padding for GPU alignment.
-    pub _pad: f32,
+    pub(crate) _pad: f32,
 }
 
 /// SSAO (Screen Space Ambient Occlusion) renderer
@@ -58,43 +58,43 @@ struct SsaoBlurInputs<'a> {
 }
 
 /// SSAO (Screen-Space Ambient Occlusion) renderer.
-pub struct SsaoRenderer {
+pub(crate) struct SsaoRenderer {
     /// Raw SSAO output texture (before blur).
-    pub ssao_texture: wgpu::Texture,
+    pub(crate) ssao_texture: wgpu::Texture,
     /// View into the raw SSAO texture.
-    pub ssao_view: wgpu::TextureView,
+    pub(crate) ssao_view: wgpu::TextureView,
     /// Blurred SSAO output texture.
-    pub ssao_blurred_texture: wgpu::Texture,
+    pub(crate) ssao_blurred_texture: wgpu::Texture,
     /// View into the blurred SSAO texture.
-    pub ssao_blurred_view: wgpu::TextureView,
+    pub(crate) ssao_blurred_view: wgpu::TextureView,
 
     /// GPU buffer holding the sample kernel.
-    pub kernel_buffer: wgpu::Buffer,
+    pub(crate) kernel_buffer: wgpu::Buffer,
     /// GPU buffer holding SSAO parameters uniform.
-    pub params_buffer: wgpu::Buffer,
+    pub(crate) params_buffer: wgpu::Buffer,
 
     /// Random rotation noise texture.
     #[allow(dead_code)] // must stay alive to back noise_view
-    pub noise_texture: wgpu::Texture,
+    noise_texture: wgpu::Texture,
     /// View into the noise texture.
-    pub noise_view: wgpu::TextureView,
+    noise_view: wgpu::TextureView,
     /// Sampler for the noise texture (repeat addressing).
-    pub noise_sampler: wgpu::Sampler,
+    noise_sampler: wgpu::Sampler,
     /// Sampler for the SSAO texture (clamp-to-edge).
-    pub ssao_sampler: wgpu::Sampler,
+    ssao_sampler: wgpu::Sampler,
 
     /// Render pipeline for the SSAO pass.
-    pub ssao_pipeline: wgpu::RenderPipeline,
+    ssao_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the SSAO pass.
-    pub ssao_bind_group_layout: wgpu::BindGroupLayout,
+    ssao_bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group for the SSAO pass.
-    pub ssao_bind_group: wgpu::BindGroup,
+    ssao_bind_group: wgpu::BindGroup,
     /// Render pipeline for the SSAO blur pass.
-    pub blur_pipeline: wgpu::RenderPipeline,
+    blur_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the blur pass.
-    pub blur_bind_group_layout: wgpu::BindGroupLayout,
+    blur_bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group for the blur pass.
-    pub blur_bind_group: wgpu::BindGroup,
+    blur_bind_group: wgpu::BindGroup,
 
     /// Stored depth view for bind group recreation on resize.
     depth_view: wgpu::TextureView,
@@ -105,11 +105,11 @@ pub struct SsaoRenderer {
     height: u32,
 
     /// SSAO sampling radius in view space.
-    pub radius: f32,
+    pub(crate) radius: f32,
     /// Depth bias for self-occlusion prevention.
-    pub bias: f32,
+    pub(crate) bias: f32,
     /// Exponent applied to the AO factor.
-    pub power: f32,
+    pub(crate) power: f32,
 }
 
 const KERNEL_SIZE: usize = 32;

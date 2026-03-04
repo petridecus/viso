@@ -14,47 +14,47 @@ use crate::renderer::picking::PickMap;
 
 /// Backbone mesh data ready for GPU upload (byte buffers).
 #[derive(Clone)]
-pub struct BackboneMeshData {
+pub(crate) struct BackboneMeshData {
     /// Backbone mesh vertex bytes (shared by tube and ribbon passes).
-    pub vertices: Vec<u8>,
+    pub(crate) vertices: Vec<u8>,
     /// Backbone tube index bytes.
-    pub tube_indices: Vec<u8>,
+    pub(crate) tube_indices: Vec<u8>,
     /// Number of backbone tube indices.
-    pub tube_index_count: u32,
+    pub(crate) tube_index_count: u32,
     /// Backbone ribbon index bytes.
-    pub ribbon_indices: Vec<u8>,
+    pub(crate) ribbon_indices: Vec<u8>,
     /// Number of backbone ribbon indices.
-    pub ribbon_index_count: u32,
+    pub(crate) ribbon_index_count: u32,
     /// Per-residue sheet normal offsets for sidechain adjustment.
-    pub sheet_offsets: Vec<(u32, Vec3)>,
+    pub(crate) sheet_offsets: Vec<(u32, Vec3)>,
     /// Per-chain index ranges and bounding spheres for frustum culling.
-    pub chain_ranges: Vec<ChainRange>,
+    pub(crate) chain_ranges: Vec<ChainRange>,
 }
 
 /// Ball-and-stick instance data (GPU-ready byte buffers).
 #[derive(Clone)]
-pub struct BallAndStickInstances {
+pub(crate) struct BallAndStickInstances {
     /// Sphere instance bytes.
-    pub sphere_instances: Vec<u8>,
+    pub(crate) sphere_instances: Vec<u8>,
     /// Number of spheres.
-    pub sphere_count: u32,
+    pub(crate) sphere_count: u32,
     /// Capsule (bond) instance bytes.
-    pub capsule_instances: Vec<u8>,
+    pub(crate) capsule_instances: Vec<u8>,
     /// Number of capsules.
-    pub capsule_count: u32,
+    pub(crate) capsule_count: u32,
 }
 
 /// Nucleic acid instance data (GPU-ready byte buffers).
 #[derive(Clone)]
-pub struct NucleicAcidInstances {
+pub(crate) struct NucleicAcidInstances {
     /// Stem capsule instance bytes.
-    pub stem_instances: Vec<u8>,
+    pub(crate) stem_instances: Vec<u8>,
     /// Number of stem instances.
-    pub stem_count: u32,
+    pub(crate) stem_count: u32,
     /// Ring polygon instance bytes.
-    pub ring_instances: Vec<u8>,
+    pub(crate) ring_instances: Vec<u8>,
     /// Number of ring instances.
-    pub ring_count: u32,
+    pub(crate) ring_count: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -113,30 +113,30 @@ pub enum SceneRequest {
 
 /// All pre-computed CPU data, ready for GPU-only upload on the main thread.
 #[derive(Clone)]
-pub struct PreparedScene {
+pub(crate) struct PreparedScene {
     /// Backbone mesh data.
-    pub backbone: BackboneMeshData,
+    pub(crate) backbone: BackboneMeshData,
     /// Sidechain capsule instance bytes.
-    pub sidechain_instances: Vec<u8>,
+    pub(crate) sidechain_instances: Vec<u8>,
     /// Number of sidechain capsule instances.
-    pub sidechain_instance_count: u32,
+    pub(crate) sidechain_instance_count: u32,
     /// Ball-and-stick instance data.
-    pub bns: BallAndStickInstances,
+    pub(crate) bns: BallAndStickInstances,
     /// Nucleic acid instance data.
-    pub na: NucleicAcidInstances,
+    pub(crate) na: NucleicAcidInstances,
     /// Mapping from raw GPU pick IDs to typed pick targets.
-    pub pick_map: PickMap,
+    pub(crate) pick_map: PickMap,
 }
 
 /// Pre-computed animation frame data, ready for GPU upload.
 #[derive(Clone)]
-pub struct PreparedAnimationFrame {
+pub(crate) struct PreparedAnimationFrame {
     /// Backbone mesh data.
-    pub backbone: BackboneMeshData,
+    pub(crate) backbone: BackboneMeshData,
     /// Optional sidechain capsule instance bytes.
-    pub sidechain_instances: Option<Vec<u8>>,
+    pub(crate) sidechain_instances: Option<Vec<u8>>,
     /// Number of sidechain capsule instances.
-    pub sidechain_instance_count: u32,
+    pub(crate) sidechain_instance_count: u32,
 }
 
 // ---------------------------------------------------------------------------

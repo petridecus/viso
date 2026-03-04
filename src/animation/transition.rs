@@ -10,17 +10,17 @@ use crate::util::easing::EasingFunction;
 /// evaluates phases sequentially — when one phase's duration expires,
 /// the next begins.
 #[derive(Debug, Clone)]
-pub struct AnimationPhase {
+pub(crate) struct AnimationPhase {
     /// Easing curve for this phase.
-    pub easing: EasingFunction,
+    pub(crate) easing: EasingFunction,
     /// Duration of this phase.
-    pub duration: Duration,
+    pub(crate) duration: Duration,
     /// Start of the global lerp range (0.0–1.0) this phase covers.
-    pub lerp_start: f32,
+    pub(crate) lerp_start: f32,
     /// End of the global lerp range (0.0–1.0) this phase covers.
-    pub lerp_end: f32,
+    pub(crate) lerp_end: f32,
     /// Whether sidechains should be visible during this phase.
-    pub include_sidechains: bool,
+    pub(crate) include_sidechains: bool,
 }
 
 /// Describes how to animate from current state to a new target.

@@ -3,21 +3,21 @@ use glam::{Mat4, Vec3};
 
 /// Perspective camera defined by eye position, target, and projection
 /// parameters.
-pub struct Camera {
+pub(crate) struct Camera {
     /// Eye (camera) position in world space.
-    pub eye: Vec3,
+    pub(crate) eye: Vec3,
     /// Look-at target position.
-    pub target: Vec3,
+    pub(crate) target: Vec3,
     /// Up direction vector.
-    pub up: Vec3,
+    pub(crate) up: Vec3,
     /// Viewport aspect ratio (width / height).
-    pub aspect: f32,
+    pub(crate) aspect: f32,
     /// Vertical field of view in degrees.
-    pub fovy: f32,
+    pub(crate) fovy: f32,
     /// Near clipping plane distance.
-    pub znear: f32,
+    pub(crate) znear: f32,
     /// Far clipping plane distance.
-    pub zfar: f32,
+    pub(crate) zfar: f32,
 }
 
 /// GPU uniform buffer holding the view-projection matrix and camera metadata.
@@ -25,21 +25,21 @@ pub struct Camera {
 /// Layout matches the WGSL `CameraUniform` struct (112 bytes, std140).
 /// Padding is handled automatically by encase.
 #[derive(Debug, Copy, Clone, ShaderType)]
-pub struct CameraUniform {
+pub(crate) struct CameraUniform {
     /// Combined view-projection matrix.
-    pub view_proj: Mat4,
+    pub(crate) view_proj: Mat4,
     /// Camera world-space position.
-    pub position: Vec3,
+    pub(crate) position: Vec3,
     /// Viewport aspect ratio.
-    pub aspect: f32,
+    pub(crate) aspect: f32,
     /// Camera forward direction for lighting.
-    pub forward: Vec3,
+    pub(crate) forward: Vec3,
     /// Vertical field of view in degrees.
-    pub fovy: f32,
+    pub(crate) fovy: f32,
     /// Currently hovered residue index (-1 if none).
-    pub hovered_residue: i32,
+    pub(crate) hovered_residue: i32,
     /// Debug visualization mode (0 = off, 1 = show normals).
-    pub debug_mode: u32,
+    pub(crate) debug_mode: u32,
 }
 
 impl Camera {

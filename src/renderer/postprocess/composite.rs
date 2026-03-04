@@ -16,47 +16,47 @@ use crate::gpu::pipeline_helpers::{
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 
 /// External texture view inputs for creating a composite pass.
-pub struct CompositeInputs<'a> {
-    pub ssao: &'a wgpu::TextureView,
-    pub depth: &'a wgpu::TextureView,
-    pub normal: &'a wgpu::TextureView,
-    pub bloom: &'a wgpu::TextureView,
+pub(crate) struct CompositeInputs<'a> {
+    pub(crate) ssao: &'a wgpu::TextureView,
+    pub(crate) depth: &'a wgpu::TextureView,
+    pub(crate) normal: &'a wgpu::TextureView,
+    pub(crate) bloom: &'a wgpu::TextureView,
 }
 
 /// Parameters for the composite pass effects (SSAO strength, outlines, etc.)
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CompositeParams {
+pub(crate) struct CompositeParams {
     /// Screen dimensions in pixels `[width, height]`.
-    pub screen_size: [f32; 2],
+    pub(crate) screen_size: [f32; 2],
     /// Outline thickness in texels.
-    pub outline_thickness: f32,
+    pub(crate) outline_thickness: f32,
     /// Outline darkness strength (0.0–1.0).
-    pub outline_strength: f32,
+    pub(crate) outline_strength: f32,
     /// SSAO contribution strength.
-    pub ao_strength: f32,
+    pub(crate) ao_strength: f32,
     /// Near clipping plane distance.
-    pub near: f32,
+    pub(crate) near: f32,
     /// Far clipping plane distance.
-    pub far: f32,
+    pub(crate) far: f32,
     /// Distance at which depth fog begins.
-    pub fog_start: f32,
+    pub(crate) fog_start: f32,
     /// Fog density factor.
-    pub fog_density: f32,
+    pub(crate) fog_density: f32,
     /// Normal-based outline strength.
-    pub normal_outline_strength: f32,
+    pub(crate) normal_outline_strength: f32,
     /// Exposure multiplier for tone mapping.
-    pub exposure: f32,
+    pub(crate) exposure: f32,
     /// Gamma correction exponent.
-    pub gamma: f32,
+    pub(crate) gamma: f32,
     /// Bloom blend intensity.
-    pub bloom_intensity: f32,
+    pub(crate) bloom_intensity: f32,
     /// Padding for GPU alignment.
-    pub _pad: f32,
+    pub(crate) _pad: f32,
     /// Padding for GPU alignment.
-    pub _pad2: f32,
+    pub(crate) _pad2: f32,
     /// Padding for GPU alignment.
-    pub _pad3: f32,
+    pub(crate) _pad3: f32,
 }
 
 impl Default for CompositeParams {
@@ -93,7 +93,7 @@ struct CompositeViews<'a> {
 }
 
 /// Composite pass renderer
-pub struct CompositePass {
+pub(crate) struct CompositePass {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -102,9 +102,9 @@ pub struct CompositePass {
 
     /// Intermediate color texture (geometry renders here instead of
     /// swapchain).
-    pub color_texture: wgpu::Texture,
+    pub(crate) color_texture: wgpu::Texture,
     /// View into the intermediate color texture.
-    pub color_view: wgpu::TextureView,
+    pub(crate) color_view: wgpu::TextureView,
 
     /// Output view (FXAA input texture), set before render.
     output_view: Option<wgpu::TextureView>,
@@ -118,7 +118,7 @@ pub struct CompositePass {
     bloom_view: wgpu::TextureView,
 
     /// Composite effect parameters (outline, AO, fog, tone-mapping).
-    pub params: CompositeParams,
+    pub(crate) params: CompositeParams,
     params_buffer: wgpu::Buffer,
 
     width: u32,

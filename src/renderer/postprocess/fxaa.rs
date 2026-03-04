@@ -16,16 +16,16 @@ use crate::gpu::pipeline_helpers::{
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 
 /// FXAA (Fast Approximate Anti-Aliasing) post-process pass.
-pub struct FxaaPass {
+pub(crate) struct FxaaPass {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
     screen_size_buffer: wgpu::Buffer,
     /// Intermediate texture: composite renders here, FXAA reads from it
-    pub input_texture: wgpu::Texture,
+    pub(crate) input_texture: wgpu::Texture,
     /// View into the FXAA input texture.
-    pub input_view: wgpu::TextureView,
+    pub(crate) input_view: wgpu::TextureView,
     /// Swapchain surface view, set each frame before render.
     output_view: Option<wgpu::TextureView>,
     width: u32,

@@ -35,19 +35,19 @@ pub enum Focus {
 /// when entities change.
 pub(crate) struct SidechainTopology {
     /// Bond pairs (atom index A, atom index B) within sidechains.
-    pub bonds: Vec<(u32, u32)>,
+    pub(crate) bonds: Vec<(u32, u32)>,
     /// Per-atom hydrophobicity flag.
-    pub hydrophobicity: Vec<bool>,
+    pub(crate) hydrophobicity: Vec<bool>,
     /// Residue index for each sidechain atom.
-    pub residue_indices: Vec<u32>,
+    pub(crate) residue_indices: Vec<u32>,
     /// Atom names for each sidechain atom (used for by-name lookup).
-    pub atom_names: Vec<String>,
+    pub(crate) atom_names: Vec<String>,
     /// Target sidechain atom positions (the "at-rest" goal).
-    pub target_positions: Vec<Vec3>,
+    pub(crate) target_positions: Vec<Vec3>,
     /// Target backbone-sidechain bond endpoints (CA pos, CB atom index).
-    pub target_backbone_bonds: Vec<(Vec3, u32)>,
+    pub(crate) target_backbone_bonds: Vec<(Vec3, u32)>,
     /// (residue_idx, atom_name) → flat index for O(1) sidechain lookup.
-    pub atom_index: FxHashMap<(u32, String), usize>,
+    pub(crate) atom_index: FxHashMap<(u32, String), usize>,
 }
 
 impl SidechainTopology {
@@ -109,11 +109,11 @@ impl SidechainTopology {
 /// `visual`.
 pub(crate) struct VisualState {
     /// Current visual backbone chains (interpolated or at-rest).
-    pub backbone_chains: Vec<Vec<Vec3>>,
+    pub(crate) backbone_chains: Vec<Vec<Vec3>>,
     /// Current visual sidechain atom positions (interpolated or at-rest).
-    pub sidechain_positions: Vec<Vec3>,
+    pub(crate) sidechain_positions: Vec<Vec3>,
     /// Current visual backbone-sidechain bonds (interpolated or at-rest).
-    pub backbone_sidechain_bonds: Vec<(Vec3, u32)>,
+    pub(crate) backbone_sidechain_bonds: Vec<(Vec3, u32)>,
     /// Position generation; bumped each animation frame.
     position_generation: u64,
     /// Position generation last consumed by the renderer.

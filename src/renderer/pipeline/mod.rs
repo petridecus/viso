@@ -8,5 +8,5 @@ mod mesh_gen;
 pub(crate) mod prepared;
 pub mod processor;
 
-pub use prepared::{PreparedScene, SceneRequest};
-pub use processor::SceneProcessor;
+pub(crate) use prepared::{PreparedScene, SceneRequest};
+pub(crate) use processor::SceneProcessor;

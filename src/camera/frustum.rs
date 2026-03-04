@@ -8,11 +8,11 @@ use glam::{Mat4, Vec3, Vec4};
 /// A plane in 3D space, represented as (normal.x, normal.y, normal.z, distance)
 /// where the plane equation is: ax + by + cz + d = 0
 #[derive(Debug, Clone, Copy)]
-pub struct Plane {
+pub(crate) struct Plane {
     /// Unit normal pointing into the positive half-space.
-    pub normal: Vec3,
+    pub(crate) normal: Vec3,
     /// Signed distance from origin (`n · p + d = 0`).
-    pub distance: f32,
+    pub(crate) distance: f32,
 }
 
 impl Plane {
@@ -42,9 +42,9 @@ impl Plane {
 
 /// View frustum consisting of 6 planes
 #[derive(Debug, Clone)]
-pub struct Frustum {
+pub(crate) struct Frustum {
     /// Six clipping planes: left, right, bottom, top, near, far.
-    pub planes: [Plane; 6],
+    pub(crate) planes: [Plane; 6],
 }
 
 impl Frustum {
@@ -88,6 +88,7 @@ impl Frustum {
 
     /// Test if a point is inside the frustum
     #[inline]
+    #[cfg(test)]
     pub fn contains_point(&self, point: Vec3) -> bool {
         for plane in &self.planes {
             if plane.distance_to_point(point) < 0.0 {
@@ -102,18 +103,6 @@ impl Frustum {
     pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
         for plane in &self.planes {
             if plane.distance_to_point(center) < -radius {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Test if a sphere is completely inside the frustum (not just
-    /// intersecting)
-    #[inline]
-    pub fn contains_sphere(&self, center: Vec3, radius: f32) -> bool {
-        for plane in &self.planes {
-            if plane.distance_to_point(center) < radius {
                 return false;
             }
         }

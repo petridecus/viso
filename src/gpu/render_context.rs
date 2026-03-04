@@ -83,6 +83,8 @@ impl RenderContext {
             .await
             .map_err(RenderContextError::AdapterRequest)?;
 
+        log_adapter_info(&adapter);
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Primary Device"),
@@ -237,5 +239,31 @@ impl RenderContext {
     /// Finish the encoder and submit its command buffer to the GPU queue.
     pub fn submit(&self, encoder: wgpu::CommandEncoder) {
         let _ = self.queue.submit(std::iter::once(encoder.finish()));
+    }
+}
+
+/// Log adapter name, backend, driver, and device type at startup.
+///
+/// Emits a warning when the selected adapter is a software (CPU) rasterizer,
+/// since performance will be severely degraded.
+fn log_adapter_info(adapter: &wgpu::Adapter) {
+    let info = adapter.get_info();
+    let driver = if info.driver.is_empty() {
+        "unknown driver"
+    } else {
+        &info.driver
+    };
+    log::info!(
+        "GPU adapter: {} ({:?}, {:?}, {})",
+        info.name,
+        info.backend,
+        info.device_type,
+        driver,
+    );
+    if info.device_type == wgpu::DeviceType::Cpu {
+        log::warn!(
+            "Software rasterizer selected — rendering performance will be \
+             severely degraded"
+        );
     }
 }

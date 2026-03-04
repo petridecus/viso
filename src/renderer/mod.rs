@@ -40,11 +40,11 @@ use crate::options::VisoOptions;
 ///
 /// Every molecular renderer (backbone, sidechain, ball-and-stick, band, pull,
 /// nucleic acid) binds the same camera, lighting, and selection groups.
-pub struct PipelineLayouts {
-    pub camera: wgpu::BindGroupLayout,
-    pub lighting: wgpu::BindGroupLayout,
-    pub selection: wgpu::BindGroupLayout,
-    pub color: wgpu::BindGroupLayout,
+pub(crate) struct PipelineLayouts {
+    pub(crate) camera: wgpu::BindGroupLayout,
+    pub(crate) lighting: wgpu::BindGroupLayout,
+    pub(crate) selection: wgpu::BindGroupLayout,
+    pub(crate) color: wgpu::BindGroupLayout,
 }
 
 // ---------------------------------------------------------------------------
@@ -54,13 +54,13 @@ pub struct PipelineLayouts {
 /// Input for the main geometry render pass.
 pub(crate) struct GeometryPassInput<'a> {
     /// Color attachment (post-process input).
-    pub color: &'a wgpu::TextureView,
+    pub(crate) color: &'a wgpu::TextureView,
     /// Normal attachment (post-process input).
-    pub normal: &'a wgpu::TextureView,
+    pub(crate) normal: &'a wgpu::TextureView,
     /// Depth attachment.
-    pub depth: &'a wgpu::TextureView,
+    pub(crate) depth: &'a wgpu::TextureView,
     /// Whether sidechain capsules should be drawn.
-    pub show_sidechains: bool,
+    pub(crate) show_sidechains: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -69,12 +69,12 @@ pub(crate) struct GeometryPassInput<'a> {
 
 /// All geometry renderers grouped together.
 pub(crate) struct Renderers {
-    pub backbone: BackboneRenderer,
-    pub sidechain: SidechainRenderer,
-    pub band: BandRenderer,
-    pub pull: PullRenderer,
-    pub ball_and_stick: BallAndStickRenderer,
-    pub nucleic_acid: NucleicAcidRenderer,
+    pub(crate) backbone: BackboneRenderer,
+    pub(crate) sidechain: SidechainRenderer,
+    pub(crate) band: BandRenderer,
+    pub(crate) pull: PullRenderer,
+    pub(crate) ball_and_stick: BallAndStickRenderer,
+    pub(crate) nucleic_acid: NucleicAcidRenderer,
 }
 
 impl Renderers {

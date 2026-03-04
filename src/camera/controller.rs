@@ -39,11 +39,11 @@ pub struct CameraController {
     /// toggle time).
     auto_rotate_axis: Option<Vec3>,
     /// Rotation sensitivity multiplier.
-    pub rotate_speed: f32,
+    rotate_speed: f32,
     /// Pan sensitivity multiplier.
-    pub pan_speed: f32,
+    pan_speed: f32,
     /// Zoom sensitivity multiplier.
-    pub zoom_speed: f32,
+    zoom_speed: f32,
 }
 
 impl CameraController {
@@ -428,7 +428,7 @@ impl CameraController {
     }
 
     /// Get the current view frustum for culling
-    pub fn frustum(&self) -> Frustum {
+    pub(crate) fn frustum(&self) -> Frustum {
         Frustum::from_view_projection(self.camera.build_matrix())
     }
 }

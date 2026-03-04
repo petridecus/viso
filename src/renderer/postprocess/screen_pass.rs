@@ -11,17 +11,17 @@ pub trait ScreenPass {
 }
 
 /// Descriptor for a fullscreen screen-space pass dispatch.
-pub struct ScreenPassDesc<'a> {
+pub(crate) struct ScreenPassDesc<'a> {
     /// Debug label for the render pass.
-    pub label: &'a str,
+    pub(crate) label: &'a str,
     /// Render target view.
-    pub view: &'a wgpu::TextureView,
+    pub(crate) view: &'a wgpu::TextureView,
     /// Render pipeline to bind.
-    pub pipeline: &'a wgpu::RenderPipeline,
+    pub(crate) pipeline: &'a wgpu::RenderPipeline,
     /// Bind group (slot 0) containing pass inputs.
-    pub bind_group: &'a wgpu::BindGroup,
+    pub(crate) bind_group: &'a wgpu::BindGroup,
     /// Clear color for the render target.
-    pub clear_color: wgpu::Color,
+    pub(crate) clear_color: wgpu::Color,
 }
 
 /// Run a fullscreen screen-space pass: begin render pass, set pipeline, draw

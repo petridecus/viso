@@ -19,9 +19,9 @@ pub struct SidechainAnimPositions {
 
 /// The visual state of a residue at a point in time.
 #[derive(Debug, Clone, Copy)]
-pub struct ResidueVisualState {
+pub(crate) struct ResidueVisualState {
     /// Backbone atom positions: N, CA, C
-    pub backbone: [Vec3; 3],
+    pub(crate) backbone: [Vec3; 3],
 }
 
 impl ResidueVisualState {
@@ -43,13 +43,13 @@ impl ResidueVisualState {
 
 /// Data for animating a single residue.
 #[derive(Debug, Clone)]
-pub struct ResidueAnimationData {
+pub(crate) struct ResidueAnimationData {
     /// Global residue index.
-    pub residue_idx: usize,
+    pub(crate) residue_idx: usize,
     /// Start state for this animation.
-    pub start: ResidueVisualState,
+    pub(crate) start: ResidueVisualState,
     /// Target state for this animation.
-    pub target: ResidueVisualState,
+    pub(crate) target: ResidueVisualState,
 }
 
 /// Executes a single animation from start to target states.

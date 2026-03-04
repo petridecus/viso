@@ -39,7 +39,7 @@ const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
 };
 
 /// Bloom post-processing pass (threshold + blur chain + upsample).
-pub struct BloomPass {
+pub(crate) struct BloomPass {
     // Threshold extraction
     threshold_pipeline: wgpu::RenderPipeline,
     threshold_bind_group_layout: wgpu::BindGroupLayout,
@@ -67,18 +67,18 @@ pub struct BloomPass {
     upsample_bind_groups: Vec<wgpu::BindGroup>,
 
     /// Final bloom output texture (half resolution).
-    pub output_texture: wgpu::Texture,
+    pub(crate) output_texture: wgpu::Texture,
     /// View into the bloom output texture.
-    pub output_view: wgpu::TextureView,
+    pub(crate) output_view: wgpu::TextureView,
 
     sampler: wgpu::Sampler,
     /// Stored input color view for bind group recreation on resize.
     input_color_view: wgpu::TextureView,
 
     /// Brightness threshold for bloom extraction.
-    pub threshold: f32,
+    pub(crate) threshold: f32,
     /// Bloom blend intensity.
-    pub intensity: f32,
+    pub(crate) intensity: f32,
     width: u32,
     height: u32,
 }

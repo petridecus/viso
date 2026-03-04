@@ -46,15 +46,15 @@ fn compute_bounding_sphere(entity: &MoleculeEntity) -> (Vec3, f32) {
 /// A scene entity wrapping a single [`MoleculeEntity`] with rendering
 /// metadata.
 #[derive(Debug, Clone)]
-pub struct SceneEntity {
+pub(crate) struct SceneEntity {
     /// Core molecule data from foldit-conv.
-    pub entity: MoleculeEntity,
+    pub(crate) entity: MoleculeEntity,
     /// Whether this entity is visible in the scene.
-    pub visible: bool,
+    pub(crate) visible: bool,
     /// Pre-computed secondary structure assignments.
-    pub ss_override: Option<Vec<SSType>>,
+    pub(crate) ss_override: Option<Vec<SSType>>,
     /// Cached per-residue energy scores from Rosetta (raw data for viz).
-    pub per_residue_scores: Option<Vec<f64>>,
+    pub(crate) per_residue_scores: Option<Vec<f64>>,
     pub(crate) mesh_version: u64,
     /// Cached centroid of all atom positions.
     pub(crate) cached_centroid: Vec3,
@@ -217,27 +217,27 @@ impl SceneEntity {
 /// All render data for a single entity, ready for the scene processor.
 /// Indices are LOCAL (0-based within the entity).
 #[derive(Debug, Clone)]
-pub struct PerEntityData {
+pub(crate) struct PerEntityData {
     /// Entity identifier.
-    pub id: u32,
+    pub(crate) id: u32,
     /// Monotonic version counter for cache invalidation.
-    pub mesh_version: u64,
+    pub(crate) mesh_version: u64,
     /// Protein backbone atom chains (N, CA, C triplets).
-    pub backbone_chains: Vec<Vec<Vec3>>,
+    pub(crate) backbone_chains: Vec<Vec<Vec3>>,
     /// Sidechain atom data with topology (positions, bonds, backbone bonds).
-    pub sidechains: SidechainAtoms,
+    pub(crate) sidechains: SidechainAtoms,
     /// Pre-computed secondary structure assignments.
-    pub ss_override: Option<Vec<SSType>>,
+    pub(crate) ss_override: Option<Vec<SSType>>,
     /// Pre-computed per-residue colors (derived from scores on main thread).
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    pub(crate) per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Non-protein entities (ligands, ions, etc.).
-    pub non_protein_entities: Vec<MoleculeEntity>,
+    pub(crate) non_protein_entities: Vec<MoleculeEntity>,
     /// P-atom chains from DNA/RNA entities.
-    pub nucleic_acid_chains: Vec<Vec<Vec3>>,
+    pub(crate) nucleic_acid_chains: Vec<Vec<Vec3>>,
     /// Base ring geometry from DNA/RNA entities.
-    pub nucleic_acid_rings: Vec<NucleotideRing>,
+    pub(crate) nucleic_acid_rings: Vec<NucleotideRing>,
     /// Total residue count in this entity.
-    pub residue_count: u32,
+    pub(crate) residue_count: u32,
 }
 
 /// A contiguous range of residues belonging to a single entity.
@@ -245,13 +245,13 @@ pub struct PerEntityData {
 /// Used to track which global residue indices map back to which entity
 /// during animation and scene processing.
 #[derive(Debug, Clone, Copy)]
-pub struct EntityResidueRange {
+pub(crate) struct EntityResidueRange {
     /// Entity identifier.
-    pub entity_id: u32,
+    pub(crate) entity_id: u32,
     /// First global residue index owned by this entity.
-    pub start: u32,
+    pub(crate) start: u32,
     /// Number of residues in this entity.
-    pub count: u32,
+    pub(crate) count: u32,
 }
 
 impl EntityResidueRange {
