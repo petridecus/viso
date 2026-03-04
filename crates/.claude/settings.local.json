@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(xargs grep -l \"trunk\\\\|viso-ui\\\\|build-dependencies\")",
-      "Bash(find /c/Users/Andreas/viso/crates/viso-ui -name \"package.json\" -o -name \"*.lock\" -o -name \".gitignore\" | xargs cat 2>/dev/null)",
-      "WebSearch"
-    ]
-  }
-}

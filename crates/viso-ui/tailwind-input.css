@@ -60,6 +60,22 @@ html, body {
     @apply px-3 py-2 overflow-y-auto overflow-x-hidden;
 }
 
+/* ── Panel header ────────────────────────────────────────────────────── */
+
+.panel-header {
+    @apply flex items-center justify-between;
+    @apply pb-2 mb-1 border-b border-white/10;
+}
+
+.panel-title {
+    @apply font-semibold text-sm text-white;
+}
+
+.panel-toggle-btn {
+    @apply text-gray-400 hover:text-white cursor-pointer;
+    @apply p-1 rounded hover:bg-white/10 transition-colors;
+}
+
 /* ── Section (collapsible group) ──────────────────────────────────────── */
 
 .section-header {

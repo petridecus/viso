@@ -169,8 +169,7 @@ pub fn push_schema(webview: &WebView, options: &VisoOptions) {
     let schema = schemars::schema_for!(VisoOptions);
     let json = serde_json::to_string(&schema).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    let _ = webview
-        .evaluate_script(&format!("window.__viso_push_schema('{escaped}')"));
+    safe_push(webview, "schema", &escaped);
 
     push_options(webview, options);
 }
@@ -179,8 +178,7 @@ pub fn push_schema(webview: &WebView, options: &VisoOptions) {
 pub fn push_options(webview: &WebView, options: &VisoOptions) {
     let json = serde_json::to_string(options).unwrap_or_default();
     let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    let _ = webview
-        .evaluate_script(&format!("window.__viso_push_options('{escaped}')"));
+    safe_push(webview, "options", &escaped);
 }
 
 /// Push stats (FPS + GPU buffer sizes) to the webview.
@@ -201,16 +199,29 @@ pub fn push_stats(
         .collect();
     let json = serde_json::json!({ "fps": fps, "buffers": buffer_list });
     let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
-    let _ =
-        webview.evaluate_script(&format!("window.__viso_push_stats('{s}')"));
+    safe_push(webview, "stats", &s);
 }
 
 /// Push the panel pinned state to the webview.
 pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
-    let _ = webview.evaluate_script(&format!(
-        "window.__viso_push_panel_pinned('{}')",
-        if pinned { "true" } else { "false" }
-    ));
+    let val = if pinned { "true" } else { "false" };
+    safe_push(webview, "panel_pinned", val);
+}
+
+/// Call `window.__viso_push_{key}(value)`, buffering on
+/// `window.__viso_early` if the bridge script hasn't loaded yet.
+///
+/// On Windows (WebView2), `evaluate_script` can fire before the
+/// initialization script has run.  This wrapper stores the value so
+/// [`BRIDGE_JS`] can replay it on init.
+fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
+    let js = format!(
+        "if(window.__viso_push_{key})\
+         {{window.__viso_push_{key}('{escaped_value}')}}\
+         else{{window.__viso_early=window.__viso_early||{{}};\
+         window.__viso_early.{key}='{escaped_value}'}}"
+    );
+    let _ = webview.evaluate_script(&js);
 }
 
 // ── Internals ────────────────────────────────────────────────────────────
@@ -244,6 +255,17 @@ const BRIDGE_JS: &str = r"
         pending.panel_pinned = val;
         dispatch('viso-panel-pinned', val);
     };
+
+    // Replay any data that arrived via evaluate_script before this init
+    // script ran (race on Windows/WebView2).
+    var early = window.__viso_early;
+    if (early) {
+        if (early.schema)       window.__viso_push_schema(early.schema);
+        if (early.options)      window.__viso_push_options(early.options);
+        if (early.stats)        window.__viso_push_stats(early.stats);
+        if (early.panel_pinned) window.__viso_push_panel_pinned(early.panel_pinned);
+        delete window.__viso_early;
+    }
 
     // When the WASM app adds a listener, replay buffered data.
     var origAdd = EventTarget.prototype.addEventListener;

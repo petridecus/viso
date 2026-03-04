@@ -117,6 +117,7 @@ impl Viewer {
             path: self.path,
             options: self.options,
             title: self.title,
+            shown: false,
             #[cfg(feature = "gui")]
             panel: crate::gui::panel::PanelController::new(),
         };
@@ -138,6 +139,8 @@ struct ViewerApp {
     path: Option<String>,
     options: Option<VisoOptions>,
     title: String,
+    /// Whether the window has been made visible after the first frame.
+    shown: bool,
     #[cfg(feature = "gui")]
     panel: crate::gui::panel::PanelController,
 }
@@ -371,11 +374,14 @@ impl ApplicationHandler for ViewerApp {
             let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
             Window::default_attributes()
                 .with_title(&self.title)
+                .with_visible(false)
                 .with_inner_size(winit::dpi::LogicalSize::new(
                     logical_w, logical_h,
                 ))
         } else {
-            Window::default_attributes().with_title(&self.title)
+            Window::default_attributes()
+                .with_title(&self.title)
+                .with_visible(false)
         };
 
         let window = match event_loop.create_window(attrs) {
@@ -411,13 +417,17 @@ impl ApplicationHandler for ViewerApp {
 
         engine.sync_scene_to_renderers(std::collections::HashMap::new());
 
+        // Render the first frame while the window is still hidden, then
+        // reveal it so the user never sees a blank rectangle.
+        engine.update(0.0);
+        let _ = engine.render();
+        window.set_visible(true);
+        self.shown = true;
+
+        // Create the webview after the first frame is on screen.
         #[cfg(feature = "gui")]
-        self.panel.init_webview(
-            window.as_ref(),
-            inner.width,
-            inner.height,
-            &engine,
-        );
+        self.panel
+            .init_webview(window.as_ref(), inner.width, inner.height, &engine);
 
         window.request_redraw();
         self.window = Some(window);
