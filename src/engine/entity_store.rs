@@ -278,3 +278,125 @@ impl EntityStore {
         self.invalidate();
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::animation::transition::Transition;
+    use crate::engine::scene::Focus;
+    use crate::engine::test_fixtures::make_protein_entity;
+
+    #[test]
+    fn new_is_empty() {
+        let store = EntityStore::new();
+        assert!(store.entities().is_empty());
+        assert!(!store.is_dirty());
+    }
+
+    #[test]
+    fn add_assigns_sequential_ids() {
+        let mut store = EntityStore::new();
+        let ids_a = store.add_entities(vec![make_protein_entity(0, b'A', 3)]);
+        let ids_b = store.add_entities(vec![make_protein_entity(0, b'B', 2)]);
+        assert_eq!(ids_a, vec![0]);
+        assert_eq!(ids_b, vec![1]);
+    }
+
+    #[test]
+    fn add_bumps_generation() {
+        let mut store = EntityStore::new();
+        assert!(!store.is_dirty());
+        let _ = store.add_entities(vec![make_protein_entity(0, b'A', 1)]);
+        assert!(store.is_dirty());
+    }
+
+    #[test]
+    fn lookup_by_id() {
+        let mut store = EntityStore::new();
+        let ids = store.add_entities(vec![make_protein_entity(0, b'A', 2)]);
+        let se = store.entity(ids[0]);
+        assert!(se.is_some());
+        assert_eq!(se.unwrap().id(), ids[0]);
+    }
+
+    #[test]
+    fn lookup_missing() {
+        let store = EntityStore::new();
+        assert!(store.entity(999).is_none());
+    }
+
+    #[test]
+    fn remove_basic() {
+        let mut store = EntityStore::new();
+        let ids = store.add_entities(vec![make_protein_entity(0, b'A', 1)]);
+        assert!(store.remove_entity(ids[0]));
+        assert!(store.entity(ids[0]).is_none());
+    }
+
+    #[test]
+    fn remove_missing() {
+        let mut store = EntityStore::new();
+        assert!(!store.remove_entity(999));
+    }
+
+    #[test]
+    fn remove_swap_updates_index() {
+        let mut store = EntityStore::new();
+        let ids = store.add_entities(vec![
+            make_protein_entity(0, b'A', 1),
+            make_protein_entity(0, b'B', 1),
+            make_protein_entity(0, b'C', 1),
+        ]);
+        // Remove first — swap_remove moves last element into slot 0
+        assert!(store.remove_entity(ids[0]));
+        assert!(store.entity(ids[0]).is_none());
+        assert!(store.entity(ids[1]).is_some());
+        assert!(store.entity(ids[2]).is_some());
+    }
+
+    #[test]
+    fn mark_rendered_clears_dirty() {
+        let mut store = EntityStore::new();
+        let _ = store.add_entities(vec![make_protein_entity(0, b'A', 1)]);
+        assert!(store.is_dirty());
+        store.mark_rendered();
+        assert!(!store.is_dirty());
+    }
+
+    #[test]
+    fn force_dirty() {
+        let mut store = EntityStore::new();
+        let _ = store.add_entities(vec![make_protein_entity(0, b'A', 1)]);
+        store.mark_rendered();
+        assert!(!store.is_dirty());
+        store.force_dirty();
+        assert!(store.is_dirty());
+    }
+
+    #[test]
+    fn cycle_focus_through_entities() {
+        let mut store = EntityStore::new();
+        let _ = store.add_entities(vec![
+            make_protein_entity(0, b'A', 1),
+            make_protein_entity(0, b'B', 1),
+        ]);
+        assert_eq!(*store.focus(), Focus::Session);
+        let f1 = store.cycle_focus();
+        assert_eq!(f1, Focus::Entity(0));
+        let f2 = store.cycle_focus();
+        assert_eq!(f2, Focus::Entity(1));
+        let f3 = store.cycle_focus();
+        assert_eq!(f3, Focus::Session);
+    }
+
+    #[test]
+    fn behavior_set_get_clear() {
+        let mut store = EntityStore::new();
+        assert!(store.behavior(0).is_none());
+        store.set_behavior(0, Transition::snap());
+        assert!(store.behavior(0).is_some());
+        store.clear_behavior(0);
+        assert!(store.behavior(0).is_none());
+    }
+}

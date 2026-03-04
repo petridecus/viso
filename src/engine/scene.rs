@@ -259,3 +259,30 @@ impl SceneTopology {
             .collect();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visual_new_is_clean() {
+        let vs = VisualState::new();
+        assert!(!vs.is_dirty());
+    }
+
+    #[test]
+    fn visual_update_marks_dirty() {
+        let mut vs = VisualState::new();
+        vs.update(vec![vec![Vec3::ZERO]], vec![Vec3::X], vec![(Vec3::Y, 0)]);
+        assert!(vs.is_dirty());
+    }
+
+    #[test]
+    fn visual_mark_rendered_clears() {
+        let mut vs = VisualState::new();
+        vs.update(vec![], vec![], vec![]);
+        assert!(vs.is_dirty());
+        vs.mark_rendered();
+        assert!(!vs.is_dirty());
+    }
+}

@@ -227,8 +227,7 @@ impl MeshCache {
 
         // Split invalidation: geometry changes clear entire cache,
         // color/display changes only regenerate instance data.
-        let geometry_changed =
-            self.last_geometry.as_ref() != Some(&geometry);
+        let geometry_changed = self.last_geometry.as_ref() != Some(&geometry);
         let instances_changed = self.last_display.as_ref() != Some(display)
             || self.last_colors.as_ref() != Some(colors);
 

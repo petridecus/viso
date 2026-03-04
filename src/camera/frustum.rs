@@ -146,4 +146,55 @@ mod tests {
         // Large sphere behind camera that doesn't reach frustum
         assert!(!frustum.intersects_sphere(Vec3::new(0.0, 0.0, 50.0), 1.0));
     }
+
+    #[test]
+    fn plane_normalizes_coefficients() {
+        // (3, 0, 4, 10) has normal length 5
+        let plane = Plane::from_coefficients(3.0, 0.0, 4.0, 10.0);
+        let len = plane.normal.length();
+        assert!((len - 1.0).abs() < 1e-6, "normal should be unit, got {len}");
+        assert!((plane.distance - 2.0).abs() < 1e-6); // 10/5 = 2
+    }
+
+    #[test]
+    fn sphere_touching_plane_intersects() {
+        let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let view =
+            Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let vp = proj * view;
+        let frustum = Frustum::from_view_projection(vp);
+
+        // Sphere centered just outside but radius reaches in
+        // The right frustum plane — point far right but with large radius
+        assert!(frustum.intersects_sphere(Vec3::new(20.0, 0.0, 0.0), 25.0));
+    }
+
+    #[test]
+    fn point_lateral_outside() {
+        let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let view =
+            Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let vp = proj * view;
+        let frustum = Frustum::from_view_projection(vp);
+
+        // Point far to the right, at correct depth but outside FOV
+        assert!(!frustum.contains_point(Vec3::new(100.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn all_planes_point_inward() {
+        let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let view =
+            Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        let vp = proj * view;
+        let frustum = Frustum::from_view_projection(vp);
+
+        // Origin is inside — all planes should have positive distance to it
+        for (i, plane) in frustum.planes.iter().enumerate() {
+            assert!(
+                plane.distance_to_point(Vec3::ZERO) > 0.0,
+                "plane {i} does not point inward"
+            );
+        }
+    }
 }

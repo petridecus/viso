@@ -246,3 +246,166 @@ pub(crate) fn compute_rmf(points: &mut [SplinePoint]) {
         points[i + 1].binormal = s_i1;
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    const TOL: f32 = 1e-4;
+
+    fn approx_eq(a: Vec3, b: Vec3) -> bool {
+        (a - b).length() < TOL
+    }
+
+    #[test]
+    fn linear_two_points() {
+        let pts = vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0)];
+        let result = linear_interpolate(&pts, 4);
+        assert_eq!(result.len(), 5); // 4 segments + endpoint
+        assert!(approx_eq(result[0], pts[0]));
+        assert!(approx_eq(*result.last().unwrap(), pts[1]));
+        // midpoint at t=0.5 (index 2)
+        assert!(approx_eq(result[2], Vec3::new(5.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn catmull_rom_endpoints() {
+        let pts: Vec<Vec3> = (0..5)
+            .map(|i| Vec3::new(i as f32 * 2.0, 0.0, 0.0))
+            .collect();
+        let result = catmull_rom(&pts, 4);
+        assert!(approx_eq(result[0], pts[0]));
+        assert!(approx_eq(*result.last().unwrap(), *pts.last().unwrap()));
+    }
+
+    #[test]
+    fn catmull_rom_passes_through() {
+        let pts: Vec<Vec3> = (0..5)
+            .map(|i| Vec3::new(i as f32 * 3.0, (i as f32).sin(), 0.0))
+            .collect();
+        let segs = 8;
+        let result = catmull_rom(&pts, segs);
+        // At span boundaries (every `segs` samples), output ≈ control point
+        for (i, pt) in pts.iter().enumerate() {
+            let idx = if i == pts.len() - 1 {
+                result.len() - 1
+            } else {
+                i * segs
+            };
+            assert!(
+                approx_eq(result[idx], *pt),
+                "span {i}: expected {pt:?}, got {:?}",
+                result[idx]
+            );
+        }
+    }
+
+    #[test]
+    fn catmull_rom_two_points_linear() {
+        let pts = vec![Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0)];
+        let result = catmull_rom(&pts, 4);
+        let linear = linear_interpolate(&pts, 4);
+        assert_eq!(result.len(), linear.len());
+        for (a, b) in result.iter().zip(linear.iter()) {
+            assert!(approx_eq(*a, *b));
+        }
+    }
+
+    #[test]
+    fn catmull_rom_single_point() {
+        let pts = vec![Vec3::new(1.0, 2.0, 3.0)];
+        let result = catmull_rom(&pts, 8);
+        assert_eq!(result.len(), 1);
+        assert!(approx_eq(result[0], pts[0]));
+    }
+
+    #[test]
+    fn bspline_last_point_matches() {
+        let pts: Vec<Vec3> = (0..6)
+            .map(|i| Vec3::new(i as f32, (i as f32 * 0.5).sin(), 0.0))
+            .collect();
+        let result = cubic_bspline(&pts, 4);
+        assert!(approx_eq(*result.last().unwrap(), *pts.last().unwrap()));
+    }
+
+    #[test]
+    fn bspline_few_points_linear() {
+        let pts = vec![Vec3::ZERO, Vec3::X, Vec3::new(2.0, 0.0, 0.0)];
+        let result = cubic_bspline(&pts, 4);
+        let linear = linear_interpolate(&pts, 4);
+        assert_eq!(result.len(), linear.len());
+    }
+
+    #[test]
+    fn helix_axis_preserves_count() {
+        let pts: Vec<Vec3> = (0..10)
+            .map(|i| {
+                let t = i as f32 * 0.5;
+                Vec3::new(t.cos(), t.sin(), t * 1.5)
+            })
+            .collect();
+        let axis = compute_helix_axis_points(&pts);
+        assert_eq!(axis.len(), pts.len());
+    }
+
+    #[test]
+    fn rmf_orthonormal() {
+        // Build a curved path
+        let n = 20;
+        let mut points: Vec<SplinePoint> = (0..n)
+            .map(|i| {
+                let t = i as f32 * 0.3;
+                SplinePoint {
+                    pos: Vec3::new(t.cos() * 5.0, t.sin() * 5.0, t * 2.0),
+                    tangent: Vec3::ZERO,
+                    normal: Vec3::ZERO,
+                    binormal: Vec3::ZERO,
+                }
+            })
+            .collect();
+        // Compute tangents via finite differences
+        for i in 0..n {
+            let prev = if i == 0 { 0 } else { i - 1 };
+            let next = (i + 1).min(n - 1);
+            points[i].tangent =
+                (points[next].pos - points[prev].pos).normalize();
+        }
+        compute_rmf(&mut points);
+
+        for (i, p) in points.iter().enumerate() {
+            assert!(
+                (p.normal.length() - 1.0).abs() < TOL,
+                "frame {i}: normal not unit"
+            );
+            assert!(
+                (p.binormal.length() - 1.0).abs() < TOL,
+                "frame {i}: binormal not unit"
+            );
+            assert!(
+                p.normal.dot(p.binormal).abs() < TOL,
+                "frame {i}: n·b != 0"
+            );
+            assert!(p.tangent.dot(p.normal).abs() < TOL, "frame {i}: t·n != 0");
+        }
+    }
+
+    #[test]
+    fn frenet_and_rmf_empty() {
+        // Empty input
+        let mut empty: Vec<SplinePoint> = vec![];
+        compute_frenet_frames(&mut empty);
+        compute_rmf(&mut empty);
+
+        // Single point
+        let mut single = vec![SplinePoint {
+            pos: Vec3::ZERO,
+            tangent: Vec3::Z,
+            normal: Vec3::ZERO,
+            binormal: Vec3::ZERO,
+        }];
+        compute_frenet_frames(&mut single);
+        compute_rmf(&mut single);
+        // Should not panic — that's the test
+    }
+}

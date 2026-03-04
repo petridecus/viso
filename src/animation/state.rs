@@ -173,3 +173,24 @@ impl AnimationState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_has_no_trajectory() {
+        let state = AnimationState::new();
+        assert!(state.trajectory_player.is_none());
+    }
+
+    #[test]
+    fn pending_transitions_lifecycle() {
+        let mut state = AnimationState::new();
+        assert!(state.pending_transitions.is_empty());
+        let _ = state.pending_transitions.insert(0, Transition::snap());
+        assert!(!state.pending_transitions.is_empty());
+        state.pending_transitions.clear();
+        assert!(state.pending_transitions.is_empty());
+    }
+}

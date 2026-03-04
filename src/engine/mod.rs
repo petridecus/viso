@@ -505,3 +505,81 @@ impl VisoEngine {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    //! Minimal entity construction helpers for unit tests.
+
+    use foldit_conv::types::coords::{Coords, CoordsAtom, Element};
+    use foldit_conv::types::entity::{MoleculeEntity, MoleculeType};
+
+    fn res_name(s: &str) -> [u8; 3] {
+        let bytes = s.as_bytes();
+        let mut out = [b' '; 3];
+        for (i, &b) in bytes.iter().take(3).enumerate() {
+            out[i] = b;
+        }
+        out
+    }
+
+    fn atom_name(s: &str) -> [u8; 4] {
+        let bytes = s.as_bytes();
+        let mut out = [b' '; 4];
+        for (i, &b) in bytes.iter().take(4).enumerate() {
+            out[i] = b;
+        }
+        out
+    }
+
+    /// Build a minimal protein entity with `residue_count` residues, each
+    /// having N/CA/C at deterministic positions along the X axis.
+    pub fn make_protein_entity(
+        entity_id: u32,
+        chain_id: u8,
+        residue_count: u32,
+    ) -> MoleculeEntity {
+        let atom_count = residue_count as usize * 3;
+        let mut atoms = Vec::with_capacity(atom_count);
+        let mut chain_ids = Vec::with_capacity(atom_count);
+        let mut res_names = Vec::with_capacity(atom_count);
+        let mut res_nums = Vec::with_capacity(atom_count);
+        let mut atom_names = Vec::with_capacity(atom_count);
+        let mut elements = Vec::with_capacity(atom_count);
+
+        for r in 0..residue_count {
+            let base_x = r as f32 * 3.8;
+            for (offset, name, elem) in [
+                (0.0, "N", Element::N),
+                (1.5, "CA", Element::C),
+                (3.0, "C", Element::C),
+            ] {
+                atoms.push(CoordsAtom {
+                    x: base_x + offset,
+                    y: 0.0,
+                    z: 0.0,
+                    occupancy: 1.0,
+                    b_factor: 0.0,
+                });
+                chain_ids.push(chain_id);
+                res_names.push(res_name("ALA"));
+                res_nums.push(r as i32 + 1);
+                atom_names.push(atom_name(name));
+                elements.push(elem);
+            }
+        }
+
+        MoleculeEntity {
+            entity_id,
+            molecule_type: MoleculeType::Protein,
+            coords: Coords {
+                num_atoms: atom_count,
+                atoms,
+                chain_ids,
+                res_names,
+                res_nums,
+                atom_names,
+                elements,
+            },
+        }
+    }
+}

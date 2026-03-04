@@ -116,3 +116,133 @@ fn resolve_atom_ref(
         .get(&(atom.residue, name.to_owned()))?;
     positions.get(*idx).copied()
 }
+
+#[cfg(test)]
+mod tests {
+    use glam::Vec3;
+    use rustc_hash::FxHashMap;
+
+    use super::*;
+    use crate::engine::scene::{SceneTopology, SidechainTopology, VisualState};
+
+    /// Build a minimal scene with 1 chain, 2 residues (6 backbone atoms),
+    /// and 1 sidechain atom ("CB" at residue 0).
+    fn test_scene() -> (VisualState, SceneTopology, Vec<Vec<Vec3>>) {
+        // Backbone: 2 residues × 3 atoms (N, CA, C)
+        let chain = vec![
+            Vec3::new(0.0, 0.0, 0.0), // res 0 N
+            Vec3::new(1.5, 0.0, 0.0), // res 0 CA
+            Vec3::new(3.0, 0.0, 0.0), // res 0 C
+            Vec3::new(3.8, 0.0, 0.0), // res 1 N
+            Vec3::new(5.3, 0.0, 0.0), // res 1 CA
+            Vec3::new(6.8, 0.0, 0.0), // res 1 C
+        ];
+
+        let mut visual = VisualState::new();
+        visual.backbone_chains = vec![chain.clone()];
+        visual.sidechain_positions = vec![Vec3::new(1.5, 2.0, 0.0)]; // CB
+
+        let mut atom_index = FxHashMap::default();
+        let _ = atom_index.insert((0_u32, "CB".to_owned()), 0_usize);
+
+        let mut topology = SceneTopology::new();
+        topology.backbone_chain_offsets = vec![0];
+        topology.sidechain_topology = SidechainTopology {
+            bonds: vec![],
+            hydrophobicity: vec![false],
+            residue_indices: vec![0],
+            atom_names: vec!["CB".to_owned()],
+            target_positions: vec![Vec3::new(1.5, 2.0, 0.0)],
+            target_backbone_bonds: vec![],
+            atom_index,
+        };
+
+        let cached = vec![chain];
+        (visual, topology, cached)
+    }
+
+    fn make_ref(residue: u32, name: &str) -> AtomRef {
+        AtomRef {
+            residue,
+            atom_name: name.to_owned(),
+        }
+    }
+
+    #[test]
+    fn resolve_ca_from_visual() {
+        let (visual, topology, cached) = test_scene();
+        let scene = ScenePositions {
+            visual: &visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        let pos = resolve_atom_ref(&scene, &make_ref(0, "CA"));
+        assert_eq!(pos, Some(Vec3::new(1.5, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn resolve_n_and_c() {
+        let (visual, topology, cached) = test_scene();
+        let scene = ScenePositions {
+            visual: &visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        assert_eq!(
+            resolve_atom_ref(&scene, &make_ref(0, "N")),
+            Some(Vec3::new(0.0, 0.0, 0.0))
+        );
+        assert_eq!(
+            resolve_atom_ref(&scene, &make_ref(0, "C")),
+            Some(Vec3::new(3.0, 0.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_cached() {
+        let (_, topology, cached) = test_scene();
+        let empty_visual = VisualState::new(); // empty backbone_chains
+        let scene = ScenePositions {
+            visual: &empty_visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        // Should fall back to cached_chains
+        let pos = resolve_atom_ref(&scene, &make_ref(1, "CA"));
+        assert_eq!(pos, Some(Vec3::new(5.3, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn resolve_sidechain_atom() {
+        let (visual, topology, cached) = test_scene();
+        let scene = ScenePositions {
+            visual: &visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        let pos = resolve_atom_ref(&scene, &make_ref(0, "CB"));
+        assert_eq!(pos, Some(Vec3::new(1.5, 2.0, 0.0)));
+    }
+
+    #[test]
+    fn resolve_unknown_returns_none() {
+        let (visual, topology, cached) = test_scene();
+        let scene = ScenePositions {
+            visual: &visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        assert_eq!(resolve_atom_ref(&scene, &make_ref(0, "XYZ")), None);
+    }
+
+    #[test]
+    fn resolve_out_of_range_returns_none() {
+        let (visual, topology, cached) = test_scene();
+        let scene = ScenePositions {
+            visual: &visual,
+            topology: &topology,
+            cached_chains: &cached,
+        };
+        assert_eq!(resolve_atom_ref(&scene, &make_ref(99, "CA")), None);
+    }
+}

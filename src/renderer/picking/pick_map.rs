@@ -80,3 +80,81 @@ impl PickMap {
         PickTarget::None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_resolves_to_none() {
+        let map = PickMap::new(10, vec![(0, 0), (0, 1)]);
+        assert_eq!(map.resolve(0), PickTarget::None);
+    }
+
+    #[test]
+    fn residue_ids_one_based() {
+        let map = PickMap::new(5, vec![]);
+        assert_eq!(map.resolve(1), PickTarget::Residue(0));
+        assert_eq!(map.resolve(5), PickTarget::Residue(4));
+    }
+
+    #[test]
+    fn atom_ids_follow_residues() {
+        let map = PickMap::new(3, vec![(10, 0), (10, 1), (20, 0)]);
+        // residues: IDs 1-3, atoms start at ID 4
+        assert_eq!(
+            map.resolve(4),
+            PickTarget::Atom {
+                entity_id: 10,
+                atom_idx: 0,
+            }
+        );
+        assert_eq!(
+            map.resolve(6),
+            PickTarget::Atom {
+                entity_id: 20,
+                atom_idx: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn out_of_range_resolves_to_none() {
+        let map = PickMap::new(2, vec![(0, 0)]);
+        // total valid IDs: 1,2 (residues) + 3 (atom) = 3
+        assert_eq!(map.resolve(4), PickTarget::None);
+        assert_eq!(map.resolve(100), PickTarget::None);
+    }
+
+    #[test]
+    fn empty_map() {
+        let map = PickMap::new(0, vec![]);
+        assert_eq!(map.resolve(0), PickTarget::None);
+        assert_eq!(map.resolve(1), PickTarget::None);
+    }
+
+    #[test]
+    fn as_residue_i32() {
+        assert_eq!(PickTarget::Residue(5).as_residue_i32(), 5);
+        assert_eq!(PickTarget::None.as_residue_i32(), -1);
+        assert_eq!(
+            PickTarget::Atom {
+                entity_id: 0,
+                atom_idx: 0,
+            }
+            .as_residue_i32(),
+            -1
+        );
+    }
+
+    #[test]
+    fn is_none_predicate() {
+        assert!(PickTarget::None.is_none());
+        assert!(!PickTarget::Residue(0).is_none());
+        assert!(!PickTarget::Atom {
+            entity_id: 0,
+            atom_idx: 0,
+        }
+        .is_none());
+    }
+}
