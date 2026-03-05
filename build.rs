@@ -15,8 +15,8 @@ fn main() {
     let ui_dir: &Path = Path::new("crates/viso-ui");
     let dist: PathBuf = ui_dir.join("dist");
 
-    // Check whether trunk has already produced real output by looking for any
-    // .wasm file in the dist directory.
+    // Check whether trunk has already produced real output by looking
+    // for any .wasm file in the dist directory.
     let has_wasm = dist.is_dir()
         && std::fs::read_dir(&dist).ok().is_some_and(|entries| {
             entries
@@ -68,8 +68,8 @@ fn main() {
     println!("cargo:rerun-if-changed=crates/viso-ui/dist");
 }
 
-/// Create the dist directory with a placeholder `index.html` so rust-embed
-/// compiles even when trunk is unavailable.
+/// Create the dist directory with a placeholder `index.html` so
+/// rust-embed compiles even when trunk is unavailable.
 fn write_placeholder(dist: &Path) {
     std::fs::create_dir_all(dist).expect("failed to create dist dir");
     std::fs::write(

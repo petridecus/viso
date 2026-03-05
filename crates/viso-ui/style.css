@@ -1,0 +1,494 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Foldit design tokens ─────────────────────────────────────────────── */
+
+:root {
+    --menu-bg-color: #1f2937;
+    --menu-hover-bg-color: #374151;
+    --bright-green: rgba(178, 252, 81, 1.0);
+    --dull-green: rgba(138, 184, 61, 1.0);
+    --bright-purple: rgba(126, 18, 148, 1.0);
+    --pale-gray: rgba(74, 73, 70, 1.0);
+    --tab-accent: #60a5fa;
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: #171717;
+    overflow: hidden;
+    overscroll-behavior: none;
+    user-select: none;
+    font-family: 'Noto Sans', sans-serif;
+}
+
+*:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+    border-radius: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background-color: #1f2937;
+    border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #374151;
+    border-radius: 4px;
+    border: 2px solid #1f2937;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 #1f2937;
+}
+
+/* ── Side panel (full-height, edge-to-edge) ───────────────────────────── */
+
+.side-panel {
+    position: relative;
+    background: #171717;
+    color: rgba(255, 255, 255, 0.9);
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Resize handle (left edge drag strip) ────────────────────────────── */
+
+.resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Panel header ────────────────────────────────────────────────────── */
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.panel-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: #fff;
+}
+
+.panel-toggle-btn {
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    transition: color 0.15s, background 0.15s;
+}
+
+.panel-toggle-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Panel layout (tab bar + content) ────────────────────────────────── */
+
+.panel-layout {
+    display: flex;
+    flex-direction: row;
+    flex: 1 1 0%;
+    min-height: 0;
+}
+
+/* ── Tab bar (vertical icon strip) ───────────────────────────────────── */
+
+.tab-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 34px;
+    min-width: 34px;
+    flex-shrink: 0;
+    background: #0a0a0a;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 4px;
+    gap: 2px;
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.15s, background 0.15s;
+    padding: 0;
+}
+
+.tab-btn:hover {
+    color: #d1d5db;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.tab-btn.active {
+    color: var(--tab-accent);
+    background: rgba(96, 165, 250, 0.1);
+}
+
+.tab-btn.active::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 4px;
+    bottom: 4px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--tab-accent);
+}
+
+/* ── Tab content (scrollable) ────────────────────────────────────────── */
+
+.tab-content {
+    flex: 1 1 0%;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px 12px;
+}
+
+/* ── Section title (active tab heading) ──────────────────────────────── */
+
+.section-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: #fff;
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ── Field group (card) ──────────────────────────────────────────────── */
+
+.field-group {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.field-group-header {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+/* ── Field rows ───────────────────────────────────────────────────────── */
+
+.field-row {
+    margin-bottom: 8px;
+}
+
+.field-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+    color: #9ca3af;
+}
+
+/* ── Slider with value readout ───────────────────────────────────────── */
+
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.slider-row input[type="range"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.slider-value {
+    font-size: 0.75rem;
+    color: #d1d5db;
+    font-variant-numeric: tabular-nums;
+    min-width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* ── Slider (native range input) ──────────────────────────────────────── */
+
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 9999px;
+    background: #404040;
+    cursor: pointer;
+    margin: 4px 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #60a5fa;
+    background: #171717;
+    cursor: pointer;
+    transition: box-shadow 0.15s;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+
+/* ── Checkbox ─────────────────────────────────────────────────────────── */
+
+.options-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.options-checkbox input[type="checkbox"] {
+    accent-color: white;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* ── Dropdown ─────────────────────────────────────────────────────────── */
+
+.options-dropdown {
+    position: relative;
+    width: 100%;
+}
+
+.options-dropdown select {
+    width: 100%;
+    padding: 6px 32px 6px 10px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.875rem;
+    appearance: none;
+    cursor: pointer;
+}
+
+.options-dropdown select:hover {
+    background: #525252;
+}
+
+.options-dropdown select:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #3b82f6;
+}
+
+/* ── Text input ───────────────────────────────────────────────────────── */
+
+.text-input {
+    width: 100%;
+    padding: 6px 10px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.875rem;
+}
+
+.text-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #3b82f6;
+}
+
+/* ── FPS label ────────────────────────────────────────────────────────── */
+
+.fps-value {
+    font-size: 0.875rem;
+    color: #d1d5db;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Top-level tabs (Load / Options) ─────────────────────────────────── */
+
+.top-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.top-tab {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #6b7280;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.top-tab:hover {
+    color: #d1d5db;
+}
+
+.top-tab.active {
+    color: var(--tab-accent);
+    border-bottom-color: var(--tab-accent);
+}
+
+/* ── Load panel ──────────────────────────────────────────────────────── */
+
+.load-panel {
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1 1 0%;
+    min-height: 0;
+}
+
+.load-section {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.load-section-title {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.fetch-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.pdb-input {
+    width: 80px;
+    padding: 6px 10px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.pdb-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #3b82f6;
+}
+
+.source-radio {
+    display: flex;
+    gap: 12px;
+    font-size: 0.8125rem;
+    color: #d1d5db;
+}
+
+.source-radio label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.source-radio input[type="radio"] {
+    accent-color: var(--tab-accent);
+}
+
+.fetch-btn,
+.browse-btn {
+    padding: 6px 14px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.fetch-btn:hover:not(:disabled),
+.browse-btn:hover:not(:disabled) {
+    background: #525252;
+}
+
+.fetch-btn:disabled,
+.browse-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.browse-btn {
+    width: 100%;
+}
+
+/* ── Load status ─────────────────────────────────────────────────────── */
+
+.load-status {
+    font-size: 0.75rem;
+    padding: 8px 0;
+    color: #9ca3af;
+}
+
+.load-status.loading {
+    color: var(--tab-accent);
+}
+
+.load-status.loaded {
+    color: #4ade80;
+}
+
+.load-status.error {
+    color: #f87171;
+}

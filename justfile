@@ -1,3 +1,6 @@
+# Use PowerShell on Windows (bash resolves to WSL on some machines)
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+
 # Run all checks (what CI runs)
 check: fmt-check clippy test doc
 
@@ -18,8 +21,8 @@ test:
     cargo test --all-features
 
 # Build docs and check for warnings
-doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+doc $RUSTDOCFLAGS="-D warnings":
+    cargo doc --no-deps --document-private-items
 
 # Dependency audit
 deny:
@@ -31,16 +34,7 @@ machete:
 
 # Check file lengths (max 800 lines)
 file-lengths:
-    #!/usr/bin/env bash
-    failed=0
-    while IFS= read -r file; do
-        lines=$(wc -l < "$file")
-        if [ "$lines" -gt 800 ]; then
-            echo "ERROR: $file has $lines lines (max 800)"
-            failed=1
-        fi
-    done < <(find src -name '*.rs' -not -path '*/target/*')
-    exit $failed
+    python3 -c "import os, sys; files = [os.path.join(r,f) for r,_,fs in os.walk('src') for f in fs if f.endswith('.rs') and 'target' not in r]; bad = [(f,sum(1 for _ in open(f,encoding='utf-8',errors='replace'))) for f in files]; bad = [(f,n) for f,n in bad if n > 800]; [print(f'ERROR: {f} has {n} lines (max 800)') for f,n in bad]; sys.exit(1 if bad else 0)"
 
 # One-time repo setup (hooks + commit template)
 setup:

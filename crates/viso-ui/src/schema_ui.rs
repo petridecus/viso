@@ -3,11 +3,24 @@
 //! Walks a JSON Schema object produced by `schemars` and renders Dioxus
 //! controls that match each field's type. When a user changes a value, the
 //! bridge sends a `set_option` IPC message to the native engine.
+//!
+//! The panel uses a tabbed layout with icon tabs on the left edge and
+//! grouped cards within each tab.
 
 use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::bridge;
+
+/// Desired tab order (left to right in the tab bar).
+const TAB_ORDER: &[&str] = &[
+    "display",
+    "lighting",
+    "post_processing",
+    "camera",
+    "geometry",
+    "debug",
+];
 
 /// Convert a `snake_case` string to `Title Case`.
 fn display_name(s: &str) -> String {
@@ -46,14 +59,113 @@ fn FpsLabel(stats_sig: Signal<Option<Value>>) -> Element {
     }
 }
 
-/// Top-level component: renders collapsible sections for each schema
-/// property group.
+/// Return an SVG icon element for a section key.
+fn tab_icon(section_key: &str) -> Element {
+    match section_key {
+        "display" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                path {
+                    d: "M1 8s2.5-4 7-4 7 4 7 4-2.5 4-7 4-7-4-7-4z",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+                circle {
+                    cx: "8", cy: "8", r: "2",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+            }
+        },
+        "lighting" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                circle {
+                    cx: "8", cy: "8", r: "3",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+                path {
+                    d: "M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1",
+                    stroke: "currentColor", stroke_width: "1.5", stroke_linecap: "round",
+                }
+            }
+        },
+        "post_processing" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                path {
+                    d: "M8 1l1.8 4.7L15 8l-5.2 2.3L8 15l-1.8-4.7L1 8l5.2-2.3z",
+                    stroke: "currentColor", stroke_width: "1.5", stroke_linejoin: "round",
+                }
+            }
+        },
+        "camera" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                rect {
+                    x: "1", y: "4", width: "14", height: "10", rx: "2",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+                circle {
+                    cx: "8", cy: "9", r: "2.5",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+                path {
+                    d: "M5.5 4L6.5 2h3l1 2",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+            }
+        },
+        "geometry" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                path {
+                    d: "M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7z",
+                    stroke: "currentColor", stroke_width: "1.5", stroke_linejoin: "round",
+                }
+                path {
+                    d: "M8 7.5l5.5-3M8 7.5v7M8 7.5L2.5 4.5",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+            }
+        },
+        "debug" => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                ellipse {
+                    cx: "8", cy: "9.5", rx: "3.5", ry: "4.5",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+                path {
+                    d: "M8 4V1.5M4.5 6.5L2 5.5M11.5 6.5L14 5.5M4.5 10.5H2M11.5 10.5H14M5 13.5L3.5 15M11 13.5l1.5 1.5",
+                    stroke: "currentColor", stroke_width: "1.5", stroke_linecap: "round",
+                }
+                line {
+                    x1: "8", y1: "5", x2: "8", y2: "14",
+                    stroke: "currentColor", stroke_width: "1", opacity: "0.5",
+                }
+            }
+        },
+        _ => rsx! {
+            svg {
+                width: "16", height: "16", view_box: "0 0 16 16", fill: "none",
+                circle {
+                    cx: "8", cy: "8", r: "6",
+                    stroke: "currentColor", stroke_width: "1.5",
+                }
+            }
+        },
+    }
+}
+
+/// Options panel content: icon tab bar on the left + section controls.
+///
+/// This component renders only the inner `.panel-layout` area.
+/// The outer panel shell (resize handle, header, pin button, top-level tabs)
+/// is owned by the parent in `main.rs`.
 #[component]
-pub fn SchemaPanel(
+pub fn OptionsPanel(
     schema: Value,
     options: Value,
     stats_sig: Signal<Option<Value>>,
-    panel_pinned: Signal<bool>,
 ) -> Element {
     let properties = schema.pointer("/properties").and_then(Value::as_object);
 
@@ -61,123 +173,69 @@ pub fn SchemaPanel(
         return rsx! { p { "No schema loaded" } };
     };
 
-    let pinned = *panel_pinned.read();
-    let panel_class = if pinned {
-        "side-panel"
-    } else {
-        "side-panel floating"
-    };
+    // Ordered list of section keys that actually exist in the schema.
+    let section_keys: Vec<String> = TAB_ORDER
+        .iter()
+        .filter(|k| props.contains_key(**k))
+        .map(|k| (*k).to_owned())
+        .collect();
 
-    // Resize drag state: (start_screen_x, start_body_width)
-    let mut drag = use_signal::<Option<(f64, f64)>>(|| None);
+    let first_key = section_keys.first().cloned().unwrap_or_default();
+    let mut active_tab = use_signal(|| first_key);
 
     rsx! {
-        div { class: "{panel_class}",
-            div {
-                class: "resize-handle",
-                onpointerdown: move |evt: PointerEvent| {
-                    let sx = evt.screen_coordinates().x;
-                    let w = web_sys::window()
-                        .and_then(|w| w.document())
-                        .and_then(|d| d.body())
-                        .map(|b| b.client_width() as f64)
-                        .unwrap_or(350.0);
-                    drag.set(Some((sx, w)));
-                    // Set pointer capture so we keep getting events
-                    // even when the cursor moves outside the webview.
-                    let id = evt.pointer_id();
-                    let js = format!(
-                        "document.querySelector('.resize-handle')\
-                         .setPointerCapture({})",
-                        id
-                    );
-                    let _ = js_sys::eval(&js);
-                },
-                onpointermove: move |evt: PointerEvent| {
-                    if let Some((start_x, start_w)) = *drag.read() {
-                        let delta = start_x - evt.screen_coordinates().x;
-                        let new_w = (start_w + delta).clamp(220.0, 700.0);
-                        bridge::send_resize_panel(new_w as u32);
-                    }
-                },
-                onpointerup: move |evt: PointerEvent| {
-                    if drag.read().is_some() {
-                        drag.set(None);
-                        let id = evt.pointer_id();
-                        let js = format!(
-                            "document.querySelector('.resize-handle')\
-                             .releasePointerCapture({})",
-                            id
-                        );
-                        let _ = js_sys::eval(&js);
-                    }
-                },
-            }
-            div { class: "panel-header",
-                span { class: "panel-title", "Options" }
-                button {
-                    class: "panel-toggle-btn",
-                    title: if pinned { "Unpin sidebar" } else { "Pin sidebar" },
-                    onclick: move |_| {
-                        bridge::send_toggle_panel();
-                    },
-                    svg {
-                        width: "16",
-                        height: "16",
-                        view_box: "0 0 16 16",
-                        fill: "none",
-                        // Sidebar icon: rectangle with vertical divider
-                        rect {
-                            x: "1",
-                            y: "2",
-                            width: "14",
-                            height: "12",
-                            rx: "2",
-                            stroke: "currentColor",
-                            stroke_width: "1.5",
-                            fill: "none",
-                        }
-                        // Vertical divider line
-                        line {
-                            x1: "10",
-                            y1: "2",
-                            x2: "10",
-                            y2: "14",
-                            stroke: "currentColor",
-                            stroke_width: "1.5",
-                        }
-                        // Fill the sidebar portion when pinned
-                        if pinned {
-                            rect {
-                                x: "10",
-                                y: "2",
-                                width: "5",
-                                height: "12",
-                                rx: "0",
-                                fill: "currentColor",
-                                opacity: "0.4",
+        div { class: "panel-layout",
+            // Tab bar — vertical strip of icon buttons
+            div { class: "tab-bar",
+                for key in section_keys.iter() {
+                    {
+                        let key_owned = key.clone();
+                        let is_active = *active_tab.read() == *key;
+                        let title = props.get(key.as_str())
+                            .and_then(|s| s.get("title"))
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                            .unwrap_or_else(|| display_name(key));
+                        let btn_class = if is_active { "tab-btn active" } else { "tab-btn" };
+                        rsx! {
+                            button {
+                                class: "{btn_class}",
+                                title: "{title}",
+                                onclick: move |_| {
+                                    active_tab.set(key_owned.clone());
+                                },
+                                {tab_icon(key)}
                             }
                         }
                     }
                 }
             }
-            for (section_key, section_schema) in props.iter() {
-                {render_section(
-                    section_key,
-                    section_schema,
-                    options.get(section_key),
-                    &schema,
-                    if section_key == "debug" { Some(stats_sig) } else { None },
-                )}
+            // Tab content — active section only
+            div { class: "tab-content",
+                {
+                    let key = active_tab.read().clone();
+                    if let Some(section_schema) = props.get(key.as_str()) {
+                        render_section(
+                            &key,
+                            section_schema,
+                            options.get(key.as_str()),
+                            &schema,
+                            if key == "debug" { Some(stats_sig) } else { None },
+                        )
+                    } else {
+                        rsx! {}
+                    }
+                }
             }
         }
     }
 }
 
-/// Render a collapsible section (one top-level Options field).
+/// Render a section's content with sub-group cards.
 ///
-/// When `stats_sig` is provided (for the Debug section), an `FpsLabel`
-/// component is rendered at the top of the section body.
+/// Fields with `x-group` metadata are collected into named card groups.
+/// Fields without a group render flat at the section level.
+/// When `stats_sig` is provided (Debug section), an FPS label appears at top.
 fn render_section(
     key: &str,
     schema: &Value,
@@ -196,26 +254,87 @@ fn render_section(
         .or_else(|| schema.pointer("/allOf/0/properties"))
         .and_then(Value::as_object);
 
-    rsx! {
-        details { open: true,
-            summary { class: "section-header",
-                "{title}"
-            }
-            div { class: "section-body",
-                if let Some(sig) = stats_sig {
-                    FpsLabel { stats_sig: sig }
-                }
-                if let Some(props) = properties {
-                    for (field_key, field_schema) in props.iter() {
-                        {render_field(
-                            key,
-                            field_key,
-                            field_schema,
-                            current.and_then(|c| c.get(field_key)),
-                            root,
-                        )}
+    // Collect fields into ordered groups: (Option<group_name>, fields).
+    let mut groups: Vec<(Option<String>, Vec<(String, Value)>)> = Vec::new();
+
+    if let Some(props) = properties {
+        for (field_key, field_schema) in props.iter() {
+            let group_name = field_schema
+                .get("x-group")
+                .and_then(Value::as_str)
+                .map(String::from);
+
+            match &group_name {
+                Some(name) => {
+                    // Append to existing group or create new one.
+                    if let Some(group) = groups
+                        .iter_mut()
+                        .find(|(n, _)| n.as_deref() == Some(name.as_str()))
+                    {
+                        group.1.push((field_key.clone(), field_schema.clone()));
+                    } else {
+                        groups.push((
+                            Some(name.clone()),
+                            vec![(field_key.clone(), field_schema.clone())],
+                        ));
                     }
                 }
+                None => {
+                    groups.push((
+                        None,
+                        vec![(field_key.clone(), field_schema.clone())],
+                    ));
+                }
+            }
+        }
+    }
+
+    rsx! {
+        div { class: "section-title", "{title}" }
+        if let Some(sig) = stats_sig {
+            FpsLabel { stats_sig: sig }
+        }
+        for (group_name, fields) in groups.iter() {
+            {render_field_group(
+                key, group_name.as_deref(), fields, current, root,
+            )}
+        }
+    }
+}
+
+/// Render a group of fields — either as a card (named group) or flat.
+fn render_field_group(
+    section: &str,
+    name: Option<&str>,
+    fields: &[(String, Value)],
+    current: Option<&Value>,
+    root: &Value,
+) -> Element {
+    if let Some(name) = name {
+        rsx! {
+            div { class: "field-group",
+                div { class: "field-group-header", "{name}" }
+                for (field_key, field_schema) in fields.iter() {
+                    {render_field(
+                        section,
+                        field_key,
+                        field_schema,
+                        current.and_then(|c| c.get(field_key.as_str())),
+                        root,
+                    )}
+                }
+            }
+        }
+    } else {
+        rsx! {
+            for (field_key, field_schema) in fields.iter() {
+                {render_field(
+                    section,
+                    field_key,
+                    field_schema,
+                    current.and_then(|c| c.get(field_key.as_str())),
+                    root,
+                )}
             }
         }
     }
@@ -312,7 +431,7 @@ fn render_field(
     }
 }
 
-/// Number input with optional min/max from schema.
+/// Number input with optional min/max from schema, plus value readout.
 fn render_number_field(
     section: &str,
     field: &str,
@@ -323,28 +442,53 @@ fn render_number_field(
     let min = schema.get("minimum").and_then(Value::as_f64);
     let max = schema.get("maximum").and_then(Value::as_f64);
     let is_int = schema.get("type").and_then(Value::as_str) == Some("integer");
-    let step = if is_int { "1" } else { "0.01" };
+
+    // Use step from schema extension, fall back to sensible default.
+    let step_val = schema.get("step").and_then(Value::as_f64);
+    let step = step_val.map(|s| format!("{s}")).unwrap_or_else(|| {
+        if is_int {
+            "1".into()
+        } else {
+            "0.01".into()
+        }
+    });
+
+    // Format the displayed value with appropriate precision.
+    let display_val = if is_int {
+        format!("{}", current_val as i64)
+    } else {
+        let decimals = step_val
+            .map(|s| {
+                let s_str = format!("{s}");
+                s_str.find('.').map_or(0, |dot| s_str.len() - dot - 1)
+            })
+            .unwrap_or(2);
+        format!("{current_val:.decimals$}")
+    };
 
     let section = section.to_owned();
     let field = field.to_owned();
 
     rsx! {
-        input {
-            r#type: "range",
-            value: "{current_val}",
-            step: "{step}",
-            min: min.map(|v| format!("{v}")).unwrap_or_default(),
-            max: max.map(|v| format!("{v}")).unwrap_or_default(),
-            oninput: move |evt: Event<FormData>| {
-                if let Ok(v) = evt.value().parse::<f64>() {
-                    let val = if is_int {
-                        Value::from(v as i64)
-                    } else {
-                        Value::from(v)
-                    };
-                    bridge::send_set_option(&section, &field, &val);
-                }
-            },
+        div { class: "slider-row",
+            input {
+                r#type: "range",
+                value: "{current_val}",
+                step: "{step}",
+                min: min.map(|v| format!("{v}")).unwrap_or_default(),
+                max: max.map(|v| format!("{v}")).unwrap_or_default(),
+                oninput: move |evt: Event<FormData>| {
+                    if let Ok(v) = evt.value().parse::<f64>() {
+                        let val = if is_int {
+                            Value::from(v as i64)
+                        } else {
+                            Value::from(v)
+                        };
+                        bridge::send_set_option(&section, &field, &val);
+                    }
+                },
+            }
+            span { class: "slider-value", "{display_val}" }
         }
     }
 }

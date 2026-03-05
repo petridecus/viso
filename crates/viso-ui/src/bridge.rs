@@ -134,6 +134,43 @@ pub fn send_load_file(path: &str) {
     post_message(&msg.to_string());
 }
 
+/// Send a `fetch_pdb` action to the native engine.
+pub fn send_fetch_pdb(id: &str, source: &str) {
+    let msg = serde_json::json!({
+        "action": "fetch_pdb",
+        "id": id,
+        "source": source,
+    });
+    post_message(&msg.to_string());
+}
+
+/// Send an `open_file_dialog` action to the native engine.
+pub fn send_open_file_dialog() {
+    let msg = serde_json::json!({ "action": "open_file_dialog" });
+    post_message(&msg.to_string());
+}
+
+/// Register a listener for load-status events from the native engine.
+pub fn register_load_status_listener(mut status_sig: Signal<Option<Value>>) {
+    let on_status = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(json_str) = evt.detail().as_string() {
+                if let Ok(val) = serde_json::from_str::<Value>(&json_str) {
+                    status_sig.set(Some(val));
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-load-status",
+            on_status.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-load-status listener");
+    on_status.forget();
+}
+
 /// Call `window.ipc.postMessage(json)` to send a message to the native
 /// wry IPC handler.
 fn post_message(json: &str) {

@@ -190,18 +190,24 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
 }
 
 /// Create a [`VisoEngine`], optionally loading a structure file.
+///
+/// When `path` is `None`, an empty scene is created (no geometry loaded).
 fn create_engine(
     window: Arc<Window>,
     size: (u32, u32),
     scale: f64,
     path: Option<&str>,
 ) -> Result<VisoEngine, VisoError> {
-    let result = if let Some(path) = path {
+    if let Some(path) = path {
         pollster::block_on(VisoEngine::new_with_path(window, size, scale, path))
     } else {
-        pollster::block_on(VisoEngine::new(window, size, scale))
-    };
-    result.map_err(|e| VisoError::Viewer(e.to_string()))
+        let mut context =
+            pollster::block_on(crate::gpu::RenderContext::new(window, size))?;
+        if scale < 2.0 {
+            context.render_scale = 2;
+        }
+        VisoEngine::new_empty(context)
+    }
 }
 
 impl ViewerApp {
@@ -211,9 +217,10 @@ impl ViewerApp {
             return;
         };
         engine.resize(vp_w, vp_h);
-        let Some(window) = &self.window else { return };
         #[cfg(feature = "gui")]
-        self.panel.apply_layout(window);
+        if let Some(window) = &self.window {
+            self.panel.apply_layout(window);
+        }
     }
 
     fn handle_scale_factor_changed(&mut self, scale_factor: f64) {
@@ -261,6 +268,10 @@ impl ViewerApp {
         self.panel.push_stats_if_due(now, engine);
 
         let Some(w) = &self.window else { return };
+
+        #[cfg(feature = "gui")]
+        self.panel.tick_slide(dt, w);
+
         w.request_redraw();
     }
 
@@ -342,8 +353,9 @@ impl ViewerApp {
         #[cfg(feature = "gui")]
         if code == KeyCode::Backslash {
             self.panel.toggle();
-            let Some(window) = &self.window else { return };
-            self.panel.apply_layout(window);
+            if let Some(window) = &self.window {
+                self.panel.apply_layout(window);
+            }
             return;
         }
 
@@ -458,14 +470,13 @@ impl ApplicationHandler for ViewerApp {
 
         engine.sync_scene_to_renderers(std::collections::HashMap::new());
 
-        // Render the first frame while the window is still hidden, then
-        // reveal it so the user never sees a blank rectangle.
+        // Render the first frame while the window is still hidden,
+        // then reveal it so the user never sees a blank rectangle.
         engine.update(0.0);
         let _ = engine.render();
         window.set_visible(true);
         self.shown = true;
 
-        // Create the webview after the first frame is on screen.
         #[cfg(feature = "gui")]
         self.panel.init_webview(
             window.as_ref(),

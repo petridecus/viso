@@ -23,6 +23,10 @@ pub struct SceneProcessor {
     scene_result: triple_buffer::Output<Option<PreparedScene>>,
     anim_result: triple_buffer::Output<Option<PreparedAnimationFrame>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Monotonically increasing scene generation counter. Bumped each
+    /// time a `FullRebuild` is submitted. Animation frame results with
+    /// a lower generation are discarded as stale.
+    scene_generation: u64,
 }
 
 impl SceneProcessor {
@@ -47,7 +51,19 @@ impl SceneProcessor {
             scene_result: scene_output,
             anim_result: anim_output,
             thread: Some(thread),
+            scene_generation: 0,
         })
+    }
+
+    /// Increment and return the next scene generation counter.
+    pub fn next_generation(&mut self) -> u64 {
+        self.scene_generation += 1;
+        self.scene_generation
+    }
+
+    /// Current scene generation counter.
+    pub fn generation(&self) -> u64 {
+        self.scene_generation
     }
 
     /// Submit a scene request (non-blocking send).
@@ -62,9 +78,23 @@ impl SceneProcessor {
     }
 
     /// Non-blocking check for completed animation frame.
+    ///
+    /// Discards frames whose generation is older than the current scene
+    /// generation. As soon as a new `FullRebuild` is submitted (bumping
+    /// `scene_generation`), all prior animation frames become stale —
+    /// even before the rebuild result arrives on the main thread.
     pub fn try_recv_animation(&mut self) -> Option<PreparedAnimationFrame> {
         let _ = self.anim_result.update();
-        self.anim_result.output_buffer_mut().take()
+        let prepared = self.anim_result.output_buffer_mut().take()?;
+        if prepared.generation < self.scene_generation {
+            log::debug!(
+                "Discarding stale animation frame (gen {} < current {})",
+                prepared.generation,
+                self.scene_generation,
+            );
+            return None;
+        }
+        Some(prepared)
     }
 
     /// Shut down the background thread and wait for it to finish.
@@ -83,6 +113,8 @@ impl SceneProcessor {
         mut anim_input: triple_buffer::Input<Option<PreparedAnimationFrame>>,
     ) {
         let mut cache = MeshCache::new();
+        // Generation of the last FullRebuild processed on this thread.
+        let mut last_rebuild_generation: u64 = 0;
 
         while let Ok(request) = request_rx.recv() {
             let latest = drain_latest(request, &request_rx);
@@ -94,7 +126,9 @@ impl SceneProcessor {
                     display,
                     colors,
                     geometry,
+                    generation,
                 } => {
+                    last_rebuild_generation = generation;
                     cache.cache_stable_data(&entities);
                     let entity_meshes =
                         cache.update(&entities, &display, &colors, &geometry);
@@ -110,7 +144,14 @@ impl SceneProcessor {
                     per_residue_colors,
                     geometry,
                     per_chain_lod,
+                    generation,
                 } => {
+                    // Skip animation frames from a scene that has already
+                    // been superseded by a newer FullRebuild.
+                    if generation < last_rebuild_generation {
+                        continue;
+                    }
+
                     let na =
                         na_chains.as_deref().unwrap_or(&cache.cached_na_chains);
                     let ss = ss_types
@@ -129,6 +170,7 @@ impl SceneProcessor {
                             geometry: &geometry,
                             per_chain_lod: per_chain_lod.as_deref(),
                         },
+                        generation,
                     );
                     anim_input.write(Some(prepared));
                 }

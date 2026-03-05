@@ -19,7 +19,7 @@ exclude = ["gallery/", "assets/", "docs/", ".github/"]
 default = ["binary"]
 binary = ["gui", "dep:env_logger"]
 viewer = ["dep:winit", "dep:pollster"]
-gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess"]
+gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess", "dep:ureq", "dep:rfd"]
 
 [dependencies]
 wgpu = { version = "26.0", features = ["naga-ir"] }
@@ -42,6 +42,9 @@ env_logger = { version = "0.11", optional = true }
 
 # HTTP client for downloading structures from RCSB
 ureq = { version = "3", optional = true }
+
+# Native file dialogs for Load panel
+rfd = { version = "0.15", optional = true }
 
 # Embedded webview for GUI options panel
 wry = { version = "0.50", optional = true }

@@ -173,6 +173,7 @@ pub struct AnimationFrameInput<'a> {
 /// Generate backbone + optional sidechain mesh for an animation frame.
 pub fn process_animation_frame(
     input: &AnimationFrameInput,
+    generation: u64,
 ) -> PreparedAnimationFrame {
     // --- Backbone mesh (protein + nucleic acid, unified) ---
     let total_residues: usize = input
@@ -219,5 +220,6 @@ pub fn process_animation_frame(
         },
         sidechain_instances,
         sidechain_instance_count,
+        generation,
     }
 }

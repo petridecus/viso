@@ -3,7 +3,7 @@ export default {
 	content: [
 		'./index.html',
 		'./src/**/*.rs',
-		'./tailwind-input.css',
+		'./style.css',
 	],
 	theme: {
 		extend: {},
