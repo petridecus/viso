@@ -138,19 +138,40 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 /* ── Dropdown ─────────────────────────────────────────────────────────── */
 
-.options-dropdown {
+.dropdown {
     @apply relative w-full;
 }
 
-.options-dropdown select {
-    @apply w-full px-2.5 py-1.5 pr-8;
+.dropdown-trigger {
+    @apply w-full px-2.5 py-1.5 flex items-center justify-between;
     @apply bg-neutral-700 border border-neutral-600 rounded-md text-gray-100 text-sm;
-    @apply focus:outline-none focus:ring-2 focus:ring-blue-500;
-    @apply appearance-none cursor-pointer;
+    @apply cursor-pointer;
 }
 
-.options-dropdown select:hover {
+.dropdown-trigger:hover {
     @apply bg-neutral-600;
+}
+
+.dropdown-arrow {
+    @apply text-neutral-400 text-xs ml-1;
+}
+
+.dropdown-menu {
+    @apply absolute z-50 w-full mt-1 py-1;
+    @apply bg-neutral-700 border border-neutral-600 rounded-md shadow-lg;
+    @apply max-h-48 overflow-y-auto;
+}
+
+.dropdown-item {
+    @apply px-2.5 py-1.5 text-sm text-gray-100 cursor-pointer;
+}
+
+.dropdown-item:hover {
+    @apply bg-neutral-600;
+}
+
+.dropdown-item.selected {
+    @apply bg-blue-600/30 text-blue-300;
 }
 
 /* ── Text input ───────────────────────────────────────────────────────── */

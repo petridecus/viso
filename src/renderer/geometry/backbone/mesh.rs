@@ -60,7 +60,7 @@ pub(crate) fn generate_mesh_colored(
         geo,
         per_chain_lod,
     );
-    let na_lod = per_chain_lod.map(|l| &l[chains.protein.len()..]);
+    let na_lod = per_chain_lod.and_then(|l| l.get(chains.protein.len()..));
     process_na_chains(chains.na, geo, na_lod, &mut out, global_residue_idx);
 
     out
@@ -111,8 +111,9 @@ fn process_protein_chains(
             })
             .collect();
 
-        let (chain_spr, chain_csv) =
-            per_chain_lod.map_or((spr, csv), |l| l[chain_idx]);
+        let (chain_spr, chain_csv) = per_chain_lod
+            .and_then(|l| l.get(chain_idx).copied())
+            .unwrap_or((spr, csv));
 
         let params = MeshParams {
             base_vertex: out.vertices.len() as u32,
@@ -158,8 +159,9 @@ fn process_na_chains(
             })
             .collect();
 
-        let (chain_spr, chain_csv) =
-            per_chain_lod.map_or((spr, csv), |l| l[na_idx]);
+        let (chain_spr, chain_csv) = per_chain_lod
+            .and_then(|l| l.get(na_idx).copied())
+            .unwrap_or((spr, csv));
 
         let params = MeshParams {
             base_vertex: out.vertices.len() as u32,

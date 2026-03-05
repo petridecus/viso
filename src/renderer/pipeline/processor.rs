@@ -225,13 +225,13 @@ impl MeshCache {
             .sum();
         let geometry = geometry.clamped_for_residues(total_residues);
 
-        // Split invalidation: geometry changes clear entire cache,
-        // color/display changes only regenerate instance data.
-        let geometry_changed = self.last_geometry.as_ref() != Some(&geometry);
-        let instances_changed = self.last_display.as_ref() != Some(display)
+        // Any settings change (geometry, display, or colors) clears the
+        // entire cache because backbone colors are baked into vertex data.
+        let settings_changed = self.last_geometry.as_ref() != Some(&geometry)
+            || self.last_display.as_ref() != Some(display)
             || self.last_colors.as_ref() != Some(colors);
 
-        if geometry_changed {
+        if settings_changed {
             self.meshes.clear();
         }
         self.last_display = Some(display.clone());
@@ -249,12 +249,6 @@ impl MeshCache {
                     e, display, colors, &geometry,
                 );
                 drop(self.meshes.insert(e.id, (e.mesh_version, mesh)));
-            } else if instances_changed {
-                if let Some((_, mesh)) = self.meshes.get_mut(&e.id) {
-                    super::mesh_gen::regenerate_instances(
-                        mesh, e, display, colors,
-                    );
-                }
             }
         }
 

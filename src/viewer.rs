@@ -120,7 +120,7 @@ impl Viewer {
         #[cfg(all(target_os = "linux", feature = "gui"))]
         winit::platform::x11::register_xlib_error_hook(Box::new(
             |_display, error| {
-                let error = error as *mut x11_dl::xlib::XErrorEvent;
+                let error = error.cast::<x11_dl::xlib::XErrorEvent>();
                 let code = unsafe { (*error).error_code };
                 // 168 = GLXBadWindow, 170 = wry child-window teardown
                 code == 168 || code == 170
@@ -392,42 +392,50 @@ impl ViewerApp {
     }
 }
 
-impl ApplicationHandler for ViewerApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
+impl ViewerApp {
+    /// Build window attributes, sizing to 75% of the primary monitor.
+    fn window_attrs(
+        &self,
+        event_loop: &ActiveEventLoop,
+    ) -> winit::window::WindowAttributes {
+        let mut attrs = Window::default_attributes()
+            .with_title(&self.title)
+            .with_visible(false);
 
         let monitor = event_loop
             .primary_monitor()
             .or_else(|| event_loop.available_monitors().next());
-        let attrs = if let Some(mon) = &monitor {
+        if let Some(mon) = monitor {
             let mon_size = mon.size();
             let scale = mon.scale_factor();
             #[allow(clippy::cast_possible_truncation)]
             let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
             #[allow(clippy::cast_possible_truncation)]
             let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
-            Window::default_attributes()
-                .with_title(&self.title)
-                .with_visible(false)
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    logical_w, logical_h,
-                ))
-        } else {
-            Window::default_attributes()
-                .with_title(&self.title)
-                .with_visible(false)
-        };
+            attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(
+                logical_w, logical_h,
+            ));
+        }
 
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                log::error!("Failed to create window: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
+        attrs
+    }
+}
+
+impl ApplicationHandler for ViewerApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let window =
+            match event_loop.create_window(self.window_attrs(event_loop)) {
+                Ok(w) => Arc::new(w),
+                Err(e) => {
+                    log::error!("Failed to create window: {e}");
+                    event_loop.exit();
+                    return;
+                }
+            };
 
         let inner = window.inner_size();
         let scale = window.scale_factor();
@@ -462,8 +470,12 @@ impl ApplicationHandler for ViewerApp {
 
         // Create the webview after the first frame is on screen.
         #[cfg(feature = "gui")]
-        self.panel
-            .init_webview(window.as_ref(), inner.width, inner.height, &engine);
+        self.panel.init_webview(
+            window.as_ref(),
+            inner.width,
+            inner.height,
+            &engine,
+        );
 
         window.request_redraw();
         self.window = Some(window);
@@ -517,8 +529,7 @@ impl ApplicationHandler for ViewerApp {
         // Throttle GTK event pumping to ~60 Hz so it doesn't compete
         // with the render loop (which runs via ControlFlow::Poll).
         let now = Instant::now();
-        if now.duration_since(self.last_gtk_pump) >= Duration::from_millis(16)
-        {
+        if now.duration_since(self.last_gtk_pump) >= Duration::from_millis(16) {
             self.last_gtk_pump = now;
             while gtk::events_pending() {
                 let _ = gtk::main_iteration_do(false);

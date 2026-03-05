@@ -69,7 +69,10 @@ impl RenderContext {
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         initial_size: (u32, u32),
     ) -> Result<Self, RenderContextError> {
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            flags: wgpu::InstanceFlags::default().with_env(),
+            ..Default::default()
+        });
         let surface = instance
             .create_surface(window)
             .map_err(RenderContextError::SurfaceCreation)?;

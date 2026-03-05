@@ -67,8 +67,8 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     let has_wasm = UiAssets::iter().any(|name| name.ends_with(".wasm"));
     if !has_wasm {
         log::warn!(
-            "viso-ui was not built (no .wasm in embedded assets). \
-             Run `trunk build` in crates/viso-ui/ to enable the GUI panel."
+            "viso-ui was not built (no .wasm in embedded assets). Run `trunk \
+             build` in crates/viso-ui/ to enable the GUI panel."
         );
         return Err(wry::Error::MessageSender);
     }
@@ -216,10 +216,9 @@ pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
 /// [`BRIDGE_JS`] can replay it on init.
 fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
     let js = format!(
-        "if(window.__viso_push_{key})\
-         {{window.__viso_push_{key}('{escaped_value}')}}\
-         else{{window.__viso_early=window.__viso_early||{{}};\
-         window.__viso_early.{key}='{escaped_value}'}}"
+        "if(window.__viso_push_{key}){{window.__viso_push_{key}('\
+         {escaped_value}')}}else{{window.__viso_early=window.\
+         __viso_early||{{}};window.__viso_early.{key}='{escaped_value}'}}"
     );
     let _ = webview.evaluate_script(&js);
 }

@@ -163,15 +163,24 @@ impl PanelController {
         while let Ok(action) = rx.try_recv() {
             match action {
                 UiAction::SetOption { path, field, value } => {
+                    log::debug!("SetOption: {path}.{field} = {value}");
                     let mut opts = engine.options.clone();
                     let Ok(mut root) = serde_json::to_value(&opts) else {
+                        log::warn!("Failed to serialize options to JSON");
                         continue;
                     };
                     if let Some(section) = root.get_mut(&path) {
                         section[&field] = value;
+                    } else {
+                        log::warn!(
+                            "Section '{path}' not found in options JSON"
+                        );
                     }
-                    if let Ok(updated) = serde_json::from_value(root) {
-                        opts = updated;
+                    match serde_json::from_value(root) {
+                        Ok(updated) => opts = updated,
+                        Err(e) => {
+                            log::warn!("Options deserialization failed: {e}");
+                        }
                     }
                     engine.set_options(opts);
                 }

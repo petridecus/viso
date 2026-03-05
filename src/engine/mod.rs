@@ -11,6 +11,7 @@ pub(crate) mod scene_data;
 mod sync;
 pub(crate) mod trajectory;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -428,6 +429,9 @@ impl VisoEngine {
         }
         if colors_changed {
             self.refresh_ball_and_stick();
+        }
+        if display_changed || colors_changed {
+            self.sync_scene_to_renderers(HashMap::new());
         }
     }
 

@@ -375,6 +375,9 @@ fn render_bool_field(
 
 /// Enum dropdown (string with enum constraint).
 ///
+/// Uses a custom HTML/CSS dropdown instead of a native `<select>` because
+/// WebKitGTK renders native selects as GTK popups that escape the webview.
+///
 /// Handles both `{ "enum": [...] }` and `{ "oneOf": [{"const": ...}, ...] }`
 /// patterns produced by schemars.
 fn render_enum_field(
@@ -409,19 +412,37 @@ fn render_enum_field(
     let section = section.to_owned();
     let field = field.to_owned();
 
+    let mut open = use_signal(|| false);
+    let mut selected = use_signal(|| current_str.to_owned());
+
     rsx! {
-        div { class: "options-dropdown",
-            select {
-                value: "{current_str}",
-                onchange: move |evt: Event<FormData>| {
-                    let val = Value::String(evt.value().to_string());
-                    bridge::send_set_option(&section, &field, &val);
-                },
-                for variant in &variants {
-                    option {
-                        value: "{variant}",
-                        selected: variant == current_str,
-                        {display_name(variant)}
+        div { class: "dropdown",
+            div {
+                class: "dropdown-trigger",
+                onclick: move |_| { let v = *open.read(); open.set(!v); },
+                span { {display_name(&selected.read())} }
+                span { class: "dropdown-arrow", "▾" }
+            }
+            if *open.read() {
+                div { class: "dropdown-menu",
+                    for variant in &variants {
+                        div {
+                            class: if *variant == *selected.read() { "dropdown-item selected" } else { "dropdown-item" },
+                            onclick: {
+                                let section = section.clone();
+                                let field = field.clone();
+                                let v = variant.clone();
+                                move |_| {
+                                    let val = Value::String(v.clone());
+                                    bridge::send_set_option(
+                                        &section, &field, &val,
+                                    );
+                                    selected.set(v.clone());
+                                    open.set(false);
+                                }
+                            },
+                            {display_name(variant)}
+                        }
                     }
                 }
             }
