@@ -294,6 +294,13 @@ impl VisoEngine {
                 let chains = self.gpu.renderers.backbone.cached_chains();
                 self.gpu.pick.select_chain(index, chains, extend)
             }
+
+            // ── Entity focus ──
+            VisoCommand::FocusEntity { id } => {
+                self.entities.set_focus(Focus::Entity(id));
+                self.fit_camera_to_focus();
+                false
+            }
         }
     }
 }
@@ -515,7 +522,9 @@ pub(crate) mod test_fixtures {
     //! Minimal entity construction helpers for unit tests.
 
     use foldit_conv::types::coords::{Coords, CoordsAtom, Element};
-    use foldit_conv::types::entity::{MoleculeEntity, MoleculeType};
+    use foldit_conv::types::entity::{
+        coords_to_entity_kind, MoleculeEntity, MoleculeType,
+    };
 
     fn res_name(s: &str) -> [u8; 3] {
         let bytes = s.as_bytes();
@@ -572,18 +581,61 @@ pub(crate) mod test_fixtures {
             }
         }
 
+        let coords = Coords {
+            num_atoms: atom_count,
+            atoms,
+            chain_ids,
+            res_names,
+            res_nums,
+            atom_names,
+            elements,
+        };
+        let kind = coords_to_entity_kind(MoleculeType::Protein, coords);
         MoleculeEntity {
             entity_id,
             molecule_type: MoleculeType::Protein,
-            coords: Coords {
-                num_atoms: atom_count,
-                atoms,
-                chain_ids,
-                res_names,
-                res_nums,
-                atom_names,
-                elements,
-            },
+            kind,
+        }
+    }
+
+    /// Build a minimal water entity (non-focusable).
+    pub fn make_water_entity(entity_id: u32) -> MoleculeEntity {
+        let coords = Coords {
+            num_atoms: 3,
+            atoms: vec![
+                CoordsAtom {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                    occupancy: 1.0,
+                    b_factor: 0.0,
+                },
+                CoordsAtom {
+                    x: 0.96,
+                    y: 0.0,
+                    z: 0.0,
+                    occupancy: 1.0,
+                    b_factor: 0.0,
+                },
+                CoordsAtom {
+                    x: -0.24,
+                    y: 0.93,
+                    z: 0.0,
+                    occupancy: 1.0,
+                    b_factor: 0.0,
+                },
+            ],
+            chain_ids: vec![b'W'; 3],
+            res_names: vec![res_name("HOH"); 3],
+            res_nums: vec![1; 3],
+            atom_names: vec![atom_name("O"), atom_name("H1"), atom_name("H2")],
+            elements: vec![Element::O, Element::H, Element::H],
+        };
+        let kind = coords_to_entity_kind(MoleculeType::Water, coords);
+        MoleculeEntity {
+            entity_id,
+            molecule_type: MoleculeType::Water,
+            kind,
         }
     }
 }

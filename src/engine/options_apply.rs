@@ -36,11 +36,26 @@ impl VisoEngine {
             .iter()
             .map(|e| e.per_residue_scores.as_deref())
             .collect();
+        let entity_chain_counts: Vec<usize> = self
+            .entities
+            .entities()
+            .iter()
+            .filter(|e| e.visible)
+            .filter_map(|e| {
+                let data = e.entity.extract_backbone();
+                if data.chains.is_empty() {
+                    None
+                } else {
+                    Some(data.chains.len())
+                }
+            })
+            .collect();
         let new_colors = score_color::compute_per_residue_colors(
             &chains,
             &self.topology.ss_types,
             &per_entity_scores,
             &self.options.display.backbone_color_mode,
+            Some(&entity_chain_counts),
         );
         self.gpu.set_target_colors(&new_colors);
         self.topology.per_residue_colors = Some(new_colors);

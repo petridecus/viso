@@ -171,7 +171,7 @@ pub(super) fn load_scene_from_file(
             "  entity {} — {:?}: {} atoms",
             e.entity_id,
             e.molecule_type,
-            e.coords.num_atoms
+            e.atom_count()
         );
     }
 

@@ -161,7 +161,7 @@ impl BallAndStickRenderer {
         let mut atom_offset = pick_id_offset;
 
         for entity in entities {
-            let entity_atom_count = entity.coords.num_atoms as u32;
+            let entity_atom_count = entity.atom_count() as u32;
             Self::generate_entity_instances(
                 entity,
                 display,
@@ -183,14 +183,13 @@ impl BallAndStickRenderer {
         atom_offset: u32,
         out: &mut InstanceCollector,
     ) {
+        let coords = entity.to_coords();
         match entity.molecule_type {
             MoleculeType::Ligand | MoleculeType::Cofactor => {
                 let tint = (entity.molecule_type == MoleculeType::Cofactor)
-                    .then(|| {
-                        Self::resolve_cofactor_tint(&entity.coords, colors)
-                    });
+                    .then(|| Self::resolve_cofactor_tint(&coords, colors));
                 Self::generate_ligand_instances(
-                    &entity.coords,
+                    &coords,
                     tint,
                     atom_offset,
                     out,
@@ -201,14 +200,14 @@ impl BallAndStickRenderer {
                     colors.map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
                 if display.lipid_ball_and_stick() {
                     Self::generate_ligand_instances(
-                        &entity.coords,
+                        &coords,
                         Some(lipid_tint),
                         atom_offset,
                         out,
                     );
                 } else {
                     Self::generate_coarse_lipid_instances(
-                        &entity.coords,
+                        &coords,
                         lipid_tint,
                         atom_offset,
                         out,
@@ -216,23 +215,14 @@ impl BallAndStickRenderer {
                 }
             }
             MoleculeType::Ion if display.show_ions => {
-                Self::generate_ion_instances(&entity.coords, atom_offset, out);
+                Self::generate_ion_instances(&coords, atom_offset, out);
             }
             MoleculeType::Water if display.show_waters => {
-                Self::generate_water_instances(
-                    &entity.coords,
-                    atom_offset,
-                    out,
-                );
+                Self::generate_water_instances(&coords, atom_offset, out);
             }
             MoleculeType::Solvent if display.show_solvent => {
                 let sc = colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
-                Self::generate_solvent_instances(
-                    &entity.coords,
-                    sc,
-                    atom_offset,
-                    out,
-                );
+                Self::generate_solvent_instances(&coords, sc, atom_offset, out);
             }
             _ => {}
         }

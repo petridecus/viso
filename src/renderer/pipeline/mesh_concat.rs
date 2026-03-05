@@ -187,7 +187,7 @@ impl MeshAccumulator {
         );
         self.bns_capsule_count += mesh.bns.capsule_count;
         for npe in &mesh.non_protein_entities {
-            self.bns_pick_offset += npe.coords.num_atoms as u32;
+            self.bns_pick_offset += npe.atom_count() as u32;
         }
     }
 
@@ -210,7 +210,7 @@ impl MeshAccumulator {
     fn build_pick_map(&self) -> PickMap {
         let mut atom_entries: Vec<(u32, u32)> = Vec::new();
         for entity in &self.non_protein {
-            for atom_idx in 0..entity.coords.num_atoms as u32 {
+            for atom_idx in 0..entity.atom_count() as u32 {
                 atom_entries.push((entity.entity_id, atom_idx));
             }
         }

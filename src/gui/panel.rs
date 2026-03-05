@@ -205,50 +205,9 @@ impl PanelController {
 
         for action in actions {
             match action {
-                UiAction::SetOption { path, field, value } => {
-                    log::debug!("SetOption: {path}.{field} = {value}");
-                    let mut opts = engine.options.clone();
-                    let Ok(mut root) = serde_json::to_value(&opts) else {
-                        log::warn!("Failed to serialize options to JSON");
-                        continue;
-                    };
-                    if let Some(section) = root.get_mut(&path) {
-                        section[&field] = value;
-                    } else {
-                        log::warn!(
-                            "Section '{path}' not found in options JSON"
-                        );
-                    }
-                    match serde_json::from_value(root) {
-                        Ok(updated) => opts = updated,
-                        Err(e) => {
-                            log::warn!("Options deserialization failed: {e}");
-                        }
-                    }
-                    engine.set_options(opts);
-                }
-                UiAction::LoadFile { path } => {
-                    self.load_local_file(engine, &path);
-                }
-                UiAction::FetchPdb { id, source } => {
-                    self.start_fetch_pdb(&id, &source);
-                }
-                UiAction::OpenFileDialog => {
-                    self.open_file_dialog(engine);
-                }
-                UiAction::TogglePanel => {
-                    toggled = true;
-                }
-                UiAction::ResizePanel { width } => {
-                    resize_width = Some(width);
-                }
-                UiAction::KeyPress { key } => {
-                    if let Some(cmd) =
-                        crate::input::KeyBindings::default().lookup(&key)
-                    {
-                        let _ = engine.execute(cmd);
-                    }
-                }
+                UiAction::TogglePanel => toggled = true,
+                UiAction::ResizePanel { width } => resize_width = Some(width),
+                _ => self.apply_action(action, engine),
             }
         }
 
@@ -261,6 +220,71 @@ impl PanelController {
             if clamped != self.width {
                 self.width = clamped;
                 self.apply_layout(window);
+            }
+        }
+    }
+
+    /// Apply a single UI action to the engine.
+    fn apply_action(&mut self, action: UiAction, engine: &mut VisoEngine) {
+        match action {
+            UiAction::SetOption { path, field, value } => {
+                log::debug!("SetOption: {path}.{field} = {value}");
+                let mut opts = engine.options.clone();
+                let Ok(mut root) = serde_json::to_value(&opts) else {
+                    log::warn!("Failed to serialize options to JSON");
+                    return;
+                };
+                if let Some(section) = root.get_mut(&path) {
+                    section[&field] = value;
+                } else {
+                    log::warn!("Section '{path}' not found in options JSON");
+                }
+                match serde_json::from_value(root) {
+                    Ok(updated) => opts = updated,
+                    Err(e) => {
+                        log::warn!("Options deserialization failed: {e}");
+                    }
+                }
+                engine.set_options(opts);
+            }
+            UiAction::LoadFile { path } => {
+                self.load_local_file(engine, &path);
+            }
+            UiAction::FetchPdb { id, source } => {
+                self.start_fetch_pdb(&id, &source);
+            }
+            UiAction::OpenFileDialog => {
+                self.open_file_dialog(engine);
+            }
+            UiAction::KeyPress { key } => {
+                if let Some(cmd) =
+                    crate::input::KeyBindings::default().lookup(&key)
+                {
+                    let _ = engine.execute(cmd);
+                }
+            }
+            UiAction::FocusEntity { id } => {
+                let _ = engine.execute(
+                    crate::engine::command::VisoCommand::FocusEntity { id },
+                );
+                self.push_scene_entities(engine);
+            }
+            UiAction::ToggleEntityVisibility { id } => {
+                let was_visible = engine.entities.entity(id).map(|e| e.visible);
+                let new_visible = was_visible == Some(false);
+                log::info!(
+                    "ToggleEntityVisibility: id={id}, was={was_visible:?} -> \
+                     new={new_visible}"
+                );
+                engine.set_entity_visible(id, new_visible);
+                self.push_scene_entities(engine);
+            }
+            UiAction::RemoveEntity { id } => {
+                engine.remove_entity(id);
+                self.push_scene_entities(engine);
+            }
+            UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
+                // Handled in drain_and_apply directly
             }
         }
     }
@@ -282,8 +306,19 @@ impl PanelController {
             buffers.extend(engine.gpu.pick.selection.buffer_info());
             buffers.extend(engine.gpu.pick.residue_colors.buffer_info());
             webview::push_stats(wv, engine.fps(), &buffers);
+            self.push_scene_entities(engine);
             self.last_stats_push = now;
         }
+    }
+
+    /// Push the current entity list to the webview.
+    pub(crate) fn push_scene_entities(&self, engine: &VisoEngine) {
+        let Some(ref wv) = self.webview else {
+            return;
+        };
+        let summaries = engine.entities.entity_summaries();
+        let json = serde_json::to_string(&summaries).unwrap_or_default();
+        webview::push_scene_entities(wv, &json);
     }
 }
 
@@ -295,6 +330,7 @@ impl PanelController {
         log::info!("Loading local file: {path}");
         match parse_and_load(engine, path) {
             Ok(()) => {
+                self.push_scene_entities(engine);
                 if let Some(ref wv) = self.webview {
                     let name =
                         std::path::Path::new(path).file_name().map_or_else(

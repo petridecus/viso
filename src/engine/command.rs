@@ -197,4 +197,11 @@ pub enum VisoCommand {
         /// If true, add to the existing selection.
         extend: bool,
     },
+
+    // ── Entity focus ──────────────────────────────────────────────
+    /// Focus a specific entity by ID and fit the camera to it.
+    FocusEntity {
+        /// Entity identifier.
+        id: u32,
+    },
 }

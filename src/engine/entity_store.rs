@@ -3,7 +3,7 @@
 
 use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
-use foldit_conv::types::entity::MoleculeEntity;
+use foldit_conv::types::entity::{MoleculeEntity, MoleculeType};
 use glam::Vec3;
 use rustc_hash::FxHashMap;
 
@@ -148,7 +148,7 @@ impl EntityStore {
         let focusable: Vec<u32> = self
             .scene_entities
             .iter()
-            .filter(|e| e.visible)
+            .filter(|e| e.visible && e.entity.is_focusable())
             .map(SceneEntity::id)
             .collect();
 
@@ -232,7 +232,7 @@ impl EntityStore {
         let mut total_weight: f32 = 0.0;
         let mut weighted_sum = Vec3::ZERO;
         for e in &visible {
-            let w = e.entity.coords.atoms.len() as f32;
+            let w = e.entity.atom_count() as f32;
             if w > 0.0 {
                 weighted_sum += e.cached_centroid * w;
                 total_weight += w;
@@ -272,6 +272,41 @@ impl EntityStore {
         self.invalidate();
     }
 
+    /// Collect a JSON-serializable summary of all entities for the UI.
+    #[must_use]
+    pub fn entity_summaries(&self) -> Vec<serde_json::Value> {
+        self.scene_entities
+            .iter()
+            .map(|se| {
+                let mol_type = match se.entity.molecule_type {
+                    MoleculeType::Protein => "Protein",
+                    MoleculeType::DNA => "DNA",
+                    MoleculeType::RNA => "RNA",
+                    _ => "Ligand",
+                };
+                let chain_ids: Vec<String> =
+                    se.entity.as_polymer().map_or_else(Vec::new, |data| {
+                        data.chains
+                            .iter()
+                            .map(|c| String::from(c.chain_id as char))
+                            .collect()
+                    });
+                let focused =
+                    matches!(self.focus, Focus::Entity(eid) if eid == se.id());
+                serde_json::json!({
+                    "id": se.id(),
+                    "molecule_type": mol_type,
+                    "label": se.entity.label(),
+                    "visible": se.visible,
+                    "atom_count": se.entity.atom_count(),
+                    "chain_ids": chain_ids,
+                    "focused": focused,
+                    "focusable": se.entity.is_focusable(),
+                })
+            })
+            .collect()
+    }
+
     /// Update protein entity coords in a specific scene entity.
     pub fn update_entity_protein_coords(&mut self, id: u32, coords: Coords) {
         if let Some(&idx) = self.id_index.get(&id) {
@@ -294,7 +329,9 @@ mod tests {
     use super::*;
     use crate::animation::transition::Transition;
     use crate::engine::scene::Focus;
-    use crate::engine::test_fixtures::make_protein_entity;
+    use crate::engine::test_fixtures::{
+        make_protein_entity, make_water_entity,
+    };
 
     #[test]
     fn new_is_empty() {
@@ -387,8 +424,8 @@ mod tests {
     fn cycle_focus_through_entities() {
         let mut store = EntityStore::new();
         let _ = store.add_entities(vec![
-            make_protein_entity(0, b'A', 1),
-            make_protein_entity(0, b'B', 1),
+            make_protein_entity(0, b'A', 3),
+            make_protein_entity(0, b'B', 2),
         ]);
         assert_eq!(*store.focus(), Focus::Session);
         let f1 = store.cycle_focus();
@@ -397,6 +434,16 @@ mod tests {
         assert_eq!(f2, Focus::Entity(1));
         let f3 = store.cycle_focus();
         assert_eq!(f3, Focus::Session);
+    }
+
+    #[test]
+    fn cycle_focus_skips_non_focusable() {
+        let mut store = EntityStore::new();
+        // Water is not focusable, should be skipped
+        let _ = store.add_entities(vec![make_water_entity(0)]);
+        assert_eq!(*store.focus(), Focus::Session);
+        let f = store.cycle_focus();
+        assert_eq!(f, Focus::Session); // no focusable entities
     }
 
     #[test]

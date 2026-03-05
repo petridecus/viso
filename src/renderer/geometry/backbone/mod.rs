@@ -309,19 +309,19 @@ impl BackboneRenderer {
         if !data.vertices.is_empty() {
             let _ =
                 self.vertex_buffer.write_bytes(device, queue, data.vertices);
-            self.tube_pass.write_indices_bytes(
-                device,
-                queue,
-                data.tube_indices,
-                data.tube_index_count,
-            );
-            self.ribbon_pass.write_indices_bytes(
-                device,
-                queue,
-                data.ribbon_indices,
-                data.ribbon_index_count,
-            );
         }
+        self.tube_pass.write_indices_bytes(
+            device,
+            queue,
+            data.tube_indices,
+            data.tube_index_count,
+        );
+        self.ribbon_pass.write_indices_bytes(
+            device,
+            queue,
+            data.ribbon_indices,
+            data.ribbon_index_count,
+        );
         self.sheet_offsets = data.sheet_offsets;
         self.chain_ranges = data.chain_ranges;
         self.cached_chains.clear();

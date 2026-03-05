@@ -138,11 +138,16 @@ pub(crate) fn chain_color(t: f32) -> [f32; 3] {
 ///
 /// Supports chain coloring (rainbow), secondary structure coloring, and
 /// score-based coloring (absolute or relative).
+///
+/// `entity_chain_counts` maps each entity to the number of backbone chains it
+/// contributed to the flat `backbone_chains` vec. When present, chain coloring
+/// assigns the same color to all backbone segments from the same entity.
 pub(crate) fn compute_per_residue_colors(
     backbone_chains: &[Vec<glam::Vec3>],
     ss_types: &[foldit_conv::secondary_structure::SSType],
     per_residue_scores: &[Option<&[f64]>],
     color_mode: &super::BackboneColorMode,
+    entity_chain_counts: Option<&[usize]>,
 ) -> Vec<[f32; 3]> {
     use foldit_conv::secondary_structure::SSType;
 
@@ -171,25 +176,61 @@ pub(crate) fn compute_per_residue_colors(
                 ss_types.iter().map(SSType::color).collect()
             }
         }
-        super::BackboneColorMode::Chain => {
-            let num_chains = backbone_chains.len();
-            if num_chains == 0 {
-                return vec![[0.5, 0.5, 0.5]; residue_count];
-            }
-            let mut colors = Vec::with_capacity(residue_count);
-            for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-                let t = if num_chains > 1 {
-                    chain_idx as f32 / (num_chains - 1) as f32
-                } else {
-                    0.0
-                };
-                let color = chain_color(t);
-                let n_residues = chain.len() / 3;
-                for _ in 0..n_residues {
-                    colors.push(color);
-                }
-            }
-            colors
-        }
+        super::BackboneColorMode::Chain => per_chain_colors(
+            backbone_chains,
+            entity_chain_counts,
+            residue_count,
+        ),
     }
+}
+
+/// Assign chain colors, grouping backbone segments by entity when available.
+fn per_chain_colors(
+    backbone_chains: &[Vec<glam::Vec3>],
+    entity_chain_counts: Option<&[usize]>,
+    residue_count: usize,
+) -> Vec<[f32; 3]> {
+    if backbone_chains.is_empty() {
+        return vec![[0.5, 0.5, 0.5]; residue_count];
+    }
+
+    // When entity grouping is available, all backbone segments from
+    // the same entity share one color.
+    if let Some(counts) = entity_chain_counts {
+        let mut chain_to_entity = Vec::with_capacity(backbone_chains.len());
+        for (entity_idx, &count) in counts.iter().enumerate() {
+            for _ in 0..count {
+                chain_to_entity.push(entity_idx);
+            }
+        }
+        let n_entities = counts.len();
+        let mut colors = Vec::with_capacity(residue_count);
+        for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+            let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
+            let t = if n_entities > 1 {
+                eidx as f32 / (n_entities - 1) as f32
+            } else {
+                0.0
+            };
+            let color = chain_color(t);
+            let n_residues = chain.len() / 3;
+            colors.extend(std::iter::repeat_n(color, n_residues));
+        }
+        return colors;
+    }
+
+    // Fallback: one color per backbone chain
+    let num_chains = backbone_chains.len();
+    let mut colors = Vec::with_capacity(residue_count);
+    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+        let t = if num_chains > 1 {
+            chain_idx as f32 / (num_chains - 1) as f32
+        } else {
+            0.0
+        };
+        let color = chain_color(t);
+        let n_residues = chain.len() / 3;
+        colors.extend(std::iter::repeat_n(color, n_residues));
+    }
+    colors
 }

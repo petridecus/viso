@@ -100,6 +100,29 @@ pub fn register_panel_listener(mut pinned_sig: Signal<bool>) {
     on_pinned.forget();
 }
 
+/// Register a listener for scene-entity updates from the native engine.
+pub fn register_scene_entities_listener(
+    mut entities_sig: Signal<Option<Value>>,
+) {
+    let on_entities = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(json_str) = evt.detail().as_string() {
+                if let Ok(val) = serde_json::from_str::<Value>(&json_str) {
+                    entities_sig.set(Some(val));
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-scene-entities",
+            on_entities.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-scene-entities listener");
+    on_entities.forget();
+}
+
 // ── Outbound actions ─────────────────────────────────────────────────────
 
 /// Send a `toggle_panel` action to the native engine.
@@ -147,6 +170,25 @@ pub fn send_fetch_pdb(id: &str, source: &str) {
 /// Send an `open_file_dialog` action to the native engine.
 pub fn send_open_file_dialog() {
     let msg = serde_json::json!({ "action": "open_file_dialog" });
+    post_message(&msg.to_string());
+}
+
+/// Send a `focus_entity` action to the native engine.
+pub fn send_focus_entity(id: u64) {
+    let msg = serde_json::json!({ "action": "focus_entity", "id": id });
+    post_message(&msg.to_string());
+}
+
+/// Send a `toggle_entity_visibility` action to the native engine.
+pub fn send_toggle_entity_visibility(id: u64) {
+    let msg =
+        serde_json::json!({ "action": "toggle_entity_visibility", "id": id });
+    post_message(&msg.to_string());
+}
+
+/// Send a `remove_entity` action to the native engine.
+pub fn send_remove_entity(id: u64) {
+    let msg = serde_json::json!({ "action": "remove_entity", "id": id });
     post_message(&msg.to_string());
 }
 

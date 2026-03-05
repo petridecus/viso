@@ -23,7 +23,7 @@ use crate::animation::SidechainAnimPositions;
 /// Compute (centroid, radius) for a molecule entity's atom positions.
 /// Returns `(Vec3::ZERO, 0.0)` when the entity has no atoms.
 fn compute_bounding_sphere(entity: &MoleculeEntity) -> (Vec3, f32) {
-    let atoms = &entity.coords.atoms;
+    let atoms = entity.atoms();
     if atoms.is_empty() {
         return (Vec3::ZERO, 0.0);
     }
@@ -192,7 +192,7 @@ impl SceneEntity {
 
     /// Render data for a non-protein, non-nucleic-acid entity.
     fn per_entity_data_non_protein(&self) -> Option<PerEntityData> {
-        if self.entity.coords.num_atoms == 0 {
+        if self.entity.atom_count() == 0 {
             return None;
         }
         Some(PerEntityData {

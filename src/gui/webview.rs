@@ -60,6 +60,21 @@ pub enum UiAction {
         /// Physical key name matching winit's `KeyCode` debug format.
         key: String,
     },
+    /// Focus a specific entity (click in Scene panel).
+    FocusEntity {
+        /// Entity ID to focus.
+        id: u32,
+    },
+    /// Toggle visibility of a specific entity.
+    ToggleEntityVisibility {
+        /// Entity ID to toggle.
+        id: u32,
+    },
+    /// Remove a specific entity from the scene.
+    RemoveEntity {
+        /// Entity ID to remove.
+        id: u32,
+    },
 }
 
 /// Create the wry webview as a child of the given window.
@@ -216,6 +231,12 @@ pub fn push_stats(
     safe_push(webview, "stats", &s);
 }
 
+/// Push the scene entity list to the webview.
+pub fn push_scene_entities(webview: &WebView, entities_json: &str) {
+    let escaped = entities_json.replace('\\', "\\\\").replace('\'', "\\'");
+    safe_push(webview, "scene_entities", &escaped);
+}
+
 /// Push a load-status event to the webview.
 ///
 /// `status` is one of `"loading"`, `"loaded"`, or `"error"`.
@@ -256,7 +277,7 @@ fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
 /// buffered. When a listener attaches it replays any pending data.
 const BRIDGE_JS: &str = r"
 (function() {
-    var pending = { schema: null, options: null, stats: null, panel_pinned: null, load_status: null };
+    var pending = { schema: null, options: null, stats: null, panel_pinned: null, load_status: null, scene_entities: null };
 
     function dispatch(name, json) {
         window.dispatchEvent(new CustomEvent(name, { detail: json }));
@@ -292,6 +313,10 @@ const BRIDGE_JS: &str = r"
         pending.load_status = json;
         dispatch('viso-load-status', json);
     };
+    window.__viso_push_scene_entities = function(json) {
+        pending.scene_entities = json;
+        dispatch('viso-scene-entities', json);
+    };
 
     // Replay any data that arrived via evaluate_script before this init
     // script ran (race on Windows/WebView2).
@@ -301,7 +326,8 @@ const BRIDGE_JS: &str = r"
         if (early.options)      window.__viso_push_options(early.options);
         if (early.stats)        window.__viso_push_stats(early.stats);
         if (early.panel_pinned) window.__viso_push_panel_pinned(early.panel_pinned);
-        if (early.load_status)  window.__viso_push_load_status(early.load_status);
+        if (early.load_status)       window.__viso_push_load_status(early.load_status);
+        if (early.scene_entities)    window.__viso_push_scene_entities(early.scene_entities);
         delete window.__viso_early;
     }
 
@@ -323,6 +349,9 @@ const BRIDGE_JS: &str = r"
         }
         if (this === window && type === 'viso-load-status' && pending.load_status) {
             dispatch('viso-load-status', pending.load_status);
+        }
+        if (this === window && type === 'viso-scene-entities' && pending.scene_entities) {
+            dispatch('viso-scene-entities', pending.scene_entities);
         }
     };
 })();
@@ -370,6 +399,18 @@ fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         "resize_panel" => {
             let width = msg.get("width")?.as_u64()? as u32;
             Some(UiAction::ResizePanel { width })
+        }
+        "focus_entity" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            Some(UiAction::FocusEntity { id })
+        }
+        "toggle_entity_visibility" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            Some(UiAction::ToggleEntityVisibility { id })
+        }
+        "remove_entity" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            Some(UiAction::RemoveEntity { id })
         }
         _ => None,
     }

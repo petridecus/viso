@@ -5,6 +5,7 @@
 
 mod bridge;
 mod load_ui;
+mod scene_ui;
 mod schema_ui;
 
 use dioxus::prelude::*;
@@ -20,8 +21,9 @@ fn app() -> Element {
     let stats: Signal<Option<Value>> = use_signal(|| None);
     let panel_pinned: Signal<bool> = use_signal(|| true);
     let load_status: Signal<Option<Value>> = use_signal(|| None);
+    let scene_entities: Signal<Option<Value>> = use_signal(|| None);
 
-    // "load" or "options"
+    // "load", "scene", or "options"
     let mut top_tab: Signal<String> = use_signal(|| "load".to_string());
 
     // Register IPC listeners once on mount.
@@ -30,6 +32,7 @@ fn app() -> Element {
         bridge::register_stats_listener(stats);
         bridge::register_panel_listener(panel_pinned);
         bridge::register_load_status_listener(load_status);
+        bridge::register_scene_entities_listener(scene_entities);
     });
 
     let pinned = *panel_pinned.read();
@@ -90,6 +93,11 @@ fn app() -> Element {
                         class: if current_tab == "load" { "top-tab active" } else { "top-tab" },
                         onclick: move |_| top_tab.set("load".into()),
                         "Load"
+                    }
+                    button {
+                        class: if current_tab == "scene" { "top-tab active" } else { "top-tab" },
+                        onclick: move |_| top_tab.set("scene".into()),
+                        "Scene"
                     }
                     button {
                         class: if current_tab == "options" { "top-tab active" } else { "top-tab" },
@@ -161,6 +169,9 @@ fn app() -> Element {
                         },
                     }
                 }
+                "scene" => rsx! {
+                    scene_ui::ScenePanel { scene_entities: scene_entities }
+                },
                 _ => rsx! {
                     load_ui::LoadPanel { load_status: load_status }
                 },
