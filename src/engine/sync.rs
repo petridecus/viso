@@ -78,11 +78,13 @@ impl VisoEngine {
         self.animation.pending_transitions = transitions;
         self.entities.mark_rendered();
 
+        let generation = self.gpu.scene_processor.next_generation();
         self.gpu.scene_processor.submit(SceneRequest::FullRebuild {
             entities,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
             geometry: self.options.geometry.clone(),
+            generation,
         });
     }
 

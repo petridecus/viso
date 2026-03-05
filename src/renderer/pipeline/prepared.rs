@@ -83,6 +83,8 @@ pub enum SceneRequest {
         colors: ColorOptions,
         /// Current geometry options for mesh generation.
         geometry: GeometryOptions,
+        /// Scene generation counter (monotonically increasing).
+        generation: u64,
     },
     /// Per-frame animation mesh generation (backbone + optional sidechains).
     ///
@@ -106,6 +108,8 @@ pub enum SceneRequest {
         /// chain uses its own detail level instead of the global geo
         /// settings.
         per_chain_lod: Option<Vec<(usize, usize)>>,
+        /// Scene generation this frame belongs to.
+        generation: u64,
     },
     /// Shut down the background thread.
     Shutdown,
@@ -137,6 +141,8 @@ pub(crate) struct PreparedAnimationFrame {
     pub(crate) sidechain_instances: Option<Vec<u8>>,
     /// Number of sidechain capsule instances.
     pub(crate) sidechain_instance_count: u32,
+    /// Scene generation this frame was produced for.
+    pub(crate) generation: u64,
 }
 
 // ---------------------------------------------------------------------------

@@ -156,26 +156,21 @@ fn tab_icon(section_key: &str) -> Element {
     }
 }
 
-/// Top-level component: renders a tabbed panel with icon tabs on the left
-/// and grouped controls in the content area.
+/// Options panel content: icon tab bar on the left + section controls.
+///
+/// This component renders only the inner `.panel-layout` area.
+/// The outer panel shell (resize handle, header, pin button, top-level tabs)
+/// is owned by the parent in `main.rs`.
 #[component]
-pub fn SchemaPanel(
+pub fn OptionsPanel(
     schema: Value,
     options: Value,
     stats_sig: Signal<Option<Value>>,
-    panel_pinned: Signal<bool>,
 ) -> Element {
     let properties = schema.pointer("/properties").and_then(Value::as_object);
 
     let Some(props) = properties else {
         return rsx! { p { "No schema loaded" } };
-    };
-
-    let pinned = *panel_pinned.read();
-    let panel_class = if pinned {
-        "side-panel"
-    } else {
-        "side-panel floating"
     };
 
     // Ordered list of section keys that actually exist in the schema.
@@ -188,135 +183,47 @@ pub fn SchemaPanel(
     let first_key = section_keys.first().cloned().unwrap_or_default();
     let mut active_tab = use_signal(|| first_key);
 
-    // Resize drag state: (start_screen_x, start_body_width)
-    let mut drag = use_signal::<Option<(f64, f64)>>(|| None);
-
     rsx! {
-        div { class: "{panel_class}",
-            div {
-                class: "resize-handle",
-                onpointerdown: move |evt: PointerEvent| {
-                    let sx = evt.screen_coordinates().x;
-                    let w = web_sys::window()
-                        .and_then(|w| w.document())
-                        .and_then(|d| d.body())
-                        .map(|b| b.client_width() as f64)
-                        .unwrap_or(350.0);
-                    drag.set(Some((sx, w)));
-                    let id = evt.pointer_id();
-                    let js = format!(
-                        "document.querySelector('.resize-handle')\
-                         .setPointerCapture({})",
-                        id
-                    );
-                    let _ = js_sys::eval(&js);
-                },
-                onpointermove: move |evt: PointerEvent| {
-                    if let Some((start_x, start_w)) = *drag.read() {
-                        let delta = start_x - evt.screen_coordinates().x;
-                        let new_w = (start_w + delta).clamp(220.0, 700.0);
-                        bridge::send_resize_panel(new_w as u32);
-                    }
-                },
-                onpointerup: move |evt: PointerEvent| {
-                    if drag.read().is_some() {
-                        drag.set(None);
-                        let id = evt.pointer_id();
-                        let js = format!(
-                            "document.querySelector('.resize-handle')\
-                             .releasePointerCapture({})",
-                            id
-                        );
-                        let _ = js_sys::eval(&js);
-                    }
-                },
-            }
-            div { class: "panel-header",
-                span { class: "panel-title", "Options" }
-                button {
-                    class: "panel-toggle-btn",
-                    title: if pinned { "Unpin sidebar" } else { "Pin sidebar" },
-                    onclick: move |_| {
-                        bridge::send_toggle_panel();
-                    },
-                    svg {
-                        width: "16",
-                        height: "16",
-                        view_box: "0 0 16 16",
-                        fill: "none",
-                        rect {
-                            x: "1",
-                            y: "2",
-                            width: "14",
-                            height: "12",
-                            rx: "2",
-                            stroke: "currentColor",
-                            stroke_width: "1.5",
-                            fill: "none",
-                        }
-                        line {
-                            x1: "10",
-                            y1: "2",
-                            x2: "10",
-                            y2: "14",
-                            stroke: "currentColor",
-                            stroke_width: "1.5",
-                        }
-                        if pinned {
-                            rect {
-                                x: "10",
-                                y: "2",
-                                width: "5",
-                                height: "12",
-                                rx: "0",
-                                fill: "currentColor",
-                                opacity: "0.4",
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "panel-layout",
-                // Tab bar — vertical strip of icon buttons
-                div { class: "tab-bar",
-                    for key in section_keys.iter() {
-                        {
-                            let key_owned = key.clone();
-                            let is_active = *active_tab.read() == *key;
-                            let title = props.get(key.as_str())
-                                .and_then(|s| s.get("title"))
-                                .and_then(Value::as_str)
-                                .map(String::from)
-                                .unwrap_or_else(|| display_name(key));
-                            let btn_class = if is_active { "tab-btn active" } else { "tab-btn" };
-                            rsx! {
-                                button {
-                                    class: "{btn_class}",
-                                    title: "{title}",
-                                    onclick: move |_| {
-                                        active_tab.set(key_owned.clone());
-                                    },
-                                    {tab_icon(key)}
-                                }
-                            }
-                        }
-                    }
-                }
-                // Tab content — active section only
-                div { class: "tab-content",
+        div { class: "panel-layout",
+            // Tab bar — vertical strip of icon buttons
+            div { class: "tab-bar",
+                for key in section_keys.iter() {
                     {
-                        let key = active_tab.read().clone();
-                        if let Some(section_schema) = props.get(key.as_str()) {
-                            render_section(
-                                &key,
-                                section_schema,
-                                options.get(key.as_str()),
-                                &schema,
-                                if key == "debug" { Some(stats_sig) } else { None },
-                            )
-                        } else {
-                            rsx! {}
+                        let key_owned = key.clone();
+                        let is_active = *active_tab.read() == *key;
+                        let title = props.get(key.as_str())
+                            .and_then(|s| s.get("title"))
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                            .unwrap_or_else(|| display_name(key));
+                        let btn_class = if is_active { "tab-btn active" } else { "tab-btn" };
+                        rsx! {
+                            button {
+                                class: "{btn_class}",
+                                title: "{title}",
+                                onclick: move |_| {
+                                    active_tab.set(key_owned.clone());
+                                },
+                                {tab_icon(key)}
+                            }
                         }
+                    }
+                }
+            }
+            // Tab content — active section only
+            div { class: "tab-content",
+                {
+                    let key = active_tab.read().clone();
+                    if let Some(section_schema) = props.get(key.as_str()) {
+                        render_section(
+                            &key,
+                            section_schema,
+                            options.get(key.as_str()),
+                            &schema,
+                            if key == "debug" { Some(stats_sig) } else { None },
+                        )
+                    } else {
+                        rsx! {}
                     }
                 }
             }
@@ -373,7 +280,10 @@ fn render_section(
                     }
                 }
                 None => {
-                    groups.push((None, vec![(field_key.clone(), field_schema.clone())]));
+                    groups.push((
+                        None,
+                        vec![(field_key.clone(), field_schema.clone())],
+                    ));
                 }
             }
         }
@@ -385,7 +295,9 @@ fn render_section(
             FpsLabel { stats_sig: sig }
         }
         for (group_name, fields) in groups.iter() {
-            {render_field_group(key, group_name.as_deref(), fields, current, root)}
+            {render_field_group(
+                key, group_name.as_deref(), fields, current, root,
+            )}
         }
     }
 }
@@ -533,9 +445,13 @@ fn render_number_field(
 
     // Use step from schema extension, fall back to sensible default.
     let step_val = schema.get("step").and_then(Value::as_f64);
-    let step = step_val
-        .map(|s| format!("{s}"))
-        .unwrap_or_else(|| if is_int { "1".into() } else { "0.01".into() });
+    let step = step_val.map(|s| format!("{s}")).unwrap_or_else(|| {
+        if is_int {
+            "1".into()
+        } else {
+            "0.01".into()
+        }
+    });
 
     // Format the displayed value with appropriate precision.
     let display_val = if is_int {

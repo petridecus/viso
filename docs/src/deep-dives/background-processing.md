@@ -56,6 +56,7 @@ SceneRequest::FullRebuild {
     display: DisplayOptions,
     colors: ColorOptions,
     geometry: GeometryOptions,
+    generation: u64,
 }
 ```
 
@@ -74,6 +75,7 @@ SceneRequest::AnimationFrame {
     sidechains: Option<AnimationSidechainData>,
     ss_types: Option<Vec<SSType>>,
     per_residue_colors: Option<Vec<[f32; 3]>>,
+    generation: u64,
 }
 ```
 
@@ -198,10 +200,24 @@ pub struct PreparedAnimationFrame {
     pub sheet_offsets: Vec<(u32, Vec3)>,
     pub sidechain_instances: Option<Vec<u8>>,
     pub sidechain_instance_count: u32,
+    pub generation: u64,
 }
 ```
 
 Only tube, ribbon, and (optionally) sidechain meshes are regenerated during animation -- ball-and-stick, bands, pulls, and nucleic acid meshes don't change.
+
+## Stale Frame Discarding
+
+When a scene is replaced (e.g. loading a new structure), any in-flight animation frames from the old scene become stale -- their `per_chain_lod` array may be sized for the old scene while chain data comes from the new one, causing index-out-of-bounds panics.
+
+A monotonically increasing `generation` counter prevents this:
+
+1. Each `FullRebuild` carries a new generation from `SceneProcessor::next_generation()`
+2. Each `AnimationFrame` carries the generation of the scene it was produced for
+3. **Background thread**: frames with `generation < last_rebuild_generation` are skipped before processing
+4. **Main thread**: `try_recv_animation()` discards frames with `generation < scene_generation`
+
+This two-level check ensures stale frames are dropped both before expensive mesh generation and before GPU upload, with no additional synchronization primitives.
 
 ## Request Coalescing
 

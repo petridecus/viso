@@ -260,6 +260,37 @@ impl SceneTopology {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Scene lifecycle (impl VisoEngine)
+// ---------------------------------------------------------------------------
+
+use foldit_conv::types::entity::MoleculeEntity;
+
+impl super::VisoEngine {
+    /// Replace the current scene with new entities.
+    ///
+    /// Clears all existing entities and loads the new ones via
+    /// [`load_entities`](Self::load_entities) with camera fit.
+    /// Returns the assigned entity IDs.
+    pub fn replace_scene(&mut self, entities: Vec<MoleculeEntity>) -> Vec<u32> {
+        self.entities.clear_all();
+        self.visual = VisualState::new();
+        self.animation = crate::animation::AnimationState::new();
+        self.load_entities(entities, true)
+    }
+
+    /// Remove all entities from the scene.
+    ///
+    /// Clears the entity store and triggers a full renderer sync so the
+    /// viewport becomes empty.
+    pub fn clear_scene(&mut self) {
+        self.entities.clear_all();
+        self.visual = VisualState::new();
+        self.animation = crate::animation::AnimationState::new();
+        self.sync_scene_to_renderers(std::collections::HashMap::new());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

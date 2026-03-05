@@ -15,17 +15,21 @@ fn main() {
     let ui_dir: &Path = Path::new("crates/viso-ui");
     let dist: PathBuf = ui_dir.join("dist");
 
-    // Check whether trunk has already produced real output by looking for any
-    // .wasm file in the dist directory.
+    // Check whether trunk has already produced real output by looking
+    // for any .wasm file in the dist directory.
     let has_wasm = dist.is_dir()
-        && std::fs::read_dir(&dist)
-            .ok()
-            .map(|entries| entries.flatten().any(|e| e.path().extension().is_some_and(|ext| ext == "wasm")))
-            .unwrap_or(false);
+        && std::fs::read_dir(&dist).ok().is_some_and(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|ext| ext == "wasm"))
+        });
 
     if !has_wasm {
         // First build – run trunk automatically.
-        println!("cargo:warning=viso-ui has not been built yet, running `trunk build`…");
+        println!(
+            "cargo:warning=viso-ui has not been built yet, running `trunk \
+             build`…"
+        );
 
         let mut cmd = std::process::Command::new("trunk");
         let _ = cmd.arg("build").current_dir(ui_dir);
@@ -41,13 +45,20 @@ fn main() {
                 println!("cargo:warning=viso-ui built successfully");
             }
             Ok(s) => {
-                // trunk ran but failed – fall back to placeholder so compilation
-                // can still succeed (the UI just won't work).
-                eprintln!("trunk build exited with {s}; falling back to placeholder");
+                // trunk ran but failed – fall back to placeholder so
+                // compilation can still succeed (the UI just won't
+                // work).
+                println!(
+                    "cargo:warning=trunk build exited with {s}; falling back \
+                     to placeholder"
+                );
                 write_placeholder(&dist);
             }
             Err(e) => {
-                eprintln!("failed to run `trunk`: {e}; falling back to placeholder");
+                println!(
+                    "cargo:warning=failed to run `trunk`: {e}; falling back \
+                     to placeholder"
+                );
                 write_placeholder(&dist);
             }
         }
@@ -57,13 +68,14 @@ fn main() {
     println!("cargo:rerun-if-changed=crates/viso-ui/dist");
 }
 
-/// Create the dist directory with a placeholder `index.html` so rust-embed
-/// compiles even when trunk is unavailable.
+/// Create the dist directory with a placeholder `index.html` so
+/// rust-embed compiles even when trunk is unavailable.
 fn write_placeholder(dist: &Path) {
     std::fs::create_dir_all(dist).expect("failed to create dist dir");
     std::fs::write(
         dist.join("index.html"),
-        "<!DOCTYPE html><html><body>viso-ui not built – install trunk and rebuild</body></html>",
+        "<!DOCTYPE html><html><body>viso-ui not built – install trunk and \
+         rebuild</body></html>",
     )
     .expect("failed to write placeholder index.html");
 }

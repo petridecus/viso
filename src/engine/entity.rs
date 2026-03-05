@@ -42,12 +42,22 @@ impl VisoEngine {
         entities: Vec<MoleculeEntity>,
         fit_camera: bool,
     ) -> Vec<u32> {
+        // Check whether the animator has existing state to animate from.
+        let was_empty = !self.animation.animator.is_animating()
+            && self.visual.backbone_chains.is_empty();
+
         let ids = self.entities.add_entities(entities);
         if fit_camera {
-            // Sync immediately so entity data is available for camera fit
-            let snap_transitions: HashMap<u32, Transition> =
-                ids.iter().map(|&id| (id, Transition::snap())).collect();
-            self.sync_scene_to_renderers(snap_transitions);
+            if was_empty {
+                // No previous state — non-animated sync uploads backbone
+                // directly via apply_prepared (the animator can't
+                // interpolate from nothing).
+                self.sync_scene_to_renderers(HashMap::new());
+            } else {
+                let snap_transitions: HashMap<u32, Transition> =
+                    ids.iter().map(|&id| (id, Transition::snap())).collect();
+                self.sync_scene_to_renderers(snap_transitions);
+            }
             if let Some((centroid, radius)) = self.entities.bounding_sphere() {
                 self.camera_controller.fit_to_sphere(centroid, radius);
             }

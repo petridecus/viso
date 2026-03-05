@@ -53,20 +53,23 @@ fn resolve_structure_path(input: &str) -> Result<String, String> {
 fn main() -> ExitCode {
     env_logger::init();
 
-    let Some(input) = std::env::args().nth(1) else {
-        log::error!("Usage: viso <PDB_ID or path>");
-        return ExitCode::from(2);
+    let cif_path = match std::env::args().nth(1) {
+        Some(input) => match resolve_structure_path(&input) {
+            Ok(path) => Some(path),
+            Err(e) => {
+                log::error!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
     };
 
-    let cif_path = match resolve_structure_path(&input) {
-        Ok(path) => path,
-        Err(e) => {
-            log::error!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let mut builder = viso::Viewer::builder();
+    if let Some(path) = cif_path {
+        builder = builder.with_path(path);
+    }
 
-    if let Err(e) = viso::Viewer::builder().with_path(cif_path).build().run() {
+    if let Err(e) = builder.build().run() {
         log::error!("Viewer error: {e}");
         return ExitCode::FAILURE;
     }

@@ -272,6 +272,7 @@ impl GpuPipeline {
             per_residue_colors: None,
             geometry: geometry.clone(),
             per_chain_lod: None,
+            generation: self.scene_processor.generation(),
         });
     }
 
@@ -325,6 +326,7 @@ impl GpuPipeline {
             per_residue_colors: None,
             geometry: base_geo,
             per_chain_lod: Some(per_chain_lod),
+            generation: self.scene_processor.generation(),
         });
     }
 

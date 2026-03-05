@@ -39,6 +39,15 @@ pub enum UiAction {
         /// Filesystem path to the `.cif` or `.pdb` file.
         path: String,
     },
+    /// Fetch a PDB structure by ID from a remote database.
+    FetchPdb {
+        /// 4-character PDB identifier (e.g. `"1crn"`).
+        id: String,
+        /// Source database: `"rcsb"` or `"pdb-redo"`.
+        source: String,
+    },
+    /// Open a native file dialog to pick a local structure file.
+    OpenFileDialog,
     /// Toggle the panel between pinned and unpinned.
     TogglePanel,
     /// Resize the panel to a new width.
@@ -67,8 +76,8 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     let has_wasm = UiAssets::iter().any(|name| name.ends_with(".wasm"));
     if !has_wasm {
         log::warn!(
-            "viso-ui was not built (no .wasm in embedded assets). \
-             Run `trunk build` in crates/viso-ui/ to enable the GUI panel."
+            "viso-ui was not built (no .wasm in embedded assets). Run `trunk \
+             build` in crates/viso-ui/ to enable the GUI panel."
         );
         return Err(wry::Error::MessageSender);
     }
@@ -202,6 +211,16 @@ pub fn push_stats(
     safe_push(webview, "stats", &s);
 }
 
+/// Push a load-status event to the webview.
+///
+/// `status` is one of `"loading"`, `"loaded"`, or `"error"`.
+/// `message` is a human-readable description.
+pub fn push_load_status(webview: &WebView, status: &str, message: &str) {
+    let json = serde_json::json!({ "status": status, "message": message });
+    let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
+    safe_push(webview, "load_status", &s);
+}
+
 /// Push the panel pinned state to the webview.
 pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
     let val = if pinned { "true" } else { "false" };
@@ -216,10 +235,9 @@ pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
 /// [`BRIDGE_JS`] can replay it on init.
 fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
     let js = format!(
-        "if(window.__viso_push_{key})\
-         {{window.__viso_push_{key}('{escaped_value}')}}\
-         else{{window.__viso_early=window.__viso_early||{{}};\
-         window.__viso_early.{key}='{escaped_value}'}}"
+        "if(window.__viso_push_{key}){{window.__viso_push_{key}('\
+         {escaped_value}')}}else{{window.__viso_early=window.\
+         __viso_early||{{}};window.__viso_early.{key}='{escaped_value}'}}"
     );
     let _ = webview.evaluate_script(&js);
 }
@@ -233,7 +251,7 @@ fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
 /// buffered. When a listener attaches it replays any pending data.
 const BRIDGE_JS: &str = r"
 (function() {
-    var pending = { schema: null, options: null, stats: null, panel_pinned: null };
+    var pending = { schema: null, options: null, stats: null, panel_pinned: null, load_status: null };
 
     function dispatch(name, json) {
         window.dispatchEvent(new CustomEvent(name, { detail: json }));
@@ -255,6 +273,10 @@ const BRIDGE_JS: &str = r"
         pending.panel_pinned = val;
         dispatch('viso-panel-pinned', val);
     };
+    window.__viso_push_load_status = function(json) {
+        pending.load_status = json;
+        dispatch('viso-load-status', json);
+    };
 
     // Replay any data that arrived via evaluate_script before this init
     // script ran (race on Windows/WebView2).
@@ -264,6 +286,7 @@ const BRIDGE_JS: &str = r"
         if (early.options)      window.__viso_push_options(early.options);
         if (early.stats)        window.__viso_push_stats(early.stats);
         if (early.panel_pinned) window.__viso_push_panel_pinned(early.panel_pinned);
+        if (early.load_status)  window.__viso_push_load_status(early.load_status);
         delete window.__viso_early;
     }
 
@@ -282,6 +305,9 @@ const BRIDGE_JS: &str = r"
         }
         if (this === window && type === 'viso-panel-pinned' && pending.panel_pinned !== null) {
             dispatch('viso-panel-pinned', pending.panel_pinned);
+        }
+        if (this === window && type === 'viso-load-status' && pending.load_status) {
+            dispatch('viso-load-status', pending.load_status);
         }
     };
 })();
@@ -315,6 +341,12 @@ fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             let path = msg.get("path")?.as_str()?.to_owned();
             Some(UiAction::LoadFile { path })
         }
+        "fetch_pdb" => {
+            let id = msg.get("id")?.as_str()?.to_owned();
+            let source = msg.get("source")?.as_str()?.to_owned();
+            Some(UiAction::FetchPdb { id, source })
+        }
+        "open_file_dialog" => Some(UiAction::OpenFileDialog),
         "toggle_panel" => Some(UiAction::TogglePanel),
         "resize_panel" => {
             let width = msg.get("width")?.as_u64()? as u32;

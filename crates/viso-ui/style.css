@@ -350,3 +350,145 @@ input[type="range"]:hover::-webkit-slider-thumb {
     color: #d1d5db;
     font-variant-numeric: tabular-nums;
 }
+
+/* ── Top-level tabs (Load / Options) ─────────────────────────────────── */
+
+.top-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.top-tab {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #6b7280;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.top-tab:hover {
+    color: #d1d5db;
+}
+
+.top-tab.active {
+    color: var(--tab-accent);
+    border-bottom-color: var(--tab-accent);
+}
+
+/* ── Load panel ──────────────────────────────────────────────────────── */
+
+.load-panel {
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1 1 0%;
+    min-height: 0;
+}
+
+.load-section {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.load-section-title {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.fetch-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.pdb-input {
+    width: 80px;
+    padding: 6px 10px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.pdb-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #3b82f6;
+}
+
+.source-radio {
+    display: flex;
+    gap: 12px;
+    font-size: 0.8125rem;
+    color: #d1d5db;
+}
+
+.source-radio label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.source-radio input[type="radio"] {
+    accent-color: var(--tab-accent);
+}
+
+.fetch-btn,
+.browse-btn {
+    padding: 6px 14px;
+    background: #404040;
+    border: 1px solid #525252;
+    border-radius: 6px;
+    color: #f3f4f6;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.fetch-btn:hover:not(:disabled),
+.browse-btn:hover:not(:disabled) {
+    background: #525252;
+}
+
+.fetch-btn:disabled,
+.browse-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.browse-btn {
+    width: 100%;
+}
+
+/* ── Load status ─────────────────────────────────────────────────────── */
+
+.load-status {
+    font-size: 0.75rem;
+    padding: 8px 0;
+    color: #9ca3af;
+}
+
+.load-status.loading {
+    color: var(--tab-accent);
+}
+
+.load-status.loaded {
+    color: #4ade80;
+}
+
+.load-status.error {
+    color: #f87171;
+}

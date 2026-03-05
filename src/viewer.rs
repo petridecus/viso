@@ -18,7 +18,7 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::error::VisoError;
 use crate::input::processor::InputProcessor;
@@ -154,18 +154,24 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
 }
 
 /// Create a [`VisoEngine`], optionally loading a structure file.
+///
+/// When `path` is `None`, an empty scene is created (no geometry loaded).
 fn create_engine(
     window: Arc<Window>,
     size: (u32, u32),
     scale: f64,
     path: Option<&str>,
 ) -> Result<VisoEngine, VisoError> {
-    let result = if let Some(path) = path {
+    if let Some(path) = path {
         pollster::block_on(VisoEngine::new_with_path(window, size, scale, path))
     } else {
-        pollster::block_on(VisoEngine::new(window, size, scale))
-    };
-    result.map_err(|e| VisoError::Viewer(e.to_string()))
+        let mut context =
+            pollster::block_on(crate::gpu::RenderContext::new(window, size))?;
+        if scale < 2.0 {
+            context.render_scale = 2;
+        }
+        VisoEngine::new_empty(context)
+    }
 }
 
 impl ViewerApp {
@@ -362,35 +368,40 @@ impl ViewerApp {
     }
 }
 
+/// Build the window attributes, sizing to 75% of the primary monitor.
+fn window_attrs(event_loop: &ActiveEventLoop, title: &str) -> WindowAttributes {
+    let mut attrs = Window::default_attributes()
+        .with_title(title)
+        .with_visible(false);
+
+    let monitor = event_loop
+        .primary_monitor()
+        .or_else(|| event_loop.available_monitors().next());
+
+    if let Some(mon) = &monitor {
+        let mon_size = mon.size();
+        let scale = mon.scale_factor();
+        #[allow(clippy::cast_possible_truncation)]
+        let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
+        attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(
+            logical_w, logical_h,
+        ));
+    }
+
+    attrs
+}
+
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
 
-        let monitor = event_loop
-            .primary_monitor()
-            .or_else(|| event_loop.available_monitors().next());
-        let attrs = if let Some(mon) = &monitor {
-            let mon_size = mon.size();
-            let scale = mon.scale_factor();
-            #[allow(clippy::cast_possible_truncation)]
-            let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
-            Window::default_attributes()
-                .with_title(&self.title)
-                .with_visible(false)
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    logical_w, logical_h,
-                ))
-        } else {
-            Window::default_attributes()
-                .with_title(&self.title)
-                .with_visible(false)
-        };
-
-        let window = match event_loop.create_window(attrs) {
+        let window = match event_loop
+            .create_window(window_attrs(event_loop, &self.title))
+        {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 log::error!("Failed to create window: {e}");
@@ -423,17 +434,20 @@ impl ApplicationHandler for ViewerApp {
 
         engine.sync_scene_to_renderers(std::collections::HashMap::new());
 
-        // Render the first frame while the window is still hidden, then
-        // reveal it so the user never sees a blank rectangle.
+        // Render the first frame while the window is still hidden,
+        // then reveal it so the user never sees a blank rectangle.
         engine.update(0.0);
         let _ = engine.render();
         window.set_visible(true);
         self.shown = true;
 
-        // Create the webview after the first frame is on screen.
         #[cfg(feature = "gui")]
-        self.panel
-            .init_webview(window.as_ref(), inner.width, inner.height, &engine);
+        self.panel.init_webview(
+            window.as_ref(),
+            inner.width,
+            inner.height,
+            &engine,
+        );
 
         window.request_redraw();
         self.window = Some(window);

@@ -45,6 +45,15 @@ impl EntityStore {
         }
     }
 
+    /// Remove all entities, behaviors, and focus — reset to empty state.
+    pub fn clear_all(&mut self) {
+        self.scene_entities.clear();
+        self.id_index.clear();
+        self.behaviors.clear();
+        self.focus = Focus::Session;
+        self.generation += 1;
+    }
+
     // -- Dirty tracking --
 
     fn invalidate(&mut self) {

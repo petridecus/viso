@@ -27,6 +27,8 @@ pub(crate) struct PanelController {
     /// Animated x-position of the panel (physical px, left edge).
     /// Only used for the unpinned slide; pinned mode ignores this.
     slide_x: f32,
+    /// Receiver for background PDB fetch results (path or error message).
+    load_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ impl PanelController {
             peek: false,
             width: webview::PANEL_WIDTH,
             slide_x: 0.0,
+            load_rx: None,
         }
     }
 
@@ -172,7 +175,8 @@ impl PanelController {
 
         let near_edge = mouse_x >= (w - Self::EDGE_ZONE);
         let in_panel = mouse_x
-            >= (w - self.width as f32
+            >= (w
+                - self.width as f32
                 - Self::PANEL_MARGIN as f32
                 - Self::PEEK_GRACE);
 
@@ -187,14 +191,19 @@ impl PanelController {
         engine: &mut VisoEngine,
         window: &Window,
     ) {
-        let Some(ref rx) = self.action_rx else {
-            return;
-        };
+        // Poll background fetch result.
+        self.poll_load_result(engine);
+
+        let actions: Vec<UiAction> = self
+            .action_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).collect())
+            .unwrap_or_default();
 
         let mut toggled = false;
         let mut resize_width: Option<u32> = None;
 
-        while let Ok(action) = rx.try_recv() {
+        for action in actions {
             match action {
                 UiAction::SetOption { path, field, value } => {
                     let mut opts = engine.options.clone();
@@ -210,8 +219,13 @@ impl PanelController {
                     engine.set_options(opts);
                 }
                 UiAction::LoadFile { path } => {
-                    log::info!("load_file action: {path}");
-                    // TODO: implement runtime file loading
+                    self.load_local_file(engine, &path);
+                }
+                UiAction::FetchPdb { id, source } => {
+                    self.start_fetch_pdb(&id, &source);
+                }
+                UiAction::OpenFileDialog => {
+                    self.open_file_dialog(engine);
                 }
                 UiAction::TogglePanel => {
                     toggled = true;
@@ -255,4 +269,178 @@ impl PanelController {
             self.last_stats_push = now;
         }
     }
+}
+
+// ── Load handlers ────────────────────────────────────────────────────────
+
+impl PanelController {
+    /// Parse a local file and load its entities into the engine.
+    fn load_local_file(&self, engine: &mut VisoEngine, path: &str) {
+        log::info!("Loading local file: {path}");
+        match parse_and_load(engine, path) {
+            Ok(()) => {
+                if let Some(ref wv) = self.webview {
+                    let name =
+                        std::path::Path::new(path).file_name().map_or_else(
+                            || path.to_owned(),
+                            |n| n.to_string_lossy().into_owned(),
+                        );
+                    webview::push_load_status(
+                        wv,
+                        "loaded",
+                        &format!("Loaded {name}"),
+                    );
+                }
+            }
+            Err(msg) => {
+                log::error!("Failed to load {path}: {msg}");
+                if let Some(ref wv) = self.webview {
+                    webview::push_load_status(wv, "error", &msg);
+                }
+            }
+        }
+    }
+
+    /// Open a native file dialog and load the selected file.
+    fn open_file_dialog(&self, engine: &mut VisoEngine) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("Structure", &["cif", "pdb"])
+            .set_title("Open Structure File");
+
+        if let Some(path) = dialog.pick_file() {
+            let path_str = path.to_string_lossy().into_owned();
+            self.load_local_file(engine, &path_str);
+        }
+    }
+
+    /// Validate and start a background PDB fetch.
+    fn start_fetch_pdb(&mut self, id: &str, source: &str) {
+        let id = id.trim().to_lowercase();
+        if id.len() != 4 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if let Some(ref wv) = self.webview {
+                webview::push_load_status(
+                    wv,
+                    "error",
+                    "PDB ID must be exactly 4 alphanumeric characters",
+                );
+            }
+            return;
+        }
+
+        if let Some(ref wv) = self.webview {
+            webview::push_load_status(
+                wv,
+                "loading",
+                &format!("Fetching {}", id.to_uppercase()),
+            );
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.load_rx = Some(rx);
+
+        let source = source.to_owned();
+        let _ = std::thread::Builder::new().name("pdb-fetch".into()).spawn(
+            move || {
+                let _ = tx.send(fetch_pdb_blocking(&id, &source));
+            },
+        );
+    }
+
+    /// Poll the background fetch channel for a result.
+    fn poll_load_result(&mut self, engine: &mut VisoEngine) {
+        let Some(ref rx) = self.load_rx else {
+            return;
+        };
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.load_rx = None;
+                return;
+            }
+        };
+        self.load_rx = None;
+
+        match result {
+            Ok(path) => self.load_local_file(engine, &path),
+            Err(msg) => {
+                log::error!("PDB fetch failed: {msg}");
+                if let Some(ref wv) = self.webview {
+                    webview::push_load_status(wv, "error", &msg);
+                }
+            }
+        }
+    }
+}
+
+// ── Helpers (free functions) ─────────────────────────────────────────────
+
+/// Parse a structure file via `foldit-conv` and load entities into the
+/// engine, replacing the current scene.
+fn parse_and_load(engine: &mut VisoEngine, path: &str) -> Result<(), String> {
+    use foldit_conv::adapters::pdb::structure_file_to_coords;
+    use foldit_conv::types::entity::split_into_entities;
+
+    let coords = structure_file_to_coords(std::path::Path::new(path))
+        .map_err(|e| format!("Parse error: {e}"))?;
+    let entities = split_into_entities(&coords);
+    if entities.is_empty() {
+        return Err("No entities found in file".into());
+    }
+
+    let _ = engine.replace_scene(entities);
+    Ok(())
+}
+
+/// Download a PDB structure to the local cache. Returns the cached path.
+///
+/// Runs on a background thread — must not touch the engine or webview.
+fn fetch_pdb_blocking(id: &str, source: &str) -> Result<String, String> {
+    let models_dir = std::path::Path::new("assets/models");
+
+    let (url, filename) = match source {
+        "pdb-redo" => (
+            format!("https://pdb-redo.eu/db/{id}/{id}_final.cif"),
+            format!("{id}_redo.cif"),
+        ),
+        _ => (
+            format!("https://files.rcsb.org/download/{id}.cif"),
+            format!("{id}.cif"),
+        ),
+    };
+
+    let local_path = models_dir.join(&filename);
+
+    // Return cached copy if it exists.
+    if local_path.exists() {
+        return Ok(local_path.to_string_lossy().into_owned());
+    }
+
+    if !models_dir.exists() {
+        std::fs::create_dir_all(models_dir)
+            .map_err(|e| format!("Failed to create models directory: {e}"))?;
+    }
+
+    log::info!("Downloading {} from {source}...", id.to_uppercase());
+
+    let agent = ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build(),
+    );
+    let content = agent
+        .get(&url)
+        .call()
+        .map_err(|e| format!("Network error downloading {id}: {e}"))?
+        .into_body()
+        .with_config()
+        .limit(50 * 1024 * 1024)
+        .read_to_string()
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+    std::fs::write(&local_path, &content)
+        .map_err(|e| format!("I/O error saving CIF file: {e}"))?;
+
+    log::info!("Downloaded to {}", local_path.display());
+    Ok(local_path.to_string_lossy().into_owned())
 }
