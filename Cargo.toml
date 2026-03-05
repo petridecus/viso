@@ -16,8 +16,8 @@ categories = ["graphics", "rendering", "science", "visualization"]
 exclude = ["gallery/", "assets/", "docs/", ".github/"]
 
 [features]
-default = ["binary"]
-binary = ["gui", "dep:env_logger", "dep:ureq"]
+default = ["binary", "gui"]
+binary = ["viewer", "dep:env_logger", "dep:ureq"]
 viewer = ["dep:winit", "dep:pollster"]
 gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess"]
 
@@ -119,5 +119,9 @@ trivial_numeric_casts = "deny"
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "deny"
 bare_urls = "deny"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+x11-dl = "2"
 
 [dev-dependencies]
