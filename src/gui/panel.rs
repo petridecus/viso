@@ -242,6 +242,13 @@ impl PanelController {
                 UiAction::ResizePanel { width } => {
                     resize_width = Some(width);
                 }
+                UiAction::KeyPress { key } => {
+                    if let Some(cmd) =
+                        crate::input::KeyBindings::default().lookup(&key)
+                    {
+                        let _ = engine.execute(cmd);
+                    }
+                }
             }
         }
 

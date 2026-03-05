@@ -55,6 +55,11 @@ pub enum UiAction {
         /// New panel width in physical pixels.
         width: u32,
     },
+    /// A key press forwarded from the webview (e.g. Tab on Windows).
+    KeyPress {
+        /// Physical key name matching winit's `KeyCode` debug format.
+        key: String,
+    },
 }
 
 /// Create the wry webview as a child of the given window.
@@ -257,6 +262,16 @@ const BRIDGE_JS: &str = r"
         window.dispatchEvent(new CustomEvent(name, { detail: json }));
     }
 
+    // Forward Tab to the native side so the engine can cycle focus.
+    // WebView2 on Windows intercepts Tab for its own focus navigation,
+    // preventing winit from seeing the keypress.
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            window.ipc.postMessage(JSON.stringify({ action: 'key', key: 'Tab' }));
+        }
+    });
+
     window.__viso_push_schema = function(json) {
         pending.schema = json;
         dispatch('viso-schema', json);
@@ -347,6 +362,10 @@ fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             Some(UiAction::FetchPdb { id, source })
         }
         "open_file_dialog" => Some(UiAction::OpenFileDialog),
+        "key" => {
+            let key = msg.get("key")?.as_str()?.to_owned();
+            Some(UiAction::KeyPress { key })
+        }
         "toggle_panel" => Some(UiAction::TogglePanel),
         "resize_panel" => {
             let width = msg.get("width")?.as_u64()? as u32;
