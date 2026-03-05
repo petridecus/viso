@@ -16,8 +16,8 @@ categories = ["graphics", "rendering", "science", "visualization"]
 exclude = ["gallery/", "assets/", "docs/", ".github/"]
 
 [features]
-default = ["binary", "gui"]
-binary = ["viewer", "dep:env_logger", "dep:ureq"]
+default = ["binary"]
+binary = ["gui", "dep:env_logger"]
 viewer = ["dep:winit", "dep:pollster"]
 gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess"]
 

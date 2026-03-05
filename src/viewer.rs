@@ -18,7 +18,7 @@ use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::error::VisoError;
 use crate::input::processor::InputProcessor;
@@ -392,33 +392,29 @@ impl ViewerApp {
     }
 }
 
-impl ViewerApp {
-    /// Build window attributes, sizing to 75% of the primary monitor.
-    fn window_attrs(
-        &self,
-        event_loop: &ActiveEventLoop,
-    ) -> winit::window::WindowAttributes {
-        let mut attrs = Window::default_attributes()
-            .with_title(&self.title)
-            .with_visible(false);
+/// Build the window attributes, sizing to 75% of the primary monitor.
+fn window_attrs(event_loop: &ActiveEventLoop, title: &str) -> WindowAttributes {
+    let mut attrs = Window::default_attributes()
+        .with_title(title)
+        .with_visible(false);
 
-        let monitor = event_loop
-            .primary_monitor()
-            .or_else(|| event_loop.available_monitors().next());
-        if let Some(mon) = monitor {
-            let mon_size = mon.size();
-            let scale = mon.scale_factor();
-            #[allow(clippy::cast_possible_truncation)]
-            let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
-            attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(
-                logical_w, logical_h,
-            ));
-        }
+    let monitor = event_loop
+        .primary_monitor()
+        .or_else(|| event_loop.available_monitors().next());
 
-        attrs
+    if let Some(mon) = &monitor {
+        let mon_size = mon.size();
+        let scale = mon.scale_factor();
+        #[allow(clippy::cast_possible_truncation)]
+        let logical_w = (mon_size.width as f64 / scale * 0.75) as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        let logical_h = (mon_size.height as f64 / scale * 0.75) as u32;
+        attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(
+            logical_w, logical_h,
+        ));
     }
+
+    attrs
 }
 
 impl ApplicationHandler for ViewerApp {
@@ -427,15 +423,16 @@ impl ApplicationHandler for ViewerApp {
             return;
         }
 
-        let window =
-            match event_loop.create_window(self.window_attrs(event_loop)) {
-                Ok(w) => Arc::new(w),
-                Err(e) => {
-                    log::error!("Failed to create window: {e}");
-                    event_loop.exit();
-                    return;
-                }
-            };
+        let window = match event_loop
+            .create_window(window_attrs(event_loop, &self.title))
+        {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                log::error!("Failed to create window: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let inner = window.inner_size();
         let scale = window.scale_factor();

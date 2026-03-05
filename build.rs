@@ -46,8 +46,8 @@ fn main() {
             }
             Ok(s) => {
                 // trunk ran but failed – fall back to placeholder so
-                // compilation can still succeed (the UI just
-                // won't work).
+                // compilation can still succeed (the UI just won't
+                // work).
                 println!(
                     "cargo:warning=trunk build exited with {s}; falling back \
                      to placeholder"
