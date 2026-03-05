@@ -1613,7 +1613,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 [[package]]
 name = "foldit-conv"
 version = "0.1.0"
-source = "git+https://github.com/petridecus/foldit-conv#c69ad138291067a84e434f2442ef00242e3eb2f1"
+source = "git+https://github.com/petridecus/foldit-conv#d68cf2c5346eb765448cf60b8467e9e0061db3d2"
 dependencies = [
  "flate2",
  "glam",

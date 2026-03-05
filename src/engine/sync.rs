@@ -28,8 +28,11 @@ impl VisoEngine {
 
         // Concatenate backbone chains and store on visual state for
         // animation / apply_pending_scene.
-        let entity_chain_counts: Vec<usize> =
-            entities.iter().map(|e| e.backbone_chains.len()).collect();
+        let entity_chain_counts: Vec<usize> = entities
+            .iter()
+            .map(|e| e.backbone_chains.len())
+            .filter(|&c| c > 0)
+            .collect();
         let backbone_chains: Vec<Vec<Vec3>> = entities
             .iter()
             .flat_map(|e| e.backbone_chains.iter().cloned())

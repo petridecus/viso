@@ -263,24 +263,8 @@ impl PanelController {
                     let _ = engine.execute(cmd);
                 }
             }
-            UiAction::FocusEntity { id } => {
-                let _ = engine.execute(
-                    crate::engine::command::VisoCommand::FocusEntity { id },
-                );
-                self.push_scene_entities(engine);
-            }
-            UiAction::ToggleEntityVisibility { id } => {
-                let was_visible = engine.entities.entity(id).map(|e| e.visible);
-                let new_visible = was_visible == Some(false);
-                log::info!(
-                    "ToggleEntityVisibility: id={id}, was={was_visible:?} -> \
-                     new={new_visible}"
-                );
-                engine.set_entity_visible(id, new_visible);
-                self.push_scene_entities(engine);
-            }
-            UiAction::RemoveEntity { id } => {
-                engine.remove_entity(id);
+            UiAction::Command(cmd) => {
+                let _ = engine.execute(cmd);
                 self.push_scene_entities(engine);
             }
             UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
@@ -306,7 +290,6 @@ impl PanelController {
             buffers.extend(engine.gpu.pick.selection.buffer_info());
             buffers.extend(engine.gpu.pick.residue_colors.buffer_info());
             webview::push_stats(wv, engine.fps(), &buffers);
-            self.push_scene_entities(engine);
             self.last_stats_push = now;
         }
     }
@@ -316,7 +299,7 @@ impl PanelController {
         let Some(ref wv) = self.webview else {
             return;
         };
-        let summaries = engine.entities.entity_summaries();
+        let summaries = entity_summaries(engine);
         let json = serde_json::to_string(&summaries).unwrap_or_default();
         webview::push_scene_entities(wv, &json);
     }
@@ -423,6 +406,49 @@ impl PanelController {
             }
         }
     }
+}
+
+// ── Entity summary (GUI-layer serialization) ─────────────────────────────
+
+/// Build a JSON-serializable summary of all entities for the webview UI.
+fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+    use foldit_conv::types::entity::MoleculeType;
+
+    let focus = engine.entities.focus();
+    engine
+        .entities
+        .entities()
+        .iter()
+        .map(|se| {
+            let mol_type = match se.entity.molecule_type {
+                MoleculeType::Protein => "Protein",
+                MoleculeType::DNA => "DNA",
+                MoleculeType::RNA => "RNA",
+                _ => "Ligand",
+            };
+            let chain_ids: Vec<String> =
+                se.entity.as_polymer().map_or_else(Vec::new, |data| {
+                    data.chains
+                        .iter()
+                        .map(|c| String::from(c.chain_id as char))
+                        .collect()
+                });
+            let focused = matches!(
+                focus,
+                crate::engine::scene::Focus::Entity(eid) if *eid == se.id()
+            );
+            serde_json::json!({
+                "id": se.id(),
+                "molecule_type": mol_type,
+                "label": se.entity.label(),
+                "visible": se.visible,
+                "atom_count": se.entity.atom_count(),
+                "chain_ids": chain_ids,
+                "focused": focused,
+                "focusable": se.entity.is_focusable(),
+            })
+        })
+        .collect()
 }
 
 // ── Helpers (free functions) ─────────────────────────────────────────────

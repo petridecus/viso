@@ -241,47 +241,36 @@ impl VisoEngine {
     pub fn execute(&mut self, cmd: command::VisoCommand) -> bool {
         use command::VisoCommand;
         match cmd {
-            // ── Camera ──
-            VisoCommand::RecenterCamera => {
-                self.fit_camera_to_focus();
-                false
-            }
-            VisoCommand::ToggleAutoRotate => {
-                let _ = self.camera_controller.toggle_auto_rotate();
-                false
-            }
+            // Camera
+            VisoCommand::RecenterCamera => self.execute_no_selection(|e| {
+                e.fit_camera_to_focus();
+            }),
+            VisoCommand::ToggleAutoRotate => self.execute_no_selection(|e| {
+                let _ = e.camera_controller.toggle_auto_rotate();
+            }),
             VisoCommand::RotateCamera { delta } => {
-                self.camera_controller.rotate(delta);
-                false
+                self.execute_no_selection(|e| e.camera_controller.rotate(delta))
             }
             VisoCommand::PanCamera { delta } => {
-                self.camera_controller.pan(delta);
-                false
+                self.execute_no_selection(|e| e.camera_controller.pan(delta))
             }
             VisoCommand::Zoom { delta } => {
-                self.camera_controller.zoom(delta);
-                false
+                self.execute_no_selection(|e| e.camera_controller.zoom(delta))
             }
-
-            // ── Focus ──
-            VisoCommand::CycleFocus => {
-                let _ = self.entities.cycle_focus();
-                self.fit_camera_to_focus();
-                false
-            }
-            VisoCommand::ResetFocus => {
-                self.entities.set_focus(Focus::Session);
-                self.fit_camera_to_focus();
-                false
-            }
-
-            // ── Playback ──
+            // Focus
+            VisoCommand::CycleFocus => self.execute_no_selection(|e| {
+                let _ = e.entities.cycle_focus();
+                e.fit_camera_to_focus();
+            }),
+            VisoCommand::ResetFocus => self.execute_no_selection(|e| {
+                e.entities.set_focus(Focus::Session);
+                e.fit_camera_to_focus();
+            }),
+            // Playback
             VisoCommand::ToggleTrajectory => {
-                self.animation.toggle_trajectory();
-                false
+                self.execute_no_selection(|e| e.animation.toggle_trajectory())
             }
-
-            // ── Selection ──
+            // Selection
             VisoCommand::ClearSelection => self.gpu.pick.clear_selection(),
             VisoCommand::SelectResidue { index, extend } => {
                 self.gpu.pick.picking.handle_click(index, extend)
@@ -294,14 +283,26 @@ impl VisoEngine {
                 let chains = self.gpu.renderers.backbone.cached_chains();
                 self.gpu.pick.select_chain(index, chains, extend)
             }
-
-            // ── Entity focus ──
-            VisoCommand::FocusEntity { id } => {
-                self.entities.set_focus(Focus::Entity(id));
-                self.fit_camera_to_focus();
+            // Entity management
+            VisoCommand::FocusEntity { id } => self.execute_no_selection(|e| {
+                e.entities.set_focus(Focus::Entity(id));
+                e.fit_camera_to_focus();
+            }),
+            VisoCommand::ToggleEntityVisibility { id } => {
+                let vis = self.entities.entity(id).is_some_and(|e| !e.visible);
+                self.set_entity_visible(id, vis);
                 false
             }
+            VisoCommand::RemoveEntity { id } => {
+                self.execute_no_selection(|e| e.remove_entity(id))
+            }
         }
+    }
+
+    /// Run a non-selection command, always returning `false`.
+    fn execute_no_selection(&mut self, f: impl FnOnce(&mut Self)) -> bool {
+        f(self);
+        false
     }
 }
 

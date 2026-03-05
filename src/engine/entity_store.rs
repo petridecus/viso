@@ -3,7 +3,7 @@
 
 use foldit_conv::types::assembly::update_protein_entities;
 use foldit_conv::types::coords::Coords;
-use foldit_conv::types::entity::{MoleculeEntity, MoleculeType};
+use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 use rustc_hash::FxHashMap;
 
@@ -270,41 +270,6 @@ impl EntityStore {
             se.invalidate_render_cache();
         }
         self.invalidate();
-    }
-
-    /// Collect a JSON-serializable summary of all entities for the UI.
-    #[must_use]
-    pub fn entity_summaries(&self) -> Vec<serde_json::Value> {
-        self.scene_entities
-            .iter()
-            .map(|se| {
-                let mol_type = match se.entity.molecule_type {
-                    MoleculeType::Protein => "Protein",
-                    MoleculeType::DNA => "DNA",
-                    MoleculeType::RNA => "RNA",
-                    _ => "Ligand",
-                };
-                let chain_ids: Vec<String> =
-                    se.entity.as_polymer().map_or_else(Vec::new, |data| {
-                        data.chains
-                            .iter()
-                            .map(|c| String::from(c.chain_id as char))
-                            .collect()
-                    });
-                let focused =
-                    matches!(self.focus, Focus::Entity(eid) if eid == se.id());
-                serde_json::json!({
-                    "id": se.id(),
-                    "molecule_type": mol_type,
-                    "label": se.entity.label(),
-                    "visible": se.visible,
-                    "atom_count": se.entity.atom_count(),
-                    "chain_ids": chain_ids,
-                    "focused": focused,
-                    "focusable": se.entity.is_focusable(),
-                })
-            })
-            .collect()
     }
 
     /// Update protein entity coords in a specific scene entity.

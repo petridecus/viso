@@ -12,6 +12,7 @@ use wry::http::header::CONTENT_TYPE;
 use wry::http::Response;
 use wry::{dpi, Rect, WebView, WebViewBuilder};
 
+use crate::engine::command::VisoCommand;
 use crate::options::VisoOptions;
 
 /// Embedded viso-ui dist output (built by `trunk build`).
@@ -60,21 +61,8 @@ pub enum UiAction {
         /// Physical key name matching winit's `KeyCode` debug format.
         key: String,
     },
-    /// Focus a specific entity (click in Scene panel).
-    FocusEntity {
-        /// Entity ID to focus.
-        id: u32,
-    },
-    /// Toggle visibility of a specific entity.
-    ToggleEntityVisibility {
-        /// Entity ID to toggle.
-        id: u32,
-    },
-    /// Remove a specific entity from the scene.
-    RemoveEntity {
-        /// Entity ID to remove.
-        id: u32,
-    },
+    /// An engine command to forward via `engine.execute()`.
+    Command(VisoCommand),
 }
 
 /// Create the wry webview as a child of the given window.
@@ -402,15 +390,17 @@ fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         }
         "focus_entity" => {
             let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::FocusEntity { id })
+            Some(UiAction::Command(VisoCommand::FocusEntity { id }))
         }
         "toggle_entity_visibility" => {
             let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::ToggleEntityVisibility { id })
+            Some(UiAction::Command(VisoCommand::ToggleEntityVisibility {
+                id,
+            }))
         }
         "remove_entity" => {
             let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::RemoveEntity { id })
+            Some(UiAction::Command(VisoCommand::RemoveEntity { id }))
         }
         _ => None,
     }

@@ -198,9 +198,21 @@ pub enum VisoCommand {
         extend: bool,
     },
 
-    // ── Entity focus ──────────────────────────────────────────────
+    // ── Entity management ─────────────────────────────────────────
     /// Focus a specific entity by ID and fit the camera to it.
     FocusEntity {
+        /// Entity identifier.
+        id: u32,
+    },
+
+    /// Toggle visibility of a specific entity.
+    ToggleEntityVisibility {
+        /// Entity identifier.
+        id: u32,
+    },
+
+    /// Remove a specific entity from the scene.
+    RemoveEntity {
         /// Entity identifier.
         id: u32,
     },
