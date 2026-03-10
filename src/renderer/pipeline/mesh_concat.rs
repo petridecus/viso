@@ -223,6 +223,7 @@ impl MeshAccumulator {
         let tube_index_count = self.backbone_tube_inds.len() as u32;
         let ribbon_index_count = self.backbone_ribbon_inds.len() as u32;
         PreparedScene {
+            generation: 0,
             backbone: BackboneMeshData {
                 vertices: self.backbone_verts,
                 tube_indices: bytemuck::cast_slice(&self.backbone_tube_inds)

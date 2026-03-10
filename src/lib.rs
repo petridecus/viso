@@ -47,6 +47,7 @@ pub use animation::transition::Transition;
 pub use engine::command::{
     AtomRef, BandInfo, BandTarget, BandType, PullInfo, VisoCommand,
 };
+pub use engine::scene::Focus;
 pub use engine::VisoEngine;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;

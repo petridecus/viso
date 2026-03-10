@@ -5,7 +5,8 @@ mod constraint;
 mod entity;
 pub(crate) mod entity_store;
 mod options_apply;
-pub(crate) mod scene;
+/// Scene types: Focus, topology, and visual state.
+pub mod scene;
 /// Entity data types, bond topology, and scene aggregation functions.
 pub(crate) mod scene_data;
 mod sync;
@@ -377,6 +378,88 @@ impl VisoEngine {
     pub fn fps(&self) -> f32 {
         self.frame_timing.fps()
     }
+
+    /// Currently selected residue indices.
+    #[must_use]
+    pub fn selected_residues(&self) -> &[i32] {
+        self.gpu.pick.selected_residues()
+    }
+
+    /// Read-only access to the current options.
+    #[must_use]
+    pub fn options(&self) -> &VisoOptions {
+        &self.options
+    }
+
+    /// Name of the currently active preset, if any.
+    #[must_use]
+    pub fn active_preset(&self) -> Option<&str> {
+        self.active_preset.as_deref()
+    }
+
+    /// Whether a trajectory is loaded.
+    #[must_use]
+    pub fn has_trajectory(&self) -> bool {
+        self.animation.trajectory_player.is_some()
+    }
+
+    /// Current focus state.
+    #[must_use]
+    pub fn focus(&self) -> Focus {
+        *self.entities.focus()
+    }
+
+    /// Set the focus state directly.
+    pub fn set_focus(&mut self, focus: Focus) {
+        self.entities.set_focus(focus);
+    }
+
+    /// Resolve an atom position from structural references.
+    ///
+    /// Uses interpolated visual positions during animation so lookups
+    /// track animated atoms. Returns `None` if the residue/atom is
+    /// out of range.
+    #[must_use]
+    pub fn resolve_atom_position(
+        &self,
+        residue: u32,
+        atom_name: &str,
+    ) -> Option<glam::Vec3> {
+        let scene = constraint::ScenePositions {
+            visual: &self.visual,
+            topology: &self.topology,
+            cached_chains: self.gpu.renderers.backbone.cached_chains(),
+        };
+        constraint::resolve_atom_ref_pub(
+            &scene,
+            &command::AtomRef {
+                residue,
+                atom_name: atom_name.to_owned(),
+            },
+        )
+    }
+
+    /// Number of entities currently in the scene.
+    #[must_use]
+    pub fn entity_count(&self) -> usize {
+        self.entities.entity_count()
+    }
+
+    /// Current viewport dimensions in physical pixels.
+    #[must_use]
+    pub fn viewport_size(&self) -> glam::UVec2 {
+        glam::UVec2::new(
+            self.gpu.context.config.width,
+            self.gpu.context.config.height,
+        )
+    }
+
+    /// Update the cursor position for GPU picking.
+    ///
+    /// Call each frame with the current mouse position in physical pixels.
+    pub fn set_cursor_pos(&mut self, x: f32, y: f32) {
+        self.gpu.cursor_pos = (x, y);
+    }
 }
 
 // ── Public API: options ──
@@ -439,6 +522,7 @@ impl VisoEngine {
             self.refresh_ball_and_stick();
         }
         if display_changed || colors_changed {
+            log::debug!("set_options: display/colors changed, triggering sync");
             self.sync_scene_to_renderers(HashMap::new());
         }
     }

@@ -85,6 +85,12 @@ impl VisoEngine {
         self.entities.mark_rendered();
 
         let generation = self.gpu.scene_processor.next_generation();
+        log::debug!(
+            "sync_scene_to_renderers: submitting FullRebuild \
+             gen={generation}, entity_count={}, backbone_chains={}",
+            entities.len(),
+            self.visual.backbone_chains.len(),
+        );
         self.gpu.scene_processor.submit(SceneRequest::FullRebuild {
             entities,
             display: self.options.display.clone(),
@@ -123,6 +129,14 @@ impl VisoEngine {
         let Some(prepared) = self.gpu.scene_processor.try_recv_scene() else {
             return;
         };
+        log::debug!(
+            "apply_pending_scene: consumed gen={}, backbone verts={}, \
+             tube_idx={}, ribbon_idx={}",
+            prepared.generation,
+            prepared.backbone.vertices.len(),
+            prepared.backbone.tube_index_count,
+            prepared.backbone.ribbon_index_count,
+        );
 
         let entity_transitions =
             std::mem::take(&mut self.animation.pending_transitions);

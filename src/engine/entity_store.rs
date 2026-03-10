@@ -45,15 +45,6 @@ impl EntityStore {
         }
     }
 
-    /// Remove all entities, behaviors, and focus — reset to empty state.
-    pub fn clear_all(&mut self) {
-        self.scene_entities.clear();
-        self.id_index.clear();
-        self.behaviors.clear();
-        self.focus = Focus::Session;
-        self.generation += 1;
-    }
-
     // -- Dirty tracking --
 
     fn invalidate(&mut self) {
@@ -79,14 +70,17 @@ impl EntityStore {
 
     // -- Entity management --
 
-    /// Add entities to the store. Entity IDs are reassigned to be globally
-    /// unique. Returns the assigned entity IDs.
+    /// Add entities to the store. Entity IDs are preserved from the caller
+    /// (the caller is responsible for assigning unique IDs). Returns the
+    /// entity IDs as passed in.
     pub fn add_entities(&mut self, entities: Vec<MoleculeEntity>) -> Vec<u32> {
         let mut ids = Vec::with_capacity(entities.len());
-        for mut entity in entities {
-            let id = self.next_entity_id;
-            self.next_entity_id += 1;
-            entity.entity_id = id;
+        for entity in entities {
+            let id = entity.entity_id;
+            // Track the highest ID we've seen so auto-assignment stays safe
+            if id >= self.next_entity_id {
+                self.next_entity_id = id + 1;
+            }
             let idx = self.scene_entities.len();
             self.scene_entities.push(SceneEntity::new(entity));
             let _ = self.id_index.insert(id, idx);
@@ -94,6 +88,27 @@ impl EntityStore {
         }
         self.invalidate();
         ids
+    }
+
+    /// Whether the store contains an entity with the given ID.
+    #[must_use]
+    pub fn has_entity(&self, id: u32) -> bool {
+        self.id_index.contains_key(&id)
+    }
+
+    /// Number of entities in the store.
+    #[must_use]
+    pub fn entity_count(&self) -> usize {
+        self.scene_entities.len()
+    }
+
+    /// Remove all entities from the store.
+    pub fn clear(&mut self) {
+        self.scene_entities.clear();
+        self.id_index.clear();
+        self.behaviors.clear();
+        self.focus = Focus::Session;
+        self.invalidate();
     }
 
     /// Read access to a scene entity.
@@ -306,12 +321,12 @@ mod tests {
     }
 
     #[test]
-    fn add_assigns_sequential_ids() {
+    fn add_preserves_caller_ids() {
         let mut store = EntityStore::new();
-        let ids_a = store.add_entities(vec![make_protein_entity(0, b'A', 3)]);
-        let ids_b = store.add_entities(vec![make_protein_entity(0, b'B', 2)]);
-        assert_eq!(ids_a, vec![0]);
-        assert_eq!(ids_b, vec![1]);
+        let ids_a = store.add_entities(vec![make_protein_entity(10, b'A', 3)]);
+        let ids_b = store.add_entities(vec![make_protein_entity(20, b'B', 2)]);
+        assert_eq!(ids_a, vec![10]);
+        assert_eq!(ids_b, vec![20]);
     }
 
     #[test]
@@ -355,9 +370,9 @@ mod tests {
     fn remove_swap_updates_index() {
         let mut store = EntityStore::new();
         let ids = store.add_entities(vec![
-            make_protein_entity(0, b'A', 1),
-            make_protein_entity(0, b'B', 1),
-            make_protein_entity(0, b'C', 1),
+            make_protein_entity(10, b'A', 1),
+            make_protein_entity(11, b'B', 1),
+            make_protein_entity(12, b'C', 1),
         ]);
         // Remove first — swap_remove moves last element into slot 0
         assert!(store.remove_entity(ids[0]));
@@ -389,14 +404,14 @@ mod tests {
     fn cycle_focus_through_entities() {
         let mut store = EntityStore::new();
         let _ = store.add_entities(vec![
-            make_protein_entity(0, b'A', 3),
-            make_protein_entity(0, b'B', 2),
+            make_protein_entity(10, b'A', 1),
+            make_protein_entity(11, b'B', 1),
         ]);
         assert_eq!(*store.focus(), Focus::Session);
         let f1 = store.cycle_focus();
-        assert_eq!(f1, Focus::Entity(0));
+        assert_eq!(f1, Focus::Entity(10));
         let f2 = store.cycle_focus();
-        assert_eq!(f2, Focus::Entity(1));
+        assert_eq!(f2, Focus::Entity(11));
         let f3 = store.cycle_focus();
         assert_eq!(f3, Focus::Session);
     }

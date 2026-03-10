@@ -37,7 +37,7 @@ toml = "0.8"
 schemars = "1"
 
 # Logging
-log = "0.4"
+log = { version = "0.4", features = ["release_max_level_info"] }
 env_logger = { version = "0.11", optional = true }
 
 # HTTP client for downloading structures from RCSB

@@ -27,6 +27,10 @@ pub struct SceneProcessor {
     /// time a `FullRebuild` is submitted. Animation frame results with
     /// a lower generation are discarded as stale.
     scene_generation: u64,
+    /// True between `FullRebuild` submission and `PreparedScene`
+    /// consumption. While set, the backbone renderer's cached chains are
+    /// stale — LOD must not read them.
+    scene_pending: bool,
 }
 
 impl SceneProcessor {
@@ -52,12 +56,18 @@ impl SceneProcessor {
             anim_result: anim_output,
             thread: Some(thread),
             scene_generation: 0,
+            scene_pending: false,
         })
     }
 
     /// Increment and return the next scene generation counter.
+    ///
+    /// Also sets `scene_pending`, which prevents LOD from reading the
+    /// backbone renderer's stale cached chains until the corresponding
+    /// `PreparedScene` is consumed.
     pub fn next_generation(&mut self) -> u64 {
         self.scene_generation += 1;
+        self.scene_pending = true;
         self.scene_generation
     }
 
@@ -72,9 +82,42 @@ impl SceneProcessor {
     }
 
     /// Non-blocking check for completed full scene rebuild.
+    ///
+    /// Discards results whose generation is older than the current scene
+    /// generation, preventing stale geometry from a previous structure
+    /// from being uploaded after `replace_scene()`.
+    ///
+    /// Clears `scene_pending` on successful consumption so that LOD
+    /// submission (gated by [`Self::is_scene_pending`]) resumes with the
+    /// now-correct backbone renderer cache.
     pub fn try_recv_scene(&mut self) -> Option<PreparedScene> {
         let _ = self.scene_result.update();
-        self.scene_result.output_buffer_mut().take()
+        let prepared = self.scene_result.output_buffer_mut().take()?;
+        if prepared.generation < self.scene_generation {
+            log::debug!(
+                "try_recv_scene: DISCARDING stale scene (gen {} < current {})",
+                prepared.generation,
+                self.scene_generation,
+            );
+            return None;
+        }
+        log::debug!(
+            "try_recv_scene: ACCEPTED scene gen={} (current={})",
+            prepared.generation,
+            self.scene_generation,
+        );
+        self.scene_pending = false;
+        Some(prepared)
+    }
+
+    /// Whether a `FullRebuild` has been submitted but its `PreparedScene`
+    /// has not yet been consumed.
+    ///
+    /// While true, the backbone renderer's cached chains are stale —
+    /// callers that read the cache to build `AnimationFrame` requests
+    /// (notably LOD) must skip submission.
+    pub fn is_scene_pending(&self) -> bool {
+        self.scene_pending
     }
 
     /// Non-blocking check for completed animation frame.
@@ -129,11 +172,13 @@ impl SceneProcessor {
                     generation,
                 } => {
                     last_rebuild_generation = generation;
+                    cache.clear_meshes();
                     cache.cache_stable_data(&entities);
                     let entity_meshes =
                         cache.update(&entities, &display, &colors, &geometry);
-                    let prepared =
+                    let mut prepared =
                         super::mesh_concat::concatenate_meshes(&entity_meshes);
+                    prepared.generation = generation;
                     scene_input.write(Some(prepared));
                 }
                 SceneRequest::AnimationFrame {
@@ -214,6 +259,11 @@ impl MeshCache {
             cached_ss_types: None,
             cached_per_residue_colors: None,
         }
+    }
+
+    /// Clear all cached entity meshes.
+    fn clear_meshes(&mut self) {
+        self.meshes.clear();
     }
 
     /// Cache stable per-scene data from entities so animation frames can

@@ -118,6 +118,8 @@ pub enum SceneRequest {
 /// All pre-computed CPU data, ready for GPU-only upload on the main thread.
 #[derive(Clone)]
 pub(crate) struct PreparedScene {
+    /// Scene generation this prepared scene was produced for.
+    pub(crate) generation: u64,
     /// Backbone mesh data.
     pub(crate) backbone: BackboneMeshData,
     /// Sidechain capsule instance bytes.

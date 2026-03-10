@@ -64,6 +64,15 @@ pub(super) fn resolve_pull(
     })
 }
 
+/// Public entry point for [`resolve_atom_ref`] (used by
+/// [`super::VisoEngine::resolve_atom_position`]).
+pub(super) fn resolve_atom_ref_pub(
+    scene: &ScenePositions<'_>,
+    atom: &AtomRef,
+) -> Option<Vec3> {
+    resolve_atom_ref(scene, atom)
+}
+
 /// Resolve an [`AtomRef`] to a world-space position from scene data.
 ///
 /// Uses interpolated visual positions during animation so constraints

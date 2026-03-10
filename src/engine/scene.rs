@@ -1,7 +1,7 @@
 //! Scene topology: derived structural metadata computed from entities.
 //!
 //! Does NOT own entities (those live in
-//! [`super::entity_store::EntityStore`]). Holds sidechain topology,
+//! [`crate::engine::entity_store::EntityStore`]). Holds sidechain topology,
 //! SS types, per-residue colors, residue ranges, and NA chains — all
 //! recomputed when entities change.
 
@@ -167,9 +167,10 @@ impl VisualState {
 
 /// Derived scene topology: structural metadata computed from entities.
 ///
-/// Does NOT own entities (those live in [`super::entity_store::EntityStore`]).
-/// Holds sidechain topology, SS types, per-residue colors, residue ranges,
-/// and NA chains — all recomputed when entities change.
+/// Does NOT own entities (those live in
+/// [`crate::engine::entity_store::EntityStore`]). Holds sidechain topology, SS
+/// types, per-residue colors, residue ranges, and NA chains — all recomputed
+/// when entities change.
 pub struct SceneTopology {
     /// Nucleic acid P-atom chains (stable between animation frames).
     pub(crate) na_chains: Vec<Vec<Vec3>>,
@@ -273,7 +274,12 @@ impl super::VisoEngine {
     /// [`load_entities`](Self::load_entities) with camera fit.
     /// Returns the assigned entity IDs.
     pub fn replace_scene(&mut self, entities: Vec<MoleculeEntity>) -> Vec<u32> {
-        self.entities.clear_all();
+        log::debug!(
+            "replace_scene: clearing {} entities, loading {} new",
+            self.entities.entity_count(),
+            entities.len(),
+        );
+        self.entities.clear();
         self.visual = VisualState::new();
         self.animation = crate::animation::AnimationState::new();
         self.load_entities(entities, true)
@@ -284,7 +290,7 @@ impl super::VisoEngine {
     /// Clears the entity store and triggers a full renderer sync so the
     /// viewport becomes empty.
     pub fn clear_scene(&mut self) {
-        self.entities.clear_all();
+        self.entities.clear();
         self.visual = VisualState::new();
         self.animation = crate::animation::AnimationState::new();
         self.sync_scene_to_renderers(std::collections::HashMap::new());

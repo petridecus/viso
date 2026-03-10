@@ -7,6 +7,7 @@ use foldit_conv::types::entity::MoleculeEntity;
 use glam::Vec3;
 
 use super::command::{BandInfo, PullInfo};
+use super::scene_data::SceneEntity;
 use super::{constraint, VisoEngine};
 use crate::animation::transition::Transition;
 use crate::renderer::geometry::BackboneUpdateData;
@@ -157,6 +158,91 @@ impl VisoEngine {
             &self.gpu.context.queue,
             resolved_pull.as_ref(),
         );
+    }
+}
+
+// ── Declarative reconciliation ──
+
+impl VisoEngine {
+    /// Reconcile the scene with a new set of entities.
+    ///
+    /// - New IDs (not in current scene) → added
+    /// - Missing IDs (in scene but not in input) → removed
+    /// - Existing IDs with changed data → updated with the given transition
+    /// - Existing IDs, unchanged → no-op
+    ///
+    /// `default_transition` is used for new and updated entities.
+    pub fn sync_entities(
+        &mut self,
+        entities: Vec<MoleculeEntity>,
+        default_transition: &Transition,
+    ) {
+        use std::collections::HashSet;
+
+        let incoming_ids: HashSet<u32> =
+            entities.iter().map(|e| e.entity_id).collect();
+        let current_ids: Vec<u32> = self
+            .entities
+            .entities()
+            .iter()
+            .map(SceneEntity::id)
+            .collect();
+
+        // Remove entities not in the incoming set
+        for id in &current_ids {
+            if !incoming_ids.contains(id) {
+                self.entities.clear_behavior(*id);
+                let _ = self.entities.remove_entity(*id);
+            }
+        }
+
+        // Add or update entities
+        let mut entity_transitions = HashMap::new();
+        for entity in entities {
+            let id = entity.entity_id;
+            if self.entities.has_entity(id) {
+                // Update existing entity
+                self.entities.replace_entity(entity);
+                let transition = self
+                    .entities
+                    .behavior(id)
+                    .cloned()
+                    .unwrap_or_else(|| default_transition.clone());
+                let _ = entity_transitions.insert(id, transition);
+            } else {
+                // Add new entity
+                let _ = self.entities.add_entities(vec![entity]);
+                let _ =
+                    entity_transitions.insert(id, default_transition.clone());
+            }
+        }
+
+        self.sync_scene_to_renderers(entity_transitions);
+    }
+
+    /// Update a single entity by ID. Returns `Err` if the ID doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::VisoError`] if no entity with the given ID exists.
+    pub fn update_entity(
+        &mut self,
+        entity: MoleculeEntity,
+        transition: Transition,
+    ) -> Result<(), crate::VisoError> {
+        let id = entity.entity_id;
+        if !self.entities.has_entity(id) {
+            return Err(crate::VisoError::StructureLoad(format!(
+                "Entity {id} not found"
+            )));
+        }
+        self.entities.replace_entity(entity);
+        let effective =
+            self.entities.behavior(id).cloned().unwrap_or(transition);
+        let mut transitions = HashMap::new();
+        let _ = transitions.insert(id, effective);
+        self.sync_scene_to_renderers(transitions);
+        Ok(())
     }
 }
 

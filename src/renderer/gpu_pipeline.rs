@@ -290,6 +290,13 @@ impl GpuPipeline {
         camera_eye: Vec3,
         geometry: &GeometryOptions,
     ) {
+        // While a FullRebuild is in flight, the backbone renderer's
+        // cached chains are stale. Submitting a LOD remesh now would
+        // produce an AnimationFrame with old backbone geometry that
+        // could overwrite the correct PreparedScene upload.
+        if self.scene_processor.is_scene_pending() {
+            return;
+        }
         use crate::options::{lod_scaled, select_chain_lod_tier};
 
         // Use clamped geometry as the base for LOD scaling
@@ -331,12 +338,16 @@ impl GpuPipeline {
     }
 
     /// Check per-chain LOD tiers and submit a background remesh if any
-    /// chain's tier has changed.
+    /// chain's tier has changed. Skipped while a `FullRebuild` is
+    /// pending — the backbone renderer's cached chains are stale.
     pub(crate) fn check_and_submit_lod(
         &mut self,
         camera_eye: Vec3,
         geometry: &GeometryOptions,
     ) {
+        if self.scene_processor.is_scene_pending() {
+            return;
+        }
         let per_chain_tiers: Vec<u8> = self
             .renderers
             .backbone
