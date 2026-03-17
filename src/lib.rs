@@ -45,9 +45,6 @@ pub mod gui;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub mod web;
 
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
-pub use wasm_bindgen_rayon::init_thread_pool;
-
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
 pub use engine::command::{
@@ -67,3 +64,5 @@ pub use renderer::picking::PickTarget;
 // Feature-gated
 #[cfg(feature = "viewer")]
 pub use viewer::{Viewer, ViewerBuilder};
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use wasm_bindgen_rayon::init_thread_pool;

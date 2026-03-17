@@ -3,19 +3,20 @@
 //! Sets up the engine, wires the viso-ui IPC bridge (same protocol as the
 //! native wry path), and runs a `requestAnimationFrame` render loop.
 
+mod input;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+pub use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::HtmlCanvasElement;
 
 use crate::gpu::RenderContext;
-use crate::input::{InputEvent, InputProcessor, MouseButton};
+use crate::input::InputProcessor;
 use crate::options::VisoOptions;
 use crate::VisoEngine;
-
-pub use wasm_bindgen_rayon::init_thread_pool;
 
 // ---------------------------------------------------------------------------
 // Shared engine handle
@@ -75,8 +76,12 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     install_ipc_bridge(Rc::clone(&engine));
 
     // Wire up canvas input and resize handling
-    attach_input_listeners(&canvas, Rc::clone(&engine), Rc::clone(&input));
-    attach_resize_observer(&canvas, Rc::clone(&engine));
+    input::attach_input_listeners(
+        &canvas,
+        Rc::clone(&engine),
+        Rc::clone(&input),
+    );
+    input::attach_resize_observer(&canvas, Rc::clone(&engine));
 
     // Start the render loop
     request_animation_frame_loop(Rc::clone(&engine));
@@ -108,8 +113,7 @@ pub fn load_structure(
 /// Install the IPC bridge between the parent page (engine) and the
 /// viso-ui iframe.
 ///
-/// - Creates the `ipc.postMessage` handler that routes actions into the
-///   engine.
+/// - Creates the `ipc.postMessage` handler that routes actions into the engine.
 /// - Waits for the `ui-panel` iframe to load, then injects `ipc` and the
 ///   `BRIDGE_JS` push functions into the iframe's `contentWindow` so that
 ///   viso-ui (which runs inside the iframe) can send/receive messages.
@@ -136,8 +140,7 @@ fn install_ipc_bridge(engine: EngineHandle) {
 
     // Install ipc on the parent window (for __viso_load_bytes and
     // direct JS callers).
-    let _ =
-        js_sys::Reflect::set(&window, &JsValue::from_str("ipc"), &ipc);
+    let _ = js_sys::Reflect::set(&window, &JsValue::from_str("ipc"), &ipc);
     log::info!("[bridge] ipc.postMessage installed on parent window");
 
     // -- window.__viso_load_bytes(bytes, formatHint) --
@@ -209,15 +212,16 @@ fn install_ipc_bridge(engine: EngineHandle) {
 fn setup_iframe_bridge(ipc: &JsValue, engine: &EngineHandle) {
     log::info!("[bridge] setup_iframe_bridge: starting");
     let Some(iframe_win) = ui_iframe_window() else {
-        log::warn!("[bridge] setup_iframe_bridge: iframe contentWindow NOT accessible");
+        log::warn!(
+            "[bridge] setup_iframe_bridge: iframe contentWindow NOT accessible"
+        );
         return;
     };
     log::info!("[bridge] setup_iframe_bridge: got iframe contentWindow");
 
     // Install `window.ipc` on the iframe so bridge.rs can call
     // `window.ipc.postMessage(json)`.
-    let _ =
-        js_sys::Reflect::set(&iframe_win, &JsValue::from_str("ipc"), ipc);
+    let _ = js_sys::Reflect::set(&iframe_win, &JsValue::from_str("ipc"), ipc);
     log::info!("[bridge] setup_iframe_bridge: ipc installed on iframe window");
 
     // Run BRIDGE_JS inside the iframe context — this installs the
@@ -247,12 +251,17 @@ fn setup_iframe_bridge(ipc: &JsValue, engine: &EngineHandle) {
     // re-dispatches all stored values.
     eval_in(
         &iframe_win,
-        "setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},200);\
-         setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},1000);\
-         setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},3000);",
+        "setTimeout(function(){if(window.__viso_replay_pending)window.\
+         __viso_replay_pending()},200);setTimeout(function(){if(window.\
+         __viso_replay_pending)window.__viso_replay_pending()},1000);\
+         setTimeout(function(){if(window.__viso_replay_pending)window.\
+         __viso_replay_pending()},3000);",
     );
 
-    log::info!("[bridge] setup_iframe_bridge: done (retries scheduled at 200/1000/3000ms)");
+    log::info!(
+        "[bridge] setup_iframe_bridge: done (retries scheduled at \
+         200/1000/3000ms)"
+    );
 }
 
 /// Get the `contentWindow` of the `ui-panel` iframe, if available.
@@ -518,7 +527,10 @@ fn push_to_ui(key: &str, json: &str) {
         log::info!("[bridge] push_to_ui({key}): targeting iframe window");
         eval_in(&iframe_win, &js);
     } else {
-        log::warn!("[bridge] push_to_ui({key}): iframe not available, falling back to parent");
+        log::warn!(
+            "[bridge] push_to_ui({key}): iframe not available, falling back \
+             to parent"
+        );
         let _ = js_sys::eval(&js);
     }
 }
@@ -579,8 +591,7 @@ fn request_animation_frame_loop(engine: EngineHandle) {
             if *count >= 15 {
                 *count = 0;
                 let fps = eng.fps();
-                let json =
-                    serde_json::json!({ "fps": fps, "buffers": [] });
+                let json = serde_json::json!({ "fps": fps, "buffers": [] });
                 push_to_ui("stats", &json.to_string());
             }
         }
@@ -600,251 +611,6 @@ fn request_animation_frame(
     web_sys::window()
         .ok_or_else(|| JsValue::from_str("no global window"))?
         .request_animation_frame(callback.as_ref().unchecked_ref())
-}
-
-// ---------------------------------------------------------------------------
-// DOM input event forwarding
-// ---------------------------------------------------------------------------
-
-fn dpr() -> f32 {
-    web_sys::window()
-        .map(|w| w.device_pixel_ratio() as f32)
-        .unwrap_or(1.0)
-}
-
-fn attach_input_listeners(
-    canvas: &HtmlCanvasElement,
-    engine: EngineHandle,
-    input: Rc<RefCell<InputProcessor>>,
-) {
-    // Mouse move
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb =
-            Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
-                let scale = dpr();
-                let x = event.offset_x() as f32 * scale;
-                let y = event.offset_y() as f32 * scale;
-                let mut eng = engine.borrow_mut();
-                eng.set_cursor_pos(x, y);
-                let evt = InputEvent::CursorMoved { x, y };
-                if let Some(cmd) =
-                    input.borrow_mut().handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            });
-        let _ = canvas.add_event_listener_with_callback(
-            "mousemove",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-
-    // Mouse down
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb =
-            Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
-                let button = match event.button() {
-                    2 => MouseButton::Right,
-                    1 => MouseButton::Middle,
-                    _ => MouseButton::Left,
-                };
-                let evt = InputEvent::MouseButton {
-                    button,
-                    pressed: true,
-                };
-                let mut eng = engine.borrow_mut();
-                if let Some(cmd) =
-                    input.borrow_mut().handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            });
-        let _ = canvas.add_event_listener_with_callback(
-            "mousedown",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-
-    // Mouse up
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb =
-            Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
-                let button = match event.button() {
-                    2 => MouseButton::Right,
-                    1 => MouseButton::Middle,
-                    _ => MouseButton::Left,
-                };
-                let evt = InputEvent::MouseButton {
-                    button,
-                    pressed: false,
-                };
-                let mut eng = engine.borrow_mut();
-                if let Some(cmd) =
-                    input.borrow_mut().handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            });
-        let _ = canvas.add_event_listener_with_callback(
-            "mouseup",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-
-    // Wheel
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb =
-            Closure::<dyn FnMut(_)>::new(move |event: web_sys::WheelEvent| {
-                event.prevent_default();
-                let delta = -(event.delta_y() as f32) * 0.01;
-                let evt = InputEvent::Scroll { delta };
-                let mut eng = engine.borrow_mut();
-                if let Some(cmd) =
-                    input.borrow_mut().handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            });
-        let opts = web_sys::AddEventListenerOptions::new();
-        opts.set_passive(false);
-        let _ = canvas
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "wheel",
-                cb.as_ref().unchecked_ref(),
-                &opts,
-            );
-        cb.forget();
-    }
-
-    // Prevent context menu on right-click
-    {
-        let cb =
-            Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
-                event.prevent_default();
-            });
-        let _ = canvas.add_event_listener_with_callback(
-            "contextmenu",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-
-    // Keyboard input — listen on the document so keys work even when
-    // the canvas isn't explicitly focused.
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb = Closure::<dyn FnMut(_)>::new(
-            move |event: web_sys::KeyboardEvent| {
-                // Browser KeyboardEvent.code uses the same naming as
-                // winit's KeyCode debug format: "KeyQ", "Tab", etc.
-                let code = event.code();
-                if let Some(cmd) =
-                    input.borrow_mut().handle_key_press(&code)
-                {
-                    event.prevent_default();
-                    let _ = engine.borrow_mut().execute(cmd);
-                }
-
-                // Forward shift state
-                let evt = InputEvent::ModifiersChanged {
-                    shift: event.shift_key(),
-                };
-                let mut eng = engine.borrow_mut();
-                if let Some(cmd) = input
-                    .borrow_mut()
-                    .handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            },
-        );
-        let document = web_sys::window()
-            .and_then(|w| w.document())
-            .expect("no document");
-        let _ = document.add_event_listener_with_callback(
-            "keydown",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-
-    // Shift key release
-    {
-        let engine = Rc::clone(&engine);
-        let input = Rc::clone(&input);
-        let cb = Closure::<dyn FnMut(_)>::new(
-            move |event: web_sys::KeyboardEvent| {
-                let evt = InputEvent::ModifiersChanged {
-                    shift: event.shift_key(),
-                };
-                let mut eng = engine.borrow_mut();
-                if let Some(cmd) = input
-                    .borrow_mut()
-                    .handle_event(evt, eng.hovered_target())
-                {
-                    let _ = eng.execute(cmd);
-                }
-            },
-        );
-        let document = web_sys::window()
-            .and_then(|w| w.document())
-            .expect("no document");
-        let _ = document.add_event_listener_with_callback(
-            "keyup",
-            cb.as_ref().unchecked_ref(),
-        );
-        cb.forget();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Canvas resize handling
-// ---------------------------------------------------------------------------
-
-/// Watch the canvas element for size changes and call `engine.resize()`.
-fn attach_resize_observer(canvas: &HtmlCanvasElement, engine: EngineHandle) {
-    let canvas_clone = canvas.clone();
-    let cb = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
-        let dpr = web_sys::window()
-            .map(|w| w.device_pixel_ratio())
-            .unwrap_or(1.0);
-        let w = (f64::from(canvas_clone.client_width()) * dpr) as u32;
-        let h = (f64::from(canvas_clone.client_height()) * dpr) as u32;
-        if w > 0 && h > 0 {
-            canvas_clone.set_width(w);
-            canvas_clone.set_height(h);
-            engine.borrow_mut().resize(w, h);
-        }
-    });
-
-    // Create ResizeObserver via JS interop
-    let observer_js = js_sys::Function::new_with_args(
-        "cb",
-        "return new ResizeObserver(cb)",
-    );
-    if let Ok(observer) = observer_js.call1(&JsValue::NULL, cb.as_ref()) {
-        let observe_fn = js_sys::Reflect::get(
-            &observer,
-            &JsValue::from_str("observe"),
-        );
-        if let Ok(observe_fn) = observe_fn {
-            let observe_fn: js_sys::Function = observe_fn.unchecked_into();
-            let _ = observe_fn.call1(&observer, canvas);
-        }
-    }
-    cb.forget();
 }
 
 // ---------------------------------------------------------------------------

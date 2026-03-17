@@ -1,7 +1,8 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
 use std::path::Path;
 use std::process::Command;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -24,15 +25,13 @@ fn main() -> Result<()> {
 }
 
 /// WASM rustflags for multithreaded viso (SharedArrayBuffer + web workers).
-const WASM_RUSTFLAGS: &str = "\
-    -C target-feature=+atomics,+bulk-memory,+mutable-globals \
-    -C link-arg=--shared-memory \
-    -C link-arg=--import-memory \
-    -C link-arg=--max-memory=1073741824 \
-    -C link-arg=--export=__wasm_init_tls \
-    -C link-arg=--export=__tls_size \
-    -C link-arg=--export=__tls_align \
-    -C link-arg=--export=__tls_base";
+const WASM_RUSTFLAGS: &str =
+    "\
+    -C target-feature=+atomics,+bulk-memory,+mutable-globals -C \
+     link-arg=--shared-memory -C link-arg=--import-memory -C \
+     link-arg=--max-memory=1073741824 -C link-arg=--export=__wasm_init_tls -C \
+     link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C \
+     link-arg=--export=__tls_base";
 
 fn build_web() -> Result<()> {
     // Resolve the viso workspace root (parent of xtask/)
@@ -45,12 +44,16 @@ fn build_web() -> Result<()> {
     println!("Building viso for wasm32...");
     let status = Command::new("cargo")
         .args([
-            "+nightly", "build",
-            "--target", "wasm32-unknown-unknown",
-            "--features", "web",
+            "+nightly",
+            "build",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--features",
+            "web",
             "--no-default-features",
             "--release",
-            "-Z", "build-std=panic_abort,std,alloc",
+            "-Z",
+            "build-std=panic_abort,std,alloc",
         ])
         .env("RUSTFLAGS", WASM_RUSTFLAGS)
         .current_dir(viso_root)
@@ -59,8 +62,8 @@ fn build_web() -> Result<()> {
         anyhow::bail!("Failed to build viso for wasm32");
     }
 
-    let wasm_path = viso_root
-        .join("target/wasm32-unknown-unknown/release/viso.wasm");
+    let wasm_path =
+        viso_root.join("target/wasm32-unknown-unknown/release/viso.wasm");
     if !wasm_path.exists() {
         anyhow::bail!("WASM binary not found at {}", wasm_path.display());
     }
@@ -98,20 +101,23 @@ fn build_web() -> Result<()> {
     copy_dir(&ui_dist, &ui_dst)?;
 
     println!("Web build complete.");
-    println!("  Serve with: cd {} && python3 -m http.server 8080", web_dir.display());
+    println!(
+        "  Serve with: cd {} && python3 -m http.server 8080",
+        web_dir.display()
+    );
     Ok(())
 }
 
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        let status = Command::new("cp")
-            .arg("-r")
-            .arg(src)
-            .arg(dst)
-            .status()?;
+        let status = Command::new("cp").arg("-r").arg(src).arg(dst).status()?;
         if !status.success() {
-            anyhow::bail!("Failed to copy {} to {}", src.display(), dst.display());
+            anyhow::bail!(
+                "Failed to copy {} to {}",
+                src.display(),
+                dst.display()
+            );
         }
     }
     #[cfg(windows)]
@@ -120,12 +126,21 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
             .args([
                 src.to_str().unwrap(),
                 dst.to_str().unwrap(),
-                "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
+                "/E",
+                "/NFL",
+                "/NDL",
+                "/NJH",
+                "/NJS",
+                "/NP",
             ])
             .status()?;
         match status.code() {
             Some(code) if code < 8 => {}
-            _ => anyhow::bail!("Failed to copy {} to {}", src.display(), dst.display()),
+            _ => anyhow::bail!(
+                "Failed to copy {} to {}",
+                src.display(),
+                dst.display()
+            ),
         }
     }
     Ok(())

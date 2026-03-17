@@ -107,8 +107,8 @@ impl SidechainRenderer {
     /// Generate capsule instances from sidechain data.
     /// - `frustum`: Optional frustum for culling (None = no culling)
     /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
-    /// - `per_residue_colors`: When set, each sidechain atom is colored by
-    ///   its residue's backbone color (overrides `sidechain_colors`).
+    /// - `per_residue_colors`: When set, each sidechain atom is colored by its
+    ///   residue's backbone color (overrides `sidechain_colors`).
     pub(crate) fn generate_instances(
         sidechain: &SidechainView,
         frustum: Option<&Frustum>,
@@ -126,11 +126,9 @@ impl SidechainRenderer {
         let get_color = |idx: usize| -> [f32; 3] {
             // Backbone color mode: look up the residue's backbone color.
             if let Some(colors) = per_residue_colors {
-                let res = sidechain
-                    .residue_indices
-                    .get(idx)
-                    .copied()
-                    .unwrap_or(0) as usize;
+                let res =
+                    sidechain.residue_indices.get(idx).copied().unwrap_or(0)
+                        as usize;
                 return colors.get(res).copied().unwrap_or([0.5, 0.5, 0.5]);
             }
             if sidechain.hydrophobicity.get(idx).copied().unwrap_or(false) {
@@ -251,8 +249,12 @@ impl SidechainRenderer {
         frustum: Option<&Frustum>,
         per_residue_colors: Option<&[[f32; 3]]>,
     ) {
-        let instances =
-            Self::generate_instances(sidechain, frustum, None, per_residue_colors);
+        let instances = Self::generate_instances(
+            sidechain,
+            frustum,
+            None,
+            per_residue_colors,
+        );
 
         let _ = self.pass.write_instances(device, queue, &instances);
     }

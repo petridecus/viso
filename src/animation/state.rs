@@ -2,10 +2,10 @@
 //! pending per-entity transitions.
 
 use std::collections::HashMap;
-use web_time::Instant;
 
 use glam::Vec3;
 use molex::adapters::dcd::DcdFrame;
+use web_time::Instant;
 
 use super::{AnimationFrame, EntitySidechainData, StructureAnimator};
 use crate::animation::transition::Transition;

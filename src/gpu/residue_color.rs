@@ -6,7 +6,6 @@
 //! visual feedback.
 
 use web_time::Instant;
-
 use wgpu::util::DeviceExt;
 
 use crate::gpu::pipeline_helpers::read_only_storage_buffer;

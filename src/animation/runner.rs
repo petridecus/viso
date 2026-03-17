@@ -1,9 +1,9 @@
 //! Animation runner executes a single animation.
 
 use std::time::Duration;
-use web_time::Instant;
 
 use glam::Vec3;
+use web_time::Instant;
 
 use super::transition::{AnimationPhase, Transition};
 

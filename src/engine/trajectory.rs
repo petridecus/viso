@@ -4,10 +4,10 @@
 //! bypassing the animation interpolation system.
 
 use std::time::Duration;
-use web_time::Instant;
 
 use glam::Vec3;
 use molex::adapters::dcd::DcdFrame;
+use web_time::Instant;
 
 /// Minimal frame sequencer — auto-advances with configurable speed.
 pub struct TrajectoryPlayer {

@@ -1,12 +1,12 @@
 //! Scene loading, GPU pipeline initialization, and engine assembly.
 
 use std::time::Duration;
-use web_time::Instant;
 
 use glam::Vec3;
 #[cfg(not(target_arch = "wasm32"))]
 use molex::adapters::pdb::structure_file_to_entities;
 use molex::render::RenderCoords;
+use web_time::Instant;
 
 use super::entity_store::EntityStore;
 use super::scene::{SceneTopology, VisualState};

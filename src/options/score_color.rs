@@ -145,13 +145,14 @@ pub(crate) fn chain_color_indexed(idx: usize, _total: usize) -> [f32; 3] {
     CHAIN_PALETTE[idx % CHAIN_PALETTE.len()]
 }
 
-/// Legacy API: positional [0,1] → color (still used by `initial_chain_colors`).
+/// Legacy API: positional \[0,1\] → color (still used by
+/// `initial_chain_colors`).
 pub(crate) fn chain_color(t: f32) -> [f32; 3] {
     let hue = t * 360.0;
     hsl_to_rgb(hue, 0.6, 0.55)
 }
 
-/// Convert HSL (h in degrees, s and l in [0,1]) to linear RGB.
+/// Convert HSL (h in degrees, s and l in \[0,1\]) to linear RGB.
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h2 = h / 60.0;

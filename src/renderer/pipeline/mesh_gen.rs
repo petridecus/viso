@@ -106,13 +106,12 @@ pub fn generate_entity_mesh(
     colors: &ColorOptions,
     geometry: &GeometryOptions,
 ) -> CachedEntityMesh {
-    let na_base_colors: Vec<[f32; 3]> = if display.na_color_mode
-        == crate::options::NaColorMode::BaseColor
-    {
-        g.nucleic_acid_rings.iter().map(|r| r.color).collect()
-    } else {
-        Vec::new()
-    };
+    let na_base_colors: Vec<[f32; 3]> =
+        if display.na_color_mode == crate::options::NaColorMode::BaseColor {
+            g.nucleic_acid_rings.iter().map(|r| r.color).collect()
+        } else {
+            Vec::new()
+        };
     let na_colors_ref = if na_base_colors.is_empty() {
         None
     } else {
@@ -131,7 +130,12 @@ pub fn generate_entity_mesh(
     );
 
     let (sidechain_instances, sidechain_instance_count) =
-        generate_sidechain_bytes(g, &backbone_mesh.sheet_offsets, colors, display);
+        generate_sidechain_bytes(
+            g,
+            &backbone_mesh.sheet_offsets,
+            colors,
+            display,
+        );
     let (bns, na) = generate_non_backbone_bytes(g, display, colors);
 
     CachedEntityMesh {

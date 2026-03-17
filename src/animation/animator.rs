@@ -1,9 +1,8 @@
 //! Structure animator for per-entity backbone/sidechain transitions.
 
-use web_time::Instant;
-
 use glam::Vec3;
 use rustc_hash::FxHashMap;
+use web_time::Instant;
 
 use super::runner::{
     AnimationRunner, ResidueAnimationData, ResidueVisualState,

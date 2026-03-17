@@ -15,11 +15,11 @@ pub(crate) mod trajectory;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-use web_time::Instant;
 
 pub(crate) use bootstrap::FrameTiming;
 use entity_store::EntityStore;
 use scene::{Focus, SceneTopology, VisualState};
+use web_time::Instant;
 
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
