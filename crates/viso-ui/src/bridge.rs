@@ -125,16 +125,27 @@ pub fn register_scene_entities_listener(
 
 // ── Outbound actions ─────────────────────────────────────────────────────
 
-/// Send a `toggle_panel` action to the native engine.
+/// Toggle the panel between pinned and unpinned. On native, sends IPC.
+/// On web, toggles the iframe visibility directly.
 pub fn send_toggle_panel() {
-    let msg = serde_json::json!({ "action": "toggle_panel" });
-    post_message(&msg.to_string());
+    if is_web_context() {
+        toggle_web_panel();
+    } else {
+        let msg = serde_json::json!({ "action": "toggle_panel" });
+        post_message(&msg.to_string());
+    }
 }
 
-/// Send a `resize_panel` action to the native engine.
+/// Resize the panel. On native, sends IPC. On web, sets the iframe
+/// width directly.
 pub fn send_resize_panel(width: u32) {
-    let msg = serde_json::json!({ "action": "resize_panel", "width": width });
-    post_message(&msg.to_string());
+    if is_web_context() {
+        resize_web_panel(width);
+    } else {
+        let msg =
+            serde_json::json!({ "action": "resize_panel", "width": width });
+        post_message(&msg.to_string());
+    }
 }
 
 /// Send a `set_option` action to the native engine.
@@ -301,6 +312,32 @@ fn post_message(json: &str) {
     let js = format!(
         "window.ipc.postMessage('{}')",
         json.replace('\\', "\\\\").replace('\'', "\\'")
+    );
+    let _ = js_sys::eval(&js);
+}
+
+// ── Web-context helpers ──────────────────────────────────────────────────
+
+/// Returns `true` if running inside a web host (parent has
+/// `__viso_load_bytes`), as opposed to a native wry webview.
+fn is_web_context() -> bool {
+    has_load_bytes()
+}
+
+/// Toggle the `ui-panel` iframe visibility in the parent document.
+fn toggle_web_panel() {
+    let _ = js_sys::eval(
+        "var p=window.parent.document.getElementById('ui-panel');\
+         if(p){p.style.display=p.style.display==='none'?'':'none'}",
+    );
+}
+
+/// Resize the `ui-panel` iframe width in the parent document.
+fn resize_web_panel(width: u32) {
+    let js = format!(
+        "var p=window.parent.document.getElementById('ui-panel');\
+         if(p)p.style.width='{}px'",
+        width
     );
     let _ = js_sys::eval(&js);
 }
