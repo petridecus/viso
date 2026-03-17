@@ -56,7 +56,7 @@ jobs:
       - name: Build WASM engine
         run: |
           RUSTFLAGS="\
-            -C target-feature=+atomics,+bulk-memory,+mutable-globals \
+            -C target-feature=+atomics,+bulk-memory,+mutable-globals,-reference-types,-multivalue \
             -C link-arg=--shared-memory \
             -C link-arg=--import-memory \
             -C link-arg=--max-memory=268435456 \
