@@ -53,10 +53,14 @@ fn app() -> Element {
                 class: "resize-handle",
                 onpointerdown: move |evt: PointerEvent| {
                     let sx = evt.screen_coordinates().x;
+                    // clientWidth is CSS pixels; native expects physical pixels.
+                    let dpr = web_sys::window()
+                        .map(|w| w.device_pixel_ratio())
+                        .unwrap_or(1.0);
                     let w = web_sys::window()
                         .and_then(|w| w.document())
                         .and_then(|d| d.body())
-                        .map(|b| b.client_width() as f64)
+                        .map(|b| b.client_width() as f64 * dpr)
                         .unwrap_or(350.0);
                     drag.set(Some((sx, w)));
                     let id = evt.pointer_id();
@@ -69,7 +73,13 @@ fn app() -> Element {
                 },
                 onpointermove: move |evt: PointerEvent| {
                     if let Some((start_x, start_w)) = *drag.read() {
-                        let delta = start_x - evt.screen_coordinates().x;
+                        let dpr = web_sys::window()
+                            .map(|w| w.device_pixel_ratio())
+                            .unwrap_or(1.0);
+                        // screen_coordinates are CSS pixels; scale delta to
+                        // physical pixels to match the native panel width.
+                        let delta =
+                            (start_x - evt.screen_coordinates().x) * dpr;
                         let new_w = (start_w + delta).clamp(220.0, 700.0);
                         bridge::send_resize_panel(new_w as u32);
                     }

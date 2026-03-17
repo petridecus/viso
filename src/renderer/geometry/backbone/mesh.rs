@@ -103,7 +103,7 @@ fn process_protein_chains(
         let ss_types =
             resolve(chain_override, DetectionInput::CaPositions(&atoms.ca));
 
-        let profiles: Vec<CrossSectionProfile> = (0..n_residues)
+        let mut profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {
                 let color = per_residue_colors
                     .and_then(|c| {
@@ -118,6 +118,10 @@ fn process_protein_chains(
                 )
             })
             .collect();
+
+        if geo.sheet_arrows {
+            apply_sheet_arrows(&ss_types, &mut profiles, geo);
+        }
 
         let (chain_spr, chain_csv) = per_chain_lod
             .and_then(|l| l.get(chain_idx).copied())
@@ -205,6 +209,48 @@ fn bounding_sphere(positions: &[Vec3]) -> (Vec3, f32) {
         .map(|p| (*p - center).length())
         .fold(0.0f32, f32::max);
     (center, radius)
+}
+
+// ==================== SHEET ARROW HEADS ====================
+
+/// Widen and taper the last residues of each sheet segment to create
+/// arrow heads at sheet→non-sheet transitions (C-terminal end).
+///
+/// For each contiguous run of Sheet residues, modifies:
+/// - Penultimate sheet residue: width × 1.5 (barb)
+/// - Last sheet residue: width → 0.05 (tapered tip)
+fn apply_sheet_arrows(
+    ss_types: &[SSType],
+    profiles: &mut [CrossSectionProfile],
+    geo: &GeometryOptions,
+) {
+    let n = ss_types.len();
+    if n == 0 {
+        return;
+    }
+
+    // Find end of each contiguous Sheet run
+    let mut i = 0;
+    while i < n {
+        if ss_types[i] != SSType::Sheet {
+            i += 1;
+            continue;
+        }
+        // Find end of this sheet segment
+        let start = i;
+        while i < n && ss_types[i] == SSType::Sheet {
+            i += 1;
+        }
+        let end = i; // exclusive
+        let len = end - start;
+
+        if len >= 2 {
+            // Barb: widen the penultimate residue
+            profiles[end - 2].width = geo.sheet_width * 1.5;
+        }
+        // Tip: taper the last residue to a point
+        profiles[end - 1].width = 0.05;
+    }
 }
 
 // ==================== PROTEIN CHAIN MESH ====================

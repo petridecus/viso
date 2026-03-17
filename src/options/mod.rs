@@ -14,6 +14,8 @@ mod debug;
 mod display;
 mod geometry;
 mod lighting;
+/// Color palette system.
+pub mod palette;
 mod post_processing;
 /// Score-to-color gradient mapping.
 pub(crate) mod score_color;
@@ -25,14 +27,15 @@ pub use camera::CameraOptions;
 pub use colors::ColorOptions;
 pub use debug::DebugOptions;
 pub use display::{
-    BackboneColorMode, DisplayOptions, LipidMode, NaColorMode, PresentMode,
-    SidechainColorMode,
+    BackboneColorMode, ColorScheme, DisplayOptions, LipidMode, NaColorMode,
+    PresentMode, SidechainColorMode,
 };
 pub use geometry::{
     lod_params, lod_scaled, select_chain_lod_tier, select_lod_tier,
-    GeometryOptions,
+    CartoonStyle, GeometryOptions,
 };
 pub use lighting::LightingOptions;
+pub use palette::{Palette, PaletteMode, PalettePreset};
 pub use post_processing::PostProcessingOptions;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -178,5 +181,34 @@ shininess = 80.0
         assert!(lighting.get("ambient").is_some());
         assert!(lighting.get("light1_dir").is_none());
         assert!(lighting.get("specular_intensity").is_none());
+    }
+
+    #[test]
+    fn palette_fields_are_flat_enums_in_schema() {
+        let schema_value =
+            serde_json::to_value(VisoOptions::json_schema()).unwrap();
+        let display = &schema_value["properties"]["display"]["properties"];
+
+        // backbone_palette_preset should be a $ref to PalettePreset enum
+        let preset = &display["backbone_palette_preset"];
+        assert!(
+            preset.get("$ref").is_some(),
+            "backbone_palette_preset should be a $ref, got: {preset}",
+        );
+
+        // backbone_palette_mode should be a $ref to PaletteMode enum
+        let mode = &display["backbone_palette_mode"];
+        assert!(
+            mode.get("$ref").is_some(),
+            "backbone_palette_mode should be a $ref, got: {mode}",
+        );
+
+        // PalettePreset definition should have oneOf with enum values
+        let defs = &schema_value["$defs"];
+        let preset_def = &defs["PalettePreset"];
+        assert!(
+            preset_def.get("oneOf").is_some(),
+            "PalettePreset should have oneOf variants",
+        );
     }
 }

@@ -2,11 +2,38 @@ use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Cartoon rendering style presets.
+///
+/// Each preset maps to specific per-SS geometry parameters (width, thickness,
+/// roundness). When set to anything other than `Custom`, the preset values
+/// override the per-SS fields.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CartoonStyle {
+    /// Flat ribbons for helices/sheets, round tubes for coils.
+    #[default]
+    Ribbon,
+    /// Round tubes everywhere, uniform radius.
+    Tube,
+    /// Cylindrical helices, flat sheets with arrows, round coils.
+    Cylindrical,
+    /// Custom — user controls all per-SS parameters directly.
+    Custom,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[schemars(title = "Geometry", inline)]
 #[serde(default)]
 /// Geometry detail options for molecular rendering primitives.
 pub struct GeometryOptions {
+    /// Cartoon rendering style preset.
+    #[schemars(title = "Cartoon Style", extend("x-group" = "Style"))]
+    pub cartoon_style: CartoonStyle,
+    /// Whether to draw arrow heads at the C-terminal end of beta sheets.
+    #[schemars(title = "Sheet Arrows", extend("x-group" = "Sheet"))]
+    pub sheet_arrows: bool,
     /// Helix ribbon half-width in angstroms.
     #[schemars(title = "Helix Width", range(min = 0.2, max = 3.0), extend("step" = 0.1), extend("x-group" = "Helix"))]
     pub helix_width: f32,
@@ -207,6 +234,8 @@ pub fn select_chain_lod_tier(chain_center: Vec3, camera_eye: Vec3) -> u8 {
 impl Default for GeometryOptions {
     fn default() -> Self {
         Self {
+            cartoon_style: CartoonStyle::default(),
+            sheet_arrows: true,
             helix_width: 1.4,
             helix_thickness: 0.25,
             helix_roundness: 0.0,
@@ -224,6 +253,53 @@ impl Default for GeometryOptions {
             solvent_radius: 0.15,
             ligand_sphere_radius: 0.3,
             ligand_bond_radius: 0.12,
+        }
+    }
+}
+
+impl GeometryOptions {
+    /// Return a copy with per-SS parameters resolved from the cartoon style
+    /// preset. When `Custom`, returns self unchanged.
+    #[must_use]
+    pub fn resolve_cartoon_style(&self) -> Self {
+        match self.cartoon_style {
+            CartoonStyle::Custom => self.clone(),
+            CartoonStyle::Ribbon => Self {
+                helix_width: 1.4,
+                helix_thickness: 0.25,
+                helix_roundness: 0.0,
+                sheet_width: 1.6,
+                sheet_thickness: 0.25,
+                sheet_roundness: 0.0,
+                coil_width: 0.4,
+                coil_thickness: 0.4,
+                coil_roundness: 1.0,
+                ..self.clone()
+            },
+            CartoonStyle::Tube => Self {
+                helix_width: 0.4,
+                helix_thickness: 0.4,
+                helix_roundness: 1.0,
+                sheet_width: 0.4,
+                sheet_thickness: 0.4,
+                sheet_roundness: 1.0,
+                coil_width: 0.4,
+                coil_thickness: 0.4,
+                coil_roundness: 1.0,
+                ..self.clone()
+            },
+            CartoonStyle::Cylindrical => Self {
+                helix_width: 0.5,
+                helix_thickness: 0.5,
+                helix_roundness: 1.0,
+                sheet_width: 1.6,
+                sheet_thickness: 0.25,
+                sheet_roundness: 0.0,
+                coil_width: 0.3,
+                coil_thickness: 0.3,
+                coil_roundness: 1.0,
+                ..self.clone()
+            },
         }
     }
 }

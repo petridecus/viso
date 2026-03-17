@@ -1,7 +1,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::palette::{Palette, PaletteMode, PalettePreset};
+
 /// How protein backbone is colored.
+///
+/// Legacy enum retained for backward compatibility. New code should prefer
+/// [`ColorScheme`].
 #[derive(
     Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
 )]
@@ -16,6 +21,50 @@ pub enum BackboneColorMode {
     /// Each chain gets a distinct color, interpolated blue→red.
     #[default]
     Chain,
+}
+
+/// What property drives coloring.
+///
+/// The scheme determines *what data* maps to color. The palette (a separate
+/// field) determines *which colors* are used. Any scheme can be combined with
+/// any palette.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorScheme {
+    /// Each chain gets a distinct color from the palette.
+    #[default]
+    Chain,
+    /// Each entity gets a distinct color from the palette.
+    Entity,
+    /// Color by molecule type (protein, RNA, DNA, ligand, etc.).
+    EntityType,
+    /// Color by secondary structure type (helix, sheet, coil).
+    SecondaryStructure,
+    /// N-to-C gradient per chain using the palette.
+    ResidueIndex,
+    /// Gradient by crystallographic B-factor.
+    BFactor,
+    /// Gradient by Kyte-Doolittle hydrophobicity scale.
+    Hydrophobicity,
+    /// Absolute Rosetta energy score.
+    Score,
+    /// Relative score (5th/95th percentile normalized).
+    ScoreRelative,
+    /// Single uniform color (uses first color from palette stops).
+    Solid,
+}
+
+impl From<&BackboneColorMode> for ColorScheme {
+    fn from(mode: &BackboneColorMode) -> Self {
+        match mode {
+            BackboneColorMode::Chain => Self::Chain,
+            BackboneColorMode::Score => Self::Score,
+            BackboneColorMode::ScoreRelative => Self::ScoreRelative,
+            BackboneColorMode::SecondaryStructure => Self::SecondaryStructure,
+        }
+    }
 }
 
 /// How sidechains are colored.
@@ -122,9 +171,19 @@ pub struct DisplayOptions {
     /// Whether to render hydrogen atoms.
     #[schemars(title = "Show Hydrogens", extend("x-group" = "Visibility"))]
     pub show_hydrogens: bool,
-    /// Backbone coloring strategy.
-    #[schemars(title = "Backbone Color", extend("x-group" = "Coloring"))]
+    /// Backbone coloring strategy (legacy field — prefer
+    /// `backbone_color_scheme`).
+    #[schemars(skip)]
     pub backbone_color_mode: BackboneColorMode,
+    /// What property backbone color maps to.
+    #[schemars(title = "Backbone Color", extend("x-group" = "Coloring"))]
+    pub backbone_color_scheme: ColorScheme,
+    /// Named color palette preset for backbone coloring.
+    #[schemars(title = "Backbone Palette", extend("x-group" = "Coloring"))]
+    pub backbone_palette_preset: PalettePreset,
+    /// How backbone palette colors are distributed.
+    #[schemars(title = "Palette Mode", extend("x-group" = "Coloring"))]
+    pub backbone_palette_mode: PaletteMode,
     /// Sidechain coloring strategy.
     #[schemars(title = "Sidechain Color", extend("x-group" = "Coloring"))]
     pub sidechain_color_mode: SidechainColorMode,
@@ -141,5 +200,15 @@ impl DisplayOptions {
     #[must_use]
     pub fn lipid_ball_and_stick(&self) -> bool {
         matches!(self.lipid_mode, LipidMode::BallAndStick)
+    }
+
+    /// Construct a [`Palette`] from the flattened preset/mode fields.
+    #[must_use]
+    pub fn backbone_palette(&self) -> Palette {
+        Palette {
+            preset: self.backbone_palette_preset.clone(),
+            mode: self.backbone_palette_mode.clone(),
+            stops: Vec::new(),
+        }
     }
 }

@@ -50,12 +50,22 @@ impl VisoEngine {
                 }
             })
             .collect();
-        let new_colors = score_color::compute_per_residue_colors(
+        let entity_molecule_types: Vec<molex::types::entity::MoleculeType> =
+            self.entities
+                .entities()
+                .iter()
+                .filter(|e| e.visible)
+                .filter(|e| !e.entity.extract_backbone().chains.is_empty())
+                .map(|e| e.entity.molecule_type)
+                .collect();
+        let new_colors = score_color::compute_per_residue_colors_styled(
             &chains,
             &self.topology.ss_types,
             &per_entity_scores,
-            &self.options.display.backbone_color_mode,
+            &self.options.display.backbone_color_scheme,
+            &self.options.display.backbone_palette(),
             Some(&entity_chain_counts),
+            Some(&entity_molecule_types),
         );
         self.gpu.set_target_colors(&new_colors);
         self.topology.per_residue_colors = Some(new_colors);

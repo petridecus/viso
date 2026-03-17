@@ -47,13 +47,24 @@ impl VisoEngine {
             .iter()
             .map(|e| e.per_residue_scores.as_deref())
             .collect();
-        let colors = crate::options::score_color::compute_per_residue_colors(
-            &backbone_chains,
-            &self.topology.ss_types,
-            &per_entity_scores,
-            &self.options.display.backbone_color_mode,
-            Some(&entity_chain_counts),
-        );
+        let entity_molecule_types: Vec<molex::types::entity::MoleculeType> =
+            self.entities
+                .entities()
+                .iter()
+                .filter(|e| e.visible)
+                .filter(|e| !e.entity.extract_backbone().chains.is_empty())
+                .map(|e| e.entity.molecule_type)
+                .collect();
+        let colors =
+            crate::options::score_color::compute_per_residue_colors_styled(
+                &backbone_chains,
+                &self.topology.ss_types,
+                &per_entity_scores,
+                &self.options.display.backbone_color_scheme,
+                &self.options.display.backbone_palette(),
+                Some(&entity_chain_counts),
+                Some(&entity_molecule_types),
+            );
         for (e, range) in entities
             .iter_mut()
             .zip(&self.topology.entity_residue_ranges)
@@ -95,7 +106,7 @@ impl VisoEngine {
             entities,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
-            geometry: self.options.geometry.clone(),
+            geometry: self.options.geometry.resolve_cartoon_style(),
             generation,
         });
     }

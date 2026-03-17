@@ -1,54 +1,16 @@
-//! Per-residue energy score → RGB color mapping.
+//! Per-residue color mapping: scheme + palette driven.
 //!
-//! Two modes:
-//! - **Absolute** (`score`): Uses fixed REU thresholds (-4 to +4).
-//! - **Relative** (`score_relative`): Normalizes within the current structure
-//!   using 5th/95th percentile bounds.
+//! Maps a [`ColorScheme`](crate::options::ColorScheme) (what property drives
+//! color) and a [`Palette`](crate::options::Palette) (which colors to use) to
+//! per-residue RGB arrays for backbone rendering.
 //!
-//! Both modes use a [`ColorRamp`](score_color::ColorRamp) to map the normalized
-//! value to a color. Default ramp: green (good) → yellow (neutral) → red (bad).
+//! Score modes:
+//! - **Absolute** (`score`): Fixed REU thresholds (-4 to +4).
+//! - **Relative** (`score_relative`): 5th/95th percentile normalization.
 
 /// Absolute energy thresholds in REU.
 const GOOD_THRESHOLD: f64 = -4.0;
 const BAD_THRESHOLD: f64 = 4.0;
-
-/// A color ramp defined by N evenly-spaced color stops.
-/// `t = 0` maps to the first color (good), `t = 1` maps to the last (bad).
-pub struct ColorRamp {
-    stops: Vec<[f32; 3]>,
-}
-
-impl ColorRamp {
-    /// Interpolate the ramp at position `t` in [0, 1].
-    pub fn sample(&self, t: f32) -> [f32; 3] {
-        let t = t.clamp(0.0, 1.0);
-        let n = self.stops.len() - 1;
-        let scaled = t * n as f32;
-        let idx = (scaled as usize).min(n - 1);
-        let frac = scaled - idx as f32;
-
-        let a = &self.stops[idx];
-        let b = &self.stops[idx + 1];
-        [
-            a[0] + (b[0] - a[0]) * frac,
-            a[1] + (b[1] - a[1]) * frac,
-            a[2] + (b[2] - a[2]) * frac,
-        ]
-    }
-}
-
-impl Default for ColorRamp {
-    /// Green → Yellow → Red
-    fn default() -> Self {
-        Self {
-            stops: vec![
-                [0.1, 0.8, 0.2],  // green (good)
-                [1.0, 0.9, 0.1],  // yellow (neutral)
-                [0.9, 0.15, 0.1], // red (bad)
-            ],
-        }
-    }
-}
 
 /// Absolute mode: map a per-residue energy (REU) to [0, 1] using fixed
 /// thresholds.
@@ -62,87 +24,6 @@ fn score_to_t_absolute(score: f64) -> f32 {
     } else {
         (0.5 + 0.5 * score / BAD_THRESHOLD) as f32
     }
-}
-
-/// Absolute per-residue score colors using the default color ramp.
-pub fn per_residue_score_colors(scores: &[f64]) -> Vec<[f32; 3]> {
-    per_residue_score_colors_with_ramp(scores, &ColorRamp::default())
-}
-
-/// Absolute per-residue score colors using a custom color ramp.
-pub fn per_residue_score_colors_with_ramp(
-    scores: &[f64],
-    ramp: &ColorRamp,
-) -> Vec<[f32; 3]> {
-    scores
-        .iter()
-        .map(|&s| ramp.sample(score_to_t_absolute(s)))
-        .collect()
-}
-
-/// Relative per-residue score colors using the default color ramp.
-/// Normalizes to the 5th/95th percentile range within the given scores.
-pub fn per_residue_score_colors_relative(scores: &[f64]) -> Vec<[f32; 3]> {
-    per_residue_score_colors_relative_with_ramp(scores, &ColorRamp::default())
-}
-
-/// Relative per-residue score colors using a custom color ramp.
-pub fn per_residue_score_colors_relative_with_ramp(
-    scores: &[f64],
-    ramp: &ColorRamp,
-) -> Vec<[f32; 3]> {
-    if scores.is_empty() {
-        return Vec::new();
-    }
-
-    let mut sorted: Vec<f64> = scores.to_vec();
-    sorted
-        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let lo_idx = (sorted.len() as f64 * 0.05) as usize;
-    let hi_idx = ((sorted.len() as f64 * 0.95) as usize).min(sorted.len() - 1);
-    let min_score = sorted[lo_idx];
-    let max_score = sorted[hi_idx];
-    let range = max_score - min_score;
-
-    scores
-        .iter()
-        .map(|&score| {
-            let t = if range.abs() < 1e-6 {
-                0.5
-            } else {
-                ((score - min_score) / range).clamp(0.0, 1.0) as f32
-            };
-            ramp.sample(t)
-        })
-        .collect()
-}
-
-/// Discrete chain color palette — perceptually distinct, PBR-friendly
-/// colors that look good under directional lighting.
-///
-/// For ≤`CHAIN_PALETTE.len()` chains the palette is indexed directly.
-/// Beyond that, falls back to an evenly-spaced HSL sweep.
-const CHAIN_PALETTE: &[[f32; 3]] = &[
-    [0.05, 0.45, 1.00], // electric blue
-    [1.00, 0.35, 0.00], // pure orange
-    [0.00, 0.85, 0.20], // neon green
-    [1.00, 0.10, 0.25], // fire red
-    [0.55, 0.20, 1.00], // violet
-    [1.00, 0.85, 0.00], // bright yellow
-    [0.00, 0.85, 0.85], // electric cyan
-    [1.00, 0.05, 0.60], // hot pink
-    [0.40, 0.90, 0.00], // chartreuse
-    [0.10, 0.30, 1.00], // deep blue
-    [1.00, 0.50, 0.20], // tangerine
-    [0.80, 0.00, 1.00], // purple
-];
-
-/// Compute a chain color for index `idx` out of `total` chains.
-///
-/// Cycles through the hand-picked palette.
-pub(crate) fn chain_color_indexed(idx: usize, _total: usize) -> [f32; 3] {
-    CHAIN_PALETTE[idx % CHAIN_PALETTE.len()]
 }
 
 /// Legacy API: positional \[0,1\] → color (still used by
@@ -169,27 +50,67 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
     [r1 + m, g1 + m, b1 + m]
 }
 
-/// Compute per-residue colors based on backbone color mode.
+/// Compute per-residue colors using the scheme + palette system.
 ///
-/// Supports chain coloring (rainbow), secondary structure coloring, and
-/// score-based coloring (absolute or relative).
+/// Supports all [`ColorScheme`](super::ColorScheme) variants. For schemes
+/// that require data not available in the current pipeline (BFactor,
+/// Hydrophobicity), falls back to neutral gray.
 ///
-/// `entity_chain_counts` maps each entity to the number of backbone chains it
-/// contributed to the flat `backbone_chains` vec. When present, chain coloring
-/// assigns the same color to all backbone segments from the same entity.
-pub(crate) fn compute_per_residue_colors(
+/// `entity_chain_counts` maps each entity to the number of backbone chains
+/// it contributed. `entity_molecule_types` gives the `MoleculeType` per
+/// entity (parallel to `entity_chain_counts`), used by `EntityType` coloring.
+pub(crate) fn compute_per_residue_colors_styled(
     backbone_chains: &[Vec<glam::Vec3>],
     ss_types: &[molex::secondary_structure::SSType],
     per_residue_scores: &[Option<&[f64]>],
-    color_mode: &super::BackboneColorMode,
+    scheme: &super::ColorScheme,
+    palette: &super::palette::Palette,
     entity_chain_counts: Option<&[usize]>,
+    entity_molecule_types: Option<&[molex::types::entity::MoleculeType]>,
 ) -> Vec<[f32; 3]> {
     use molex::secondary_structure::SSType;
 
     let residue_count = ss_types.len().max(1);
-    match color_mode {
-        super::BackboneColorMode::Score
-        | super::BackboneColorMode::ScoreRelative => {
+    match scheme {
+        super::ColorScheme::Chain => per_chain_colors_with_palette(
+            backbone_chains,
+            residue_count,
+            palette,
+        ),
+        super::ColorScheme::Entity => per_entity_colors(
+            backbone_chains,
+            entity_chain_counts,
+            residue_count,
+            palette,
+        ),
+        super::ColorScheme::EntityType => per_entity_type_colors(
+            backbone_chains,
+            entity_chain_counts,
+            entity_molecule_types,
+            residue_count,
+            palette,
+        ),
+        super::ColorScheme::SecondaryStructure => {
+            if ss_types.is_empty() {
+                vec![[0.5, 0.5, 0.5]; residue_count]
+            } else {
+                ss_types
+                    .iter()
+                    .map(|ss| {
+                        let idx = match ss {
+                            SSType::Helix => 0,
+                            SSType::Sheet => 1,
+                            SSType::Coil => 2,
+                        };
+                        palette.categorical_color(idx)
+                    })
+                    .collect()
+            }
+        }
+        super::ColorScheme::ResidueIndex => {
+            per_chain_gradient(backbone_chains, residue_count, palette)
+        }
+        super::ColorScheme::Score | super::ColorScheme::ScoreRelative => {
             let mut all_scores: Vec<f64> = Vec::new();
             for &s in per_residue_scores.iter().flatten() {
                 all_scores.extend_from_slice(s);
@@ -197,40 +118,112 @@ pub(crate) fn compute_per_residue_colors(
             if all_scores.is_empty() {
                 return vec![[0.5, 0.5, 0.5]; residue_count];
             }
-            match color_mode {
-                super::BackboneColorMode::Score => {
-                    per_residue_score_colors(&all_scores)
+            match scheme {
+                super::ColorScheme::Score => {
+                    per_residue_score_colors_with_palette(&all_scores, palette)
                 }
-                _ => per_residue_score_colors_relative(&all_scores),
+                _ => per_residue_score_colors_relative_with_palette(
+                    &all_scores,
+                    palette,
+                ),
             }
         }
-        super::BackboneColorMode::SecondaryStructure => {
-            if ss_types.is_empty() {
-                vec![[0.5, 0.5, 0.5]; residue_count]
-            } else {
-                ss_types.iter().map(SSType::color).collect()
-            }
+        super::ColorScheme::Solid => {
+            let color = palette
+                .resolved_stops()
+                .first()
+                .map_or([0.5, 0.5, 0.5], |s| s.1);
+            vec![color; residue_count]
         }
-        super::BackboneColorMode::Chain => per_chain_colors(
-            backbone_chains,
-            entity_chain_counts,
-            residue_count,
-        ),
+        super::ColorScheme::BFactor | super::ColorScheme::Hydrophobicity => {
+            // These schemes require per-atom data not available in the
+            // current pipeline. Fall back to gray.
+            vec![[0.5, 0.5, 0.5]; residue_count]
+        }
     }
 }
 
-/// Assign chain colors, grouping backbone segments by entity when available.
-fn per_chain_colors(
+/// Absolute score colors using a palette instead of the hardcoded ramp.
+fn per_residue_score_colors_with_palette(
+    scores: &[f64],
+    palette: &super::palette::Palette,
+) -> Vec<[f32; 3]> {
+    scores
+        .iter()
+        .map(|&s| palette.sample(score_to_t_absolute(s)))
+        .collect()
+}
+
+/// Relative score colors using a palette.
+fn per_residue_score_colors_relative_with_palette(
+    scores: &[f64],
+    palette: &super::palette::Palette,
+) -> Vec<[f32; 3]> {
+    if scores.is_empty() {
+        return Vec::new();
+    }
+
+    let mut sorted: Vec<f64> = scores.to_vec();
+    sorted
+        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let lo_idx = (sorted.len() as f64 * 0.05) as usize;
+    let hi_idx = ((sorted.len() as f64 * 0.95) as usize).min(sorted.len() - 1);
+    let min_score = sorted[lo_idx];
+    let max_score = sorted[hi_idx];
+    let range = max_score - min_score;
+
+    scores
+        .iter()
+        .map(|&score| {
+            let t = if range.abs() < 1e-6 {
+                0.5
+            } else {
+                ((score - min_score) / range).clamp(0.0, 1.0) as f32
+            };
+            palette.sample(t)
+        })
+        .collect()
+}
+
+/// N→C gradient per chain using the palette.
+fn per_chain_gradient(
+    backbone_chains: &[Vec<glam::Vec3>],
+    residue_count: usize,
+    palette: &super::palette::Palette,
+) -> Vec<[f32; 3]> {
+    if backbone_chains.is_empty() {
+        return vec![[0.5, 0.5, 0.5]; residue_count];
+    }
+    let mut colors = Vec::with_capacity(residue_count);
+    for chain in backbone_chains {
+        let n_residues = chain.len() / 3;
+        if n_residues == 0 {
+            continue;
+        }
+        for i in 0..n_residues {
+            let t = if n_residues == 1 {
+                0.0
+            } else {
+                i as f32 / (n_residues - 1) as f32
+            };
+            colors.push(palette.sample(t));
+        }
+    }
+    colors
+}
+
+/// One color per entity (all chains from the same entity share one color).
+fn per_entity_colors(
     backbone_chains: &[Vec<glam::Vec3>],
     entity_chain_counts: Option<&[usize]>,
     residue_count: usize,
+    palette: &super::palette::Palette,
 ) -> Vec<[f32; 3]> {
     if backbone_chains.is_empty() {
         return vec![[0.5, 0.5, 0.5]; residue_count];
     }
 
-    // When entity grouping is available, all backbone segments from
-    // the same entity share one color.
     if let Some(counts) = entity_chain_counts {
         let mut chain_to_entity = Vec::with_capacity(backbone_chains.len());
         for (entity_idx, &count) in counts.iter().enumerate() {
@@ -238,22 +231,96 @@ fn per_chain_colors(
                 chain_to_entity.push(entity_idx);
             }
         }
-        let n_entities = counts.len();
         let mut colors = Vec::with_capacity(residue_count);
         for (chain_idx, chain) in backbone_chains.iter().enumerate() {
             let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
-            let color = chain_color_indexed(eidx, n_entities);
+            let color = palette.categorical_color(eidx);
             let n_residues = chain.len() / 3;
             colors.extend(std::iter::repeat_n(color, n_residues));
         }
         return colors;
     }
 
-    // Fallback: one color per backbone chain
-    let num_chains = backbone_chains.len();
+    // Fallback: treat each chain as its own entity
+    per_chain_colors_with_palette(backbone_chains, residue_count, palette)
+}
+
+/// Color by molecule type — all entities of the same type share one color.
+///
+/// Maps each `MoleculeType` variant to a fixed palette index so Protein,
+/// DNA, RNA, Ligand, etc. each get a consistent, distinct color.
+fn per_entity_type_colors(
+    backbone_chains: &[Vec<glam::Vec3>],
+    entity_chain_counts: Option<&[usize]>,
+    entity_molecule_types: Option<&[molex::types::entity::MoleculeType]>,
+    residue_count: usize,
+    palette: &super::palette::Palette,
+) -> Vec<[f32; 3]> {
+    if backbone_chains.is_empty() {
+        return vec![[0.5, 0.5, 0.5]; residue_count];
+    }
+
+    let (Some(counts), Some(mol_types)) =
+        (entity_chain_counts, entity_molecule_types)
+    else {
+        // Without molecule type data, fall back to per-entity coloring.
+        return per_entity_colors(
+            backbone_chains,
+            entity_chain_counts,
+            residue_count,
+            palette,
+        );
+    };
+
+    // Build chain → molecule type index mapping.
+    let mut chain_to_type_idx = Vec::with_capacity(backbone_chains.len());
+    for (entity_idx, &count) in counts.iter().enumerate() {
+        let type_idx = mol_types
+            .get(entity_idx)
+            .map_or(0, |&mt| molecule_type_index(mt));
+        for _ in 0..count {
+            chain_to_type_idx.push(type_idx);
+        }
+    }
+
     let mut colors = Vec::with_capacity(residue_count);
     for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let color = chain_color_indexed(chain_idx, num_chains);
+        let tidx = chain_to_type_idx.get(chain_idx).copied().unwrap_or(0);
+        let color = palette.categorical_color(tidx);
+        let n_residues = chain.len() / 3;
+        colors.extend(std::iter::repeat_n(color, n_residues));
+    }
+    colors
+}
+
+/// Map a `MoleculeType` to a stable palette index.
+fn molecule_type_index(mt: molex::types::entity::MoleculeType) -> usize {
+    use molex::types::entity::MoleculeType;
+    match mt {
+        MoleculeType::Protein => 0,
+        MoleculeType::DNA => 1,
+        MoleculeType::RNA => 2,
+        MoleculeType::Ligand => 3,
+        MoleculeType::Cofactor => 4,
+        MoleculeType::Ion => 5,
+        MoleculeType::Water => 6,
+        MoleculeType::Lipid => 7,
+        MoleculeType::Solvent => 8,
+    }
+}
+
+/// Each backbone chain gets its own color from the palette.
+fn per_chain_colors_with_palette(
+    backbone_chains: &[Vec<glam::Vec3>],
+    residue_count: usize,
+    palette: &super::palette::Palette,
+) -> Vec<[f32; 3]> {
+    if backbone_chains.is_empty() {
+        return vec![[0.5, 0.5, 0.5]; residue_count];
+    }
+    let mut colors = Vec::with_capacity(residue_count);
+    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
+        let color = palette.categorical_color(chain_idx);
         let n_residues = chain.len() / 3;
         colors.extend(std::iter::repeat_n(color, n_residues));
     }
