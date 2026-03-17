@@ -32,11 +32,11 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let uv = in.uv;
 
     // Sample center and 4 direct neighbors
-    let rgbM  = textureSample(input_texture, tex_sampler, uv).rgb;
-    let rgbN  = textureSample(input_texture, tex_sampler, uv + vec2<f32>( 0.0, -texel_size.y)).rgb;
-    let rgbS  = textureSample(input_texture, tex_sampler, uv + vec2<f32>( 0.0,  texel_size.y)).rgb;
-    let rgbW  = textureSample(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x,  0.0)).rgb;
-    let rgbE  = textureSample(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x,  0.0)).rgb;
+    let rgbM  = textureSampleLevel(input_texture, tex_sampler, uv, 0.0).rgb;
+    let rgbN  = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>( 0.0, -texel_size.y), 0.0).rgb;
+    let rgbS  = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>( 0.0,  texel_size.y), 0.0).rgb;
+    let rgbW  = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x,  0.0), 0.0).rgb;
+    let rgbE  = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x,  0.0), 0.0).rgb;
 
     let lumM = luminance(rgbM);
     let lumN = luminance(rgbN);
@@ -54,10 +54,10 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Sample corners for sub-pixel aliasing detection
-    let rgbNW = textureSample(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x, -texel_size.y)).rgb;
-    let rgbNE = textureSample(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x, -texel_size.y)).rgb;
-    let rgbSW = textureSample(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x,  texel_size.y)).rgb;
-    let rgbSE = textureSample(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x,  texel_size.y)).rgb;
+    let rgbNW = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x, -texel_size.y), 0.0).rgb;
+    let rgbNE = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x, -texel_size.y), 0.0).rgb;
+    let rgbSW = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>(-texel_size.x,  texel_size.y), 0.0).rgb;
+    let rgbSE = textureSampleLevel(input_texture, tex_sampler, uv + vec2<f32>( texel_size.x,  texel_size.y), 0.0).rgb;
 
     let lumNW = luminance(rgbNW);
     let lumNE = luminance(rgbNE);
@@ -131,23 +131,23 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // Search positive direction
     var uvP = edgeUv + edgeStep;
-    var lumDeltaP = luminance(textureSample(input_texture, tex_sampler, uvP).rgb) - lumAvg;
+    var lumDeltaP = luminance(textureSampleLevel(input_texture, tex_sampler, uvP, 0.0).rgb) - lumAvg;
     var doneP = abs(lumDeltaP) >= gradientScaled;
 
     for (var i = 1; i < FXAA_SEARCH_STEPS && !doneP; i = i + 1) {
         uvP += edgeStep;
-        lumDeltaP = luminance(textureSample(input_texture, tex_sampler, uvP).rgb) - lumAvg;
+        lumDeltaP = luminance(textureSampleLevel(input_texture, tex_sampler, uvP, 0.0).rgb) - lumAvg;
         doneP = abs(lumDeltaP) >= gradientScaled;
     }
 
     // Search negative direction
     var uvN = edgeUv - edgeStep;
-    var lumDeltaN = luminance(textureSample(input_texture, tex_sampler, uvN).rgb) - lumAvg;
+    var lumDeltaN = luminance(textureSampleLevel(input_texture, tex_sampler, uvN, 0.0).rgb) - lumAvg;
     var doneN = abs(lumDeltaN) >= gradientScaled;
 
     for (var i = 1; i < FXAA_SEARCH_STEPS && !doneN; i = i + 1) {
         uvN -= edgeStep;
-        lumDeltaN = luminance(textureSample(input_texture, tex_sampler, uvN).rgb) - lumAvg;
+        lumDeltaN = luminance(textureSampleLevel(input_texture, tex_sampler, uvN, 0.0).rgb) - lumAvg;
         doneN = abs(lumDeltaN) >= gradientScaled;
     }
 
@@ -182,6 +182,6 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         finalUv.x += pixelStep * finalBlend;
     }
 
-    let result = textureSample(input_texture, tex_sampler, finalUv).rgb;
+    let result = textureSampleLevel(input_texture, tex_sampler, finalUv, 0.0).rgb;
     return vec4<f32>(result, 1.0);
 }

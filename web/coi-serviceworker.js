@@ -46,7 +46,18 @@ if (typeof window === 'undefined') {
 } else {
     // Window context -- register the service worker
     (async function () {
-        if (window.crossOriginIsolated !== false) return;
+        if (window.crossOriginIsolated) return;
+
+        // If a controller already exists, the service worker is active but
+        // the browser still reports crossOriginIsolated as false (Safari).
+        // Do not reload again — it would loop forever.
+        if (navigator.serviceWorker.controller) {
+            console.warn(
+                "COOP/COEP Service Worker is active but crossOriginIsolated is still false. " +
+                "SharedArrayBuffer may not be available in this browser."
+            );
+            return;
+        }
 
         const registration = await navigator.serviceWorker
             .register(window.document.currentScript.src)

@@ -74,11 +74,11 @@ fn detect_depth_edges(uv: vec2<f32>, texel_size: vec2<f32>, thickness: f32) -> f
 fn detect_normal_edges(uv: vec2<f32>, texel_size: vec2<f32>, thickness: f32) -> f32 {
     let offset = texel_size * thickness;
 
-    let n_c = textureSample(normal_texture, tex_sampler, uv).xyz;
-    let n_t = textureSample(normal_texture, tex_sampler, uv + vec2(0.0, -offset.y)).xyz;
-    let n_b = textureSample(normal_texture, tex_sampler, uv + vec2(0.0, offset.y)).xyz;
-    let n_l = textureSample(normal_texture, tex_sampler, uv + vec2(-offset.x, 0.0)).xyz;
-    let n_r = textureSample(normal_texture, tex_sampler, uv + vec2(offset.x, 0.0)).xyz;
+    let n_c = textureSampleLevel(normal_texture, tex_sampler, uv, 0.0).xyz;
+    let n_t = textureSampleLevel(normal_texture, tex_sampler, uv + vec2(0.0, -offset.y), 0.0).xyz;
+    let n_b = textureSampleLevel(normal_texture, tex_sampler, uv + vec2(0.0, offset.y), 0.0).xyz;
+    let n_l = textureSampleLevel(normal_texture, tex_sampler, uv + vec2(-offset.x, 0.0), 0.0).xyz;
+    let n_r = textureSampleLevel(normal_texture, tex_sampler, uv + vec2(offset.x, 0.0), 0.0).xyz;
 
     // Compute maximum normal dissimilarity
     let diff = max(
@@ -115,10 +115,10 @@ fn tonemap_pbr_neutral(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(color_texture, tex_sampler, in.uv);
-    let ao = textureSample(ssao_texture, tex_sampler, in.uv).r;
+    let color = textureSampleLevel(color_texture, tex_sampler, in.uv, 0.0);
+    let ao = textureSampleLevel(ssao_texture, tex_sampler, in.uv, 0.0).r;
     let depth = load_depth(in.uv);
-    let normal_sample = textureSample(normal_texture, tex_sampler, in.uv);
+    let normal_sample = textureSampleLevel(normal_texture, tex_sampler, in.uv, 0.0);
     let ambient_ratio = normal_sample.w;
 
     // Background early-out (no outline on empty space)
@@ -149,7 +149,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // === STEP 4: Add bloom (before tone mapping, in HDR space) ===
     if (params.bloom_intensity > 0.0) {
-        let bloom = textureSample(bloom_texture, tex_sampler, in.uv).rgb;
+        let bloom = textureSampleLevel(bloom_texture, tex_sampler, in.uv, 0.0).rgb;
         final_color = final_color + bloom * params.bloom_intensity;
     }
 

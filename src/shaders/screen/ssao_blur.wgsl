@@ -25,7 +25,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> FullscreenVertexOutput {
 
 // Load normal from G-buffer
 fn load_normal(uv: vec2<f32>) -> vec3<f32> {
-    return textureSample(normal_texture, tex_sampler, uv).xyz;
+    return textureSampleLevel(normal_texture, tex_sampler, uv, 0.0).xyz;
 }
 
 // Gaussian weight for spatial distance (pre-computed sigma = 3.0 for 7x7 kernel)
@@ -40,7 +40,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
     let texel_size = vec2<f32>(1.0) / vec2<f32>(textureDimensions(ssao_texture));
 
     // Center sample
-    let center_ao = textureSample(ssao_texture, tex_sampler, in.uv).r;
+    let center_ao = textureSampleLevel(ssao_texture, tex_sampler, in.uv, 0.0).r;
     let center_depth = linearize_depth(load_depth(in.uv), params.near, params.far);
     let center_normal = load_normal(in.uv);
 
@@ -62,7 +62,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
             let spatial_w = gaussian_weight(offset);
 
             // Sample AO, depth, and normal
-            let sample_ao = textureSample(ssao_texture, tex_sampler, sample_uv).r;
+            let sample_ao = textureSampleLevel(ssao_texture, tex_sampler, sample_uv, 0.0).r;
             let sample_depth = linearize_depth(load_depth(sample_uv), params.near, params.far);
             let sample_normal = load_normal(sample_uv);
 

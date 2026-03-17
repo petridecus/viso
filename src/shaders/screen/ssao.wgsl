@@ -45,7 +45,7 @@ fn get_view_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 
 // Read world-space normal from G-buffer and transform to view-space
 fn get_view_normal(uv: vec2<f32>, texel_size: vec2<f32>) -> vec3<f32> {
-    let world_normal = textureSample(normal_texture, tex_sampler, uv).xyz;
+    let world_normal = textureSampleLevel(normal_texture, tex_sampler, uv, 0.0).xyz;
     // Transform world-space normal to view-space (w=0 for direction vector)
     return normalize((params.view * vec4<f32>(world_normal, 0.0)).xyz);
 }
@@ -76,7 +76,7 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) f32 {
 
     // Get noise for random rotation (tiled across screen)
     let noise_uv = in.uv * noise_scale;
-    let random_vec = normalize(textureSample(noise_texture, noise_sampler, noise_uv).xyz * 2.0 - 1.0);
+    let random_vec = normalize(textureSampleLevel(noise_texture, noise_sampler, noise_uv, 0.0).xyz * 2.0 - 1.0);
 
     // Create TBN matrix to orient hemisphere along normal
     let tangent = normalize(random_vec - normal * dot(random_vec, normal));
