@@ -42,6 +42,9 @@ pub mod viewer;
 #[cfg(feature = "gui")]
 pub mod gui;
 
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub mod web;
+
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
 pub use engine::command::{

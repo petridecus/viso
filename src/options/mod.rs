@@ -18,6 +18,7 @@ mod post_processing;
 /// Score-to-color gradient mapping.
 pub(crate) mod score_color;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 pub use camera::CameraOptions;
@@ -75,6 +76,7 @@ impl VisoOptions {
     ///
     /// Returns [`VisoError::Io`] if the file cannot be read, or
     /// [`VisoError::OptionsParse`] if the TOML content is invalid.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(path: &Path) -> Result<Self, VisoError> {
         let content = std::fs::read_to_string(path).map_err(VisoError::Io)?;
         toml::from_str(&content)
@@ -87,6 +89,7 @@ impl VisoOptions {
     ///
     /// Returns [`VisoError::Io`] if the file cannot be written, or
     /// [`VisoError::OptionsParse`] if serialization fails.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self, path: &Path) -> Result<(), VisoError> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| VisoError::OptionsParse(e.to_string()))?;
@@ -97,6 +100,7 @@ impl VisoOptions {
     }
 
     /// List available preset names (TOML file stems) in a directory.
+    #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub fn list_presets(dir: &Path) -> Vec<String> {
         let mut names = Vec::new();

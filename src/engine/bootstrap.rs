@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
+#[cfg(not(target_arch = "wasm32"))]
 use molex::adapters::pdb::structure_file_to_entities;
 use molex::render::RenderCoords;
 
@@ -155,8 +156,60 @@ fn init_gpu_pipeline(
 // Scene loading helpers
 // ---------------------------------------------------------------------------
 
+/// Load a structure from in-memory bytes, selecting the parser based on the
+/// file extension hint (`"cif"`, `"pdb"`, or `"bcif"`).
+///
+/// Returns a populated [`EntityStore`] and the derived protein
+/// `RenderCoords`.
+pub(super) fn load_scene_from_bytes(
+    bytes: &[u8],
+    format_hint: &str,
+) -> Result<(EntityStore, RenderCoords), VisoError> {
+    let hint = format_hint.to_ascii_lowercase();
+    let hint = hint.trim_start_matches('.');
+    let entities = match hint {
+        "cif" | "mmcif" => {
+            let text = std::str::from_utf8(bytes).map_err(|e| {
+                VisoError::StructureLoad(format!("Invalid UTF-8 in CIF: {e}"))
+            })?;
+            molex::adapters::pdb::mmcif_str_to_entities(text)
+                .map_err(|e| VisoError::StructureLoad(e.to_string()))?
+        }
+        "pdb" | "ent" => {
+            let text = std::str::from_utf8(bytes).map_err(|e| {
+                VisoError::StructureLoad(format!("Invalid UTF-8 in PDB: {e}"))
+            })?;
+            molex::adapters::pdb::pdb_str_to_entities(text)
+                .map_err(|e| VisoError::StructureLoad(e.to_string()))?
+        }
+        "bcif" => molex::adapters::bcif::bcif_to_entities(bytes)
+            .map_err(|e| VisoError::StructureLoad(e.to_string()))?,
+        other => {
+            return Err(VisoError::StructureLoad(format!(
+                "Unsupported format '{other}'. Use 'cif', 'pdb', or 'bcif'."
+            )));
+        }
+    };
+
+    for e in &entities {
+        log::debug!(
+            "  entity {} — {:?}: {} atoms",
+            e.entity_id,
+            e.molecule_type,
+            e.atom_count()
+        );
+    }
+
+    let mut store = EntityStore::new();
+    let entity_ids = store.add_entities(entities);
+
+    let render_coords = extract_render_coords(&store, &entity_ids);
+    Ok((store, render_coords))
+}
+
 /// Load a structure file and split into entities, returning a populated
 /// [`EntityStore`] and the derived protein `RenderCoords`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn load_scene_from_file(
     cif_path: &str,
 ) -> Result<(EntityStore, RenderCoords), VisoError> {
@@ -265,6 +318,7 @@ impl VisoEngine {
     ///
     /// Returns [`VisoError`] if GPU initialization
     /// or structure loading fails.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn new(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -285,6 +339,7 @@ impl VisoEngine {
     ///
     /// Returns [`VisoError`] if GPU initialization
     /// or structure loading fails.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn new_with_path(
         window: impl Into<wgpu::SurfaceTarget<'static>>,
         size: (u32, u32),
@@ -312,6 +367,7 @@ impl VisoEngine {
     ///
     /// Returns [`VisoError`] if structure loading
     /// fails.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new_from_context(
         mut context: RenderContext,
         scale_factor: f64,
@@ -322,6 +378,51 @@ impl VisoEngine {
         }
 
         Self::init_with_context(context, cif_path)
+    }
+
+    /// Engine from a pre-built [`RenderContext`] and in-memory structure
+    /// bytes (for WASM / headless use).
+    ///
+    /// `format_hint` is the file extension: `"cif"`, `"pdb"`, or `"bcif"`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError`] if structure loading or GPU initialization
+    /// fails.
+    pub fn new_from_bytes(
+        context: RenderContext,
+        bytes: &[u8],
+        format_hint: &str,
+    ) -> Result<Self, VisoError> {
+        let (entities, render_coords) =
+            load_scene_from_bytes(bytes, format_hint)?;
+        let options = VisoOptions::default();
+
+        let mut bootstrap =
+            init_gpu_pipeline(&context, entities, &render_coords)?;
+        bootstrap.renderers.init_ball_and_stick_entities(
+            &context,
+            &bootstrap.entities,
+            &options,
+        );
+        let colors = initial_chain_colors(
+            &render_coords.backbone_chains,
+            render_coords
+                .backbone_chains
+                .iter()
+                .map(|c| c.len() / 3)
+                .sum(),
+        );
+        bootstrap.pick.init_colors_and_groups(
+            &context,
+            &colors,
+            &bootstrap.renderers,
+        );
+        if let Some((centroid, radius)) = bootstrap.entities.bounding_sphere() {
+            bootstrap.camera_controller.fit_to_sphere(centroid, radius);
+        }
+
+        Self::assemble(context, options, bootstrap)
     }
 
     /// Engine with an empty scene (no entities loaded).
@@ -347,6 +448,7 @@ impl VisoEngine {
     }
 
     /// Shared construction logic for both windowed and headless modes.
+    #[cfg(not(target_arch = "wasm32"))]
     fn init_with_context(
         context: RenderContext,
         cif_path: &str,

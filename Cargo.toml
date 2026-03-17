@@ -20,6 +20,14 @@ default = ["binary"]
 binary = ["gui", "dep:env_logger"]
 viewer = ["dep:winit", "dep:pollster"]
 gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess", "dep:ureq", "dep:rfd"]
+web = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:web-sys",
+    "dep:console_log",
+    "dep:console_error_panic_hook",
+    "dep:js-sys",
+]
 
 [dependencies]
 wgpu = { version = "26.0", features = ["naga-ir"] }
@@ -65,6 +73,28 @@ naga_oil = "0.19"
 naga = "26"
 
 molex = "0.1.0"
+
+# WASM dependencies (feature-gated behind "web")
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+console_log = { version = "1", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[dependencies.web-sys]
+version = "0.3"
+optional = true
+features = [
+    "HtmlCanvasElement",
+    "Window",
+    "Document",
+    "Performance",
+    "EventTarget",
+    "MouseEvent",
+    "WheelEvent",
+    "KeyboardEvent",
+    "AddEventListenerOptions",
+]
 
 [[bin]]
 name = "viso"
@@ -123,11 +153,12 @@ broken_intra_doc_links = "deny"
 private_intra_doc_links = "deny"
 bare_urls = "deny"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+wasm-bindgen-rayon = "1"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 x11-dl = "2"
-
-[patch."https://github.com/petridecus/molex"]
-molex = { path = "../molex" }
 
 [dev-dependencies]

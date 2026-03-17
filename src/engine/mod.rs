@@ -13,6 +13,7 @@ mod sync;
 pub(crate) mod trajectory;
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::time::Instant;
 
@@ -550,6 +551,7 @@ impl VisoEngine {
 
     /// Load a named view preset from the presets directory.
     /// Returns true on success.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_preset(&mut self, name: &str, presets_dir: &Path) -> bool {
         let path = presets_dir.join(format!("{name}.toml"));
         match VisoOptions::load(&path) {
@@ -568,6 +570,7 @@ impl VisoEngine {
 
     /// Save the current options as a named view preset.
     /// Returns true on success.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_preset(&mut self, name: &str, presets_dir: &Path) -> bool {
         let path = presets_dir.join(format!("{name}.toml"));
         match self.options.save(&path) {

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viso WebGPU Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: system-ui, sans-serif;
+            color: #e0e0e0;
+        }
+        #status {
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #888;
+        }
+        canvas {
+            width: 80vw;
+            height: 70vh;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        .controls {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        input[type="text"] {
+            padding: 6px 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #2a2a3e;
+            color: #e0e0e0;
+            font-size: 14px;
+            width: 120px;
+        }
+        button {
+            padding: 6px 14px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #3a3a5e;
+            color: #e0e0e0;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:hover { background: #4a4a6e; }
+    </style>
+</head>
+<body>
+    <!-- coi-serviceworker enables Cross-Origin Isolation so
+         SharedArrayBuffer works (required by wasm-bindgen-rayon). -->
+    <script src="coi-serviceworker.js"></script>
+
+    <div id="status">Loading WASM module...</div>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+    <div class="controls">
+        <label for="pdb-id">PDB ID:</label>
+        <input type="text" id="pdb-id" value="4pnk" placeholder="e.g. 4pnk" />
+        <button id="load-btn">Load</button>
+    </div>
+
+    <script type="module">
+        // Import the wasm-bindgen generated JS glue.
+        // When built with wasm-pack, the package is typically at ./pkg/viso.js
+        import init_wasm, { init, start } from './pkg/viso.js';
+
+        const status = document.getElementById('status');
+        const canvas = document.getElementById('canvas');
+        const pdbInput = document.getElementById('pdb-id');
+        const loadBtn = document.getElementById('load-btn');
+
+        async function loadStructure(pdbId) {
+            status.textContent = `Fetching ${pdbId.toUpperCase()} from RCSB...`;
+
+            // Try BinaryCIF first (smaller), fall back to mmCIF
+            let bytes, formatHint;
+            try {
+                const url = `https://models.rcsb.org/${pdbId.toLowerCase()}.bcif`;
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                bytes = new Uint8Array(await resp.arrayBuffer());
+                formatHint = 'bcif';
+            } catch {
+                const url = `https://files.rcsb.org/download/${pdbId.toUpperCase()}.cif`;
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    status.textContent = `Failed to fetch ${pdbId}`;
+                    return;
+                }
+                bytes = new Uint8Array(await resp.arrayBuffer());
+                formatHint = 'cif';
+            }
+
+            status.textContent = `Initializing renderer for ${pdbId.toUpperCase()}...`;
+            try {
+                await start(canvas, bytes, formatHint);
+                status.textContent = `Rendering ${pdbId.toUpperCase()} (${bytes.length} bytes, ${formatHint})`;
+            } catch (e) {
+                status.textContent = `Error: ${e}`;
+                console.error(e);
+            }
+        }
+
+        async function main() {
+            try {
+                // Initialize the WASM module
+                await init_wasm();
+                init();
+                status.textContent = 'WASM initialized. Loading structure...';
+
+                // Load the default structure
+                await loadStructure(pdbInput.value);
+            } catch (e) {
+                status.textContent = `Init error: ${e}`;
+                console.error(e);
+            }
+        }
+
+        loadBtn.addEventListener('click', () => {
+            loadStructure(pdbInput.value.trim());
+        });
+
+        pdbInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') loadStructure(pdbInput.value.trim());
+        });
+
+        main();
+    </script>
+</body>
+</html>
