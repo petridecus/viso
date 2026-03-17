@@ -1,0 +1,133 @@
+[workspace]
+members = ["crates/viso-ui"]
+
+[package]
+name = "viso"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-accelerated 3D protein visualization engine"
+authors = ["Andreas Petrides <apetrides32@gmail.com>"]
+license-file = "LICENSE.md"
+publish = false
+repository = "https://github.com/petridecus/viso"
+readme = "README.md"
+keywords = ["protein", "visualization", "molecular", "wgpu", "3d"]
+categories = ["graphics", "rendering", "science", "visualization"]
+exclude = ["gallery/", "assets/", "docs/", ".github/"]
+
+[features]
+default = ["binary"]
+binary = ["gui", "dep:env_logger"]
+viewer = ["dep:winit", "dep:pollster"]
+gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess", "dep:ureq", "dep:rfd"]
+
+[dependencies]
+wgpu = { version = "26.0", features = ["naga-ir"] }
+winit = { version = "0.30.12", optional = true }
+pollster = { version = "0.4.0", optional = true }
+bytemuck = "1.24.0"
+encase = "0.12"
+rand = "0.9.2"
+glam = { version = "0.30.10", features = ["encase"] }
+
+# Serialization for options/presets
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+schemars = "1"
+
+# Logging
+log = { version = "0.4", features = ["release_max_level_info"] }
+env_logger = { version = "0.11", optional = true }
+
+# HTTP client for downloading structures from RCSB
+ureq = { version = "3", optional = true }
+
+# Native file dialogs for Load panel
+rfd = { version = "0.15", optional = true }
+
+# Embedded webview for GUI options panel
+wry = { version = "0.50", optional = true }
+
+# Embed viso-ui WASM bundle at compile time
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+
+# Fast non-cryptographic hashing for entity ID maps
+rustc-hash = "2"
+
+# Lock-free triple buffering for scene processor results
+triple_buffer = "8"
+
+# Half-precision floats for BRDF LUT texture (Rg16Float)
+half = "2"
+naga_oil = "0.19"
+naga = "26"
+
+molex = "0.1.0"
+
+[[bin]]
+name = "viso"
+path = "src/main.rs"
+required-features = ["binary"]
+
+[lints.clippy]
+# Broad lint groups (lower priority so individual lints can override)
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# Restriction lints (opt-in, not covered by the groups above)
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+str_to_string = "deny"
+
+# GPU / graphics allowances — casts are intentional and safe
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+
+# Float comparison: graphics math frequently compares against 0.0, 1.0, etc.
+float_cmp = "allow"
+
+# Multiple crate versions: transitive deps — not actionable
+multiple_crate_versions = "allow"
+
+# Pedantic allowances
+suboptimal_flops = "allow"
+missing_const_for_fn = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+items_after_statements = "allow"
+use_self = "allow"
+redundant_pub_crate = "allow"
+
+[lints.rust]
+missing_docs = "deny"
+unused_results = "deny"
+unused_qualifications = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+bare_urls = "deny"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+x11-dl = "2"
+
+[patch."https://github.com/petridecus/molex"]
+molex = { path = "../molex" }
+
+[dev-dependencies]

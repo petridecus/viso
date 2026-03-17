@@ -1,0 +1,141 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// How protein backbone is colored.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackboneColorMode {
+    /// Color by absolute score.
+    Score,
+    /// Color by relative score.
+    ScoreRelative,
+    /// Color by secondary structure type.
+    SecondaryStructure,
+    /// Each chain gets a distinct color, interpolated blue→red.
+    #[default]
+    Chain,
+}
+
+/// How sidechains are colored.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidechainColorMode {
+    /// Color by hydrophobicity.
+    #[default]
+    Hydrophobicity,
+}
+
+/// How nucleic acid backbone is colored.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NaColorMode {
+    /// Single uniform color.
+    #[default]
+    Uniform,
+}
+
+/// Lipid display style.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LipidMode {
+    /// Coarse-grained spheres.
+    #[default]
+    Coarse,
+    /// Full ball-and-stick representation.
+    BallAndStick,
+}
+
+/// Surface presentation mode.
+///
+/// Not all modes are supported on every platform. If the requested mode is
+/// unavailable, the engine falls back to [`PresentMode::Fifo`] (always
+/// supported).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Default,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentMode {
+    /// VSync — capped to display refresh rate, no tearing.
+    #[default]
+    Fifo,
+    /// Immediate — lowest latency, may tear.
+    Immediate,
+    /// Mailbox — low-latency VSync (triple-buffered).
+    Mailbox,
+}
+
+impl PresentMode {
+    /// Convert to the corresponding wgpu present mode.
+    #[must_use]
+    pub fn to_wgpu(self) -> wgpu::PresentMode {
+        match self {
+            Self::Fifo => wgpu::PresentMode::Fifo,
+            Self::Immediate => wgpu::PresentMode::Immediate,
+            Self::Mailbox => wgpu::PresentMode::Mailbox,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema,
+)]
+#[schemars(title = "Display", inline)]
+#[serde(default)]
+#[allow(clippy::struct_excessive_bools)]
+/// Display toggles and coloring mode selections.
+pub struct DisplayOptions {
+    /// Whether to render water molecules.
+    #[schemars(title = "Show Waters", extend("x-group" = "Visibility"))]
+    pub show_waters: bool,
+    /// Whether to render ion atoms.
+    #[schemars(title = "Show Ions", extend("x-group" = "Visibility"))]
+    pub show_ions: bool,
+    /// Whether to render solvent molecules.
+    #[schemars(title = "Show Solvent", extend("x-group" = "Visibility"))]
+    pub show_solvent: bool,
+    /// Lipid rendering style.
+    #[schemars(title = "Lipid Mode", extend("x-group" = "Visibility"))]
+    pub lipid_mode: LipidMode,
+    /// Whether to render amino acid sidechains.
+    #[schemars(title = "Show Sidechains", extend("x-group" = "Visibility"))]
+    pub show_sidechains: bool,
+    /// Whether to render hydrogen atoms.
+    #[schemars(title = "Show Hydrogens", extend("x-group" = "Visibility"))]
+    pub show_hydrogens: bool,
+    /// Backbone coloring strategy.
+    #[schemars(title = "Backbone Color", extend("x-group" = "Coloring"))]
+    pub backbone_color_mode: BackboneColorMode,
+    /// Sidechain coloring strategy.
+    #[schemars(title = "Sidechain Color", extend("x-group" = "Coloring"))]
+    pub sidechain_color_mode: SidechainColorMode,
+    /// Nucleic acid coloring strategy.
+    #[schemars(title = "Nucleic Acid Color", extend("x-group" = "Coloring"))]
+    pub na_color_mode: NaColorMode,
+    /// Surface presentation mode (VSync, immediate, mailbox).
+    #[schemars(title = "Present Mode", extend("x-group" = "Presentation"))]
+    pub present_mode: PresentMode,
+}
+
+impl DisplayOptions {
+    /// Whether lipid mode uses full ball-and-stick representation.
+    #[must_use]
+    pub fn lipid_ball_and_stick(&self) -> bool {
+        matches!(self.lipid_mode, LipidMode::BallAndStick)
+    }
+}
