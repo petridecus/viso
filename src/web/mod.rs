@@ -13,6 +13,7 @@ use wasm_bindgen::JsCast;
 pub use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::HtmlCanvasElement;
 
+use crate::bridge::{self, UiAction};
 use crate::gpu::RenderContext;
 use crate::input::InputProcessor;
 use crate::options::VisoOptions;
@@ -146,7 +147,7 @@ fn install_ipc_bridge(engine: EngineHandle) {
     // -- window.__viso_load_bytes(bytes, formatHint) --
     let eng = Rc::clone(&engine);
     let load_bytes = Closure::<dyn FnMut(Vec<u8>, String)>::new(
-        move |bytes: Vec<u8>, hint: String| match parse_structure_bytes(
+        move |bytes: Vec<u8>, hint: String| match bridge::parse_structure_bytes(
             &bytes, &hint,
         ) {
             Ok(entities) => {
@@ -227,7 +228,7 @@ fn setup_iframe_bridge(ipc: &JsValue, engine: &EngineHandle) {
     // Run BRIDGE_JS inside the iframe context — this installs the
     // `__viso_push_*` functions and CustomEvent dispatchers on the
     // iframe's window.
-    eval_in(&iframe_win, BRIDGE_JS);
+    eval_in(&iframe_win, bridge::BRIDGE_JS);
     log::info!("[bridge] setup_iframe_bridge: BRIDGE_JS eval'd in iframe");
 
     // Verify the push functions exist on the iframe window
@@ -303,70 +304,41 @@ fn handle_ipc_action(engine: &EngineHandle, json: &str) {
         return;
     };
 
-    let action = msg
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-
-    let mut eng = engine.borrow_mut();
+    let Some(action) = bridge::parse_action(&msg) else {
+        let action_str =
+            msg.get("action").and_then(|v| v.as_str()).unwrap_or("???");
+        log::warn!("unhandled IPC action: {action_str}");
+        return;
+    };
 
     match action {
-        "set_option" => {
-            let path = msg.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let field = msg.get("field").and_then(|v| v.as_str()).unwrap_or("");
-            let value = msg.get("value").cloned().unwrap_or_default();
-            if let Ok(mut root) = serde_json::to_value(&eng.options()) {
-                root[path][field] = value;
+        UiAction::SetOption { path, field, value } => {
+            let mut eng = engine.borrow_mut();
+            if let Ok(mut root) = serde_json::to_value(eng.options()) {
+                root[&path][&field] = value;
                 if let Ok(updated) = serde_json::from_value::<VisoOptions>(root)
                 {
                     eng.set_options(updated);
                 }
             }
         }
-        "fetch_pdb" => {
-            let id = msg
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let source = msg
-                .get("source")
-                .and_then(|v| v.as_str())
-                .unwrap_or("rcsb")
-                .to_string();
-            // Spawn async fetch in the browser
+        UiAction::FetchPdb { id, source } => {
             let eng_clone = Rc::clone(engine);
             wasm_bindgen_futures::spawn_local(async move {
                 fetch_and_load(&eng_clone, &id, &source).await;
             });
         }
-        "focus_entity" => {
-            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                let cmd = crate::VisoCommand::FocusEntity { id: id as u32 };
-                let _ = eng.execute(cmd);
-            }
+        UiAction::Command(cmd) => {
+            let mut eng = engine.borrow_mut();
+            let _ = eng.execute(cmd);
+            push_scene_entities(&eng);
         }
-        "toggle_entity_visibility" => {
-            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                let cmd = crate::VisoCommand::ToggleEntityVisibility {
-                    id: id as u32,
-                };
-                let _ = eng.execute(cmd);
-                push_scene_entities(&eng);
-            }
-        }
-        "remove_entity" => {
-            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                let cmd = crate::VisoCommand::RemoveEntity { id: id as u32 };
-                let _ = eng.execute(cmd);
-                push_scene_entities(&eng);
-            }
-        }
-        "toggle_panel" | "resize_panel" | "open_file_dialog" | "key" => {
-            // Panel/file-dialog actions are native-only; no-op on web
-        }
-        other => {
-            log::warn!("unhandled IPC action: {other}");
+        UiAction::TogglePanel
+        | UiAction::ResizePanel { .. }
+        | UiAction::OpenFileDialog
+        | UiAction::KeyPress { .. }
+        | UiAction::LoadFile { .. } => {
+            // Native-only actions; no-op on web
         }
     }
 }
@@ -437,7 +409,7 @@ async fn fetch_and_load(engine: &EngineHandle, id: &str, source: &str) {
     let array = js_sys::Uint8Array::new(&buf);
     let bytes = array.to_vec();
 
-    match parse_structure_bytes(&bytes, "cif") {
+    match bridge::parse_structure_bytes(&bytes, "cif") {
         Ok(entities) => {
             let mut eng = engine.borrow_mut();
             let _ids = eng.replace_scene(entities);
@@ -466,44 +438,8 @@ fn push_schema_and_options(engine: &VisoEngine) {
 
 /// Push the scene entity list to viso-ui.
 fn push_scene_entities(engine: &VisoEngine) {
-    use molex::types::entity::MoleculeType;
-
-    let focus = engine.entities.focus();
-    let entities: Vec<serde_json::Value> = engine
-        .entities
-        .entities()
-        .iter()
-        .map(|se| {
-            let mol_type = match se.entity.molecule_type {
-                MoleculeType::Protein => "Protein",
-                MoleculeType::DNA => "DNA",
-                MoleculeType::RNA => "RNA",
-                _ => "Ligand",
-            };
-            let chain_ids: Vec<String> =
-                se.entity.as_polymer().map_or_else(Vec::new, |data| {
-                    data.chains
-                        .iter()
-                        .map(|c| String::from(c.chain_id as char))
-                        .collect()
-                });
-            let focused = matches!(
-                focus,
-                crate::engine::scene::Focus::Entity(eid) if *eid == se.id()
-            );
-            serde_json::json!({
-                "id": se.id(),
-                "molecule_type": mol_type,
-                "label": se.entity.label(),
-                "visible": se.visible,
-                "atom_count": se.entity.atom_count(),
-                "chain_ids": chain_ids,
-                "focused": focused,
-                "focusable": se.entity.is_focusable(),
-            })
-        })
-        .collect();
-    let json = serde_json::to_string(&entities).unwrap_or_default();
+    let summaries = bridge::entity_summaries(engine);
+    let json = serde_json::to_string(&summaries).unwrap_or_default();
     push_to_ui("scene_entities", &json);
 }
 
@@ -516,7 +452,7 @@ fn push_load_status(status: &str, message: &str) {
 /// Dispatch a value to viso-ui via the bridge's
 /// `window.__viso_push_{key}(json)` function on the iframe's window.
 fn push_to_ui(key: &str, json: &str) {
-    let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
+    let escaped = bridge::escape_for_js(json);
     let js = format!(
         "if(window.__viso_push_{key}){{window.__viso_push_{key}('{escaped}')}}"
     );
@@ -532,35 +468,6 @@ fn push_to_ui(key: &str, json: &str) {
              to parent"
         );
         let _ = js_sys::eval(&js);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Structure parsing from in-memory bytes
-// ---------------------------------------------------------------------------
-
-fn parse_structure_bytes(
-    bytes: &[u8],
-    format_hint: &str,
-) -> Result<Vec<molex::types::entity::MoleculeEntity>, String> {
-    let hint = format_hint.to_ascii_lowercase();
-    let hint = hint.trim_start_matches('.');
-    match hint {
-        "cif" | "mmcif" => {
-            let text = std::str::from_utf8(bytes)
-                .map_err(|e| format!("Invalid UTF-8 in CIF: {e}"))?;
-            molex::adapters::pdb::mmcif_str_to_entities(text)
-                .map_err(|e| format!("CIF parse error: {e}"))
-        }
-        "pdb" | "ent" => {
-            let text = std::str::from_utf8(bytes)
-                .map_err(|e| format!("Invalid UTF-8 in PDB: {e}"))?;
-            molex::adapters::pdb::pdb_str_to_entities(text)
-                .map_err(|e| format!("PDB parse error: {e}"))
-        }
-        other => {
-            Err(format!("Unsupported format '{other}'. Use 'cif' or 'pdb'."))
-        }
     }
 }
 
@@ -612,51 +519,3 @@ fn request_animation_frame(
         .ok_or_else(|| JsValue::from_str("no global window"))?
         .request_animation_frame(callback.as_ref().unchecked_ref())
 }
-
-// ---------------------------------------------------------------------------
-// Bridge JS (same CustomEvent dispatch as native BRIDGE_JS)
-// ---------------------------------------------------------------------------
-
-/// Minimal version of the bridge script that defines the
-/// `window.__viso_push_*` functions and dispatches `CustomEvent`s.
-/// viso-ui registers listeners on these events.
-const BRIDGE_JS: &str = r"
-(function() {
-    var pending = {};
-    function dispatch(name, json) {
-        window.dispatchEvent(new CustomEvent(name, { detail: json }));
-    }
-    function makePush(key, eventName) {
-        window['__viso_push_' + key] = function(json) {
-            pending[key] = json;
-            dispatch(eventName, json);
-        };
-    }
-    makePush('schema', 'viso-schema');
-    makePush('options', 'viso-options');
-    makePush('stats', 'viso-stats');
-    makePush('panel_pinned', 'viso-panel-pinned');
-    makePush('load_status', 'viso-load-status');
-    makePush('scene_entities', 'viso-scene-entities');
-
-    // Allow late listeners (e.g. dioxus WASM) to replay any values
-    // that were pushed before they registered.
-    window.__viso_replay_pending = function() {
-        for (var k in pending) {
-            var fn = window['__viso_push_' + k];
-            if (fn) fn(pending[k]);
-        }
-    };
-
-    // Replay any early pushes
-    if (window.__viso_early) {
-        var e = window.__viso_early;
-        for (var k in e) {
-            if (window['__viso_push_' + k]) {
-                window['__viso_push_' + k](e[k]);
-            }
-        }
-        delete window.__viso_early;
-    }
-})();
-";

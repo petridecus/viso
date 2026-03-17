@@ -12,7 +12,7 @@ use wry::http::header::CONTENT_TYPE;
 use wry::http::Response;
 use wry::{dpi, Rect, WebView, WebViewBuilder};
 
-use crate::engine::command::VisoCommand;
+use crate::bridge::{self, UiAction};
 use crate::options::VisoOptions;
 
 /// Embedded viso-ui dist output (built by `trunk build`).
@@ -22,48 +22,6 @@ struct UiAssets;
 
 /// Width of the options panel in logical pixels.
 pub const PANEL_WIDTH: u32 = 350;
-
-/// Actions sent from the webview WASM app to the native engine.
-#[derive(Debug)]
-pub enum UiAction {
-    /// Set a single option field: `options[section][field] = value`.
-    SetOption {
-        /// Top-level section key (e.g. `"lighting"`).
-        path: String,
-        /// Field key within the section (e.g. `"roughness"`).
-        field: String,
-        /// New JSON value.
-        value: serde_json::Value,
-    },
-    /// Load a structure file by path.
-    LoadFile {
-        /// Filesystem path to the `.cif` or `.pdb` file.
-        path: String,
-    },
-    /// Fetch a PDB structure by ID from a remote database.
-    FetchPdb {
-        /// 4-character PDB identifier (e.g. `"1crn"`).
-        id: String,
-        /// Source database: `"rcsb"` or `"pdb-redo"`.
-        source: String,
-    },
-    /// Open a native file dialog to pick a local structure file.
-    OpenFileDialog,
-    /// Toggle the panel between pinned and unpinned.
-    TogglePanel,
-    /// Resize the panel to a new width.
-    ResizePanel {
-        /// New panel width in physical pixels.
-        width: u32,
-    },
-    /// A key press forwarded from the webview (e.g. Tab on Windows).
-    KeyPress {
-        /// Physical key name matching winit's `KeyCode` debug format.
-        key: String,
-    },
-    /// An engine command to forward via `engine.execute()`.
-    Command(VisoCommand),
-}
 
 /// Create the wry webview as a child of the given window.
 ///
@@ -93,6 +51,8 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     let (tx, rx) = mpsc::channel();
 
     let bounds = panel_bounds(window_width, window_height, panel_width);
+
+    let init_js = format!("{}{}", bridge::BRIDGE_JS, BRIDGE_JS_NATIVE_ADDENDUM);
 
     let webview = WebViewBuilder::new()
         .with_bounds(bounds)
@@ -125,11 +85,11 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
             }
         })
         .with_url(dev_or_embedded_url())
-        .with_initialization_script(BRIDGE_JS)
+        .with_initialization_script(&init_js)
         .with_ipc_handler(move |req| {
             let body = req.body();
             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(body) {
-                if let Some(action) = parse_action(&msg) {
+                if let Some(action) = bridge::parse_action(&msg) {
                     let _ = tx.send(action);
                 }
             }
@@ -185,8 +145,7 @@ pub fn panel_bounds_floating(
 pub fn push_schema(webview: &WebView, options: &VisoOptions) {
     let schema = schemars::schema_for!(VisoOptions);
     let json = serde_json::to_string(&schema).unwrap_or_default();
-    let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    safe_push(webview, "schema", &escaped);
+    safe_push(webview, "schema", &bridge::escape_for_js(&json));
 
     push_options(webview, options);
 }
@@ -194,8 +153,7 @@ pub fn push_schema(webview: &WebView, options: &VisoOptions) {
 /// Push the current Options state to the webview.
 pub fn push_options(webview: &WebView, options: &VisoOptions) {
     let json = serde_json::to_string(options).unwrap_or_default();
-    let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
-    safe_push(webview, "options", &escaped);
+    safe_push(webview, "options", &bridge::escape_for_js(&json));
 }
 
 /// Push stats (FPS + GPU buffer sizes) to the webview.
@@ -215,14 +173,16 @@ pub fn push_stats(
         })
         .collect();
     let json = serde_json::json!({ "fps": fps, "buffers": buffer_list });
-    let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
-    safe_push(webview, "stats", &s);
+    safe_push(webview, "stats", &bridge::escape_for_js(&json.to_string()));
 }
 
 /// Push the scene entity list to the webview.
 pub fn push_scene_entities(webview: &WebView, entities_json: &str) {
-    let escaped = entities_json.replace('\\', "\\\\").replace('\'', "\\'");
-    safe_push(webview, "scene_entities", &escaped);
+    safe_push(
+        webview,
+        "scene_entities",
+        &bridge::escape_for_js(entities_json),
+    );
 }
 
 /// Push a load-status event to the webview.
@@ -231,8 +191,11 @@ pub fn push_scene_entities(webview: &WebView, entities_json: &str) {
 /// `message` is a human-readable description.
 pub fn push_load_status(webview: &WebView, status: &str, message: &str) {
     let json = serde_json::json!({ "status": status, "message": message });
-    let s = json.to_string().replace('\\', "\\\\").replace('\'', "\\'");
-    safe_push(webview, "load_status", &s);
+    safe_push(
+        webview,
+        "load_status",
+        &bridge::escape_for_js(&json.to_string()),
+    );
 }
 
 /// Push the panel pinned state to the webview.
@@ -246,7 +209,7 @@ pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
 ///
 /// On Windows (WebView2), `evaluate_script` can fire before the
 /// initialization script has run.  This wrapper stores the value so
-/// [`BRIDGE_JS`] can replay it on init.
+/// the bridge script can replay it on init.
 fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
     let js = format!(
         "if(window.__viso_push_{key}){{window.__viso_push_{key}('\
@@ -258,22 +221,14 @@ fn safe_push(webview: &WebView, key: &str, escaped_value: &str) {
 
 // ── Internals ────────────────────────────────────────────────────────────
 
-/// JavaScript injected before page load. Defines the bridge functions that
-/// the Dioxus WASM code calls, and dispatches `CustomEvent`s.
+/// Native-specific addendum to the shared bridge JavaScript.
 ///
-/// Calls that arrive before the WASM app has registered listeners are
-/// buffered. When a listener attaches it replays any pending data.
-const BRIDGE_JS: &str = r"
+/// Handles Tab key forwarding (WebView2 intercepts Tab for its own focus
+/// navigation) and replays pending data when the WASM app adds
+/// `addEventListener` calls late.
+const BRIDGE_JS_NATIVE_ADDENDUM: &str = r"
 (function() {
-    var pending = { schema: null, options: null, stats: null, panel_pinned: null, load_status: null, scene_entities: null };
-
-    function dispatch(name, json) {
-        window.dispatchEvent(new CustomEvent(name, { detail: json }));
-    }
-
     // Forward Tab to the native side so the engine can cycle focus.
-    // WebView2 on Windows intercepts Tab for its own focus navigation,
-    // preventing winit from seeing the keypress.
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Tab') {
             e.preventDefault();
@@ -281,65 +236,12 @@ const BRIDGE_JS: &str = r"
         }
     });
 
-    window.__viso_push_schema = function(json) {
-        pending.schema = json;
-        dispatch('viso-schema', json);
-    };
-    window.__viso_push_options = function(json) {
-        pending.options = json;
-        dispatch('viso-options', json);
-    };
-    window.__viso_push_stats = function(json) {
-        pending.stats = json;
-        dispatch('viso-stats', json);
-    };
-    window.__viso_push_panel_pinned = function(val) {
-        pending.panel_pinned = val;
-        dispatch('viso-panel-pinned', val);
-    };
-    window.__viso_push_load_status = function(json) {
-        pending.load_status = json;
-        dispatch('viso-load-status', json);
-    };
-    window.__viso_push_scene_entities = function(json) {
-        pending.scene_entities = json;
-        dispatch('viso-scene-entities', json);
-    };
-
-    // Replay any data that arrived via evaluate_script before this init
-    // script ran (race on Windows/WebView2).
-    var early = window.__viso_early;
-    if (early) {
-        if (early.schema)       window.__viso_push_schema(early.schema);
-        if (early.options)      window.__viso_push_options(early.options);
-        if (early.stats)        window.__viso_push_stats(early.stats);
-        if (early.panel_pinned) window.__viso_push_panel_pinned(early.panel_pinned);
-        if (early.load_status)       window.__viso_push_load_status(early.load_status);
-        if (early.scene_entities)    window.__viso_push_scene_entities(early.scene_entities);
-        delete window.__viso_early;
-    }
-
     // When the WASM app adds a listener, replay buffered data.
     var origAdd = EventTarget.prototype.addEventListener;
     EventTarget.prototype.addEventListener = function(type, fn, opts) {
         origAdd.call(this, type, fn, opts);
-        if (this === window && type === 'viso-schema' && pending.schema) {
-            dispatch('viso-schema', pending.schema);
-        }
-        if (this === window && type === 'viso-options' && pending.options) {
-            dispatch('viso-options', pending.options);
-        }
-        if (this === window && type === 'viso-stats' && pending.stats) {
-            dispatch('viso-stats', pending.stats);
-        }
-        if (this === window && type === 'viso-panel-pinned' && pending.panel_pinned !== null) {
-            dispatch('viso-panel-pinned', pending.panel_pinned);
-        }
-        if (this === window && type === 'viso-load-status' && pending.load_status) {
-            dispatch('viso-load-status', pending.load_status);
-        }
-        if (this === window && type === 'viso-scene-entities' && pending.scene_entities) {
-            dispatch('viso-scene-entities', pending.scene_entities);
+        if (this === window && type.startsWith('viso-') && window.__viso_replay_pending) {
+            window.__viso_replay_pending();
         }
     };
 })();
@@ -356,52 +258,5 @@ fn dev_or_embedded_url() -> &'static str {
         "http://localhost:8080/"
     } else {
         "viso://localhost/"
-    }
-}
-
-/// Parse an IPC message from the WASM side into a [`UiAction`].
-fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
-    let action = msg.get("action")?.as_str()?;
-    match action {
-        "set_option" => {
-            let path = msg.get("path")?.as_str()?.to_owned();
-            let field = msg.get("field")?.as_str()?.to_owned();
-            let value = msg.get("value")?.clone();
-            Some(UiAction::SetOption { path, field, value })
-        }
-        "load_file" => {
-            let path = msg.get("path")?.as_str()?.to_owned();
-            Some(UiAction::LoadFile { path })
-        }
-        "fetch_pdb" => {
-            let id = msg.get("id")?.as_str()?.to_owned();
-            let source = msg.get("source")?.as_str()?.to_owned();
-            Some(UiAction::FetchPdb { id, source })
-        }
-        "open_file_dialog" => Some(UiAction::OpenFileDialog),
-        "key" => {
-            let key = msg.get("key")?.as_str()?.to_owned();
-            Some(UiAction::KeyPress { key })
-        }
-        "toggle_panel" => Some(UiAction::TogglePanel),
-        "resize_panel" => {
-            let width = msg.get("width")?.as_u64()? as u32;
-            Some(UiAction::ResizePanel { width })
-        }
-        "focus_entity" => {
-            let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::Command(VisoCommand::FocusEntity { id }))
-        }
-        "toggle_entity_visibility" => {
-            let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::Command(VisoCommand::ToggleEntityVisibility {
-                id,
-            }))
-        }
-        "remove_entity" => {
-            let id = msg.get("id")?.as_u64()? as u32;
-            Some(UiAction::Command(VisoCommand::RemoveEntity { id }))
-        }
-        _ => None,
     }
 }

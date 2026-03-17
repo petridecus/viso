@@ -167,10 +167,92 @@ pub fn send_fetch_pdb(id: &str, source: &str) {
     post_message(&msg.to_string());
 }
 
-/// Send an `open_file_dialog` action to the native engine.
+/// Open a file dialog. On native, delegates to `rfd::FileDialog` via IPC.
+/// On web, uses a browser `<input type="file">` and passes bytes to the
+/// engine via `window.parent.__viso_load_bytes()`.
 pub fn send_open_file_dialog() {
-    let msg = serde_json::json!({ "action": "open_file_dialog" });
-    post_message(&msg.to_string());
+    if has_load_bytes() {
+        open_browser_file_dialog();
+    } else {
+        let msg = serde_json::json!({ "action": "open_file_dialog" });
+        post_message(&msg.to_string());
+    }
+}
+
+/// Check whether `window.parent.__viso_load_bytes` exists (web context).
+fn has_load_bytes() -> bool {
+    let Some(win) = web_sys::window() else {
+        return false;
+    };
+    let Ok(parent) = js_sys::Reflect::get(&win, &JsValue::from_str("parent"))
+    else {
+        return false;
+    };
+    js_sys::Reflect::get(&parent, &JsValue::from_str("__viso_load_bytes"))
+        .map(|v| v.is_function())
+        .unwrap_or(false)
+}
+
+/// Create a hidden `<input type="file">`, trigger it, read the selected
+/// file via `FileReader`, and pass the bytes to the engine.
+fn open_browser_file_dialog() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Ok(el) = document.create_element("input") else {
+        return;
+    };
+    let input: web_sys::HtmlInputElement = el.unchecked_into();
+    input.set_type("file");
+    input.set_accept(".cif,.pdb");
+
+    let on_change = Closure::<dyn FnMut()>::once({
+        let input = input.clone();
+        move || {
+            let Some(files) = input.files() else { return };
+            let Some(file) = files.get(0) else { return };
+            let name = file.name();
+            let ext = name.rsplit('.').next().unwrap_or("cif").to_owned();
+
+            let Ok(reader) = web_sys::FileReader::new() else {
+                return;
+            };
+            let reader_clone = reader.clone();
+            let on_load = Closure::<dyn FnMut()>::once(move || {
+                let Ok(result) = reader_clone.result() else {
+                    return;
+                };
+                let array = js_sys::Uint8Array::new(&result);
+                // Call window.parent.__viso_load_bytes(bytes, ext)
+                let Some(win) = web_sys::window() else { return };
+                let Ok(parent) =
+                    js_sys::Reflect::get(&win, &JsValue::from_str("parent"))
+                else {
+                    return;
+                };
+                let Ok(func) = js_sys::Reflect::get(
+                    &parent,
+                    &JsValue::from_str("__viso_load_bytes"),
+                ) else {
+                    return;
+                };
+                if func.is_function() {
+                    let func: js_sys::Function = func.unchecked_into();
+                    let _ =
+                        func.call2(&parent, &array, &JsValue::from_str(&ext));
+                }
+            });
+            reader.set_onload(Some(on_load.as_ref().unchecked_ref()));
+            on_load.forget();
+            let _ = reader.read_as_array_buffer(&file);
+        }
+    });
+    let _ = input.add_event_listener_with_callback(
+        "change",
+        on_change.as_ref().unchecked_ref(),
+    );
+    on_change.forget();
+    input.click();
 }
 
 /// Send a `focus_entity` action to the native engine.

@@ -25,6 +25,7 @@
 //! documentation.
 
 pub(crate) mod animation;
+pub(crate) mod bridge;
 pub(crate) mod camera;
 pub(crate) mod engine;
 pub(crate) mod error;
@@ -47,6 +48,8 @@ pub mod web;
 
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
+#[cfg(feature = "gui")]
+pub use bridge::UiAction;
 pub use engine::command::{
     AtomRef, BandInfo, BandTarget, BandType, PullInfo, VisoCommand,
 };
@@ -55,8 +58,6 @@ pub use engine::VisoEngine;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
 pub use gpu::texture::RenderTarget;
-#[cfg(feature = "gui")]
-pub use gui::webview::UiAction;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
 // Picking output
