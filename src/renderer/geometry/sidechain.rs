@@ -96,7 +96,7 @@ impl SidechainRenderer {
         )?;
 
         // No frustum culling on initial creation
-        let instances = Self::generate_instances(sidechain, None, None);
+        let instances = Self::generate_instances(sidechain, None, None, None);
 
         let _ =
             pass.write_instances(&context.device, &context.queue, &instances);
@@ -107,10 +107,13 @@ impl SidechainRenderer {
     /// Generate capsule instances from sidechain data.
     /// - `frustum`: Optional frustum for culling (None = no culling)
     /// - `sidechain_colors`: Optional (hydrophobic, hydrophilic) color override
+    /// - `per_residue_colors`: When set, each sidechain atom is colored by
+    ///   its residue's backbone color (overrides `sidechain_colors`).
     pub(crate) fn generate_instances(
         sidechain: &SidechainView,
         frustum: Option<&Frustum>,
         sidechain_colors: Option<([f32; 3], [f32; 3])>,
+        per_residue_colors: Option<&[[f32; 3]]>,
     ) -> Vec<CapsuleInstance> {
         let mut instances = Vec::with_capacity(
             sidechain.bonds.len() + sidechain.backbone_bonds.len(),
@@ -121,6 +124,15 @@ impl SidechainRenderer {
 
         // Helper to get color for an atom index
         let get_color = |idx: usize| -> [f32; 3] {
+            // Backbone color mode: look up the residue's backbone color.
+            if let Some(colors) = per_residue_colors {
+                let res = sidechain
+                    .residue_indices
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                return colors.get(res).copied().unwrap_or([0.5, 0.5, 0.5]);
+            }
             if sidechain.hydrophobicity.get(idx).copied().unwrap_or(false) {
                 hydrophobic_color
             } else {
@@ -227,7 +239,7 @@ impl SidechainRenderer {
         queue: &wgpu::Queue,
         sidechain: &SidechainView,
     ) {
-        self.update_with_frustum(device, queue, sidechain, None);
+        self.update_with_frustum(device, queue, sidechain, None, None);
     }
 
     /// Update sidechain geometry with frustum culling.
@@ -237,8 +249,10 @@ impl SidechainRenderer {
         queue: &wgpu::Queue,
         sidechain: &SidechainView,
         frustum: Option<&Frustum>,
+        per_residue_colors: Option<&[[f32; 3]]>,
     ) {
-        let instances = Self::generate_instances(sidechain, frustum, None);
+        let instances =
+            Self::generate_instances(sidechain, frustum, None, per_residue_colors);
 
         let _ = self.pass.write_instances(device, queue, &instances);
     }

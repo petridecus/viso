@@ -1,9 +1,7 @@
 //! WASM entry point for running Viso in a browser via WebGPU.
 //!
-//! Exports two `wasm_bindgen` functions:
-//! - [`init`] — sets up logging and panic hooks.
-//! - [`start`] — creates a `VisoEngine` from an `HtmlCanvasElement` and
-//!   structure file bytes, then enters a `requestAnimationFrame` render loop.
+//! Sets up the engine, wires the viso-ui IPC bridge (same protocol as the
+//! native wry path), and runs a `requestAnimationFrame` render loop.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,7 +12,18 @@ use web_sys::HtmlCanvasElement;
 
 use crate::gpu::RenderContext;
 use crate::input::{InputEvent, InputProcessor, MouseButton};
+use crate::options::VisoOptions;
 use crate::VisoEngine;
+
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+// ---------------------------------------------------------------------------
+// Shared engine handle
+// ---------------------------------------------------------------------------
+
+/// Thread-local engine state shared between the rAF loop, input listeners,
+/// and the IPC bridge.
+type EngineHandle = Rc<RefCell<VisoEngine>>;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -35,53 +44,489 @@ pub fn init() {
 
 /// Create and start a `VisoEngine` rendering to the given canvas.
 ///
-/// `format_hint` is the file extension used to select the parser:
-/// `"cif"`, `"pdb"`, or `"bcif"`.
+/// This also installs the IPC bridge so that viso-ui (running in the same
+/// page or an iframe) can communicate with the engine via the same
+/// `window.ipc.postMessage` / `window.__viso_push_*` protocol used
+/// natively.
 ///
 /// # Errors
 ///
 /// Returns a `JsValue` error string if engine initialization fails.
 #[wasm_bindgen]
-pub async fn start(
-    canvas: HtmlCanvasElement,
-    structure_bytes: &[u8],
-    format_hint: &str,
-) -> Result<(), JsValue> {
+pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     let width = canvas.client_width().max(1) as u32;
     let height = canvas.client_height().max(1) as u32;
 
-    // Parse structure from bytes
-    let entities = parse_structure_bytes(structure_bytes, format_hint)
-        .map_err(|e| JsValue::from_str(&e))?;
-
-    // Create RenderContext from canvas via wgpu::SurfaceTarget::Canvas.
     let surface_target = wgpu::SurfaceTarget::Canvas(canvas.clone());
     let context = RenderContext::new(surface_target, (width, height))
         .await
         .map_err(|e| JsValue::from_str(&format!("GPU init failed: {e}")))?;
 
-    // Build engine with empty scene, then load entities
-    let mut engine = VisoEngine::new_empty(context)
+    let engine = VisoEngine::new_empty(context)
         .map_err(|e| JsValue::from_str(&format!("Engine init failed: {e}")))?;
 
-    let _ids = engine.load_entities(entities, true);
-
-    // Kick off the rAF loop
     let engine = Rc::new(RefCell::new(engine));
     let input = Rc::new(RefCell::new(InputProcessor::new()));
 
+    // Install the IPC bridge so viso-ui can talk to us.
+    // The bridge must be installed on the iframe's contentWindow (not the
+    // parent) because viso-ui runs inside the iframe and has its own
+    // window object.  We defer the initial push until the iframe loads.
+    install_ipc_bridge(Rc::clone(&engine));
+
+    // Wire up canvas input and resize handling
     attach_input_listeners(&canvas, Rc::clone(&engine), Rc::clone(&input));
+    attach_resize_observer(&canvas, Rc::clone(&engine));
+
+    // Start the render loop
     request_animation_frame_loop(Rc::clone(&engine));
 
     Ok(())
+}
+
+/// Load a structure from bytes into the running engine.
+///
+/// Called from JS after fetching a file (e.g. from RCSB).
+#[wasm_bindgen]
+pub fn load_structure(
+    engine_holder: &JsValue,
+    bytes: &[u8],
+    format_hint: &str,
+) -> Result<(), JsValue> {
+    // This is called from JS via the IPC bridge, not directly.
+    // The actual implementation is in handle_ipc_action.
+    let _ = (engine_holder, bytes, format_hint);
+    Err(JsValue::from_str(
+        "Use the viso-ui load panel or call window.__viso_load_bytes()",
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// IPC bridge (viso-ui ↔ engine)
+// ---------------------------------------------------------------------------
+
+/// Install the IPC bridge between the parent page (engine) and the
+/// viso-ui iframe.
+///
+/// - Creates the `ipc.postMessage` handler that routes actions into the
+///   engine.
+/// - Waits for the `ui-panel` iframe to load, then injects `ipc` and the
+///   `BRIDGE_JS` push functions into the iframe's `contentWindow` so that
+///   viso-ui (which runs inside the iframe) can send/receive messages.
+/// - Also installs `__viso_load_bytes` on the parent window for direct
+///   byte-loading from JS.
+fn install_ipc_bridge(engine: EngineHandle) {
+    log::info!("[bridge] install_ipc_bridge: starting");
+    let window = web_sys::window().expect("no global window");
+
+    // -- Build the ipc object with a postMessage handler --
+    let eng = Rc::clone(&engine);
+    let on_message = Closure::<dyn FnMut(String)>::new(move |json: String| {
+        log::info!("[bridge] ipc.postMessage received: {json}");
+        handle_ipc_action(&eng, &json);
+    });
+
+    let ipc = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &ipc,
+        &JsValue::from_str("postMessage"),
+        on_message.as_ref(),
+    );
+    on_message.forget();
+
+    // Install ipc on the parent window (for __viso_load_bytes and
+    // direct JS callers).
+    let _ =
+        js_sys::Reflect::set(&window, &JsValue::from_str("ipc"), &ipc);
+    log::info!("[bridge] ipc.postMessage installed on parent window");
+
+    // -- window.__viso_load_bytes(bytes, formatHint) --
+    let eng = Rc::clone(&engine);
+    let load_bytes = Closure::<dyn FnMut(Vec<u8>, String)>::new(
+        move |bytes: Vec<u8>, hint: String| match parse_structure_bytes(
+            &bytes, &hint,
+        ) {
+            Ok(entities) => {
+                let mut e = eng.borrow_mut();
+                let _ids = e.replace_scene(entities);
+                push_load_status("loaded", "Structure loaded");
+                push_scene_entities(&e);
+            }
+            Err(msg) => {
+                log::error!("load failed: {msg}");
+                push_load_status("error", &msg);
+            }
+        },
+    );
+    let _ = js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__viso_load_bytes"),
+        load_bytes.as_ref(),
+    );
+    load_bytes.forget();
+    log::info!("[bridge] __viso_load_bytes installed on parent window");
+
+    // -- Wire up the iframe once it loads --
+    let eng_for_iframe = Rc::clone(&engine);
+    let ipc_ref = js_sys::Reflect::get(&window, &JsValue::from_str("ipc"))
+        .expect("ipc not on window");
+    let on_load = Closure::<dyn FnMut()>::new(move || {
+        log::info!("[bridge] iframe 'load' event fired");
+        setup_iframe_bridge(&ipc_ref, &eng_for_iframe);
+    });
+
+    let document = window.document().expect("no document");
+    if let Some(iframe) = document.get_element_by_id("ui-panel") {
+        log::info!("[bridge] found ui-panel iframe element");
+        let iframe: web_sys::HtmlIFrameElement = iframe.unchecked_into();
+
+        // Attach load listener for future loads / reloads.
+        let _ = iframe.add_event_listener_with_callback(
+            "load",
+            on_load.as_ref().unchecked_ref(),
+        );
+        log::info!("[bridge] attached 'load' listener to iframe");
+
+        // If the iframe already loaded (likely — it's a small HTML page
+        // while the WASM took a while), set up immediately.
+        if iframe.content_window().is_some() {
+            log::info!("[bridge] iframe already loaded, setting up bridge now");
+            let ipc2 = js_sys::Reflect::get(
+                &web_sys::window().expect("window"),
+                &JsValue::from_str("ipc"),
+            )
+            .expect("ipc");
+            setup_iframe_bridge(&ipc2, &engine);
+        }
+    } else {
+        log::warn!("[bridge] ui-panel iframe element NOT found in DOM");
+    }
+    on_load.forget();
+    log::info!("[bridge] install_ipc_bridge: done");
+}
+
+/// Inject the IPC bridge into the viso-ui iframe's contentWindow.
+fn setup_iframe_bridge(ipc: &JsValue, engine: &EngineHandle) {
+    log::info!("[bridge] setup_iframe_bridge: starting");
+    let Some(iframe_win) = ui_iframe_window() else {
+        log::warn!("[bridge] setup_iframe_bridge: iframe contentWindow NOT accessible");
+        return;
+    };
+    log::info!("[bridge] setup_iframe_bridge: got iframe contentWindow");
+
+    // Install `window.ipc` on the iframe so bridge.rs can call
+    // `window.ipc.postMessage(json)`.
+    let _ =
+        js_sys::Reflect::set(&iframe_win, &JsValue::from_str("ipc"), ipc);
+    log::info!("[bridge] setup_iframe_bridge: ipc installed on iframe window");
+
+    // Run BRIDGE_JS inside the iframe context — this installs the
+    // `__viso_push_*` functions and CustomEvent dispatchers on the
+    // iframe's window.
+    eval_in(&iframe_win, BRIDGE_JS);
+    log::info!("[bridge] setup_iframe_bridge: BRIDGE_JS eval'd in iframe");
+
+    // Verify the push functions exist on the iframe window
+    let has_push = js_sys::Reflect::get(
+        &iframe_win,
+        &JsValue::from_str("__viso_push_schema"),
+    )
+    .map(|v| v.is_function())
+    .unwrap_or(false);
+    log::info!(
+        "[bridge] setup_iframe_bridge: __viso_push_schema on iframe = {}",
+        has_push
+    );
+
+    // Now push the initial data into the (now-ready) iframe.
+    log::info!("[bridge] setup_iframe_bridge: pushing initial schema+options");
+    push_schema_and_options(&engine.borrow());
+
+    // Schedule retries — dioxus WASM inside the iframe may not have
+    // registered its event listeners yet.  __viso_replay_pending
+    // re-dispatches all stored values.
+    eval_in(
+        &iframe_win,
+        "setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},200);\
+         setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},1000);\
+         setTimeout(function(){if(window.__viso_replay_pending)window.__viso_replay_pending()},3000);",
+    );
+
+    log::info!("[bridge] setup_iframe_bridge: done (retries scheduled at 200/1000/3000ms)");
+}
+
+/// Get the `contentWindow` of the `ui-panel` iframe, if available.
+fn ui_iframe_window() -> Option<JsValue> {
+    let document = web_sys::window()?.document()?;
+    let el = document.get_element_by_id("ui-panel")?;
+    let iframe: web_sys::HtmlIFrameElement = el.unchecked_into();
+    iframe.content_window().map(JsValue::from)
+}
+
+/// Evaluate a JS string in the context of a target window.
+///
+/// Retrieves the target window's own `eval` function and calls it, so
+/// `window` references inside the script resolve to the target.
+fn eval_in(target_window: &JsValue, js: &str) {
+    let Ok(eval_fn) =
+        js_sys::Reflect::get(target_window, &JsValue::from_str("eval"))
+    else {
+        log::warn!("[bridge] eval_in: could not get eval from target window");
+        return;
+    };
+    if !eval_fn.is_function() {
+        log::warn!("[bridge] eval_in: eval is not a function on target window");
+        return;
+    }
+    let eval_fn: js_sys::Function = eval_fn.unchecked_into();
+    match eval_fn.call1(target_window, &JsValue::from_str(js)) {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("[bridge] eval_in: eval threw: {e:?}");
+        }
+    }
+}
+
+/// Handle a JSON action from viso-ui (same format as native wry IPC).
+fn handle_ipc_action(engine: &EngineHandle, json: &str) {
+    let Ok(msg) = serde_json::from_str::<serde_json::Value>(json) else {
+        log::warn!("invalid IPC JSON: {json}");
+        return;
+    };
+
+    let action = msg
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    let mut eng = engine.borrow_mut();
+
+    match action {
+        "set_option" => {
+            let path = msg.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let field = msg.get("field").and_then(|v| v.as_str()).unwrap_or("");
+            let value = msg.get("value").cloned().unwrap_or_default();
+            if let Ok(mut root) = serde_json::to_value(&eng.options()) {
+                root[path][field] = value;
+                if let Ok(updated) = serde_json::from_value::<VisoOptions>(root)
+                {
+                    eng.set_options(updated);
+                }
+            }
+        }
+        "fetch_pdb" => {
+            let id = msg
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let source = msg
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("rcsb")
+                .to_string();
+            // Spawn async fetch in the browser
+            let eng_clone = Rc::clone(engine);
+            wasm_bindgen_futures::spawn_local(async move {
+                fetch_and_load(&eng_clone, &id, &source).await;
+            });
+        }
+        "focus_entity" => {
+            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                let cmd = crate::VisoCommand::FocusEntity { id: id as u32 };
+                let _ = eng.execute(cmd);
+            }
+        }
+        "toggle_entity_visibility" => {
+            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                let cmd = crate::VisoCommand::ToggleEntityVisibility {
+                    id: id as u32,
+                };
+                let _ = eng.execute(cmd);
+                push_scene_entities(&eng);
+            }
+        }
+        "remove_entity" => {
+            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                let cmd = crate::VisoCommand::RemoveEntity { id: id as u32 };
+                let _ = eng.execute(cmd);
+                push_scene_entities(&eng);
+            }
+        }
+        "toggle_panel" | "resize_panel" | "open_file_dialog" | "key" => {
+            // Panel/file-dialog actions are native-only; no-op on web
+        }
+        other => {
+            log::warn!("unhandled IPC action: {other}");
+        }
+    }
+}
+
+/// Fetch a structure from RCSB/PDB-REDO and load it.
+async fn fetch_and_load(engine: &EngineHandle, id: &str, source: &str) {
+    push_load_status("loading", &format!("Fetching {id}..."));
+
+    let url = match source {
+        "pdb-redo" => format!(
+            "https://pdb-redo.eu/db/{id}/{id}_final.cif",
+            id = id.to_lowercase()
+        ),
+        _ => {
+            format!("https://files.rcsb.org/download/{}.cif", id.to_uppercase())
+        }
+    };
+
+    let resp = match web_sys::window()
+        .expect("no window")
+        .fetch_with_str(&url)
+        .dyn_into::<js_sys::Promise>()
+    {
+        Ok(promise) => {
+            match wasm_bindgen_futures::JsFuture::from(promise).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    push_load_status("error", &format!("Fetch failed: {e:?}"));
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            push_load_status("error", &format!("Fetch failed: {e:?}"));
+            return;
+        }
+    };
+
+    let resp: web_sys::Response = match resp.dyn_into() {
+        Ok(r) => r,
+        Err(_) => {
+            push_load_status("error", "Invalid fetch response");
+            return;
+        }
+    };
+
+    if !resp.ok() {
+        push_load_status("error", &format!("HTTP {}", resp.status()));
+        return;
+    }
+
+    let buf = match resp.array_buffer() {
+        Ok(promise) => {
+            match wasm_bindgen_futures::JsFuture::from(promise).await {
+                Ok(buf) => buf,
+                Err(e) => {
+                    push_load_status("error", &format!("Read failed: {e:?}"));
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            push_load_status("error", &format!("Read failed: {e:?}"));
+            return;
+        }
+    };
+
+    let array = js_sys::Uint8Array::new(&buf);
+    let bytes = array.to_vec();
+
+    match parse_structure_bytes(&bytes, "cif") {
+        Ok(entities) => {
+            let mut eng = engine.borrow_mut();
+            let _ids = eng.replace_scene(entities);
+            push_load_status("loaded", &format!("Loaded {id}"));
+            push_scene_entities(&eng);
+        }
+        Err(msg) => {
+            push_load_status("error", &msg);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State push (engine → viso-ui via CustomEvents)
+// ---------------------------------------------------------------------------
+
+/// Push the options JSON schema + current values to viso-ui.
+fn push_schema_and_options(engine: &VisoEngine) {
+    let schema = schemars::schema_for!(VisoOptions);
+    let json = serde_json::to_string(&schema).unwrap_or_default();
+    push_to_ui("schema", &json);
+
+    let opts_json = serde_json::to_string(engine.options()).unwrap_or_default();
+    push_to_ui("options", &opts_json);
+}
+
+/// Push the scene entity list to viso-ui.
+fn push_scene_entities(engine: &VisoEngine) {
+    use molex::types::entity::MoleculeType;
+
+    let focus = engine.entities.focus();
+    let entities: Vec<serde_json::Value> = engine
+        .entities
+        .entities()
+        .iter()
+        .map(|se| {
+            let mol_type = match se.entity.molecule_type {
+                MoleculeType::Protein => "Protein",
+                MoleculeType::DNA => "DNA",
+                MoleculeType::RNA => "RNA",
+                _ => "Ligand",
+            };
+            let chain_ids: Vec<String> =
+                se.entity.as_polymer().map_or_else(Vec::new, |data| {
+                    data.chains
+                        .iter()
+                        .map(|c| String::from(c.chain_id as char))
+                        .collect()
+                });
+            let focused = matches!(
+                focus,
+                crate::engine::scene::Focus::Entity(eid) if *eid == se.id()
+            );
+            serde_json::json!({
+                "id": se.id(),
+                "molecule_type": mol_type,
+                "label": se.entity.label(),
+                "visible": se.visible,
+                "atom_count": se.entity.atom_count(),
+                "chain_ids": chain_ids,
+                "focused": focused,
+                "focusable": se.entity.is_focusable(),
+            })
+        })
+        .collect();
+    let json = serde_json::to_string(&entities).unwrap_or_default();
+    push_to_ui("scene_entities", &json);
+}
+
+/// Push a load-status event to viso-ui.
+fn push_load_status(status: &str, message: &str) {
+    let json = serde_json::json!({ "status": status, "message": message });
+    push_to_ui("load_status", &json.to_string());
+}
+
+/// Dispatch a value to viso-ui via the bridge's
+/// `window.__viso_push_{key}(json)` function on the iframe's window.
+fn push_to_ui(key: &str, json: &str) {
+    let escaped = json.replace('\\', "\\\\").replace('\'', "\\'");
+    let js = format!(
+        "if(window.__viso_push_{key}){{window.__viso_push_{key}('{escaped}')}}"
+    );
+
+    // Eval in the iframe's context so the CustomEvent dispatches on the
+    // window that viso-ui is listening on.
+    if let Some(iframe_win) = ui_iframe_window() {
+        log::info!("[bridge] push_to_ui({key}): targeting iframe window");
+        eval_in(&iframe_win, &js);
+    } else {
+        log::warn!("[bridge] push_to_ui({key}): iframe not available, falling back to parent");
+        let _ = js_sys::eval(&js);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Structure parsing from in-memory bytes
 // ---------------------------------------------------------------------------
 
-/// Parse a structure file from raw bytes, selecting the parser based on the
-/// file extension hint.
 fn parse_structure_bytes(
     bytes: &[u8],
     format_hint: &str,
@@ -101,11 +546,9 @@ fn parse_structure_bytes(
             molex::adapters::pdb::pdb_str_to_entities(text)
                 .map_err(|e| format!("PDB parse error: {e}"))
         }
-        "bcif" => molex::adapters::bcif::bcif_to_entities(bytes)
-            .map_err(|e| format!("BinaryCIF parse error: {e}")),
-        other => Err(format!(
-            "Unsupported format '{other}'. Use 'cif', 'pdb', or 'bcif'."
-        )),
+        other => {
+            Err(format!("Unsupported format '{other}'. Use 'cif' or 'pdb'."))
+        }
     }
 }
 
@@ -113,17 +556,14 @@ fn parse_structure_bytes(
 // requestAnimationFrame render loop
 // ---------------------------------------------------------------------------
 
-/// Start a `requestAnimationFrame` loop that drives `engine.update()` +
-/// `engine.render()` each frame.
-fn request_animation_frame_loop(engine: Rc<RefCell<VisoEngine>>) {
-    // The closure must be able to schedule itself for the next frame.
-    // We use an Rc<RefCell<Option<Closure>>> to allow the closure to
-    // reference itself indirectly.
+fn request_animation_frame_loop(engine: EngineHandle) {
     let closure_holder: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
         Rc::new(RefCell::new(None));
     let holder_for_closure = Rc::clone(&closure_holder);
 
-    let dt = 1.0 / 60.0_f32; // approximate; real timing can be added later
+    let dt = 1.0 / 60.0_f32;
+    // Push stats to viso-ui roughly every 250ms (~15 frames at 60fps).
+    let frame_counter = Rc::new(RefCell::new(0u32));
 
     let cb = Closure::<dyn FnMut()>::new(move || {
         {
@@ -131,26 +571,29 @@ fn request_animation_frame_loop(engine: Rc<RefCell<VisoEngine>>) {
             eng.update(dt);
             match eng.render() {
                 Ok(()) => {}
-                Err(e) => {
-                    log::error!("render error: {e:?}");
-                }
+                Err(e) => log::error!("render error: {e:?}"),
+            }
+
+            let mut count = frame_counter.borrow_mut();
+            *count += 1;
+            if *count >= 15 {
+                *count = 0;
+                let fps = eng.fps();
+                let json =
+                    serde_json::json!({ "fps": fps, "buffers": [] });
+                push_to_ui("stats", &json.to_string());
             }
         }
-        // Schedule next frame
         let holder = holder_for_closure.borrow();
         if let Some(ref cb) = *holder {
             let _ = request_animation_frame(cb);
         }
     });
 
-    // Kick off the first frame
     let _ = request_animation_frame(&cb);
-
-    // Store the closure so it is not dropped
     *closure_holder.borrow_mut() = Some(cb);
 }
 
-/// Schedule a callback via `window.requestAnimationFrame`.
 fn request_animation_frame(
     callback: &Closure<dyn FnMut()>,
 ) -> Result<i32, JsValue> {
@@ -163,24 +606,29 @@ fn request_animation_frame(
 // DOM input event forwarding
 // ---------------------------------------------------------------------------
 
-/// Attach mouse/wheel/keyboard listeners on the canvas and forward them
-/// through the `InputProcessor` into the `VisoEngine`.
+fn dpr() -> f32 {
+    web_sys::window()
+        .map(|w| w.device_pixel_ratio() as f32)
+        .unwrap_or(1.0)
+}
+
 fn attach_input_listeners(
     canvas: &HtmlCanvasElement,
-    engine: Rc<RefCell<VisoEngine>>,
+    engine: EngineHandle,
     input: Rc<RefCell<InputProcessor>>,
 ) {
-    // ── Mouse move ──
+    // Mouse move
     {
         let engine = Rc::clone(&engine);
         let input = Rc::clone(&input);
         let cb =
             Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
-                let x = event.offset_x() as f32;
-                let y = event.offset_y() as f32;
-                let evt = InputEvent::CursorMoved { x, y };
+                let scale = dpr();
+                let x = event.offset_x() as f32 * scale;
+                let y = event.offset_y() as f32 * scale;
                 let mut eng = engine.borrow_mut();
                 eng.set_cursor_pos(x, y);
+                let evt = InputEvent::CursorMoved { x, y };
                 if let Some(cmd) =
                     input.borrow_mut().handle_event(evt, eng.hovered_target())
                 {
@@ -194,7 +642,7 @@ fn attach_input_listeners(
         cb.forget();
     }
 
-    // ── Mouse down ──
+    // Mouse down
     {
         let engine = Rc::clone(&engine);
         let input = Rc::clone(&input);
@@ -223,7 +671,7 @@ fn attach_input_listeners(
         cb.forget();
     }
 
-    // ── Mouse up ──
+    // Mouse up
     {
         let engine = Rc::clone(&engine);
         let input = Rc::clone(&input);
@@ -252,7 +700,7 @@ fn attach_input_listeners(
         cb.forget();
     }
 
-    // ── Wheel (scroll/zoom) ──
+    // Wheel
     {
         let engine = Rc::clone(&engine);
         let input = Rc::clone(&input);
@@ -268,7 +716,6 @@ fn attach_input_listeners(
                     let _ = eng.execute(cmd);
                 }
             });
-        // Use non-passive listener so we can `preventDefault`
         let opts = web_sys::AddEventListenerOptions::new();
         opts.set_passive(false);
         let _ = canvas
@@ -280,7 +727,7 @@ fn attach_input_listeners(
         cb.forget();
     }
 
-    // ── Context menu (prevent default right-click menu) ──
+    // Prevent context menu on right-click
     {
         let cb =
             Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
@@ -292,4 +739,158 @@ fn attach_input_listeners(
         );
         cb.forget();
     }
+
+    // Keyboard input — listen on the document so keys work even when
+    // the canvas isn't explicitly focused.
+    {
+        let engine = Rc::clone(&engine);
+        let input = Rc::clone(&input);
+        let cb = Closure::<dyn FnMut(_)>::new(
+            move |event: web_sys::KeyboardEvent| {
+                // Browser KeyboardEvent.code uses the same naming as
+                // winit's KeyCode debug format: "KeyQ", "Tab", etc.
+                let code = event.code();
+                if let Some(cmd) =
+                    input.borrow_mut().handle_key_press(&code)
+                {
+                    event.prevent_default();
+                    let _ = engine.borrow_mut().execute(cmd);
+                }
+
+                // Forward shift state
+                let evt = InputEvent::ModifiersChanged {
+                    shift: event.shift_key(),
+                };
+                let mut eng = engine.borrow_mut();
+                if let Some(cmd) = input
+                    .borrow_mut()
+                    .handle_event(evt, eng.hovered_target())
+                {
+                    let _ = eng.execute(cmd);
+                }
+            },
+        );
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .expect("no document");
+        let _ = document.add_event_listener_with_callback(
+            "keydown",
+            cb.as_ref().unchecked_ref(),
+        );
+        cb.forget();
+    }
+
+    // Shift key release
+    {
+        let engine = Rc::clone(&engine);
+        let input = Rc::clone(&input);
+        let cb = Closure::<dyn FnMut(_)>::new(
+            move |event: web_sys::KeyboardEvent| {
+                let evt = InputEvent::ModifiersChanged {
+                    shift: event.shift_key(),
+                };
+                let mut eng = engine.borrow_mut();
+                if let Some(cmd) = input
+                    .borrow_mut()
+                    .handle_event(evt, eng.hovered_target())
+                {
+                    let _ = eng.execute(cmd);
+                }
+            },
+        );
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .expect("no document");
+        let _ = document.add_event_listener_with_callback(
+            "keyup",
+            cb.as_ref().unchecked_ref(),
+        );
+        cb.forget();
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Canvas resize handling
+// ---------------------------------------------------------------------------
+
+/// Watch the canvas element for size changes and call `engine.resize()`.
+fn attach_resize_observer(canvas: &HtmlCanvasElement, engine: EngineHandle) {
+    let canvas_clone = canvas.clone();
+    let cb = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
+        let dpr = web_sys::window()
+            .map(|w| w.device_pixel_ratio())
+            .unwrap_or(1.0);
+        let w = (f64::from(canvas_clone.client_width()) * dpr) as u32;
+        let h = (f64::from(canvas_clone.client_height()) * dpr) as u32;
+        if w > 0 && h > 0 {
+            canvas_clone.set_width(w);
+            canvas_clone.set_height(h);
+            engine.borrow_mut().resize(w, h);
+        }
+    });
+
+    // Create ResizeObserver via JS interop
+    let observer_js = js_sys::Function::new_with_args(
+        "cb",
+        "return new ResizeObserver(cb)",
+    );
+    if let Ok(observer) = observer_js.call1(&JsValue::NULL, cb.as_ref()) {
+        let observe_fn = js_sys::Reflect::get(
+            &observer,
+            &JsValue::from_str("observe"),
+        );
+        if let Ok(observe_fn) = observe_fn {
+            let observe_fn: js_sys::Function = observe_fn.unchecked_into();
+            let _ = observe_fn.call1(&observer, canvas);
+        }
+    }
+    cb.forget();
+}
+
+// ---------------------------------------------------------------------------
+// Bridge JS (same CustomEvent dispatch as native BRIDGE_JS)
+// ---------------------------------------------------------------------------
+
+/// Minimal version of the bridge script that defines the
+/// `window.__viso_push_*` functions and dispatches `CustomEvent`s.
+/// viso-ui registers listeners on these events.
+const BRIDGE_JS: &str = r"
+(function() {
+    var pending = {};
+    function dispatch(name, json) {
+        window.dispatchEvent(new CustomEvent(name, { detail: json }));
+    }
+    function makePush(key, eventName) {
+        window['__viso_push_' + key] = function(json) {
+            pending[key] = json;
+            dispatch(eventName, json);
+        };
+    }
+    makePush('schema', 'viso-schema');
+    makePush('options', 'viso-options');
+    makePush('stats', 'viso-stats');
+    makePush('panel_pinned', 'viso-panel-pinned');
+    makePush('load_status', 'viso-load-status');
+    makePush('scene_entities', 'viso-scene-entities');
+
+    // Allow late listeners (e.g. dioxus WASM) to replay any values
+    // that were pushed before they registered.
+    window.__viso_replay_pending = function() {
+        for (var k in pending) {
+            var fn = window['__viso_push_' + k];
+            if (fn) fn(pending[k]);
+        }
+    };
+
+    // Replay any early pushes
+    if (window.__viso_early) {
+        var e = window.__viso_early;
+        for (var k in e) {
+            if (window['__viso_push_' + k]) {
+                window['__viso_push_' + k](e[k]);
+            }
+        }
+        delete window.__viso_early;
+    }
+})();
+";

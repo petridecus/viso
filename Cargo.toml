@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/viso-ui"]
+members = ["crates/viso-ui", "xtask"]
 
 [package]
 name = "viso"
@@ -77,6 +77,9 @@ naga = "26"
 
 molex = "0.1.0"
 
+# Cross-platform Instant (delegates to performance.now() on WASM)
+web-time = "1"
+
 # WASM dependencies (feature-gated behind "web")
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
@@ -89,6 +92,7 @@ version = "0.3"
 optional = true
 features = [
     "HtmlCanvasElement",
+    "HtmlIFrameElement",
     "Window",
     "Document",
     "Performance",
@@ -97,6 +101,10 @@ features = [
     "WheelEvent",
     "KeyboardEvent",
     "AddEventListenerOptions",
+    "Response",
+    "Headers",
+    "RequestInit",
+    "CustomEvent",
 ]
 
 [[bin]]
@@ -158,7 +166,8 @@ bare_urls = "deny"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
-wasm-bindgen-rayon = "1"
+rayon = "1"
+wasm-bindgen-rayon = { version = "1", features = ["no-bundler"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

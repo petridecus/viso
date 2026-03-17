@@ -47,6 +47,14 @@ pub enum KeyCommandTag {
     ResetFocus,
     /// Cancel / clear selection.
     Cancel,
+    /// Toggle ion visibility.
+    ToggleIons,
+    /// Toggle water visibility.
+    ToggleWaters,
+    /// Toggle solvent visibility.
+    ToggleSolvent,
+    /// Cycle lipid display mode.
+    CycleLipidMode,
 }
 
 impl KeyCommandTag {
@@ -59,6 +67,10 @@ impl KeyCommandTag {
             Self::ToggleAutoRotate => VisoCommand::ToggleAutoRotate,
             Self::ResetFocus => VisoCommand::ResetFocus,
             Self::Cancel => VisoCommand::ClearSelection,
+            Self::ToggleIons => VisoCommand::ToggleIons,
+            Self::ToggleWaters => VisoCommand::ToggleWaters,
+            Self::ToggleSolvent => VisoCommand::ToggleSolvent,
+            Self::CycleLipidMode => VisoCommand::CycleLipidMode,
         }
     }
 }
@@ -72,6 +84,10 @@ impl Default for KeyBindings {
             ("KeyR".into(), KeyCommandTag::ToggleAutoRotate),
             ("Backquote".into(), KeyCommandTag::ResetFocus),
             ("Escape".into(), KeyCommandTag::Cancel),
+            ("KeyI".into(), KeyCommandTag::ToggleIons),
+            ("KeyU".into(), KeyCommandTag::ToggleWaters),
+            ("KeyO".into(), KeyCommandTag::ToggleSolvent),
+            ("KeyL".into(), KeyCommandTag::CycleLipidMode),
         ]);
         Self { bindings }
     }

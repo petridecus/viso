@@ -52,6 +52,7 @@ pub(crate) fn generate_mesh_colored(
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
     per_chain_lod: Option<&[(usize, usize)]>,
+    na_residue_colors: Option<&[[f32; 3]]>,
 ) -> BackboneMeshOutput {
     let (mut out, global_residue_idx) = process_protein_chains(
         chains.protein,
@@ -61,7 +62,14 @@ pub(crate) fn generate_mesh_colored(
         per_chain_lod,
     );
     let na_lod = per_chain_lod.and_then(|l| l.get(chains.protein.len()..));
-    process_na_chains(chains.na, geo, na_lod, &mut out, global_residue_idx);
+    process_na_chains(
+        chains.na,
+        geo,
+        na_lod,
+        &mut out,
+        global_residue_idx,
+        na_residue_colors,
+    );
 
     out
 }
@@ -142,20 +150,28 @@ fn process_na_chains(
     per_chain_lod: Option<&[(usize, usize)]>,
     out: &mut BackboneMeshOutput,
     mut global_residue_idx: u32,
+    na_residue_colors: Option<&[[f32; 3]]>,
 ) {
     let spr = geo.segments_per_residue;
     let csv = geo.cross_section_verts;
 
+    // Running index into the flat na_residue_colors slice.
+    let mut na_residue_offset: usize = 0;
+
     for (na_idx, chain) in chains.iter().enumerate() {
         if chain.len() < 2 {
             global_residue_idx += chain.len() as u32;
+            na_residue_offset += chain.len();
             continue;
         }
 
         let n_residues = chain.len();
         let profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {
-                resolve_na_profile(global_residue_idx + i as u32, NA_COLOR, geo)
+                let color = na_residue_colors
+                    .and_then(|c| c.get(na_residue_offset + i).copied())
+                    .unwrap_or(NA_COLOR);
+                resolve_na_profile(global_residue_idx + i as u32, color, geo)
             })
             .collect();
 
@@ -173,6 +189,7 @@ fn process_na_chains(
         out.push_chain(chain_mesh, center, radius);
 
         global_residue_idx += n_residues as u32;
+        na_residue_offset += n_residues;
     }
 }
 

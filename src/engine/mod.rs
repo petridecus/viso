@@ -15,7 +15,7 @@ pub(crate) mod trajectory;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 
 pub(crate) use bootstrap::FrameTiming;
 use entity_store::EntityStore;
@@ -297,6 +297,35 @@ impl VisoEngine {
             }
             VisoCommand::RemoveEntity { id } => {
                 self.execute_no_selection(|e| e.remove_entity(id))
+            }
+            // Display toggles
+            VisoCommand::ToggleIons => {
+                self.options.display.show_ions =
+                    !self.options.display.show_ions;
+                self.refresh_ball_and_stick();
+                false
+            }
+            VisoCommand::ToggleWaters => {
+                self.options.display.show_waters =
+                    !self.options.display.show_waters;
+                self.refresh_ball_and_stick();
+                false
+            }
+            VisoCommand::ToggleSolvent => {
+                self.options.display.show_solvent =
+                    !self.options.display.show_solvent;
+                self.refresh_ball_and_stick();
+                false
+            }
+            VisoCommand::CycleLipidMode => {
+                self.options.display.lipid_mode =
+                    if self.options.display.lipid_ball_and_stick() {
+                        crate::options::LipidMode::Coarse
+                    } else {
+                        crate::options::LipidMode::BallAndStick
+                    };
+                self.refresh_ball_and_stick();
+                false
             }
         }
     }

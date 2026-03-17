@@ -2,7 +2,7 @@
 //! pending per-entity transitions.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use web_time::Instant;
 
 use glam::Vec3;
 use molex::adapters::dcd::DcdFrame;
@@ -84,9 +84,8 @@ impl AnimationState {
         sidechain_topology: &SidechainTopology,
         entity_residue_ranges: &[EntityResidueRange],
     ) -> AnimationFrame {
-        let ca_positions = molex::render::backbone::ca_positions_from_chains(
-            backbone_chains,
-        );
+        let ca_positions =
+            molex::render::backbone::ca_positions_from_chains(backbone_chains);
         let sidechain_positions = sidechain_topology.target_positions.clone();
         let sidechain_residue_indices =
             sidechain_topology.residue_indices.clone();

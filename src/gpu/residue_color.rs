@@ -5,7 +5,7 @@
 //! rebuilds. Transitions interpolate over ~300ms with ease-out for smooth
 //! visual feedback.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use wgpu::util::DeviceExt;
 

@@ -17,12 +17,60 @@ use super::prepared::{
 };
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 
+// ---------------------------------------------------------------------------
+// Platform-abstracted background thread spawn
+// ---------------------------------------------------------------------------
+
+/// Handle to a background worker. On native this is a joinable OS thread;
+/// on WASM it is a no-op because the worker runs on a rayon pool thread
+/// (backed by web workers via `wasm-bindgen-rayon` + `SharedArrayBuffer`)
+/// and exits when the channel disconnects.
+#[cfg(not(target_arch = "wasm32"))]
+type WorkerHandle = Option<std::thread::JoinHandle<()>>;
+#[cfg(target_arch = "wasm32")]
+type WorkerHandle = ();
+
+/// Spawn a long-lived closure on a background thread.
+///
+/// - **Native:** dedicated OS thread via `std::thread::Builder`.
+/// - **WASM:** `rayon::spawn` onto the `wasm-bindgen-rayon` pool.
+fn spawn_background(
+    f: impl FnOnce() + Send + 'static,
+) -> Result<WorkerHandle, std::io::Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::thread::Builder::new()
+            .name("scene-processor".into())
+            .spawn(f)
+            .map(Some)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        rayon::spawn(f);
+        Ok(())
+    }
+}
+
+/// Join a background worker, blocking until it finishes.
+fn join_background(handle: &mut WorkerHandle) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(h) = handle.take() {
+        let _ = h.join();
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = handle;
+}
+
+// ---------------------------------------------------------------------------
+// SceneProcessor
+// ---------------------------------------------------------------------------
+
 /// Background thread that generates CPU-side geometry from scene data.
 pub struct SceneProcessor {
     request_tx: mpsc::Sender<SceneRequest>,
     scene_result: triple_buffer::Output<Option<PreparedScene>>,
     anim_result: triple_buffer::Output<Option<PreparedAnimationFrame>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    worker: WorkerHandle,
     /// Monotonically increasing scene generation counter. Bumped each
     /// time a `FullRebuild` is submitted. Animation frame results with
     /// a lower generation are discarded as stale.
@@ -44,17 +92,15 @@ impl SceneProcessor {
         let (scene_input, scene_output) = triple_buffer::triple_buffer(&None);
         let (anim_input, anim_output) = triple_buffer::triple_buffer(&None);
 
-        let thread = std::thread::Builder::new()
-            .name("scene-processor".into())
-            .spawn(move || {
-                Self::thread_loop(request_rx, scene_input, anim_input);
-            })?;
+        let worker = spawn_background(move || {
+            Self::thread_loop(request_rx, scene_input, anim_input);
+        })?;
 
         Ok(Self {
             request_tx,
             scene_result: scene_output,
             anim_result: anim_output,
-            thread: Some(thread),
+            worker,
             scene_generation: 0,
             scene_pending: false,
         })
@@ -143,9 +189,7 @@ impl SceneProcessor {
     /// Shut down the background thread and wait for it to finish.
     pub fn shutdown(&mut self) {
         let _ = self.request_tx.send(SceneRequest::Shutdown);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
+        join_background(&mut self.worker);
     }
 
     /// Background thread main loop with per-group mesh caching.
@@ -173,7 +217,7 @@ impl SceneProcessor {
                 } => {
                     last_rebuild_generation = generation;
                     cache.clear_meshes();
-                    cache.cache_stable_data(&entities);
+                    cache.cache_stable_data(&entities, &display);
                     let entity_meshes =
                         cache.update(&entities, &display, &colors, &geometry);
                     let mut prepared =
@@ -212,6 +256,9 @@ impl SceneProcessor {
                             sidechains: sidechains.as_ref(),
                             ss_types: ss,
                             per_residue_colors: colors,
+                            na_base_colors: cache
+                                .cached_na_base_colors
+                                .as_deref(),
                             geometry: &geometry,
                             per_chain_lod: per_chain_lod.as_deref(),
                         },
@@ -246,6 +293,8 @@ struct MeshCache {
     cached_ss_types: Option<Vec<molex::secondary_structure::SSType>>,
     /// Cached per-residue colors from the last `FullRebuild`.
     cached_per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// Cached NA base colors from the last `FullRebuild`.
+    cached_na_base_colors: Option<Vec<[f32; 3]>>,
 }
 
 impl MeshCache {
@@ -258,6 +307,7 @@ impl MeshCache {
             cached_na_chains: Vec::new(),
             cached_ss_types: None,
             cached_per_residue_colors: None,
+            cached_na_base_colors: None,
         }
     }
 
@@ -271,6 +321,7 @@ impl MeshCache {
     fn cache_stable_data(
         &mut self,
         entities: &[crate::engine::scene_data::PerEntityData],
+        display: &DisplayOptions,
     ) {
         self.cached_na_chains = entities
             .iter()
@@ -294,6 +345,22 @@ impl MeshCache {
             None
         } else {
             Some(colors)
+        };
+        // Cache NA base colors for animation frames
+        let na_colors: Vec<[f32; 3]> = if display.na_color_mode
+            == crate::options::NaColorMode::BaseColor
+        {
+            entities
+                .iter()
+                .flat_map(|e| e.nucleic_acid_rings.iter().map(|r| r.color))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.cached_na_base_colors = if na_colors.is_empty() {
+            None
+        } else {
+            Some(na_colors)
         };
     }
 

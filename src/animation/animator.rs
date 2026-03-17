@@ -1,6 +1,6 @@
 //! Structure animator for per-entity backbone/sidechain transitions.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use glam::Vec3;
 use rustc_hash::FxHashMap;

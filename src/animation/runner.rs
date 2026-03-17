@@ -1,6 +1,7 @@
 //! Animation runner executes a single animation.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use glam::Vec3;
 

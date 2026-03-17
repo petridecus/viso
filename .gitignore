@@ -1,5 +1,6 @@
 target/
 assets/
+pkg/
 
 # OS
 .DS_Store

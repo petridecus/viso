@@ -242,10 +242,18 @@ impl VisoEngine {
         if !self.should_update_culling() {
             return;
         }
+        let sc_colors = if self.options.display.sidechain_color_mode
+            == crate::options::SidechainColorMode::Backbone
+        {
+            self.topology.per_residue_colors.as_deref()
+        } else {
+            None
+        };
         self.gpu.update_frustum_culling(
             &self.camera_controller,
             &self.visual,
             &self.topology,
+            sc_colors,
         );
     }
 

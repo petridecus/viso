@@ -448,6 +448,7 @@ impl GpuPipeline {
         camera: &CameraController,
         visual: &VisualState,
         topology: &SceneTopology,
+        per_residue_colors: Option<&[[f32; 3]]>,
     ) {
         self.last_cull_camera_eye = camera.camera.eye;
 
@@ -491,6 +492,7 @@ impl GpuPipeline {
             &self.context.queue,
             &adjusted.as_view(),
             Some(&frustum),
+            per_residue_colors,
         );
 
         // Recreate picking bind group since buffer may have changed

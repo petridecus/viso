@@ -25,8 +25,10 @@ pub enum BackboneColorMode {
 #[serde(rename_all = "snake_case")]
 pub enum SidechainColorMode {
     /// Color by hydrophobicity.
-    #[default]
     Hydrophobicity,
+    /// Match the backbone color of the corresponding residue.
+    #[default]
+    Backbone,
 }
 
 /// How nucleic acid backbone is colored.
@@ -36,8 +38,10 @@ pub enum SidechainColorMode {
 #[serde(rename_all = "snake_case")]
 pub enum NaColorMode {
     /// Single uniform color.
-    #[default]
     Uniform,
+    /// Color each residue's backbone segment to match its base (A/T/G/C/U).
+    #[default]
+    BaseColor,
 }
 
 /// Lipid display style.

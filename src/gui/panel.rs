@@ -5,7 +5,8 @@
 //! fields.
 
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use winit::window::Window;
 use wry::dpi;

@@ -1,6 +1,7 @@
 //! Scene loading, GPU pipeline initialization, and engine assembly.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use glam::Vec3;
 #[cfg(not(target_arch = "wasm32"))]

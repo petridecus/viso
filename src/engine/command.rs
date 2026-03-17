@@ -216,4 +216,17 @@ pub enum VisoCommand {
         /// Entity identifier.
         id: u32,
     },
+
+    // ── Display toggles ──────────────────────────────────────────
+    /// Toggle ion visibility.
+    ToggleIons,
+
+    /// Toggle water visibility.
+    ToggleWaters,
+
+    /// Toggle solvent visibility.
+    ToggleSolvent,
+
+    /// Cycle lipid display mode (coarse ↔ ball-and-stick).
+    CycleLipidMode,
 }

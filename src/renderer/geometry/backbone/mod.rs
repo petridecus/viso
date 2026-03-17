@@ -444,7 +444,7 @@ impl BackboneRenderer {
         ss_override: Option<&[SSType]>,
         geo: &GeometryOptions,
     ) -> BackboneMeshOutput {
-        mesh::generate_mesh_colored(chains, ss_override, None, geo, None)
+        mesh::generate_mesh_colored(chains, ss_override, None, geo, None, None)
     }
 
     pub(crate) fn generate_mesh_colored(
@@ -453,6 +453,7 @@ impl BackboneRenderer {
         per_residue_colors: Option<&[[f32; 3]]>,
         geo: &GeometryOptions,
         per_chain_lod: Option<&[(usize, usize)]>,
+        na_residue_colors: Option<&[[f32; 3]]>,
     ) -> BackboneMeshOutput {
         mesh::generate_mesh_colored(
             chains,
@@ -460,6 +461,7 @@ impl BackboneRenderer {
             per_residue_colors,
             geo,
             per_chain_lod,
+            na_residue_colors,
         )
     }
 

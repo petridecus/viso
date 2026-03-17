@@ -23,6 +23,7 @@ fn generate_sidechain_bytes(
     g: &PerEntityData,
     sheet_offsets: &[(u32, Vec3)],
     colors: &ColorOptions,
+    display: &DisplayOptions,
 ) -> (Vec<u8>, u32) {
     let sidechain_positions = g.sidechains.positions();
     let sidechain_hydrophobicity = g.sidechains.hydrophobicity();
@@ -47,10 +48,18 @@ fn generate_sidechain_bytes(
         hydrophobicity: &sidechain_hydrophobicity,
         residue_indices: &sidechain_residue_indices,
     };
+    let backbone_colors = if display.sidechain_color_mode
+        == crate::options::SidechainColorMode::Backbone
+    {
+        g.per_residue_colors.as_deref()
+    } else {
+        None
+    };
     let insts = SidechainRenderer::generate_instances(
         &sd,
         None,
         Some((colors.hydrophobic_sidechain, colors.hydrophilic_sidechain)),
+        backbone_colors,
     );
     let count = insts.len() as u32;
     (bytemuck::cast_slice(&insts).to_vec(), count)
@@ -97,6 +106,18 @@ pub fn generate_entity_mesh(
     colors: &ColorOptions,
     geometry: &GeometryOptions,
 ) -> CachedEntityMesh {
+    let na_base_colors: Vec<[f32; 3]> = if display.na_color_mode
+        == crate::options::NaColorMode::BaseColor
+    {
+        g.nucleic_acid_rings.iter().map(|r| r.color).collect()
+    } else {
+        Vec::new()
+    };
+    let na_colors_ref = if na_base_colors.is_empty() {
+        None
+    } else {
+        Some(na_base_colors.as_slice())
+    };
     let backbone_mesh = BackboneRenderer::generate_mesh_colored(
         &ChainPair {
             protein: &g.backbone_chains,
@@ -106,10 +127,11 @@ pub fn generate_entity_mesh(
         g.per_residue_colors.as_deref(),
         geometry,
         None,
+        na_colors_ref,
     );
 
     let (sidechain_instances, sidechain_instance_count) =
-        generate_sidechain_bytes(g, &backbone_mesh.sheet_offsets, colors);
+        generate_sidechain_bytes(g, &backbone_mesh.sheet_offsets, colors, display);
     let (bns, na) = generate_non_backbone_bytes(g, display, colors);
 
     CachedEntityMesh {
@@ -154,7 +176,7 @@ fn generate_animation_sidechains(
         hydrophobicity: &hydrophobicity,
         residue_indices: &residue_indices,
     };
-    let insts = SidechainRenderer::generate_instances(&sd, None, None);
+    let insts = SidechainRenderer::generate_instances(&sd, None, None, None);
     let count = insts.len() as u32;
     (Some(bytemuck::cast_slice(&insts).to_vec()), count)
 }
@@ -166,6 +188,7 @@ pub struct AnimationFrameInput<'a> {
     pub sidechains: Option<&'a SidechainAtoms>,
     pub ss_types: Option<&'a [SSType]>,
     pub per_residue_colors: Option<&'a [[f32; 3]]>,
+    pub na_base_colors: Option<&'a [[f32; 3]]>,
     pub geometry: &'a GeometryOptions,
     pub per_chain_lod: Option<&'a [(usize, usize)]>,
 }
@@ -192,6 +215,7 @@ pub fn process_animation_frame(
         input.per_residue_colors,
         &safe_geo,
         input.per_chain_lod,
+        input.na_base_colors,
     );
     let backbone_tube_index_count = backbone_mesh.tube_indices.len() as u32;
     let backbone_ribbon_index_count = backbone_mesh.ribbon_indices.len() as u32;

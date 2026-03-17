@@ -43,10 +43,17 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Install trunk
+        run: cargo install trunk
+
       - name: Build mdBook
         run: mdbook build docs
 
-      - name: Build WASM demo
+      - name: Build viso-ui
+        run: trunk build --release
+        working-directory: crates/viso-ui
+
+      - name: Build WASM engine
         run: wasm-pack build --target web --features web --no-default-features
 
       - name: Assemble site
@@ -56,6 +63,7 @@ jobs:
           mkdir -p site/demo
           cp -r web/* site/demo/
           cp -r pkg site/demo/pkg
+          cp -r crates/viso-ui/dist site/demo/ui
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

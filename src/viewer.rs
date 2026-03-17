@@ -363,40 +363,6 @@ impl ViewerApp {
             return;
         };
 
-        // Display toggles are VisoOptions mutations, not commands.
-        // The viewer handles them directly.
-        match code {
-            KeyCode::KeyI => {
-                engine.options.display.show_ions =
-                    !engine.options.display.show_ions;
-                engine.refresh_ball_and_stick();
-                return;
-            }
-            KeyCode::KeyU => {
-                engine.options.display.show_waters =
-                    !engine.options.display.show_waters;
-                engine.refresh_ball_and_stick();
-                return;
-            }
-            KeyCode::KeyO => {
-                engine.options.display.show_solvent =
-                    !engine.options.display.show_solvent;
-                engine.refresh_ball_and_stick();
-                return;
-            }
-            KeyCode::KeyL => {
-                engine.options.display.lipid_mode =
-                    if engine.options.display.lipid_ball_and_stick() {
-                        crate::options::LipidMode::Coarse
-                    } else {
-                        crate::options::LipidMode::BallAndStick
-                    };
-                engine.refresh_ball_and_stick();
-                return;
-            }
-            _ => {}
-        }
-
         let key_str = format!("{code:?}");
         if let Some(cmd) = self.input.handle_key_press(&key_str) {
             let _ = engine.execute(cmd);

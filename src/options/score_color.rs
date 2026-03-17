@@ -118,20 +118,54 @@ pub fn per_residue_score_colors_relative_with_ramp(
         .collect()
 }
 
-/// Compute a rainbow chain color for parameter `t` in \[0, 1\].
+/// Discrete chain color palette — perceptually distinct, PBR-friendly
+/// colors that look good under directional lighting.
 ///
-/// Maps from red (t=0) through yellow, green, cyan, to blue (t=1).
+/// For ≤`CHAIN_PALETTE.len()` chains the palette is indexed directly.
+/// Beyond that, falls back to an evenly-spaced HSL sweep.
+const CHAIN_PALETTE: &[[f32; 3]] = &[
+    [0.05, 0.45, 1.00], // electric blue
+    [1.00, 0.35, 0.00], // pure orange
+    [0.00, 0.85, 0.20], // neon green
+    [1.00, 0.10, 0.25], // fire red
+    [0.55, 0.20, 1.00], // violet
+    [1.00, 0.85, 0.00], // bright yellow
+    [0.00, 0.85, 0.85], // electric cyan
+    [1.00, 0.05, 0.60], // hot pink
+    [0.40, 0.90, 0.00], // chartreuse
+    [0.10, 0.30, 1.00], // deep blue
+    [1.00, 0.50, 0.20], // tangerine
+    [0.80, 0.00, 1.00], // purple
+];
+
+/// Compute a chain color for index `idx` out of `total` chains.
+///
+/// Cycles through the hand-picked palette.
+pub(crate) fn chain_color_indexed(idx: usize, _total: usize) -> [f32; 3] {
+    CHAIN_PALETTE[idx % CHAIN_PALETTE.len()]
+}
+
+/// Legacy API: positional [0,1] → color (still used by `initial_chain_colors`).
 pub(crate) fn chain_color(t: f32) -> [f32; 3] {
-    let hue = (1.0 - t) * 240.0;
-    let sector = hue / 60.0;
-    let frac = sector - sector.floor();
-    match sector as u32 {
-        0 => [1.0, frac, 0.0],       // red → yellow
-        1 => [1.0 - frac, 1.0, 0.0], // yellow → green
-        2 => [0.0, 1.0, frac],       // green → cyan
-        3 => [0.0, 1.0 - frac, 1.0], // cyan → blue
-        _ => [0.0, 0.0, 1.0],        // blue
-    }
+    let hue = t * 360.0;
+    hsl_to_rgb(hue, 0.6, 0.55)
+}
+
+/// Convert HSL (h in degrees, s and l in [0,1]) to linear RGB.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h2 = h / 60.0;
+    let x = c * (1.0 - (h2 % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match h2 as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    [r1 + m, g1 + m, b1 + m]
 }
 
 /// Compute per-residue colors based on backbone color mode.
@@ -207,12 +241,7 @@ fn per_chain_colors(
         let mut colors = Vec::with_capacity(residue_count);
         for (chain_idx, chain) in backbone_chains.iter().enumerate() {
             let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
-            let t = if n_entities > 1 {
-                eidx as f32 / (n_entities - 1) as f32
-            } else {
-                0.0
-            };
-            let color = chain_color(t);
+            let color = chain_color_indexed(eidx, n_entities);
             let n_residues = chain.len() / 3;
             colors.extend(std::iter::repeat_n(color, n_residues));
         }
@@ -223,12 +252,7 @@ fn per_chain_colors(
     let num_chains = backbone_chains.len();
     let mut colors = Vec::with_capacity(residue_count);
     for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let t = if num_chains > 1 {
-            chain_idx as f32 / (num_chains - 1) as f32
-        } else {
-            0.0
-        };
-        let color = chain_color(t);
+        let color = chain_color_indexed(chain_idx, num_chains);
         let n_residues = chain.len() / 3;
         colors.extend(std::iter::repeat_n(color, n_residues));
     }
