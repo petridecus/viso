@@ -93,7 +93,19 @@
         import init_wasm, { init, start, initThreadPool } from './pkg/viso.js';
 
         async function main() {
-            await init_wasm();
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const PAGE = 65536;
+            const maxPages = 1073741824 / PAGE;       // 1 GB (must match linker --max-memory)
+            const initialPages = isSafari
+                ? 536870912 / PAGE                     // Safari: 512 MB up front (avoids memory.grow)
+                : 67108864 / PAGE;                     // Others: 64 MB, grows on demand
+            const memory = new WebAssembly.Memory({
+                initial: initialPages,
+                maximum: maxPages,
+                shared: true,
+            });
+
+            await init_wasm({ memory });
             await initThreadPool(navigator.hardwareConcurrency);
             init();
 

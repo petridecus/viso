@@ -59,8 +59,7 @@ jobs:
             -C target-feature=+atomics,+bulk-memory,+mutable-globals,-reference-types,-multivalue \
             -C link-arg=--shared-memory \
             -C link-arg=--import-memory \
-            -C link-arg=--initial-memory=536870912 \
-            -C link-arg=--max-memory=536870912 \
+            -C link-arg=--max-memory=1073741824 \
             -C link-arg=--export=__wasm_init_tls \
             -C link-arg=--export=__tls_size \
             -C link-arg=--export=__tls_align \
