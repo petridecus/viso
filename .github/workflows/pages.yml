@@ -7,6 +7,9 @@ on:
       - 'docs/**'
       - 'web/**'
       - 'src/**'
+      - 'Cargo.toml'
+      - '.cargo/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
