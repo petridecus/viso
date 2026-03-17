@@ -29,6 +29,9 @@ web = [
     "dep:js-sys",
 ]
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 wgpu = { version = "26.0", features = ["naga-ir"] }
 winit = { version = "0.30.12", optional = true }
