@@ -13,7 +13,7 @@ use wasm_bindgen::JsCast;
 pub use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::HtmlCanvasElement;
 
-use crate::bridge::{self, UiAction};
+use crate::bridge::{self, PanelAxis, UiAction};
 use crate::gpu::RenderContext;
 use crate::input::InputProcessor;
 use crate::options::VisoOptions;
@@ -70,11 +70,45 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     let engine = Rc::new(RefCell::new(engine));
     let input = Rc::new(RefCell::new(InputProcessor::new()));
 
+    // Track panel axis and push orientation on init.  On resize, if the
+    // axis changed, push the new orientation and re-apply layout.
+    let panel_axis = Rc::new(RefCell::new(current_axis()));
+    let panel_collapsed = Rc::new(RefCell::new(false));
+    let panel_size = Rc::new(RefCell::new(bridge::DEFAULT_PANEL_SIZE));
+
     // Install the IPC bridge so viso-ui can talk to us.
     // The bridge must be installed on the iframe's contentWindow (not the
     // parent) because viso-ui runs inside the iframe and has its own
     // window object.  We defer the initial push until the iframe loads.
-    install_ipc_bridge(Rc::clone(&engine));
+    install_ipc_bridge(
+        Rc::clone(&engine),
+        Rc::clone(&panel_axis),
+        Rc::clone(&panel_collapsed),
+        Rc::clone(&panel_size),
+    );
+
+    push_to_ui("orientation", panel_axis.borrow().orientation_str());
+    {
+        let axis = Rc::clone(&panel_axis);
+        let collapsed = Rc::clone(&panel_collapsed);
+        let size = Rc::clone(&panel_size);
+        let cb = Closure::<dyn FnMut()>::new(move || {
+            let new_axis = current_axis();
+            let mut cur = axis.borrow_mut();
+            if new_axis != *cur {
+                *cur = new_axis;
+                push_to_ui("orientation", new_axis.orientation_str());
+                apply_web_layout(new_axis, *collapsed.borrow(), *size.borrow());
+            }
+        });
+        let _ = web_sys::window()
+            .expect("no window")
+            .add_event_listener_with_callback(
+                "resize",
+                cb.as_ref().unchecked_ref(),
+            );
+        cb.forget();
+    }
 
     // Wire up canvas input and resize handling
     input::attach_input_listeners(
@@ -120,15 +154,34 @@ pub fn load_structure(
 ///   viso-ui (which runs inside the iframe) can send/receive messages.
 /// - Also installs `__viso_load_bytes` on the parent window for direct
 ///   byte-loading from JS.
-fn install_ipc_bridge(engine: EngineHandle) {
+/// Shared panel state for the web host.
+#[derive(Clone)]
+struct WebPanelState {
+    axis: Rc<RefCell<PanelAxis>>,
+    collapsed: Rc<RefCell<bool>>,
+    size: Rc<RefCell<u32>>,
+}
+
+fn install_ipc_bridge(
+    engine: EngineHandle,
+    axis: Rc<RefCell<PanelAxis>>,
+    collapsed: Rc<RefCell<bool>>,
+    size: Rc<RefCell<u32>>,
+) {
     log::info!("[bridge] install_ipc_bridge: starting");
     let window = web_sys::window().expect("no global window");
+    let panel = WebPanelState {
+        axis,
+        collapsed,
+        size,
+    };
 
     // -- Build the ipc object with a postMessage handler --
     let eng = Rc::clone(&engine);
+    let p = panel.clone();
     let on_message = Closure::<dyn FnMut(String)>::new(move |json: String| {
         log::info!("[bridge] ipc.postMessage received: {json}");
-        handle_ipc_action(&eng, &json);
+        handle_ipc_action(&eng, &p, &json);
     });
 
     let ipc = js_sys::Object::new();
@@ -298,7 +351,11 @@ fn eval_in(target_window: &JsValue, js: &str) {
 }
 
 /// Handle a JSON action from viso-ui (same format as native wry IPC).
-fn handle_ipc_action(engine: &EngineHandle, json: &str) {
+fn handle_ipc_action(
+    engine: &EngineHandle,
+    panel: &WebPanelState,
+    json: &str,
+) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(json) else {
         log::warn!("invalid IPC JSON: {json}");
         return;
@@ -333,9 +390,22 @@ fn handle_ipc_action(engine: &EngineHandle, json: &str) {
             let _ = eng.execute(cmd);
             push_scene_entities(&eng);
         }
-        UiAction::TogglePanel
-        | UiAction::ResizePanel { .. }
-        | UiAction::OpenFileDialog
+        UiAction::TogglePanel => {
+            let mut collapsed = panel.collapsed.borrow_mut();
+            *collapsed = !*collapsed;
+            let axis = *panel.axis.borrow();
+            let size = *panel.size.borrow();
+            apply_web_layout(axis, *collapsed, size);
+        }
+        UiAction::ResizePanel { size } => {
+            let clamped =
+                size.clamp(bridge::MIN_PANEL_SIZE, bridge::MAX_PANEL_SIZE);
+            *panel.size.borrow_mut() = clamped;
+            let axis = *panel.axis.borrow();
+            let collapsed = *panel.collapsed.borrow();
+            apply_web_layout(axis, collapsed, clamped);
+        }
+        UiAction::OpenFileDialog
         | UiAction::KeyPress { .. }
         | UiAction::LoadFile { .. } => {
             // Native-only actions; no-op on web
@@ -447,6 +517,53 @@ fn push_scene_entities(engine: &VisoEngine) {
 fn push_load_status(status: &str, message: &str) {
     let json = serde_json::json!({ "status": status, "message": message });
     push_to_ui("load_status", &json.to_string());
+}
+
+/// Determine the current [`PanelAxis`] from the browser window
+/// dimensions.
+fn current_axis() -> PanelAxis {
+    web_sys::window()
+        .map(|w| {
+            #[allow(clippy::cast_possible_truncation)]
+            let width =
+                w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let height =
+                w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    as u32;
+            PanelAxis::from_dimensions(width, height)
+        })
+        .unwrap_or(PanelAxis::Right)
+}
+
+/// Apply panel layout to the `ui-panel` iframe element.  Single source
+/// of truth for all iframe style changes.
+fn apply_web_layout(axis: PanelAxis, collapsed: bool, size: u32) {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Some(el) = document.get_element_by_id("ui-panel") else {
+        return;
+    };
+
+    let dim = if collapsed {
+        format!("{}px", bridge::COLLAPSED_SIZE)
+    } else {
+        format!("{size}px")
+    };
+
+    let style = match axis {
+        PanelAxis::Right => format!(
+            "transition:width 0.2s ease;width:{dim};height:100%;\
+             top:0;right:0;position:fixed"
+        ),
+        PanelAxis::Bottom => format!(
+            "transition:height 0.2s ease;height:{dim};width:100%;\
+             bottom:0;left:0;position:fixed"
+        ),
+    };
+    let _ = el.set_attribute("style", &style);
 }
 
 /// Dispatch a value to viso-ui via the bridge's

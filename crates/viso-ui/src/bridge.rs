@@ -123,29 +123,49 @@ pub fn register_scene_entities_listener(
     on_entities.forget();
 }
 
-// ── Outbound actions ─────────────────────────────────────────────────────
-
-/// Toggle the panel between pinned and unpinned. On native, sends IPC.
-/// On web, toggles the iframe visibility directly.
-pub fn send_toggle_panel() {
-    if is_web_context() {
-        toggle_web_panel();
-    } else {
-        let msg = serde_json::json!({ "action": "toggle_panel" });
-        post_message(&msg.to_string());
-    }
+/// Listen for `viso-orientation` custom events from the host and toggle
+/// the `portrait` class on our body.
+pub fn register_orientation_listener() {
+    let on_orientation = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(val) = evt.detail().as_string() {
+                if val == "portrait" {
+                    let _ = js_sys::eval(
+                        "document.body.classList.add('portrait')",
+                    );
+                } else {
+                    let _ = js_sys::eval(
+                        "document.body.classList.remove('portrait')",
+                    );
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-orientation",
+            on_orientation.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-orientation listener");
+    on_orientation.forget();
 }
 
-/// Resize the panel. On native, sends IPC. On web, sets the iframe
-/// width directly.
-pub fn send_resize_panel(width: u32) {
-    if is_web_context() {
-        resize_web_panel(width);
-    } else {
-        let msg =
-            serde_json::json!({ "action": "resize_panel", "width": width });
-        post_message(&msg.to_string());
-    }
+// ── Outbound actions ─────────────────────────────────────────────────────
+
+/// Toggle the panel between pinned and unpinned.
+/// Sends IPC — the host (native or web) handles the actual resize.
+pub fn send_toggle_panel() {
+    let msg = serde_json::json!({ "action": "toggle_panel" });
+    post_message(&msg.to_string());
+}
+
+/// Resize the panel along its current axis. Sends IPC so the host
+/// handles it.
+pub fn send_resize_panel(size: u32) {
+    let msg =
+        serde_json::json!({ "action": "resize_panel", "size": size });
+    post_message(&msg.to_string());
 }
 
 /// Send a `set_option` action to the native engine.
@@ -318,26 +338,11 @@ fn post_message(json: &str) {
 
 // ── Web-context helpers ──────────────────────────────────────────────────
 
-/// Returns `true` if running inside a web host (parent has
-/// `__viso_load_bytes`), as opposed to a native wry webview.
-fn is_web_context() -> bool {
-    has_load_bytes()
-}
-
-/// Toggle the `ui-panel` iframe visibility in the parent document.
-fn toggle_web_panel() {
-    let _ = js_sys::eval(
-        "var p=window.parent.document.getElementById('ui-panel');\
-         if(p){p.style.display=p.style.display==='none'?'':'none'}",
-    );
-}
-
-/// Resize the `ui-panel` iframe width in the parent document.
-fn resize_web_panel(width: u32) {
-    let js = format!(
-        "var p=window.parent.document.getElementById('ui-panel');\
-         if(p)p.style.width='{}px'",
-        width
-    );
-    let _ = js_sys::eval(&js);
+/// Returns `true` if the body has the `portrait` class (set by the host
+/// via the orientation bridge event).
+pub fn is_portrait() -> bool {
+    js_sys::eval("document.body.classList.contains('portrait')")
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }

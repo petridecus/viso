@@ -12,7 +12,7 @@ use winit::window::Window;
 use wry::dpi;
 
 use super::webview;
-use crate::bridge::UiAction;
+use crate::bridge::{self, PanelAxis, UiAction};
 use crate::VisoEngine;
 
 /// Owns the webview panel and all associated state.
@@ -24,11 +24,14 @@ pub(crate) struct PanelController {
     pinned: bool,
     /// Whether the panel is temporarily revealed by a mouse hover.
     peek: bool,
-    /// Current panel width in physical pixels.
-    width: u32,
-    /// Animated x-position of the panel (physical px, left edge).
+    /// Current panel size in physical pixels (width for Right, height for
+    /// Bottom).
+    size: u32,
+    /// Current panel axis (right sidebar or bottom bar).
+    axis: PanelAxis,
+    /// Animated slide position along the panel axis (physical px).
     /// Only used for the unpinned slide; pinned mode ignores this.
-    slide_x: f32,
+    slide_pos: f32,
     /// Receiver for background PDB fetch results (path or error message).
     load_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
@@ -38,13 +41,9 @@ pub(crate) struct PanelController {
 impl PanelController {
     /// Margin around the panel when floating (not pinned).
     const PANEL_MARGIN: u32 = 10;
-    /// Minimum panel width for resize.
-    const MIN_PANEL_WIDTH: u32 = 220;
-    /// Maximum panel width for resize.
-    const MAX_PANEL_WIDTH: u32 = 700;
-    /// How many pixels from the right edge trigger a peek.
+    /// How many pixels from the panel edge trigger a peek.
     const EDGE_ZONE: f32 = 24.0;
-    /// Extra grace pixels past the panel's left edge before it hides.
+    /// Extra grace pixels past the panel edge before it hides.
     const PEEK_GRACE: f32 = 40.0;
     /// Lerp speed for the peek slide (fraction per second).
     const SLIDE_SPEED: f32 = 12.0;
@@ -63,8 +62,9 @@ impl PanelController {
             last_stats_push: Instant::now(),
             pinned: true,
             peek: false,
-            width: webview::PANEL_WIDTH,
-            slide_x: 0.0,
+            size: bridge::DEFAULT_PANEL_SIZE,
+            axis: PanelAxis::Right,
+            slide_pos: 0.0,
             load_rx: None,
         }
     }
@@ -77,14 +77,21 @@ impl PanelController {
         height: u32,
         engine: &VisoEngine,
     ) {
-        match webview::create_webview(window, width, height, self.width) {
+        self.axis = PanelAxis::from_dimensions(width, height);
+        match webview::create_webview(window, width, height, self.size) {
             Ok((wv, rx)) => {
                 webview::push_schema(&wv, &engine.options);
                 webview::push_panel_pinned(&wv, self.pinned);
+                webview::push_orientation(&wv, self.axis);
                 self.webview = Some(wv);
                 self.action_rx = Some(rx);
-                // Start the slide position at the correct spot.
-                self.slide_x = width as f32;
+                // Start the slide position off-screen along the current
+                // axis.
+                self.slide_pos = if self.axis == PanelAxis::Right {
+                    width as f32
+                } else {
+                    height as f32
+                };
                 self.apply_layout(window);
             }
             Err(e) => {
@@ -106,9 +113,19 @@ impl PanelController {
         }
     }
 
-    /// Set the webview bounds directly.  Used by pinned mode and resize.
-    pub(crate) fn apply_layout(&self, window: &Window) {
+    /// Recompute the axis from window dimensions and set the webview
+    /// bounds.  Used by pinned mode and resize.
+    pub(crate) fn apply_layout(&mut self, window: &Window) {
         let inner = window.inner_size();
+        let new_axis = PanelAxis::from_dimensions(inner.width, inner.height);
+
+        if new_axis != self.axis {
+            self.axis = new_axis;
+            if let Some(ref wv) = self.webview {
+                webview::push_orientation(wv, self.axis);
+            }
+        }
+
         let Some(ref wv) = self.webview else {
             return;
         };
@@ -117,7 +134,8 @@ impl PanelController {
             let _ = wv.set_bounds(webview::panel_bounds(
                 inner.width,
                 inner.height,
-                self.width,
+                self.size,
+                self.axis,
             ));
         }
         // Unpinned positioning is handled by `tick_slide`.
@@ -134,51 +152,80 @@ impl PanelController {
             return;
         };
 
-        let w = inner.width as f32;
         let margin = Self::PANEL_MARGIN as f32;
+
+        // The extent along the panel's axis (width for Right, height for
+        // Bottom).
+        let extent = match self.axis {
+            PanelAxis::Right => inner.width as f32,
+            PanelAxis::Bottom => inner.height as f32,
+        };
 
         // Where the panel should end up.
         let target = if self.peek {
-            w - self.width as f32 - margin
+            extent - self.size as f32 - margin
         } else {
-            w // off-screen right
+            extent // off-screen
         };
 
         // Lerp toward target.
-        let diff = target - self.slide_x;
+        let diff = target - self.slide_pos;
         if diff.abs() < Self::SNAP_PX {
-            self.slide_x = target;
+            self.slide_pos = target;
         } else {
-            self.slide_x += diff * (Self::SLIDE_SPEED * dt).min(1.0);
+            self.slide_pos += diff * (Self::SLIDE_SPEED * dt).min(1.0);
         }
 
         #[allow(clippy::cast_possible_truncation)]
-        let x = self.slide_x.round() as i32;
+        let pos = self.slide_pos.round() as i32;
         let margin_i = Self::PANEL_MARGIN as i32;
 
-        let _ = wv.set_bounds(wry::Rect {
-            position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-                x, margin_i,
-            )),
-            size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                self.width.min(inner.width),
-                inner.height.saturating_sub(Self::PANEL_MARGIN * 2),
-            )),
-        });
+        let bounds = match self.axis {
+            PanelAxis::Right => wry::Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    pos, margin_i,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    self.size.min(inner.width),
+                    inner.height.saturating_sub(Self::PANEL_MARGIN * 2),
+                )),
+            },
+            PanelAxis::Bottom => wry::Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    margin_i, pos,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    inner.width.saturating_sub(Self::PANEL_MARGIN * 2),
+                    self.size.min(inner.height),
+                )),
+            },
+        };
+        let _ = wv.set_bounds(bounds);
     }
 
-    /// Check if the mouse is near the right edge and temporarily reveal the
-    /// panel.
-    pub(crate) fn update_peek(&mut self, mouse_x: f32, window: &Window) {
+    /// Check if the mouse is near the panel edge and temporarily reveal
+    /// it.
+    pub(crate) fn update_peek(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        window: &Window,
+    ) {
         if self.pinned {
             return;
         }
-        let w = window.inner_size().width as f32;
+        let inner = window.inner_size();
 
-        let near_edge = mouse_x >= (w - Self::EDGE_ZONE);
-        let in_panel = mouse_x
-            >= (w
-                - self.width as f32
+        // Pick the coordinate and extent along the panel's axis.
+        let (coord, extent) = match self.axis {
+            PanelAxis::Right => (mouse_x, inner.width as f32),
+            PanelAxis::Bottom => (mouse_y, inner.height as f32),
+        };
+
+        let near_edge = coord >= (extent - Self::EDGE_ZONE);
+        let in_panel = coord
+            >= (extent
+                - self.size as f32
                 - Self::PANEL_MARGIN as f32
                 - Self::PEEK_GRACE);
 
@@ -208,7 +255,7 @@ impl PanelController {
         for action in actions {
             match action {
                 UiAction::TogglePanel => toggled = true,
-                UiAction::ResizePanel { width } => resize_width = Some(width),
+                UiAction::ResizePanel { size } => resize_width = Some(size),
                 _ => self.apply_action(action, engine),
             }
         }
@@ -218,9 +265,10 @@ impl PanelController {
             self.apply_layout(window);
         }
         if let Some(w) = resize_width {
-            let clamped = w.clamp(Self::MIN_PANEL_WIDTH, Self::MAX_PANEL_WIDTH);
-            if clamped != self.width {
-                self.width = clamped;
+            let clamped =
+                w.clamp(bridge::MIN_PANEL_SIZE, bridge::MAX_PANEL_SIZE);
+            if clamped != self.size {
+                self.size = clamped;
                 self.apply_layout(window);
             }
         }
@@ -301,7 +349,7 @@ impl PanelController {
         let Some(ref wv) = self.webview else {
             return;
         };
-        let summaries = crate::bridge::entity_summaries(engine);
+        let summaries = bridge::entity_summaries(engine);
         let json = serde_json::to_string(&summaries).unwrap_or_default();
         webview::push_scene_entities(wv, &json);
     }

@@ -12,7 +12,7 @@ use wry::http::header::CONTENT_TYPE;
 use wry::http::Response;
 use wry::{dpi, Rect, WebView, WebViewBuilder};
 
-use crate::bridge::{self, UiAction};
+use crate::bridge::{self, PanelAxis, UiAction};
 use crate::options::VisoOptions;
 
 /// Embedded viso-ui dist output (built by `trunk build`).
@@ -20,8 +20,8 @@ use crate::options::VisoOptions;
 #[folder = "crates/viso-ui/dist/"]
 struct UiAssets;
 
-/// Width of the options panel in logical pixels.
-pub const PANEL_WIDTH: u32 = 350;
+/// Default panel size in physical pixels (re-exported from bridge).
+pub const PANEL_WIDTH: u32 = bridge::DEFAULT_PANEL_SIZE;
 
 /// Create the wry webview as a child of the given window.
 ///
@@ -50,7 +50,8 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
 
     let (tx, rx) = mpsc::channel();
 
-    let bounds = panel_bounds(window_width, window_height, panel_width);
+    let axis = PanelAxis::from_dimensions(window_width, window_height);
+    let bounds = panel_bounds(window_width, window_height, panel_width, axis);
 
     let init_js = format!("{}{}", bridge::BRIDGE_JS, BRIDGE_JS_NATIVE_ADDENDUM);
 
@@ -99,46 +100,85 @@ pub fn create_webview<W: wry::raw_window_handle::HasWindowHandle>(
     Ok((webview, rx))
 }
 
-/// Compute the [`Rect`] for the pinned panel at the right edge of the
-/// window.
+/// Compute the [`Rect`] for the pinned panel along the given axis.
 #[must_use]
 pub fn panel_bounds(
     window_width: u32,
     window_height: u32,
-    panel_width: u32,
+    panel_size: u32,
+    axis: PanelAxis,
 ) -> Rect {
-    let x = window_width.saturating_sub(panel_width);
-    Rect {
-        position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-            x as i32, 0,
-        )),
-        size: dpi::Size::Physical(dpi::PhysicalSize::new(
-            panel_width.min(window_width),
-            window_height,
-        )),
+    match axis {
+        PanelAxis::Right => {
+            let x = window_width.saturating_sub(panel_size);
+            Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    x as i32, 0,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    panel_size.min(window_width),
+                    window_height,
+                )),
+            }
+        }
+        PanelAxis::Bottom => {
+            let y = window_height.saturating_sub(panel_size);
+            Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    0, y as i32,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    window_width,
+                    panel_size.min(window_height),
+                )),
+            }
+        }
     }
 }
 
 /// Compute the [`Rect`] for the floating (unpinned) panel, inset by
-/// `margin` on all sides.
+/// `margin` on all sides, along the given axis.
 #[must_use]
 pub fn panel_bounds_floating(
     window_width: u32,
     window_height: u32,
-    panel_width: u32,
+    panel_size: u32,
     margin: u32,
+    axis: PanelAxis,
 ) -> Rect {
-    let x = window_width.saturating_sub(panel_width + margin);
-    Rect {
-        position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-            x as i32,
-            margin as i32,
-        )),
-        size: dpi::Size::Physical(dpi::PhysicalSize::new(
-            panel_width.min(window_width),
-            window_height.saturating_sub(margin * 2),
-        )),
+    match axis {
+        PanelAxis::Right => {
+            let x = window_width.saturating_sub(panel_size + margin);
+            Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    x as i32,
+                    margin as i32,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    panel_size.min(window_width),
+                    window_height.saturating_sub(margin * 2),
+                )),
+            }
+        }
+        PanelAxis::Bottom => {
+            let y = window_height.saturating_sub(panel_size + margin);
+            Rect {
+                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
+                    margin as i32,
+                    y as i32,
+                )),
+                size: dpi::Size::Physical(dpi::PhysicalSize::new(
+                    window_width.saturating_sub(margin * 2),
+                    panel_size.min(window_height),
+                )),
+            }
+        }
     }
+}
+
+/// Push the current orientation to the webview.
+pub fn push_orientation(webview: &WebView, axis: PanelAxis) {
+    safe_push(webview, "orientation", axis.orientation_str());
 }
 
 /// Push the Options JSON schema to the webview (call once after creation).

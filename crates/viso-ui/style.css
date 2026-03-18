@@ -54,20 +54,85 @@ html, body {
     scrollbar-color: #374151 #1f2937;
 }
 
-/* ── Side panel (full-height, edge-to-edge) ───────────────────────────── */
+/* ── Panel root: arrow column + settings side-by-side ─────────────────── */
 
-.side-panel {
-    position: relative;
-    background: #171717;
-    color: rgba(255, 255, 255, 0.9);
+.panel-root {
+    display: flex;
+    flex-direction: row;
     width: 100%;
     height: 100vh;
+    background: #171717;
+    color: rgba(255, 255, 255, 0.9);
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
 }
 
-/* ── Resize handle (left edge drag strip) ────────────────────────────── */
+body.portrait .panel-root { flex-direction: column; }
+
+/* ── Persistent arrow column (always visible) ────────────────────────── */
+
+.arrow-column {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    min-width: 32px;
+    height: 100%;
+    background: #0f0f0f;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    color: #6b7280;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    transition: color 0.15s;
+}
+
+body.portrait .arrow-column {
+    width: 100%;
+    min-width: unset;
+    height: 32px;
+    min-height: 32px;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.arrow-column:hover {
+    color: #fff;
+    background: #1a1a1a;
+}
+
+/* ── Arrow icon rotation ─────────────────────────────────────────────── */
+/* Base chevron points right (">").  Rotations:
+   - Landscape collapsed: ">" (expand, point left = 180deg)
+   - Landscape expanded:  ">" (collapse, point right = 0deg)
+   - Portrait collapsed:  ">" rotated to "v" (expand, point up = -90deg)
+   - Portrait expanded:   ">" rotated to "^" (collapse, point down = 90deg) */
+
+.arrow-icon {
+    transition: transform 0.2s ease;
+    transform: rotate(0deg);
+}
+
+.arrow-icon.expanded {
+    transform: rotate(180deg);
+}
+
+body.portrait .arrow-icon { transform: rotate(90deg); }
+body.portrait .arrow-icon.expanded { transform: rotate(-90deg); }
+
+/* ── Settings content (everything to the right/below the arrow) ──────── */
+
+.settings-content {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Resize handle (drag strip along the panel's inward edge) ────────── */
 
 .resize-handle {
     position: absolute;
@@ -77,6 +142,14 @@ html, body {
     height: 100%;
     cursor: col-resize;
     z-index: 10;
+}
+
+body.portrait .resize-handle {
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
 }
 
 .resize-handle:hover,
@@ -93,27 +166,6 @@ html, body {
     padding: 8px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0;
-}
-
-.panel-title {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: #fff;
-}
-
-.panel-toggle-btn {
-    color: #9ca3af;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    border: none;
-    background: transparent;
-    transition: color 0.15s, background 0.15s;
-}
-
-.panel-toggle-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
 }
 
 /* ── Panel layout (tab bar + content) ────────────────────────────────── */

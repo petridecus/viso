@@ -8,6 +8,54 @@ use crate::engine::command::VisoCommand;
 use crate::engine::scene::Focus;
 use crate::VisoEngine;
 
+// ── Panel layout model ──────────────────────────────────────────────────
+
+/// Panel axis: right sidebar or bottom bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelAxis {
+    /// Panel docked to the right edge (landscape orientation).
+    Right,
+    /// Panel docked to the bottom edge (portrait orientation).
+    Bottom,
+}
+
+impl PanelAxis {
+    /// Determine axis from window dimensions.
+    #[must_use]
+    pub fn from_dimensions(width: u32, height: u32) -> Self {
+        if height > width {
+            Self::Bottom
+        } else {
+            Self::Right
+        }
+    }
+
+    /// Returns `"portrait"` or `"landscape"` for the viso-ui orientation
+    /// event.
+    #[must_use]
+    pub fn orientation_str(&self) -> &'static str {
+        match self {
+            Self::Bottom => "portrait",
+            Self::Right => "landscape",
+        }
+    }
+}
+
+/// Default panel size in physical pixels.
+pub const DEFAULT_PANEL_SIZE: u32 = 340;
+
+/// Minimum panel size for resize.
+pub const MIN_PANEL_SIZE: u32 = 220;
+
+/// Maximum panel size for resize.
+pub const MAX_PANEL_SIZE: u32 = 700;
+
+/// Panel size when collapsed (just the toggle arrow strip).
+///
+/// Used by the web host to set the iframe's collapsed dimension.
+#[cfg(target_arch = "wasm32")]
+pub const COLLAPSED_SIZE: u32 = 32;
+
 // ── UiAction ─────────────────────────────────────────────────────────────
 
 /// Actions sent from the viso-ui WASM app to the host engine.
@@ -38,10 +86,11 @@ pub enum UiAction {
     OpenFileDialog,
     /// Toggle the panel between pinned and unpinned.
     TogglePanel,
-    /// Resize the panel to a new width.
+    /// Resize the panel along its current axis.
     ResizePanel {
-        /// New panel width in physical pixels.
-        width: u32,
+        /// New panel size in physical pixels (width or height depending
+        /// on axis).
+        size: u32,
     },
     /// A key press forwarded from the webview (e.g. Tab on Windows).
     KeyPress {
@@ -80,8 +129,11 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         }
         "toggle_panel" => Some(UiAction::TogglePanel),
         "resize_panel" => {
-            let width = msg.get("width")?.as_u64()? as u32;
-            Some(UiAction::ResizePanel { width })
+            let size = msg
+                .get("size")
+                .or_else(|| msg.get("width"))?
+                .as_u64()? as u32;
+            Some(UiAction::ResizePanel { size })
         }
         "focus_entity" => {
             let id = msg.get("id")?.as_u64()? as u32;
@@ -211,6 +263,7 @@ pub const BRIDGE_JS: &str = r"
     makePush('panel_pinned', 'viso-panel-pinned');
     makePush('load_status', 'viso-load-status');
     makePush('scene_entities', 'viso-scene-entities');
+    makePush('orientation', 'viso-orientation');
 
     // Allow late listeners (e.g. dioxus WASM) to replay any values
     // that were pushed before they registered.
