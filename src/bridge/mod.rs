@@ -33,7 +33,7 @@ impl PanelAxis {
     /// Returns `"portrait"` or `"landscape"` for the viso-ui orientation
     /// event.
     #[must_use]
-    pub fn orientation_str(&self) -> &'static str {
+    pub fn orientation_str(self) -> &'static str {
         match self {
             Self::Bottom => "portrait",
             Self::Right => "landscape",
@@ -129,10 +129,8 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         }
         "toggle_panel" => Some(UiAction::TogglePanel),
         "resize_panel" => {
-            let size = msg
-                .get("size")
-                .or_else(|| msg.get("width"))?
-                .as_u64()? as u32;
+            let size =
+                msg.get("size").or_else(|| msg.get("width"))?.as_u64()? as u32;
             Some(UiAction::ResizePanel { size })
         }
         "focus_entity" => {

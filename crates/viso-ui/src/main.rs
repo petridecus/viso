@@ -191,7 +191,9 @@ fn app() -> Element {
                             }
                         }
                         "scene" => rsx! {
-                            scene_ui::ScenePanel { scene_entities: scene_entities }
+                            scene_ui::ScenePanel {
+                                scene_entities: scene_entities,
+                            }
                         },
                         _ => rsx! {
                             load_ui::LoadPanel { load_status: load_status }

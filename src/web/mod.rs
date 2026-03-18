@@ -56,13 +56,26 @@ pub fn init() {
 /// Returns a `JsValue` error string if engine initialization fails.
 #[wasm_bindgen]
 pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
-    let width = canvas.client_width().max(1) as u32;
-    let height = canvas.client_height().max(1) as u32;
+    let dpr = web_sys::window()
+        .map(|w| w.device_pixel_ratio())
+        .unwrap_or(1.0);
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let width = (f64::from(canvas.client_width()) * dpr) as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let height = (f64::from(canvas.client_height()) * dpr) as u32;
+    let width = width.max(1);
+    let height = height.max(1);
 
     let surface_target = wgpu::SurfaceTarget::Canvas(canvas.clone());
-    let context = RenderContext::new(surface_target, (width, height))
+    let mut context = RenderContext::new(surface_target, (width, height))
         .await
         .map_err(|e| JsValue::from_str(&format!("GPU init failed: {e}")))?;
+
+    // 2x supersampling on low-DPI displays, matching native viewer behavior
+    if dpr < 2.0 {
+        context.render_scale = 2;
+    }
 
     let engine = VisoEngine::new_empty(context)
         .map_err(|e| JsValue::from_str(&format!("Engine init failed: {e}")))?;
@@ -351,11 +364,7 @@ fn eval_in(target_window: &JsValue, js: &str) {
 }
 
 /// Handle a JSON action from viso-ui (same format as native wry IPC).
-fn handle_ipc_action(
-    engine: &EngineHandle,
-    panel: &WebPanelState,
-    json: &str,
-) {
+fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(json) else {
         log::warn!("invalid IPC JSON: {json}");
         return;
@@ -529,9 +538,11 @@ fn current_axis() -> PanelAxis {
                 w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
                     as u32;
             #[allow(clippy::cast_possible_truncation)]
-            let height =
-                w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
-                    as u32;
+            let height = w
+                .inner_height()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u32;
             PanelAxis::from_dimensions(width, height)
         })
         .unwrap_or(PanelAxis::Right)
@@ -555,12 +566,12 @@ fn apply_web_layout(axis: PanelAxis, collapsed: bool, size: u32) {
 
     let style = match axis {
         PanelAxis::Right => format!(
-            "transition:width 0.2s ease;width:{dim};height:100%;\
-             top:0;right:0;position:fixed"
+            "transition:width 0.2s \
+             ease;width:{dim};height:100%;top:0;right:0;position:fixed"
         ),
         PanelAxis::Bottom => format!(
-            "transition:height 0.2s ease;height:{dim};width:100%;\
-             bottom:0;left:0;position:fixed"
+            "transition:height 0.2s \
+             ease;height:{dim};width:100%;bottom:0;left:0;position:fixed"
         ),
     };
     let _ = el.set_attribute("style", &style);

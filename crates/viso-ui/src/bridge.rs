@@ -130,9 +130,8 @@ pub fn register_orientation_listener() {
         move |evt: web_sys::CustomEvent| {
             if let Some(val) = evt.detail().as_string() {
                 if val == "portrait" {
-                    let _ = js_sys::eval(
-                        "document.body.classList.add('portrait')",
-                    );
+                    let _ =
+                        js_sys::eval("document.body.classList.add('portrait')");
                 } else {
                     let _ = js_sys::eval(
                         "document.body.classList.remove('portrait')",
@@ -163,8 +162,7 @@ pub fn send_toggle_panel() {
 /// Resize the panel along its current axis. Sends IPC so the host
 /// handles it.
 pub fn send_resize_panel(size: u32) {
-    let msg =
-        serde_json::json!({ "action": "resize_panel", "size": size });
+    let msg = serde_json::json!({ "action": "resize_panel", "size": size });
     post_message(&msg.to_string());
 }
 
