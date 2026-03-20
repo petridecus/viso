@@ -85,8 +85,7 @@ pub enum SceneRequest {
         /// Current geometry options for mesh generation.
         geometry: GeometryOptions,
         /// Per-entity resolved display+geometry overrides.
-        entity_options:
-            FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
+        entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
         /// Scene generation counter (monotonically increasing).
         generation: u64,
     },

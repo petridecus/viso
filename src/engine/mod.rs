@@ -529,8 +529,7 @@ impl VisoEngine {
             old.display.backbone_color_mode != new.display.backbone_color_mode;
         let geometry_changed = old.geometry != new.geometry;
         let colors_changed = old.colors != new.colors;
-        let waters_changed =
-            old.display.show_waters != new.display.show_waters;
+        let waters_changed = old.display.show_waters != new.display.show_waters;
         let ions_changed = old.display.show_ions != new.display.show_ions;
         let solvent_changed =
             old.display.show_solvent != new.display.show_solvent;

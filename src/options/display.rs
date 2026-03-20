@@ -241,10 +241,7 @@ impl EntityDisplayOverride {
 
     /// Produce a [`GeometryOptions`] by patching the cartoon style onto `base`.
     #[must_use]
-    pub fn resolve_geometry(
-        &self,
-        base: &GeometryOptions,
-    ) -> GeometryOptions {
+    pub fn resolve_geometry(&self, base: &GeometryOptions) -> GeometryOptions {
         self.cartoon_style.as_ref().map_or_else(
             || base.clone(),
             |style| {

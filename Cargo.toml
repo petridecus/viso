@@ -112,7 +112,10 @@ name = "viso"
 path = "src/main.rs"
 required-features = ["binary"]
 
-[lints.clippy]
+[lints]
+workspace = true
+
+[workspace.lints.clippy]
 # Broad lint groups (lower priority so individual lints can override)
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
@@ -155,14 +158,14 @@ redundant_pub_crate = "allow"
 too_many_arguments = "allow"
 too_many_lines = "allow"
 
-[lints.rust]
+[workspace.lints.rust]
 missing_docs = "deny"
 unused_results = "deny"
 unused_qualifications = "deny"
 trivial_casts = "deny"
 trivial_numeric_casts = "deny"
 
-[lints.rustdoc]
+[workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "deny"
 bare_urls = "deny"

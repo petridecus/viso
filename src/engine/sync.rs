@@ -35,8 +35,7 @@ impl VisoEngine {
         self.topology.rebuild(&entities);
 
         // Resolve per-entity display overrides into concrete options.
-        let resolved_geometry =
-            self.options.geometry.resolve_cartoon_style();
+        let resolved_geometry = self.options.geometry.resolve_cartoon_style();
         let entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)> =
             self.entities
                 .display_overrides()
@@ -99,9 +98,8 @@ impl VisoEngine {
         // override color scheme or palette, then splice into the flat
         // color array.
         let mut final_colors = colors;
-        for (e, range) in entities
-            .iter()
-            .zip(&self.topology.entity_residue_ranges)
+        for (e, range) in
+            entities.iter().zip(&self.topology.entity_residue_ranges)
         {
             let Some((ref disp, _)) = entity_options.get(&e.id) else {
                 continue;
@@ -115,9 +113,8 @@ impl VisoEngine {
             }
             let start = range.start as usize;
             let end = range.end() as usize;
-            let recolored = self.recolor_entity(
-                e, start, end, disp, &per_entity_scores,
-            );
+            let recolored =
+                self.recolor_entity(e, start, end, disp, &per_entity_scores);
             if let Some(slice) = final_colors.get_mut(start..end) {
                 let n = slice.len().min(recolored.len());
                 slice[..n].copy_from_slice(&recolored[..n]);
@@ -148,8 +145,7 @@ impl VisoEngine {
         disp: &DisplayOptions,
         per_entity_scores: &[Option<&[f64]>],
     ) -> Vec<[f32; 3]> {
-        let entity_ss =
-            self.topology.ss_types.get(start..end).unwrap_or(&[]);
+        let entity_ss = self.topology.ss_types.get(start..end).unwrap_or(&[]);
         let entity_scores =
             per_entity_scores.get(e.id as usize).copied().flatten();
         let mol_types: Vec<_> = self

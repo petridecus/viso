@@ -418,7 +418,10 @@ impl MeshCache {
                         (display, geometry.clone())
                     };
                 let mesh = super::mesh_gen::generate_entity_mesh(
-                    e, e_display, colors, &e_geometry,
+                    e,
+                    e_display,
+                    colors,
+                    &e_geometry,
                 );
                 drop(self.meshes.insert(e.id, (e.mesh_version, mesh)));
             }

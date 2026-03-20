@@ -42,8 +42,7 @@ impl VisoEngine {
         entity_id: u32,
         overrides: EntityDisplayOverride,
     ) {
-        self.entities
-            .set_display_override(entity_id, overrides);
+        self.entities.set_display_override(entity_id, overrides);
         // Bump mesh version so the cache re-generates this entity.
         if let Some(se) = self.entities.entity_mut(entity_id) {
             se.invalidate_render_cache();
@@ -252,8 +251,7 @@ impl VisoEngine {
             } else {
                 // Add new entity
                 let _ = self.entities.add_entities(vec![entity]);
-                self.entities
-                    .apply_type_visibility(&self.options.display);
+                self.entities.apply_type_visibility(&self.options.display);
                 let _ =
                     entity_transitions.insert(id, default_transition.clone());
             }

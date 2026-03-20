@@ -36,5 +36,8 @@ web-sys = { version = "0.3", features = [
 ] }
 
 
+[lints]
+workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["serde"]

@@ -385,13 +385,10 @@ impl PanelController {
                     serde_json::from_value(value.clone()).ok();
             }
             "cartoon_style" => {
-                ovr.cartoon_style =
-                    serde_json::from_value(value.clone()).ok();
+                ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
             }
             _ => {
-                log::warn!(
-                    "Unknown entity override field: {field}"
-                );
+                log::warn!("Unknown entity override field: {field}");
                 return;
             }
         }

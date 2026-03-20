@@ -4,10 +4,8 @@
 use glam::Vec3;
 use molex::types::assembly::update_protein_entities;
 use molex::types::coords::Coords;
-use molex::types::entity::MoleculeEntity;
+use molex::types::entity::{MoleculeEntity, MoleculeType};
 use rustc_hash::FxHashMap;
-
-use molex::types::entity::MoleculeType;
 
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
@@ -112,11 +110,7 @@ impl EntityStore {
     }
 
     /// Set visibility for all entities of a given molecule type.
-    pub fn set_type_visible(
-        &mut self,
-        mol_type: MoleculeType,
-        visible: bool,
-    ) {
+    pub fn set_type_visible(&mut self, mol_type: MoleculeType, visible: bool) {
         let mut changed = false;
         for se in &mut self.scene_entities {
             if se.entity.molecule_type == mol_type && se.visible != visible {
@@ -287,9 +281,7 @@ impl EntityStore {
 
     /// All display overrides (for building per-entity options maps).
     #[must_use]
-    pub fn display_overrides(
-        &self,
-    ) -> &FxHashMap<u32, EntityDisplayOverride> {
+    pub fn display_overrides(&self) -> &FxHashMap<u32, EntityDisplayOverride> {
         &self.display_overrides
     }
 

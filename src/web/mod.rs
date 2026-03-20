@@ -676,7 +676,10 @@ fn push_to_ui(key: &str, json: &str) {
 // requestAnimationFrame render loop
 // ---------------------------------------------------------------------------
 
-fn request_animation_frame_loop(engine: EngineHandle, canvas: HtmlCanvasElement) {
+fn request_animation_frame_loop(
+    engine: EngineHandle,
+    canvas: HtmlCanvasElement,
+) {
     let closure_holder: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
         Rc::new(RefCell::new(None));
     let holder_for_closure = Rc::clone(&closure_holder);
@@ -700,9 +703,15 @@ fn request_animation_frame_loop(engine: EngineHandle, canvas: HtmlCanvasElement)
                 let dpr = web_sys::window()
                     .map(|w| w.device_pixel_ratio())
                     .unwrap_or(1.0);
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
                 let w = (f64::from(canvas.client_width()) * dpr) as u32;
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
                 let h = (f64::from(canvas.client_height()) * dpr) as u32;
                 if w > 0 && h > 0 {
                     canvas.set_width(w);
