@@ -3,6 +3,9 @@
 //! Compiled to WASM and loaded into a wry webview by the native viso engine.
 //! Communicates with the engine via a JSON IPC bridge.
 
+// Dioxus RSX macro expansion triggers these — not fixable in user code.
+#![allow(unused_qualifications, unused_results, missing_docs)]
+
 mod bridge;
 mod load_ui;
 mod scene_ui;
