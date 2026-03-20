@@ -27,8 +27,9 @@ pub use camera::CameraOptions;
 pub use colors::ColorOptions;
 pub use debug::DebugOptions;
 pub use display::{
-    BackboneColorMode, ColorScheme, DisplayOptions, EntityDisplayOverride,
-    LipidMode, NaColorMode, PresentMode, SidechainColorMode,
+    BackboneColorMode, ColorScheme, DisplayOptions, DrawingMode,
+    EntityDisplayOverride, HelixStyle, LipidMode, NaColorMode, PresentMode,
+    SheetStyle, SidechainColorMode,
 };
 pub use geometry::{
     lod_params, lod_scaled, select_chain_lod_tier, select_lod_tier,

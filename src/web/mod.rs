@@ -393,6 +393,9 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
                 if let Ok(updated) = serde_json::from_value::<VisoOptions>(root)
                 {
                     eng.set_options(updated);
+                    let opts_json = serde_json::to_string(eng.options())
+                        .unwrap_or_default();
+                    push_to_ui("options", &opts_json);
                 }
             }
         }
@@ -481,6 +484,15 @@ fn apply_entity_option(
         }
         "cartoon_style" => {
             ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
+        }
+        "drawing_mode" => {
+            ovr.drawing_mode = serde_json::from_value(value.clone()).ok();
+        }
+        "helix_style" => {
+            ovr.helix_style = serde_json::from_value(value.clone()).ok();
+        }
+        "sheet_style" => {
+            ovr.sheet_style = serde_json::from_value(value.clone()).ok();
         }
         _ => {
             log::warn!("Unknown entity override field: {field}");

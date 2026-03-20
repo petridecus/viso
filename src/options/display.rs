@@ -1,8 +1,67 @@
+use molex::types::entity::MoleculeType;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::geometry::{CartoonStyle, GeometryOptions};
 use super::palette::{Palette, PaletteMode, PalettePreset};
+
+/// Top-level drawing mode for an entity.
+///
+/// Determines whether the entity is rendered as a cartoon backbone,
+/// stick model, or ball-and-stick model.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DrawingMode {
+    /// Cartoon backbone with optional sidechains (default for proteins/NA).
+    Cartoon,
+    /// Bonds as capsules (sidechain thickness), small joint spheres.
+    Stick,
+    /// Thin bonds with tiny joint spheres (wire-like).
+    ThinStick,
+    /// Full ball-and-stick with vdW-scaled atom spheres.
+    BallAndStick,
+}
+
+impl DrawingMode {
+    /// Return the appropriate default drawing mode for a molecule type.
+    #[must_use]
+    pub fn default_for(mol_type: MoleculeType) -> Self {
+        match mol_type {
+            MoleculeType::Protein | MoleculeType::DNA | MoleculeType::RNA => {
+                Self::Cartoon
+            }
+            _ => Self::BallAndStick,
+        }
+    }
+}
+
+/// Helix rendering style within Cartoon mode.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HelixStyle {
+    /// Flat ribbon (default).
+    Ribbon,
+    /// Round tube.
+    Tube,
+    /// Solid cylinder.
+    Cylinder,
+}
+
+/// Sheet rendering style within Cartoon mode.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetStyle {
+    /// Flat ribbon (default).
+    Ribbon,
+    /// Round tube.
+    Tube,
+}
 
 /// How protein backbone is colored.
 ///
@@ -203,17 +262,32 @@ pub struct DisplayOptions {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntityDisplayOverride {
     /// Override backbone color scheme.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub backbone_color_scheme: Option<ColorScheme>,
     /// Override backbone palette preset.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub backbone_palette_preset: Option<PalettePreset>,
     /// Override backbone palette distribution mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub backbone_palette_mode: Option<PaletteMode>,
     /// Override sidechain visibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_sidechains: Option<bool>,
     /// Override sidechain coloring strategy.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sidechain_color_mode: Option<SidechainColorMode>,
     /// Override cartoon rendering style.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cartoon_style: Option<CartoonStyle>,
+    /// Override drawing mode (Cartoon / Stick / BallAndStick).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drawing_mode: Option<DrawingMode>,
+    /// Override helix rendering style within Cartoon mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helix_style: Option<HelixStyle>,
+    /// Override sheet rendering style within Cartoon mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sheet_style: Option<SheetStyle>,
 }
 
 impl EntityDisplayOverride {
@@ -239,17 +313,25 @@ impl EntityDisplayOverride {
         out
     }
 
-    /// Produce a [`GeometryOptions`] by patching the cartoon style onto `base`.
+    /// Produce a [`GeometryOptions`] by patching cartoon style, helix style,
+    /// and sheet style onto `base`.
     #[must_use]
     pub fn resolve_geometry(&self, base: &GeometryOptions) -> GeometryOptions {
-        self.cartoon_style.as_ref().map_or_else(
-            || base.clone(),
-            |style| {
-                let mut out = base.clone();
-                out.cartoon_style = style.clone();
-                out
-            },
-        )
+        let mut out = if let Some(ref style) = self.cartoon_style {
+            let mut g = base.clone();
+            g.cartoon_style = style.clone();
+            g
+        } else {
+            base.clone()
+        };
+        // Apply per-SS style overrides after the cartoon preset
+        if let Some(helix) = self.helix_style {
+            out = out.with_helix_style(helix);
+        }
+        if let Some(sheet) = self.sheet_style {
+            out = out.with_sheet_style(sheet);
+        }
+        out
     }
 
     /// Whether all fields are `None` (no overrides).
@@ -261,6 +343,20 @@ impl EntityDisplayOverride {
             && self.show_sidechains.is_none()
             && self.sidechain_color_mode.is_none()
             && self.cartoon_style.is_none()
+            && self.drawing_mode.is_none()
+            && self.helix_style.is_none()
+            && self.sheet_style.is_none()
+    }
+
+    /// Resolve the effective drawing mode for this entity, falling back
+    /// to the type-appropriate default when no override is set.
+    #[must_use]
+    pub fn effective_drawing_mode(
+        &self,
+        mol_type: MoleculeType,
+    ) -> DrawingMode {
+        self.drawing_mode
+            .unwrap_or_else(|| DrawingMode::default_for(mol_type))
     }
 }
 

@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
 use crate::animation::transition::Transition;
-use crate::options::{DisplayOptions, EntityDisplayOverride};
+use crate::options::{DisplayOptions, DrawingMode, EntityDisplayOverride};
 
 /// Consolidated entity storage.
 ///
@@ -288,11 +288,22 @@ impl EntityStore {
     // -- Per-entity data --
 
     /// Collect per-entity render data for all visible entities.
+    ///
+    /// Resolves the drawing mode per entity from display overrides.
     pub fn per_entity_data(&self) -> Vec<PerEntityData> {
         self.scene_entities
             .iter()
             .filter(|e| e.visible)
-            .filter_map(SceneEntity::to_per_entity_data)
+            .filter_map(|e| {
+                let mode = self
+                    .display_overrides
+                    .get(&e.id())
+                    .and_then(|ovr| ovr.drawing_mode)
+                    .unwrap_or_else(|| {
+                        DrawingMode::default_for(e.entity.molecule_type)
+                    });
+                e.to_per_entity_data(mode)
+            })
             .collect()
     }
 

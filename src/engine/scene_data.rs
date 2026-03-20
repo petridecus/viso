@@ -13,6 +13,7 @@ use molex::types::entity::{MoleculeEntity, MoleculeType, NucleotideRing};
 
 use crate::animation::transition::Transition;
 use crate::animation::SidechainAnimPositions;
+use crate::options::DrawingMode;
 
 // ---------------------------------------------------------------------------
 // Bounding sphere
@@ -130,8 +131,20 @@ impl SceneEntity {
     }
 
     /// Build [`PerEntityData`] from this entity's current state.
+    ///
+    /// `mode` controls the drawing mode: Cartoon uses the normal backbone
+    /// mesh pipeline, while Stick/BallAndStick routes the entity through
+    /// the ball-and-stick renderer instead.
     #[must_use]
-    pub fn to_per_entity_data(&self) -> Option<PerEntityData> {
+    pub fn to_per_entity_data(
+        &self,
+        mode: DrawingMode,
+    ) -> Option<PerEntityData> {
+        // For Stick/BnS on a normally-cartoon entity, skip backbone and
+        // route through the BnS renderer instead.
+        if mode != DrawingMode::Cartoon {
+            return self.per_entity_data_as_bns(mode);
+        }
         match self.entity.molecule_type {
             MoleculeType::Protein => self.per_entity_data_protein(),
             MoleculeType::DNA | MoleculeType::RNA => {
@@ -156,6 +169,7 @@ impl SceneEntity {
         Some(PerEntityData {
             id: self.entity.entity_id,
             mesh_version: self.mesh_version,
+            drawing_mode: DrawingMode::Cartoon,
             backbone_chains: backbone.into_chain_vecs(),
             sidechains,
             ss_override: self.ss_override.clone(),
@@ -177,6 +191,7 @@ impl SceneEntity {
         Some(PerEntityData {
             id: self.entity.entity_id,
             mesh_version: self.mesh_version,
+            drawing_mode: DrawingMode::Cartoon,
             backbone_chains: vec![],
             sidechains: SidechainAtoms::default(),
             ss_override: None,
@@ -196,6 +211,60 @@ impl SceneEntity {
         Some(PerEntityData {
             id: self.entity.entity_id,
             mesh_version: self.mesh_version,
+            drawing_mode: DrawingMode::BallAndStick,
+            backbone_chains: vec![],
+            sidechains: SidechainAtoms::default(),
+            ss_override: None,
+            per_residue_colors: None,
+            non_protein_entities: vec![self.entity.clone()],
+            nucleic_acid_chains: vec![],
+            nucleic_acid_rings: vec![],
+            residue_count: 0,
+        })
+    }
+
+    /// Render data for a polymer entity in Stick or `BallAndStick` mode.
+    ///
+    /// For proteins: keeps `backbone_chains` populated so that
+    /// `prepare_scene_metadata` can compute per-residue colors (chain,
+    /// SS, score, etc.) exactly as it does for Cartoon mode. The
+    /// backbone mesh generation is skipped later by
+    /// `generate_entity_mesh` when it sees a non-Cartoon drawing mode.
+    /// The entity is also placed in `non_protein_entities` so the BnS
+    /// renderer processes it.
+    fn per_entity_data_as_bns(
+        &self,
+        mode: DrawingMode,
+    ) -> Option<PerEntityData> {
+        if self.entity.atom_count() == 0 {
+            return None;
+        }
+        // For proteins, extract backbone so colors can be computed.
+        if self.entity.molecule_type == MoleculeType::Protein {
+            let backbone = self.entity.extract_backbone();
+            let res_count = if backbone.chains.is_empty() {
+                0
+            } else {
+                backbone.residue_count() as u32
+            };
+            return Some(PerEntityData {
+                id: self.entity.entity_id,
+                mesh_version: self.mesh_version,
+                drawing_mode: mode,
+                backbone_chains: backbone.into_chain_vecs(),
+                sidechains: SidechainAtoms::default(),
+                ss_override: self.ss_override.clone(),
+                per_residue_colors: None,
+                non_protein_entities: vec![self.entity.clone()],
+                nucleic_acid_chains: vec![],
+                nucleic_acid_rings: vec![],
+                residue_count: res_count,
+            });
+        }
+        Some(PerEntityData {
+            id: self.entity.entity_id,
+            mesh_version: self.mesh_version,
+            drawing_mode: mode,
             backbone_chains: vec![],
             sidechains: SidechainAtoms::default(),
             ss_override: None,
@@ -220,6 +289,8 @@ pub(crate) struct PerEntityData {
     pub(crate) id: u32,
     /// Monotonic version counter for cache invalidation.
     pub(crate) mesh_version: u64,
+    /// Resolved drawing mode for this entity.
+    pub(crate) drawing_mode: DrawingMode,
     /// Protein backbone atom chains (N, CA, C triplets).
     pub(crate) backbone_chains: Vec<Vec<Vec3>>,
     /// Sidechain atom data with topology (positions, bonds, backbone bonds).

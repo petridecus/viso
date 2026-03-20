@@ -2,6 +2,8 @@ use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::display::{HelixStyle, SheetStyle};
+
 /// Cartoon rendering style presets.
 ///
 /// Each preset maps to specific per-SS geometry parameters (width, thickness,
@@ -298,6 +300,50 @@ impl GeometryOptions {
                 coil_width: 0.3,
                 coil_thickness: 0.3,
                 coil_roundness: 1.0,
+                ..self.clone()
+            },
+        }
+    }
+
+    /// Return a copy with helix parameters patched from a [`HelixStyle`].
+    #[must_use]
+    pub fn with_helix_style(&self, style: HelixStyle) -> Self {
+        match style {
+            HelixStyle::Ribbon => Self {
+                helix_width: 1.4,
+                helix_thickness: 0.25,
+                helix_roundness: 0.0,
+                ..self.clone()
+            },
+            HelixStyle::Tube => Self {
+                helix_width: 0.4,
+                helix_thickness: 0.4,
+                helix_roundness: 1.0,
+                ..self.clone()
+            },
+            HelixStyle::Cylinder => Self {
+                helix_width: 0.5,
+                helix_thickness: 0.5,
+                helix_roundness: 1.0,
+                ..self.clone()
+            },
+        }
+    }
+
+    /// Return a copy with sheet parameters patched from a [`SheetStyle`].
+    #[must_use]
+    pub fn with_sheet_style(&self, style: SheetStyle) -> Self {
+        match style {
+            SheetStyle::Ribbon => Self {
+                sheet_width: 1.6,
+                sheet_thickness: 0.25,
+                sheet_roundness: 0.0,
+                ..self.clone()
+            },
+            SheetStyle::Tube => Self {
+                sheet_width: 0.4,
+                sheet_thickness: 0.4,
+                sheet_roundness: 1.0,
                 ..self.clone()
             },
         }

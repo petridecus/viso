@@ -195,6 +195,7 @@ pub fn escape_for_js(s: &str) -> String {
 /// Build a JSON-serializable summary of all entities for the viso-ui
 /// panel.
 pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+    use crate::options::DrawingMode;
     use molex::types::entity::MoleculeType;
 
     let focus = engine.entities.focus();
@@ -225,10 +226,14 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 focus,
                 Focus::Entity(eid) if *eid == se.id()
             );
-            let overrides = engine
-                .entities
-                .display_override(se.id())
-                .and_then(|ovr| serde_json::to_value(ovr).ok());
+            let ovr_data = engine.entities.display_override(se.id());
+            let overrides =
+                ovr_data.and_then(|ovr| serde_json::to_value(ovr).ok());
+            // Effective drawing mode (override or type default)
+            let effective_mode = ovr_data.map_or_else(
+                || DrawingMode::default_for(se.entity.molecule_type),
+                |ovr| ovr.effective_drawing_mode(se.entity.molecule_type),
+            );
             let mut entry = serde_json::json!({
                 "id": se.id(),
                 "molecule_type": mol_type,
@@ -238,7 +243,24 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 "chain_ids": chain_ids,
                 "focused": focused,
                 "focusable": se.entity.is_focusable(),
+                "drawing_mode": effective_mode,
             });
+            // Include individual override fields at top level for easy
+            // UI access (avoids digging into display_overrides object).
+            if let Some(ovr) = ovr_data {
+                if let Some(hs) = ovr.helix_style {
+                    entry["helix_style"] = serde_json::json!(hs);
+                }
+                if let Some(ss) = ovr.sheet_style {
+                    entry["sheet_style"] = serde_json::json!(ss);
+                }
+                if let Some(sc) = ovr.show_sidechains {
+                    entry["show_sidechains_override"] = serde_json::json!(sc);
+                }
+                if let Some(ref cs) = ovr.backbone_color_scheme {
+                    entry["color_scheme"] = serde_json::json!(cs);
+                }
+            }
             if let Some(ovr) = overrides {
                 entry["display_overrides"] = ovr;
             }

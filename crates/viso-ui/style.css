@@ -707,3 +707,72 @@ input[type="range"]:hover::-webkit-slider-thumb {
     color: #f87171;
     background: rgba(248, 113, 113, 0.1);
 }
+
+/* ── Per-entity options (expandable) ─────────────────────────────────── */
+
+.entity-options {
+    padding: 6px 10px 8px 24px;
+    margin: -2px 0 4px 0;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.entity-option-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.entity-option-label {
+    font-size: 0.6875rem;
+    color: #9ca3af;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.entity-option-select {
+    font-size: 0.6875rem;
+    color: #e5e7eb;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    padding: 2px 6px;
+    min-width: 90px;
+    cursor: pointer;
+    outline: none;
+}
+
+.entity-option-select:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.entity-option-select:focus {
+    border-color: rgba(96, 165, 250, 0.5);
+}
+
+.entity-reset-btn {
+    font-size: 0.625rem;
+    color: #6b7280;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-left: auto;
+}
+
+.entity-reset-btn:hover {
+    color: #d1d5db;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.entity-expand-btn {
+    color: #4b5563;
+}

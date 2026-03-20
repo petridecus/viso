@@ -60,8 +60,8 @@ pub use gpu::render_context::RenderContext;
 pub use gpu::texture::RenderTarget;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
-// Per-entity display overrides
-pub use options::EntityDisplayOverride;
+// Per-entity display overrides + drawing mode enums
+pub use options::{DrawingMode, EntityDisplayOverride, HelixStyle, SheetStyle};
 // Picking output
 pub use renderer::picking::PickTarget;
 // Feature-gated

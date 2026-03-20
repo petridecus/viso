@@ -327,6 +327,24 @@ pub fn send_remove_entity(id: u64) {
     post_message(&msg.to_string());
 }
 
+/// Send a `set_entity_option` action to override a per-entity display field.
+pub fn send_set_entity_option(id: u64, field: &str, value: &Value) {
+    let msg = serde_json::json!({
+        "action": "set_entity_option",
+        "entity_id": id,
+        "field": field,
+        "value": value,
+    });
+    post_message(&msg.to_string());
+}
+
+/// Send a `clear_entity_option` action to reset all per-entity overrides.
+pub fn send_clear_entity_option(id: u64) {
+    let msg =
+        serde_json::json!({ "action": "clear_entity_option", "entity_id": id });
+    post_message(&msg.to_string());
+}
+
 /// Register a listener for load-status events from the native engine.
 pub fn register_load_status_listener(mut status_sig: Signal<Option<Value>>) {
     let on_status = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(

@@ -9,7 +9,7 @@ use super::prepared::{
     NucleicAcidInstances, PreparedAnimationFrame,
 };
 use crate::engine::scene_data::PerEntityData;
-use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
+use crate::options::{ColorOptions, DisplayOptions, DrawingMode, GeometryOptions};
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
@@ -77,6 +77,8 @@ fn generate_non_backbone_bytes(
             display,
             Some(colors),
             0,
+            g.drawing_mode,
+            g.per_residue_colors.as_deref(),
         );
     let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
         &g.nucleic_acid_chains,
@@ -106,36 +108,58 @@ pub fn generate_entity_mesh(
     colors: &ColorOptions,
     geometry: &GeometryOptions,
 ) -> CachedEntityMesh {
-    let na_base_colors: Vec<[f32; 3]> =
-        if display.na_color_mode == crate::options::NaColorMode::BaseColor {
-            g.nucleic_acid_rings.iter().map(|r| r.color).collect()
-        } else {
-            Vec::new()
-        };
-    let na_colors_ref = if na_base_colors.is_empty() {
-        None
-    } else {
-        Some(na_base_colors.as_slice())
-    };
-    let backbone_mesh = BackboneRenderer::generate_mesh_colored(
-        &ChainPair {
-            protein: &g.backbone_chains,
-            na: &g.nucleic_acid_chains,
-        },
-        g.ss_override.as_deref(),
-        g.per_residue_colors.as_deref(),
-        geometry,
-        None,
-        na_colors_ref,
-    );
+    let skip_backbone = g.drawing_mode != DrawingMode::Cartoon;
 
-    let (sidechain_instances, sidechain_instance_count) =
+    // Backbone mesh (skipped for Stick/BnS — backbone_chains are only
+    // kept for per-residue color computation in those modes).
+    let backbone_mesh = if skip_backbone {
+        BackboneRenderer::generate_mesh_colored(
+            &ChainPair {
+                protein: &[],
+                na: &[],
+            },
+            None,
+            None,
+            geometry,
+            None,
+            None,
+        )
+    } else {
+        let na_base_colors: Vec<[f32; 3]> =
+            if display.na_color_mode == crate::options::NaColorMode::BaseColor
+            {
+                g.nucleic_acid_rings.iter().map(|r| r.color).collect()
+            } else {
+                Vec::new()
+            };
+        let na_colors_ref = if na_base_colors.is_empty() {
+            None
+        } else {
+            Some(na_base_colors.as_slice())
+        };
+        BackboneRenderer::generate_mesh_colored(
+            &ChainPair {
+                protein: &g.backbone_chains,
+                na: &g.nucleic_acid_chains,
+            },
+            g.ss_override.as_deref(),
+            g.per_residue_colors.as_deref(),
+            geometry,
+            None,
+            na_colors_ref,
+        )
+    };
+
+    let (sidechain_instances, sidechain_instance_count) = if skip_backbone {
+        (Vec::new(), 0)
+    } else {
         generate_sidechain_bytes(
             g,
             &backbone_mesh.sheet_offsets,
             colors,
             display,
-        );
+        )
+    };
     let (bns, na) = generate_non_backbone_bytes(g, display, colors);
 
     CachedEntityMesh {

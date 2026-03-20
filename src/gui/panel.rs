@@ -313,6 +313,9 @@ impl PanelController {
                     }
                 }
                 engine.set_options(opts);
+                if let Some(ref wv) = self.webview {
+                    webview::push_options(wv, &engine.options);
+                }
             }
             UiAction::LoadFile { path } => {
                 self.load_local_file(engine, &path);
@@ -386,6 +389,15 @@ impl PanelController {
             }
             "cartoon_style" => {
                 ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
+            }
+            "drawing_mode" => {
+                ovr.drawing_mode = serde_json::from_value(value.clone()).ok();
+            }
+            "helix_style" => {
+                ovr.helix_style = serde_json::from_value(value.clone()).ok();
+            }
+            "sheet_style" => {
+                ovr.sheet_style = serde_json::from_value(value.clone()).ok();
             }
             _ => {
                 log::warn!("Unknown entity override field: {field}");

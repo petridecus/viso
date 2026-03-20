@@ -11,6 +11,8 @@ mod load_ui;
 mod scene_ui;
 mod schema_ui;
 
+use std::collections::HashSet;
+
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -25,6 +27,11 @@ fn app() -> Element {
     let panel_pinned: Signal<bool> = use_signal(|| true);
     let load_status: Signal<Option<Value>> = use_signal(|| None);
     let scene_entities: Signal<Option<Value>> = use_signal(|| None);
+
+    // Per-entity expanded state — lives at app level so it survives
+    // tab switches (ScenePanel unmounts/remounts when switching tabs).
+    let expanded_ids: Signal<HashSet<u64>> =
+        use_signal(HashSet::new);
 
     let mut collapsed: Signal<bool> = use_signal(|| false);
     let mut top_tab: Signal<String> = use_signal(|| "load".to_string());
@@ -202,6 +209,7 @@ fn app() -> Element {
                         "scene" => rsx! {
                             scene_ui::ScenePanel {
                                 scene_entities: scene_entities,
+                                expanded_ids: expanded_ids,
                             }
                         },
                         _ => rsx! {

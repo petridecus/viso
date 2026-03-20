@@ -13,7 +13,7 @@ use molex::types::entity::{MoleculeEntity, MoleculeType};
 
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
-use crate::options::{ColorOptions, DisplayOptions};
+use crate::options::{ColorOptions, DisplayOptions, DrawingMode};
 use crate::renderer::impostor::{
     CapsuleInstance, ImpostorPass, ShaderDef, SphereInstance,
 };
@@ -23,6 +23,13 @@ const BOND_RADIUS: f32 = 0.15;
 
 /// Fraction of vdw_radius for ball-and-stick atom spheres
 const BALL_RADIUS_SCALE: f32 = 0.3;
+
+/// Sphere radius for Stick mode joints (matches sidechain capsule caps).
+const STICK_SPHERE_RADIUS: f32 = 0.15;
+
+/// Bond radius for Stick mode — matches sidechain capsule radius so
+/// stick geometry has the same visual weight as sidechain bonds.
+const STICK_BOND_RADIUS: f32 = 0.3;
 
 /// Larger spheres for ions
 const ION_RADIUS_SCALE: f32 = 0.5;
@@ -150,12 +157,22 @@ impl BallAndStickRenderer {
     /// the live-update path (the scene processor concatenation applies offsets
     /// at the byte level instead).
     ///
+    /// `mode` controls Stick vs BallAndStick rendering for
+    /// protein/NA entities that were routed through this pipeline via a
+    /// drawing mode override. For non-protein entities this is ignored.
+    ///
+    /// `per_residue_colors`, when provided, overrides CPK element
+    /// coloring for polymer entities (Stick/BnS) — each atom is colored
+    /// by its residue's backbone color (chain, SS, score, etc.).
+    ///
     /// Returns (sphere_instances, bond_instances).
     pub(crate) fn generate_all_instances(
         entities: &[MoleculeEntity],
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
         pick_id_offset: u32,
+        mode: DrawingMode,
+        per_residue_colors: Option<&[[f32; 3]]>,
     ) -> (Vec<SphereInstance>, Vec<CapsuleInstance>) {
         let mut out = InstanceCollector::default();
         let mut atom_offset = pick_id_offset;
@@ -167,6 +184,8 @@ impl BallAndStickRenderer {
                 display,
                 colors,
                 atom_offset,
+                mode,
+                per_residue_colors,
                 &mut out,
             );
             atom_offset += entity_atom_count;
@@ -176,15 +195,36 @@ impl BallAndStickRenderer {
     }
 
     /// Generate instances for a single entity, dispatching by molecule type.
+    ///
+    /// Proteins and nucleic acids only appear here when the user has
+    /// overridden their drawing mode to Stick or `BallAndStick`.
     fn generate_entity_instances(
         entity: &MoleculeEntity,
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
         atom_offset: u32,
+        mode: DrawingMode,
+        per_residue_colors: Option<&[[f32; 3]]>,
         out: &mut InstanceCollector,
     ) {
         let coords = entity.to_coords();
         match entity.molecule_type {
+            // Protein/NA in Stick or BnS mode only — Cartoon-mode
+            // polymers are in non_protein_entities for the NA renderer
+            // but must NOT produce BnS instances.
+            MoleculeType::Protein
+            | MoleculeType::DNA
+            | MoleculeType::RNA
+                if mode != DrawingMode::Cartoon =>
+            {
+                Self::generate_polymer_bns_instances(
+                    &coords,
+                    atom_offset,
+                    mode,
+                    per_residue_colors,
+                    out,
+                );
+            }
             MoleculeType::Ligand | MoleculeType::Cofactor => {
                 let tint = (entity.molecule_type == MoleculeType::Cofactor)
                     .then(|| Self::resolve_cofactor_tint(&coords, colors));
@@ -237,7 +277,14 @@ impl BallAndStickRenderer {
         colors: Option<&ColorOptions>,
     ) {
         let (sphere_instances, bond_instances) =
-            Self::generate_all_instances(entities, display, colors, 0);
+            Self::generate_all_instances(
+                entities,
+                display,
+                colors,
+                0,
+                DrawingMode::BallAndStick,
+                None,
+            );
         let _ = self.sphere_pass.write_instances(
             &context.device,
             &context.queue,
@@ -248,6 +295,146 @@ impl BallAndStickRenderer {
             &context.queue,
             &bond_instances,
         );
+    }
+
+    /// Generate ball-and-stick or stick instances for a polymer
+    /// (protein/DNA/RNA) entity using full bond inference.
+    ///
+    /// Unlike `generate_ligand_instances` (which uses per-residue bond
+    /// inference and misses inter-residue peptide bonds), this uses
+    /// `infer_bonds` on the full atom set to capture the backbone
+    /// connectivity.
+    ///
+    /// When `per_residue_colors` is provided, atoms are colored by their
+    /// residue's backbone color (chain, SS, score, etc.) instead of CPK
+    /// element colors.
+    fn generate_polymer_bns_instances(
+        coords: &molex::types::coords::Coords,
+        atom_offset: u32,
+        mode: DrawingMode,
+        per_residue_colors: Option<&[[f32; 3]]>,
+        out: &mut InstanceCollector,
+    ) {
+        let positions = atom_positions(coords);
+        let is_stick = matches!(
+            mode,
+            DrawingMode::Stick | DrawingMode::ThinStick
+        );
+        let bond_radius = match mode {
+            DrawingMode::Stick => STICK_BOND_RADIUS,
+            DrawingMode::ThinStick => BOND_RADIUS,
+            _ => BOND_RADIUS,
+        };
+
+        // Build residue-number → sequential-index map for color lookup.
+        // Backbone residue indices are 0-based sequential, but coords
+        // may have arbitrary PDB residue numbers.
+        let residue_color_map: Option<std::collections::BTreeMap<i32, usize>> =
+            per_residue_colors.map(|_| {
+                let mut seen = std::collections::BTreeMap::new();
+                let mut next_idx = 0usize;
+                for &rn in &coords.res_nums {
+                    let _ = seen.entry(rn).or_insert_with(|| {
+                        let idx = next_idx;
+                        next_idx += 1;
+                        idx
+                    });
+                }
+                seen
+            });
+
+        // Resolve color for an atom: per-residue if available, else CPK.
+        let atom_color_fn =
+            |atom_idx: usize, elem: Element| -> [f32; 3] {
+                if let (Some(colors), Some(ref map)) =
+                    (per_residue_colors, &residue_color_map)
+                {
+                    let res_num = coords.res_nums.get(atom_idx).copied().unwrap_or(0);
+                    if let Some(&seq_idx) = map.get(&res_num) {
+                        if let Some(&c) = colors.get(seq_idx) {
+                            return c;
+                        }
+                    }
+                }
+                elem.cpk_color()
+            };
+
+        // Generate atom spheres
+        for (i, pos) in positions.iter().enumerate() {
+            let elem =
+                coords.elements.get(i).copied().unwrap_or(Element::Unknown);
+            if is_stick && elem == Element::H {
+                continue;
+            }
+            let color = atom_color_fn(i, elem);
+            let radius = match mode {
+                DrawingMode::Stick => STICK_SPHERE_RADIUS,
+                DrawingMode::ThinStick => STICK_SPHERE_RADIUS * 0.7,
+                _ => elem.vdw_radius() * BALL_RADIUS_SCALE,
+            };
+            let pick_id = atom_offset + i as u32;
+
+            out.spheres.push(SphereInstance {
+                center: [pos.x, pos.y, pos.z, radius],
+                color: [color[0], color[1], color[2], pick_id as f32],
+            });
+        }
+
+        // Full bond inference (captures inter-residue peptide bonds)
+        let inferred_bonds = infer_bonds(coords, DEFAULT_TOLERANCE);
+        for bond in &inferred_bonds {
+            let elem_a = coords
+                .elements
+                .get(bond.atom_a)
+                .copied()
+                .unwrap_or(Element::Unknown);
+            let elem_b = coords
+                .elements
+                .get(bond.atom_b)
+                .copied()
+                .unwrap_or(Element::Unknown);
+            if is_stick && (elem_a == Element::H || elem_b == Element::H) {
+                continue;
+            }
+            let pos_a = positions[bond.atom_a];
+            let pos_b = positions[bond.atom_b];
+            let color_a = atom_color_fn(bond.atom_a, elem_a);
+            let color_b = atom_color_fn(bond.atom_b, elem_b);
+            let pick_id = atom_offset + bond.atom_a as u32;
+            let a = [pos_a.x, pos_a.y, pos_a.z];
+            let b = [pos_b.x, pos_b.y, pos_b.z];
+
+            if !is_stick && bond.order == BondOrder::Double {
+                let axis = (pos_b - pos_a).normalize_or_zero();
+                let perp = find_perpendicular(axis);
+                let offset = perp * DOUBLE_BOND_OFFSET;
+                let thin_radius = bond_radius * 0.7;
+
+                let a1 = pos_a + offset;
+                let b1 = pos_b + offset;
+                out.push_bond(
+                    [[a1.x, a1.y, a1.z], [b1.x, b1.y, b1.z]],
+                    thin_radius,
+                    [color_a, color_b],
+                    pick_id,
+                );
+                let a2 = pos_a - offset;
+                let b2 = pos_b - offset;
+                out.push_bond(
+                    [[a2.x, a2.y, a2.z], [b2.x, b2.y, b2.z]],
+                    thin_radius,
+                    [color_a, color_b],
+                    pick_id,
+                );
+            } else {
+                out.push_bond(
+                    [a, b],
+                    bond_radius,
+                    [color_a, color_b],
+                    pick_id,
+                );
+            }
+        }
     }
 
     /// Generate ball-and-stick instances for a small molecule entity.

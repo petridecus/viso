@@ -557,21 +557,20 @@ fn render_enum_field(
     let field = field.to_owned();
 
     let mut open = use_signal(|| false);
-    let mut selected = use_signal(|| current_str.to_owned());
 
     rsx! {
         div { class: "dropdown",
             div {
                 class: "dropdown-trigger",
                 onclick: move |_| { let v = *open.read(); open.set(!v); },
-                span { {display_name(&selected.read())} }
+                span { {display_name(current_str)} }
                 span { class: "dropdown-arrow", "▾" }
             }
             if *open.read() {
                 div { class: "dropdown-menu",
                     for variant in &variants {
                         div {
-                            class: if *variant == *selected.read() { "dropdown-item selected" } else { "dropdown-item" },
+                            class: if *variant == current_str { "dropdown-item selected" } else { "dropdown-item" },
                             onclick: {
                                 let section = section.clone();
                                 let field = field.clone();
@@ -581,7 +580,6 @@ fn render_enum_field(
                                     bridge::send_set_option(
                                         &section, &field, &val,
                                     );
-                                    selected.set(v.clone());
                                     open.set(false);
                                 }
                             },

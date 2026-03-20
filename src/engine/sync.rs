@@ -51,8 +51,9 @@ impl VisoEngine {
                 })
                 .collect();
 
-        // Concatenate backbone chains and store on visual state for
-        // animation / apply_pending_scene.
+        // Concatenate backbone chains for color computation (all
+        // entities, including Stick/BnS which keep backbone data for
+        // per-residue color calculation).
         let entity_chain_counts: Vec<usize> = entities
             .iter()
             .map(|e| e.backbone_chains.len())
@@ -62,7 +63,20 @@ impl VisoEngine {
             .iter()
             .flat_map(|e| e.backbone_chains.iter().cloned())
             .collect();
-        self.visual.backbone_chains.clone_from(&backbone_chains);
+
+        // Visual backbone chains only include Cartoon-mode entities.
+        // Stick/BnS entities keep backbone_chains for color computation
+        // but must NOT feed into the LOD/animation backbone mesh path.
+        let cartoon_backbone_chains: Vec<Vec<Vec3>> = entities
+            .iter()
+            .filter(|e| {
+                e.drawing_mode == crate::options::DrawingMode::Cartoon
+            })
+            .flat_map(|e| e.backbone_chains.iter().cloned())
+            .collect();
+        self.visual
+            .backbone_chains
+            .clone_from(&cartoon_backbone_chains);
 
         // Compute per-residue colors on main thread and distribute to
         // entities for vertex coloring (avoids background round-trip).
