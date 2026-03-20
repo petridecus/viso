@@ -334,9 +334,72 @@ impl PanelController {
                 let _ = engine.execute(cmd);
                 self.push_scene_entities(engine);
             }
+            UiAction::SetEntityOption {
+                entity_id,
+                field,
+                value,
+            } => {
+                Self::apply_entity_option(engine, entity_id, &field, &value);
+                self.push_scene_entities(engine);
+            }
+            UiAction::ClearEntityOption { entity_id } => {
+                engine.clear_entity_display_override(entity_id);
+                self.push_scene_entities(engine);
+            }
             UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
                 // Handled in drain_and_apply directly
             }
+        }
+    }
+
+    /// Apply a single per-entity display override field.
+    fn apply_entity_option(
+        engine: &mut VisoEngine,
+        entity_id: u32,
+        field: &str,
+        value: &serde_json::Value,
+    ) {
+        let mut ovr = engine
+            .entity_display_override(entity_id)
+            .cloned()
+            .unwrap_or_default();
+
+        match field {
+            "backbone_color_scheme" => {
+                ovr.backbone_color_scheme =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            "backbone_palette_preset" => {
+                ovr.backbone_palette_preset =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            "backbone_palette_mode" => {
+                ovr.backbone_palette_mode =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            "show_sidechains" => {
+                ovr.show_sidechains = value.as_bool();
+            }
+            "sidechain_color_mode" => {
+                ovr.sidechain_color_mode =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            "cartoon_style" => {
+                ovr.cartoon_style =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            _ => {
+                log::warn!(
+                    "Unknown entity override field: {field}"
+                );
+                return;
+            }
+        }
+
+        if ovr.is_empty() {
+            engine.clear_entity_display_override(entity_id);
+        } else {
+            engine.set_entity_display_override(entity_id, ovr);
         }
     }
 

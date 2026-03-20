@@ -2,6 +2,7 @@ use glam::Vec3;
 use molex::render::sidechain::SidechainAtoms;
 use molex::secondary_structure::SSType;
 use molex::types::entity::MoleculeEntity;
+use rustc_hash::FxHashMap;
 
 use crate::engine::scene_data::PerEntityData;
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
@@ -83,6 +84,9 @@ pub enum SceneRequest {
         colors: ColorOptions,
         /// Current geometry options for mesh generation.
         geometry: GeometryOptions,
+        /// Per-entity resolved display+geometry overrides.
+        entity_options:
+            FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
         /// Scene generation counter (monotonically increasing).
         generation: u64,
     },

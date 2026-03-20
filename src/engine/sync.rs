@@ -4,10 +4,12 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
+use rustc_hash::FxHashMap;
 
 use super::{scene_data, VisoEngine};
 use crate::animation::transition::Transition;
 use crate::animation::AnimationFrame;
+use crate::options::{DisplayOptions, GeometryOptions};
 use crate::renderer::gpu_pipeline::SceneChainData;
 use crate::renderer::pipeline::{PreparedScene, SceneRequest};
 
@@ -15,16 +17,40 @@ use crate::renderer::pipeline::{PreparedScene, SceneRequest};
 
 impl VisoEngine {
     /// Compute metadata from entities and store on Scene before background
-    /// submission. Returns the per-entity data and entity transitions.
+    /// submission. Returns the per-entity data, entity transitions, and
+    /// resolved per-entity display/geometry overrides.
+    #[allow(clippy::type_complexity)]
     fn prepare_scene_metadata(
         &mut self,
         entity_transitions: HashMap<u32, Transition>,
-    ) -> (Vec<scene_data::PerEntityData>, HashMap<u32, Transition>) {
+    ) -> (
+        Vec<scene_data::PerEntityData>,
+        HashMap<u32, Transition>,
+        FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
+    ) {
         let mut entities = self.entities.per_entity_data();
 
         // Rebuild structural topology (residue ranges, sidechain topology,
         // SS types, NA chains) from entity data.
         self.topology.rebuild(&entities);
+
+        // Resolve per-entity display overrides into concrete options.
+        let resolved_geometry =
+            self.options.geometry.resolve_cartoon_style();
+        let entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)> =
+            self.entities
+                .display_overrides()
+                .iter()
+                .map(|(&id, ovr)| {
+                    (
+                        id,
+                        (
+                            ovr.resolve_display(&self.options.display),
+                            ovr.resolve_geometry(&resolved_geometry),
+                        ),
+                    )
+                })
+                .collect();
 
         // Concatenate backbone chains and store on visual state for
         // animation / apply_pending_scene.
@@ -40,7 +66,8 @@ impl VisoEngine {
         self.visual.backbone_chains.clone_from(&backbone_chains);
 
         // Compute per-residue colors on main thread and distribute to
-        // entities for vertex coloring (avoids background round-trip)
+        // entities for vertex coloring (avoids background round-trip).
+        // Entities with color overrides get per-entity color computation.
         let per_entity_scores: Vec<Option<&[f64]>> = self
             .entities
             .entities()
@@ -55,6 +82,8 @@ impl VisoEngine {
                 .filter(|e| !e.entity.extract_backbone().chains.is_empty())
                 .map(|e| e.entity.molecule_type)
                 .collect();
+
+        // Default (session-wide) colors for entities without overrides.
         let colors =
             crate::options::score_color::compute_per_residue_colors_styled(
                 &backbone_chains,
@@ -65,17 +94,87 @@ impl VisoEngine {
                 Some(&entity_chain_counts),
                 Some(&entity_molecule_types),
             );
+
+        // Per-entity color override: recompute colors for entities that
+        // override color scheme or palette, then splice into the flat
+        // color array.
+        let mut final_colors = colors;
+        for (e, range) in entities
+            .iter()
+            .zip(&self.topology.entity_residue_ranges)
+        {
+            let Some((ref disp, _)) = entity_options.get(&e.id) else {
+                continue;
+            };
+            let same_colors = disp.backbone_color_scheme
+                == self.options.display.backbone_color_scheme
+                && disp.backbone_palette()
+                    == self.options.display.backbone_palette();
+            if same_colors {
+                continue;
+            }
+            let start = range.start as usize;
+            let end = range.end() as usize;
+            let recolored = self.recolor_entity(
+                e, start, end, disp, &per_entity_scores,
+            );
+            if let Some(slice) = final_colors.get_mut(start..end) {
+                let n = slice.len().min(recolored.len());
+                slice[..n].copy_from_slice(&recolored[..n]);
+            }
+        }
+
         for (e, range) in entities
             .iter_mut()
             .zip(&self.topology.entity_residue_ranges)
         {
             let start = range.start as usize;
             let end = range.end() as usize;
-            e.per_residue_colors = colors.get(start..end).map(<[_]>::to_vec);
+            e.per_residue_colors =
+                final_colors.get(start..end).map(<[_]>::to_vec);
         }
-        self.topology.per_residue_colors = Some(colors);
+        self.topology.per_residue_colors = Some(final_colors);
 
-        (entities, entity_transitions)
+        (entities, entity_transitions, entity_options)
+    }
+
+    /// Recompute per-residue colors for a single entity with overridden
+    /// display options.
+    fn recolor_entity(
+        &self,
+        e: &scene_data::PerEntityData,
+        start: usize,
+        end: usize,
+        disp: &DisplayOptions,
+        per_entity_scores: &[Option<&[f64]>],
+    ) -> Vec<[f32; 3]> {
+        let entity_ss =
+            self.topology.ss_types.get(start..end).unwrap_or(&[]);
+        let entity_scores =
+            per_entity_scores.get(e.id as usize).copied().flatten();
+        let mol_types: Vec<_> = self
+            .entities
+            .entities()
+            .iter()
+            .filter(|se| se.id() == e.id && se.visible)
+            .filter(|se| !se.entity.extract_backbone().chains.is_empty())
+            .map(|se| se.entity.molecule_type)
+            .collect();
+        let chain_counts: Vec<usize> = e
+            .backbone_chains
+            .iter()
+            .map(Vec::len)
+            .filter(|&c| c > 0)
+            .collect();
+        crate::options::score_color::compute_per_residue_colors_styled(
+            &e.backbone_chains,
+            entity_ss,
+            &[entity_scores],
+            &disp.backbone_color_scheme,
+            &disp.backbone_palette(),
+            Some(&chain_counts),
+            Some(&mol_types),
+        )
     }
 
     /// Sync scene data to renderers with per-entity transitions.
@@ -90,7 +189,7 @@ impl VisoEngine {
             return;
         }
 
-        let (entities, transitions) =
+        let (entities, transitions, entity_options) =
             self.prepare_scene_metadata(entity_transitions);
         self.animation.pending_transitions = transitions;
         self.entities.mark_rendered();
@@ -107,6 +206,7 @@ impl VisoEngine {
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
             geometry: self.options.geometry.resolve_cartoon_style(),
+            entity_options,
             generation,
         });
     }

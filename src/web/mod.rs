@@ -67,6 +67,13 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     let width = width.max(1);
     let height = height.max(1);
 
+    // Set the canvas drawing buffer to match the CSS layout size *before*
+    // creating the wgpu surface.  Without this the buffer stays at the HTML
+    // default (often 300×150) and the surface texture is mismatched — giving
+    // a blank canvas until a resize event forces synchronization.
+    canvas.set_width(width);
+    canvas.set_height(height);
+
     let surface_target = wgpu::SurfaceTarget::Canvas(canvas.clone());
     let mut context = RenderContext::new(surface_target, (width, height))
         .await
@@ -133,7 +140,7 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     input::attach_resize_observer(&canvas, Rc::clone(&engine));
 
     // Start the render loop
-    request_animation_frame_loop(Rc::clone(&engine));
+    request_animation_frame_loop(Rc::clone(&engine), canvas);
 
     Ok(())
 }
@@ -416,11 +423,75 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
             apply_web_layout(axis, collapsed, clamped);
             push_to_ui("panel_size", &format!("{clamped}"));
         }
+        UiAction::SetEntityOption {
+            entity_id,
+            field,
+            value,
+        } => {
+            let mut eng = engine.borrow_mut();
+            apply_entity_option(&mut eng, entity_id, &field, &value);
+            push_scene_entities(&eng);
+        }
+        UiAction::ClearEntityOption { entity_id } => {
+            let mut eng = engine.borrow_mut();
+            eng.clear_entity_display_override(entity_id);
+            push_scene_entities(&eng);
+        }
         UiAction::OpenFileDialog
         | UiAction::KeyPress { .. }
         | UiAction::LoadFile { .. } => {
             // Native-only actions; no-op on web
         }
+    }
+}
+
+/// Apply a single per-entity display override field.
+fn apply_entity_option(
+    engine: &mut VisoEngine,
+    entity_id: u32,
+    field: &str,
+    value: &serde_json::Value,
+) {
+    use crate::options::EntityDisplayOverride;
+
+    let mut ovr = engine
+        .entity_display_override(entity_id)
+        .cloned()
+        .unwrap_or_default();
+
+    match field {
+        "backbone_color_scheme" => {
+            ovr.backbone_color_scheme =
+                serde_json::from_value(value.clone()).ok();
+        }
+        "backbone_palette_preset" => {
+            ovr.backbone_palette_preset =
+                serde_json::from_value(value.clone()).ok();
+        }
+        "backbone_palette_mode" => {
+            ovr.backbone_palette_mode =
+                serde_json::from_value(value.clone()).ok();
+        }
+        "show_sidechains" => {
+            ovr.show_sidechains = value.as_bool();
+        }
+        "sidechain_color_mode" => {
+            ovr.sidechain_color_mode =
+                serde_json::from_value(value.clone()).ok();
+        }
+        "cartoon_style" => {
+            ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
+        }
+        _ => {
+            log::warn!("Unknown entity override field: {field}");
+            return;
+        }
+    }
+
+    if ovr.is_empty() {
+        engine.clear_entity_display_override(entity_id);
+    } else {
+        engine.set_entity_display_override(entity_id, ovr);
     }
 }
 
@@ -605,7 +676,7 @@ fn push_to_ui(key: &str, json: &str) {
 // requestAnimationFrame render loop
 // ---------------------------------------------------------------------------
 
-fn request_animation_frame_loop(engine: EngineHandle) {
+fn request_animation_frame_loop(engine: EngineHandle, canvas: HtmlCanvasElement) {
     let closure_holder: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
         Rc::new(RefCell::new(None));
     let holder_for_closure = Rc::clone(&closure_holder);
@@ -613,10 +684,33 @@ fn request_animation_frame_loop(engine: EngineHandle) {
     let dt = 1.0 / 60.0_f32;
     // Push stats to viso-ui roughly every 250ms (~15 frames at 60fps).
     let frame_counter = Rc::new(RefCell::new(0u32));
+    // Force a surface reconfigure on the first frame.  WebGPU canvases
+    // may not display content from textures acquired before the browser
+    // has composited the element into the visual tree.  Re-calling
+    // engine.resize() after the first rAF (which runs post-composite)
+    // ensures the surface context produces displayable textures.
+    let needs_initial_resize = Rc::new(RefCell::new(true));
 
     let cb = Closure::<dyn FnMut()>::new(move || {
         {
             let mut eng = engine.borrow_mut();
+
+            if *needs_initial_resize.borrow() {
+                *needs_initial_resize.borrow_mut() = false;
+                let dpr = web_sys::window()
+                    .map(|w| w.device_pixel_ratio())
+                    .unwrap_or(1.0);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let w = (f64::from(canvas.client_width()) * dpr) as u32;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let h = (f64::from(canvas.client_height()) * dpr) as u32;
+                if w > 0 && h > 0 {
+                    canvas.set_width(w);
+                    canvas.set_height(h);
+                    eng.resize(w, h);
+                }
+            }
+
             eng.update(dt);
             match eng.render() {
                 Ok(()) => {}

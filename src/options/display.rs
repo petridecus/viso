@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::geometry::{CartoonStyle, GeometryOptions};
 use super::palette::{Palette, PaletteMode, PalettePreset};
 
 /// How protein backbone is colored.
@@ -153,14 +154,17 @@ impl PresentMode {
 #[allow(clippy::struct_excessive_bools)]
 /// Display toggles and coloring mode selections.
 pub struct DisplayOptions {
-    /// Whether to render water molecules.
-    #[schemars(title = "Show Waters", extend("x-group" = "Visibility"))]
+    /// Whether to render water molecules (controlled via Scene entity
+    /// visibility, not the Options panel).
+    #[schemars(skip)]
     pub show_waters: bool,
-    /// Whether to render ion atoms.
-    #[schemars(title = "Show Ions", extend("x-group" = "Visibility"))]
+    /// Whether to render ion atoms (controlled via Scene entity
+    /// visibility, not the Options panel).
+    #[schemars(skip)]
     pub show_ions: bool,
-    /// Whether to render solvent molecules.
-    #[schemars(title = "Show Solvent", extend("x-group" = "Visibility"))]
+    /// Whether to render solvent molecules (controlled via Scene entity
+    /// visibility, not the Options panel).
+    #[schemars(skip)]
     pub show_solvent: bool,
     /// Lipid rendering style.
     #[schemars(title = "Lipid Mode", extend("x-group" = "Visibility"))]
@@ -193,6 +197,74 @@ pub struct DisplayOptions {
     /// Surface presentation mode (VSync, immediate, mailbox).
     #[schemars(title = "Present Mode", extend("x-group" = "Presentation"))]
     pub present_mode: PresentMode,
+}
+
+/// Per-entity display overrides. `None` fields use the session default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EntityDisplayOverride {
+    /// Override backbone color scheme.
+    pub backbone_color_scheme: Option<ColorScheme>,
+    /// Override backbone palette preset.
+    pub backbone_palette_preset: Option<PalettePreset>,
+    /// Override backbone palette distribution mode.
+    pub backbone_palette_mode: Option<PaletteMode>,
+    /// Override sidechain visibility.
+    pub show_sidechains: Option<bool>,
+    /// Override sidechain coloring strategy.
+    pub sidechain_color_mode: Option<SidechainColorMode>,
+    /// Override cartoon rendering style.
+    pub cartoon_style: Option<CartoonStyle>,
+}
+
+impl EntityDisplayOverride {
+    /// Produce a [`DisplayOptions`] by patching overridden fields onto `base`.
+    #[must_use]
+    pub fn resolve_display(&self, base: &DisplayOptions) -> DisplayOptions {
+        let mut out = base.clone();
+        if let Some(ref v) = self.backbone_color_scheme {
+            out.backbone_color_scheme = v.clone();
+        }
+        if let Some(ref v) = self.backbone_palette_preset {
+            out.backbone_palette_preset = v.clone();
+        }
+        if let Some(ref v) = self.backbone_palette_mode {
+            out.backbone_palette_mode = v.clone();
+        }
+        if let Some(v) = self.show_sidechains {
+            out.show_sidechains = v;
+        }
+        if let Some(ref v) = self.sidechain_color_mode {
+            out.sidechain_color_mode = v.clone();
+        }
+        out
+    }
+
+    /// Produce a [`GeometryOptions`] by patching the cartoon style onto `base`.
+    #[must_use]
+    pub fn resolve_geometry(
+        &self,
+        base: &GeometryOptions,
+    ) -> GeometryOptions {
+        self.cartoon_style.as_ref().map_or_else(
+            || base.clone(),
+            |style| {
+                let mut out = base.clone();
+                out.cartoon_style = style.clone();
+                out
+            },
+        )
+    }
+
+    /// Whether all fields are `None` (no overrides).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.backbone_color_scheme.is_none()
+            && self.backbone_palette_preset.is_none()
+            && self.backbone_palette_mode.is_none()
+            && self.show_sidechains.is_none()
+            && self.sidechain_color_mode.is_none()
+            && self.cartoon_style.is_none()
+    }
 }
 
 impl DisplayOptions {

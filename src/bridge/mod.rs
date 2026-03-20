@@ -100,6 +100,20 @@ pub enum UiAction {
         /// Physical key name matching winit's `KeyCode` debug format.
         key: String,
     },
+    /// Set a per-entity display override field.
+    SetEntityOption {
+        /// Entity ID to override.
+        entity_id: u32,
+        /// Override field name (e.g. `"cartoon_style"`).
+        field: String,
+        /// New JSON value for the field.
+        value: serde_json::Value,
+    },
+    /// Clear all per-entity display overrides for an entity.
+    ClearEntityOption {
+        /// Entity ID to clear.
+        entity_id: u32,
+    },
     /// An engine command to forward via `engine.execute()`.
     Command(VisoCommand),
 }
@@ -150,6 +164,20 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             let id = msg.get("id")?.as_u64()? as u32;
             Some(UiAction::Command(VisoCommand::RemoveEntity { id }))
         }
+        "set_entity_option" => {
+            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
+            let field = msg.get("field")?.as_str()?.to_owned();
+            let value = msg.get("value")?.clone();
+            Some(UiAction::SetEntityOption {
+                entity_id,
+                field,
+                value,
+            })
+        }
+        "clear_entity_option" => {
+            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
+            Some(UiAction::ClearEntityOption { entity_id })
+        }
         _ => None,
     }
 }
@@ -179,7 +207,12 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 MoleculeType::Protein => "Protein",
                 MoleculeType::DNA => "DNA",
                 MoleculeType::RNA => "RNA",
-                _ => "Ligand",
+                MoleculeType::Water => "Water",
+                MoleculeType::Ion => "Ion",
+                MoleculeType::Cofactor => "Cofactor",
+                MoleculeType::Solvent => "Solvent",
+                MoleculeType::Lipid => "Lipid",
+                MoleculeType::Ligand => "Ligand",
             };
             let chain_ids: Vec<String> =
                 se.entity.as_polymer().map_or_else(Vec::new, |data| {
@@ -192,7 +225,11 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 focus,
                 Focus::Entity(eid) if *eid == se.id()
             );
-            serde_json::json!({
+            let overrides = engine
+                .entities
+                .display_override(se.id())
+                .and_then(|ovr| serde_json::to_value(ovr).ok());
+            let mut entry = serde_json::json!({
                 "id": se.id(),
                 "molecule_type": mol_type,
                 "label": se.entity.label(),
@@ -201,7 +238,11 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 "chain_ids": chain_ids,
                 "focused": focused,
                 "focusable": se.entity.is_focusable(),
-            })
+            });
+            if let Some(ovr) = overrides {
+                entry["display_overrides"] = ovr;
+            }
+            entry
         })
         .collect()
 }

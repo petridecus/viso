@@ -7,9 +7,12 @@ use molex::types::coords::Coords;
 use molex::types::entity::MoleculeEntity;
 use rustc_hash::FxHashMap;
 
+use molex::types::entity::MoleculeType;
+
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
 use crate::animation::transition::Transition;
+use crate::options::{DisplayOptions, EntityDisplayOverride};
 
 /// Consolidated entity storage.
 ///
@@ -22,6 +25,8 @@ pub(crate) struct EntityStore {
     id_index: FxHashMap<u32, usize>,
     /// Per-entity animation behavior overrides.
     behaviors: FxHashMap<u32, Transition>,
+    /// Per-entity display/geometry overrides.
+    display_overrides: FxHashMap<u32, EntityDisplayOverride>,
     focus: Focus,
     next_entity_id: u32,
     /// Monotonically increasing generation; bumped on any structural mutation
@@ -38,6 +43,7 @@ impl EntityStore {
             scene_entities: Vec::new(),
             id_index: FxHashMap::default(),
             behaviors: FxHashMap::default(),
+            display_overrides: FxHashMap::default(),
             focus: Focus::Session,
             next_entity_id: 0,
             generation: 0,
@@ -90,6 +96,40 @@ impl EntityStore {
         ids
     }
 
+    /// Set initial visibility for ambient entity types (water, ion, solvent)
+    /// based on display options. Call after `add_entities` to synchronize
+    /// entity-level visibility with display toggles.
+    pub fn apply_type_visibility(&mut self, display: &DisplayOptions) {
+        for se in &mut self.scene_entities {
+            let visible = match se.entity.molecule_type {
+                MoleculeType::Water => display.show_waters,
+                MoleculeType::Ion => display.show_ions,
+                MoleculeType::Solvent => display.show_solvent,
+                _ => se.visible,
+            };
+            se.visible = visible;
+        }
+    }
+
+    /// Set visibility for all entities of a given molecule type.
+    pub fn set_type_visible(
+        &mut self,
+        mol_type: MoleculeType,
+        visible: bool,
+    ) {
+        let mut changed = false;
+        for se in &mut self.scene_entities {
+            if se.entity.molecule_type == mol_type && se.visible != visible {
+                se.visible = visible;
+                se.invalidate_render_cache();
+                changed = true;
+            }
+        }
+        if changed {
+            self.invalidate();
+        }
+    }
+
     /// Whether the store contains an entity with the given ID.
     #[must_use]
     pub fn has_entity(&self, id: u32) -> bool {
@@ -107,6 +147,7 @@ impl EntityStore {
         self.scene_entities.clear();
         self.id_index.clear();
         self.behaviors.clear();
+        self.display_overrides.clear();
         self.focus = Focus::Session;
         self.invalidate();
     }
@@ -130,6 +171,7 @@ impl EntityStore {
             return false;
         };
         drop(self.scene_entities.swap_remove(idx));
+        let _ = self.display_overrides.remove(&id);
         // If swap_remove moved the last element into `idx`, update its index.
         if idx < self.scene_entities.len() {
             let swapped_id = self.scene_entities[idx].id();
@@ -216,6 +258,39 @@ impl EntityStore {
     #[must_use]
     pub fn behavior(&self, entity_id: u32) -> Option<&Transition> {
         self.behaviors.get(&entity_id)
+    }
+
+    // -- Per-entity display overrides --
+
+    /// Set a display override for a specific entity.
+    pub fn set_display_override(
+        &mut self,
+        entity_id: u32,
+        overrides: EntityDisplayOverride,
+    ) {
+        let _ = self.display_overrides.insert(entity_id, overrides);
+    }
+
+    /// Clear a per-entity display override, reverting to session defaults.
+    pub fn clear_display_override(&mut self, entity_id: u32) {
+        let _ = self.display_overrides.remove(&entity_id);
+    }
+
+    /// Look up a per-entity display override.
+    #[must_use]
+    pub fn display_override(
+        &self,
+        entity_id: u32,
+    ) -> Option<&EntityDisplayOverride> {
+        self.display_overrides.get(&entity_id)
+    }
+
+    /// All display overrides (for building per-entity options maps).
+    #[must_use]
+    pub fn display_overrides(
+        &self,
+    ) -> &FxHashMap<u32, EntityDisplayOverride> {
+        &self.display_overrides
     }
 
     // -- Per-entity data --

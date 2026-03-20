@@ -213,13 +213,19 @@ impl SceneProcessor {
                     display,
                     colors,
                     geometry,
+                    entity_options,
                     generation,
                 } => {
                     last_rebuild_generation = generation;
                     cache.clear_meshes();
                     cache.cache_stable_data(&entities, &display);
-                    let entity_meshes =
-                        cache.update(&entities, &display, &colors, &geometry);
+                    let entity_meshes = cache.update(
+                        &entities,
+                        &display,
+                        &colors,
+                        &geometry,
+                        &entity_options,
+                    );
                     let mut prepared =
                         super::mesh_concat::concatenate_meshes(&entity_meshes);
                     prepared.generation = generation;
@@ -372,6 +378,7 @@ impl MeshCache {
         display: &DisplayOptions,
         colors: &ColorOptions,
         geometry: &GeometryOptions,
+        entity_options: &FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
     ) -> Vec<(u32, &CachedEntityMesh)> {
         // Clamp geometry detail so the concatenated vertex
         // buffer stays under the wgpu 256 MB max.
@@ -404,8 +411,14 @@ impl MeshCache {
                 .get(&e.id)
                 .is_none_or(|(v, _)| *v != e.mesh_version);
             if needs_regen {
+                let (e_display, e_geometry) =
+                    if let Some((d, g)) = entity_options.get(&e.id) {
+                        (d, g.clamped_for_residues(total_residues))
+                    } else {
+                        (display, geometry.clone())
+                    };
                 let mesh = super::mesh_gen::generate_entity_mesh(
-                    e, display, colors, &geometry,
+                    e, e_display, colors, &e_geometry,
                 );
                 drop(self.meshes.insert(e.id, (e.mesh_version, mesh)));
             }

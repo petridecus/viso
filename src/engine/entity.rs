@@ -10,6 +10,7 @@ use super::command::{BandInfo, PullInfo};
 use super::scene_data::SceneEntity;
 use super::{constraint, VisoEngine};
 use crate::animation::transition::Transition;
+use crate::options::EntityDisplayOverride;
 use crate::renderer::geometry::BackboneUpdateData;
 
 // ── Entity behavior ──
@@ -31,6 +32,44 @@ impl VisoEngine {
     pub fn clear_entity_behavior(&mut self, entity_id: u32) {
         self.entities.clear_behavior(entity_id);
     }
+
+    /// Set per-entity display/geometry overrides.
+    ///
+    /// Overridden fields take effect on the next scene sync; `None` fields
+    /// fall back to the session-wide [`crate::options::VisoOptions`].
+    pub fn set_entity_display_override(
+        &mut self,
+        entity_id: u32,
+        overrides: EntityDisplayOverride,
+    ) {
+        self.entities
+            .set_display_override(entity_id, overrides);
+        // Bump mesh version so the cache re-generates this entity.
+        if let Some(se) = self.entities.entity_mut(entity_id) {
+            se.invalidate_render_cache();
+        }
+        self.entities.force_dirty();
+        self.sync_scene_to_renderers(HashMap::new());
+    }
+
+    /// Clear a per-entity display override, reverting to session defaults.
+    pub fn clear_entity_display_override(&mut self, entity_id: u32) {
+        self.entities.clear_display_override(entity_id);
+        if let Some(se) = self.entities.entity_mut(entity_id) {
+            se.invalidate_render_cache();
+        }
+        self.entities.force_dirty();
+        self.sync_scene_to_renderers(HashMap::new());
+    }
+
+    /// Look up a per-entity display override.
+    #[must_use]
+    pub fn entity_display_override(
+        &self,
+        entity_id: u32,
+    ) -> Option<&EntityDisplayOverride> {
+        self.entities.display_override(entity_id)
+    }
 }
 
 // ── Scene data ──
@@ -48,6 +87,7 @@ impl VisoEngine {
             && self.visual.backbone_chains.is_empty();
 
         let ids = self.entities.add_entities(entities);
+        self.entities.apply_type_visibility(&self.options.display);
         if fit_camera {
             if was_empty {
                 // No previous state — non-animated sync uploads backbone
@@ -212,6 +252,8 @@ impl VisoEngine {
             } else {
                 // Add new entity
                 let _ = self.entities.add_entities(vec![entity]);
+                self.entities
+                    .apply_type_visibility(&self.options.display);
                 let _ =
                     entity_transitions.insert(id, default_transition.clone());
             }
@@ -304,10 +346,26 @@ impl VisoEngine {
     /// Set the visibility of a specific entity.
     ///
     /// Hidden entities are excluded from rendering but remain in the scene.
-    /// Forces a full scene sync.
+    /// For ambient types (water, ion, solvent), also syncs the
+    /// corresponding display option so the renderer safety net stays
+    /// consistent.
     pub fn set_entity_visible(&mut self, id: u32, visible: bool) {
         if let Some(se) = self.entities.entity_mut(id) {
             if se.visible != visible {
+                // Sync display option for ambient types.
+                use molex::types::entity::MoleculeType;
+                match se.entity.molecule_type {
+                    MoleculeType::Water => {
+                        self.options.display.show_waters = visible;
+                    }
+                    MoleculeType::Ion => {
+                        self.options.display.show_ions = visible;
+                    }
+                    MoleculeType::Solvent => {
+                        self.options.display.show_solvent = visible;
+                    }
+                    _ => {}
+                }
                 se.visible = visible;
                 se.invalidate_render_cache();
                 self.entities.force_dirty();

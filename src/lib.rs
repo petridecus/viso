@@ -48,6 +48,8 @@ pub mod web;
 
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
+// Per-entity display overrides
+pub use options::EntityDisplayOverride;
 #[cfg(feature = "gui")]
 pub use bridge::UiAction;
 pub use engine::command::{

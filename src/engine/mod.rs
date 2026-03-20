@@ -298,23 +298,37 @@ impl VisoEngine {
             VisoCommand::RemoveEntity { id } => {
                 self.execute_no_selection(|e| e.remove_entity(id))
             }
-            // Display toggles
+            // Display toggles — toggle entity-level visibility for
+            // all entities of the corresponding molecule type, and keep
+            // the display option in sync (renderer safety net).
             VisoCommand::ToggleIons => {
                 self.options.display.show_ions =
                     !self.options.display.show_ions;
-                self.refresh_ball_and_stick();
+                self.entities.set_type_visible(
+                    molex::types::entity::MoleculeType::Ion,
+                    self.options.display.show_ions,
+                );
+                self.sync_scene_to_renderers(HashMap::new());
                 false
             }
             VisoCommand::ToggleWaters => {
                 self.options.display.show_waters =
                     !self.options.display.show_waters;
-                self.refresh_ball_and_stick();
+                self.entities.set_type_visible(
+                    molex::types::entity::MoleculeType::Water,
+                    self.options.display.show_waters,
+                );
+                self.sync_scene_to_renderers(HashMap::new());
                 false
             }
             VisoCommand::ToggleSolvent => {
                 self.options.display.show_solvent =
                     !self.options.display.show_solvent;
-                self.refresh_ball_and_stick();
+                self.entities.set_type_visible(
+                    molex::types::entity::MoleculeType::Solvent,
+                    self.options.display.show_solvent,
+                );
+                self.sync_scene_to_renderers(HashMap::new());
                 false
             }
             VisoCommand::CycleLipidMode => {
@@ -515,8 +529,33 @@ impl VisoEngine {
             old.display.backbone_color_mode != new.display.backbone_color_mode;
         let geometry_changed = old.geometry != new.geometry;
         let colors_changed = old.colors != new.colors;
+        let waters_changed =
+            old.display.show_waters != new.display.show_waters;
+        let ions_changed = old.display.show_ions != new.display.show_ions;
+        let solvent_changed =
+            old.display.show_solvent != new.display.show_solvent;
 
         self.options = new;
+
+        // Sync entity-level visibility with ambient type display toggles.
+        if waters_changed {
+            self.entities.set_type_visible(
+                molex::types::entity::MoleculeType::Water,
+                self.options.display.show_waters,
+            );
+        }
+        if ions_changed {
+            self.entities.set_type_visible(
+                molex::types::entity::MoleculeType::Ion,
+                self.options.display.show_ions,
+            );
+        }
+        if solvent_changed {
+            self.entities.set_type_visible(
+                molex::types::entity::MoleculeType::Solvent,
+                self.options.display.show_solvent,
+            );
+        }
 
         if lighting_changed {
             self.apply_lighting();

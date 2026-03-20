@@ -395,9 +395,10 @@ impl VisoEngine {
         bytes: &[u8],
         format_hint: &str,
     ) -> Result<Self, VisoError> {
-        let (entities, render_coords) =
+        let (mut entities, render_coords) =
             load_scene_from_bytes(bytes, format_hint)?;
         let options = VisoOptions::default();
+        entities.apply_type_visibility(&options.display);
 
         let mut bootstrap =
             init_gpu_pipeline(&context, entities, &render_coords)?;
@@ -454,8 +455,9 @@ impl VisoEngine {
         context: RenderContext,
         cif_path: &str,
     ) -> Result<Self, VisoError> {
-        let (entities, render_coords) = load_scene_from_file(cif_path)?;
+        let (mut entities, render_coords) = load_scene_from_file(cif_path)?;
         let options = VisoOptions::default();
+        entities.apply_type_visibility(&options.display);
 
         let mut bootstrap =
             init_gpu_pipeline(&context, entities, &render_coords)?;
