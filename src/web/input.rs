@@ -151,6 +151,12 @@ pub(super) fn attach_input_listeners(
         let input = Rc::clone(&input);
         let cb = Closure::<dyn FnMut(_)>::new(
             move |event: web_sys::KeyboardEvent| {
+                // Let browser shortcuts (Cmd+R, Ctrl+Shift+R, etc.)
+                // pass through unintercepted.
+                if event.meta_key() || event.ctrl_key() || event.alt_key() {
+                    return;
+                }
+
                 // Browser KeyboardEvent.code uses the same naming as
                 // winit's KeyCode debug format: "KeyQ", "Tab", etc.
                 let code = event.code();
