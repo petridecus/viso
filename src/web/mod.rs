@@ -56,13 +56,26 @@ pub fn init() {
 /// Returns a `JsValue` error string if engine initialization fails.
 #[wasm_bindgen]
 pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
-    let width = canvas.client_width().max(1) as u32;
-    let height = canvas.client_height().max(1) as u32;
+    let dpr = web_sys::window()
+        .map(|w| w.device_pixel_ratio())
+        .unwrap_or(1.0);
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let width = (f64::from(canvas.client_width()) * dpr) as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let height = (f64::from(canvas.client_height()) * dpr) as u32;
+    let width = width.max(1);
+    let height = height.max(1);
 
     let surface_target = wgpu::SurfaceTarget::Canvas(canvas.clone());
-    let context = RenderContext::new(surface_target, (width, height))
+    let mut context = RenderContext::new(surface_target, (width, height))
         .await
         .map_err(|e| JsValue::from_str(&format!("GPU init failed: {e}")))?;
+
+    // 2x supersampling on low-DPI displays, matching native viewer behavior
+    if dpr < 2.0 {
+        context.render_scale = 2;
+    }
 
     let engine = VisoEngine::new_empty(context)
         .map_err(|e| JsValue::from_str(&format!("Engine init failed: {e}")))?;

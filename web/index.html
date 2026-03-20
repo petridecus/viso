@@ -71,7 +71,32 @@
 
         main().catch(e => {
             console.error('Viso init failed:', e);
-            document.body.textContent = `Init error: ${e}`;
+            const msg = String(e);
+            if (msg.includes('dxil.dll') || msg.includes('DXC')) {
+                document.body.innerHTML =
+                    '<div style="color:#e0e0e0;font-family:system-ui;max-width:480px;' +
+                    'margin:80px auto;line-height:1.6">' +
+                    '<h2 style="color:#ff6b6b">WebGPU not available</h2>' +
+                    '<p>Your browser\'s WebGPU backend failed to initialize because ' +
+                    'the DirectX Shader Compiler (<code>dxil.dll</code>) could not be loaded.</p>' +
+                    '<p><b>Try one of these:</b></p><ul>' +
+                    '<li>Use <b>Chrome</b> or <b>Edge</b> (latest version)</li>' +
+                    '<li>Update your current browser to the latest version</li>' +
+                    '<li>On Windows, make sure your GPU drivers are up to date</li>' +
+                    '</ul></div>';
+            } else if (msg.includes('requestAdapter') || msg.includes('no compatible GPU')) {
+                document.body.innerHTML =
+                    '<div style="color:#e0e0e0;font-family:system-ui;max-width:480px;' +
+                    'margin:80px auto;line-height:1.6">' +
+                    '<h2 style="color:#ff6b6b">WebGPU not supported</h2>' +
+                    '<p>Your browser does not support WebGPU, or no compatible GPU adapter was found.</p>' +
+                    '<p><b>Try one of these:</b></p><ul>' +
+                    '<li>Use <b>Chrome 113+</b>, <b>Edge 113+</b>, or <b>Safari 18+</b></li>' +
+                    '<li>Update your GPU drivers</li>' +
+                    '</ul></div>';
+            } else {
+                document.body.textContent = `Init error: ${e}`;
+            }
         });
     </script>
 </body>
