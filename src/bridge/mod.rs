@@ -33,7 +33,7 @@ impl PanelAxis {
     /// Returns `"portrait"` or `"landscape"` for the viso-ui orientation
     /// event.
     #[must_use]
-    pub fn orientation_str(&self) -> &'static str {
+    pub fn orientation_str(self) -> &'static str {
         match self {
             Self::Bottom => "portrait",
             Self::Right => "landscape",
@@ -41,18 +41,21 @@ impl PanelAxis {
     }
 }
 
-/// Default panel size in physical pixels.
+/// Default panel size in CSS (logical) pixels.
+///
+/// Both web and desktop hosts use the same logical value.  The desktop
+/// host converts to physical pixels via `scale_factor` at the point of
+/// `set_bounds()`.
 pub const DEFAULT_PANEL_SIZE: u32 = 340;
 
-/// Minimum panel size for resize.
+/// Minimum panel size in CSS pixels for resize.
 pub const MIN_PANEL_SIZE: u32 = 220;
 
-/// Maximum panel size for resize.
+/// Maximum panel size in CSS pixels for resize.
 pub const MAX_PANEL_SIZE: u32 = 700;
 
-/// Panel size when collapsed (just the toggle arrow strip).
-///
-/// Used by the web host to set the iframe's collapsed dimension.
+/// Panel size when collapsed (just the toggle arrow strip), in CSS
+/// pixels.
 #[cfg(target_arch = "wasm32")]
 pub const COLLAPSED_SIZE: u32 = 32;
 
@@ -129,10 +132,8 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
         }
         "toggle_panel" => Some(UiAction::TogglePanel),
         "resize_panel" => {
-            let size = msg
-                .get("size")
-                .or_else(|| msg.get("width"))?
-                .as_u64()? as u32;
+            let size =
+                msg.get("size").or_else(|| msg.get("width"))?.as_u64()? as u32;
             Some(UiAction::ResizePanel { size })
         }
         "focus_entity" => {
@@ -264,6 +265,7 @@ pub const BRIDGE_JS: &str = r"
     makePush('load_status', 'viso-load-status');
     makePush('scene_entities', 'viso-scene-entities');
     makePush('orientation', 'viso-orientation');
+    makePush('panel_size', 'viso-panel-size');
 
     // Allow late listeners (e.g. dioxus WASM) to replay any values
     // that were pushed before they registered.

@@ -88,6 +88,7 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     );
 
     push_to_ui("orientation", panel_axis.borrow().orientation_str());
+    push_to_ui("panel_size", &format!("{}", bridge::DEFAULT_PANEL_SIZE));
     {
         let axis = Rc::clone(&panel_axis);
         let collapsed = Rc::clone(&panel_collapsed);
@@ -351,11 +352,7 @@ fn eval_in(target_window: &JsValue, js: &str) {
 }
 
 /// Handle a JSON action from viso-ui (same format as native wry IPC).
-fn handle_ipc_action(
-    engine: &EngineHandle,
-    panel: &WebPanelState,
-    json: &str,
-) {
+fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(json) else {
         log::warn!("invalid IPC JSON: {json}");
         return;
@@ -404,6 +401,7 @@ fn handle_ipc_action(
             let axis = *panel.axis.borrow();
             let collapsed = *panel.collapsed.borrow();
             apply_web_layout(axis, collapsed, clamped);
+            push_to_ui("panel_size", &format!("{clamped}"));
         }
         UiAction::OpenFileDialog
         | UiAction::KeyPress { .. }
@@ -529,9 +527,11 @@ fn current_axis() -> PanelAxis {
                 w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
                     as u32;
             #[allow(clippy::cast_possible_truncation)]
-            let height =
-                w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
-                    as u32;
+            let height = w
+                .inner_height()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as u32;
             PanelAxis::from_dimensions(width, height)
         })
         .unwrap_or(PanelAxis::Right)
@@ -555,12 +555,12 @@ fn apply_web_layout(axis: PanelAxis, collapsed: bool, size: u32) {
 
     let style = match axis {
         PanelAxis::Right => format!(
-            "transition:width 0.2s ease;width:{dim};height:100%;\
-             top:0;right:0;position:fixed"
+            "transition:width 0.2s \
+             ease;width:{dim};height:100%;top:0;right:0;position:fixed"
         ),
         PanelAxis::Bottom => format!(
-            "transition:height 0.2s ease;height:{dim};width:100%;\
-             bottom:0;left:0;position:fixed"
+            "transition:height 0.2s \
+             ease;height:{dim};width:100%;bottom:0;left:0;position:fixed"
         ),
     };
     let _ = el.set_attribute("style", &style);

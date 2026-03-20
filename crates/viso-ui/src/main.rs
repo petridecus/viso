@@ -26,6 +26,9 @@ fn app() -> Element {
     let mut collapsed: Signal<bool> = use_signal(|| false);
     let mut top_tab: Signal<String> = use_signal(|| "load".to_string());
 
+    // Authoritative panel size in CSS pixels, pushed by the host.
+    let panel_size: Signal<Option<f64>> = use_signal(|| None);
+
     // Resize drag state: (start_screen_coord, start_panel_size)
     let mut drag = use_signal::<Option<(f64, f64)>>(|| None);
 
@@ -35,6 +38,7 @@ fn app() -> Element {
         bridge::register_panel_listener(panel_pinned);
         bridge::register_load_status_listener(load_status);
         bridge::register_scene_entities_listener(scene_entities);
+        bridge::register_panel_size_listener(panel_size);
 
         // The host pushes orientation via a 'viso-orientation' custom event.
         // Listen for it and set the body class accordingly.
@@ -92,24 +96,26 @@ fn app() -> Element {
                         onpointerdown: move |evt: PointerEvent| {
                             let screen = evt.screen_coordinates();
                             let portrait = bridge::is_portrait();
-                            // Capture starting screen coord and current
-                            // panel size (the iframe's own dimension
-                            // along the panel axis).
                             let start_coord = if portrait {
                                 screen.y
                             } else {
                                 screen.x
                             };
-                            let current_size = js_sys::eval(
-                                if portrait {
-                                    "window.innerHeight"
-                                } else {
-                                    "window.innerWidth"
-                                },
-                            )
-                            .ok()
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(340.0);
+                            // Use the authoritative size pushed by the
+                            // host (CSS pixels).  Falls back to
+                            // window.innerWidth only if the host hasn't
+                            // pushed yet.
+                            let current_size =
+                                panel_size.read().unwrap_or_else(|| {
+                                    js_sys::eval(if portrait {
+                                        "window.innerHeight"
+                                    } else {
+                                        "window.innerWidth"
+                                    })
+                                    .ok()
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(340.0)
+                                });
                             drag.set(Some((start_coord, current_size)));
 
                             let id = evt.pointer_id();
@@ -191,7 +197,9 @@ fn app() -> Element {
                             }
                         }
                         "scene" => rsx! {
-                            scene_ui::ScenePanel { scene_entities: scene_entities }
+                            scene_ui::ScenePanel {
+                                scene_entities: scene_entities,
+                            }
                         },
                         _ => rsx! {
                             load_ui::LoadPanel { load_status: load_status }

@@ -130,9 +130,8 @@ pub fn register_orientation_listener() {
         move |evt: web_sys::CustomEvent| {
             if let Some(val) = evt.detail().as_string() {
                 if val == "portrait" {
-                    let _ = js_sys::eval(
-                        "document.body.classList.add('portrait')",
-                    );
+                    let _ =
+                        js_sys::eval("document.body.classList.add('portrait')");
                 } else {
                     let _ = js_sys::eval(
                         "document.body.classList.remove('portrait')",
@@ -151,6 +150,30 @@ pub fn register_orientation_listener() {
     on_orientation.forget();
 }
 
+/// Register a listener for panel size updates from the host.
+///
+/// The host pushes the authoritative panel size (CSS pixels) so the
+/// resize-drag logic never has to query `window.innerWidth`.
+pub fn register_panel_size_listener(mut size_sig: Signal<Option<f64>>) {
+    let on_size = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(val_str) = evt.detail().as_string() {
+                if let Ok(val) = val_str.parse::<f64>() {
+                    size_sig.set(Some(val));
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-panel-size",
+            on_size.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-panel-size listener");
+    on_size.forget();
+}
+
 // ── Outbound actions ─────────────────────────────────────────────────────
 
 /// Toggle the panel between pinned and unpinned.
@@ -163,8 +186,7 @@ pub fn send_toggle_panel() {
 /// Resize the panel along its current axis. Sends IPC so the host
 /// handles it.
 pub fn send_resize_panel(size: u32) {
-    let msg =
-        serde_json::json!({ "action": "resize_panel", "size": size });
+    let msg = serde_json::json!({ "action": "resize_panel", "size": size });
     post_message(&msg.to_string());
 }
 

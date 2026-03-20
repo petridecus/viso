@@ -238,6 +238,12 @@ pub fn push_load_status(webview: &WebView, status: &str, message: &str) {
     );
 }
 
+/// Push the current panel size (CSS pixels) to the webview so the
+/// resize-drag logic uses the host's authoritative value.
+pub fn push_panel_size_css(webview: &WebView, size_css: u32) {
+    safe_push(webview, "panel_size", &format!("{size_css}"));
+}
+
 /// Push the panel pinned state to the webview.
 pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
     let val = if pinned { "true" } else { "false" };

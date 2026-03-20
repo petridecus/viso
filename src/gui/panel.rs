@@ -24,8 +24,9 @@ pub(crate) struct PanelController {
     pinned: bool,
     /// Whether the panel is temporarily revealed by a mouse hover.
     peek: bool,
-    /// Current panel size in physical pixels (width for Right, height for
-    /// Bottom).
+    /// Current panel size in CSS (logical) pixels (width for Right,
+    /// height for Bottom).  Converted to physical at the point of
+    /// `set_bounds()`.
     size: u32,
     /// Current panel axis (right sidebar or bottom bar).
     axis: PanelAxis,
@@ -69,6 +70,12 @@ impl PanelController {
         }
     }
 
+    /// Convert CSS panel size to physical pixels.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn physical_size(&self, scale: f64) -> u32 {
+        (f64::from(self.size) * scale).round() as u32
+    }
+
     /// Create the wry webview and push the initial schema to it.
     pub(crate) fn init_webview(
         &mut self,
@@ -77,12 +84,14 @@ impl PanelController {
         height: u32,
         engine: &VisoEngine,
     ) {
+        let physical = self.physical_size(window.scale_factor());
         self.axis = PanelAxis::from_dimensions(width, height);
-        match webview::create_webview(window, width, height, self.size) {
+        match webview::create_webview(window, width, height, physical) {
             Ok((wv, rx)) => {
                 webview::push_schema(&wv, &engine.options);
                 webview::push_panel_pinned(&wv, self.pinned);
                 webview::push_orientation(&wv, self.axis);
+                webview::push_panel_size_css(&wv, self.size);
                 self.webview = Some(wv);
                 self.action_rx = Some(rx);
                 // Start the slide position off-screen along the current
@@ -131,10 +140,11 @@ impl PanelController {
         };
 
         if self.pinned {
+            let physical = self.physical_size(window.scale_factor());
             let _ = wv.set_bounds(webview::panel_bounds(
                 inner.width,
                 inner.height,
-                self.size,
+                physical,
                 self.axis,
             ));
         }
@@ -152,6 +162,7 @@ impl PanelController {
             return;
         };
 
+        let physical = self.physical_size(window.scale_factor());
         let margin = Self::PANEL_MARGIN as f32;
 
         // The extent along the panel's axis (width for Right, height for
@@ -163,7 +174,7 @@ impl PanelController {
 
         // Where the panel should end up.
         let target = if self.peek {
-            extent - self.size as f32 - margin
+            extent - physical as f32 - margin
         } else {
             extent // off-screen
         };
@@ -186,7 +197,7 @@ impl PanelController {
                     pos, margin_i,
                 )),
                 size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                    self.size.min(inner.width),
+                    physical.min(inner.width),
                     inner.height.saturating_sub(Self::PANEL_MARGIN * 2),
                 )),
             },
@@ -196,7 +207,7 @@ impl PanelController {
                 )),
                 size: dpi::Size::Physical(dpi::PhysicalSize::new(
                     inner.width.saturating_sub(Self::PANEL_MARGIN * 2),
-                    self.size.min(inner.height),
+                    physical.min(inner.height),
                 )),
             },
         };
@@ -222,10 +233,11 @@ impl PanelController {
             PanelAxis::Bottom => (mouse_y, inner.height as f32),
         };
 
+        let physical = self.physical_size(window.scale_factor());
         let near_edge = coord >= (extent - Self::EDGE_ZONE);
         let in_panel = coord
             >= (extent
-                - self.size as f32
+                - physical as f32
                 - Self::PANEL_MARGIN as f32
                 - Self::PEEK_GRACE);
 
@@ -265,11 +277,16 @@ impl PanelController {
             self.apply_layout(window);
         }
         if let Some(w) = resize_width {
+            // The webview sends CSS pixels — clamp and store in CSS
+            // units.  Conversion to physical happens at set_bounds().
             let clamped =
                 w.clamp(bridge::MIN_PANEL_SIZE, bridge::MAX_PANEL_SIZE);
             if clamped != self.size {
                 self.size = clamped;
                 self.apply_layout(window);
+                if let Some(ref wv) = self.webview {
+                    webview::push_panel_size_css(wv, self.size);
+                }
             }
         }
     }
