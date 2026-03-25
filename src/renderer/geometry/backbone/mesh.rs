@@ -2,7 +2,7 @@
 //! into final vertex/index buffers for both protein and nucleic acid chains.
 
 use glam::Vec3;
-use molex::secondary_structure::{resolve, DetectionInput, SSType};
+use molex::SSType;
 
 use super::path::{compute_sheet_geometry, interpolate_per_residue_normals};
 use super::profile::{
@@ -14,6 +14,7 @@ use super::spline::{
     cubic_bspline, SplinePoint,
 };
 use super::{BackboneMeshOutput, BackboneVertex};
+use crate::engine::scene_data::estimate_carbonyl_o;
 use crate::options::GeometryOptions;
 
 /// Per-chain index range and bounding sphere for frustum culling.
@@ -100,8 +101,28 @@ fn process_protein_chains(
             let end = (start + n_residues).min(o.len());
             (start < o.len()).then(|| &o[start..end])
         });
-        let ss_types =
-            resolve(chain_override, DetectionInput::CaPositions(&atoms.ca));
+        let ss_types = chain_override.map_or_else(
+            || {
+                // Build ResidueBackbone from N/CA/C, estimating O.
+                let backbone: Vec<molex::ResidueBackbone> = (0..n_residues)
+                    .filter_map(|r| {
+                        let n = *atoms.n.get(r)?;
+                        let ca = *atoms.ca.get(r)?;
+                        let c = *atoms.c.get(r)?;
+                        let o = if r + 1 < n_residues {
+                            let next_n = atoms.n[r + 1];
+                            estimate_carbonyl_o(next_n, ca, c)
+                        } else {
+                            ca + (c - ca).normalize_or_zero() * 1.231
+                        };
+                        Some(molex::ResidueBackbone { n, ca, c, o })
+                    })
+                    .collect();
+                let (ss, _) = molex::analysis::detect_dssp(&backbone);
+                molex::analysis::merge_short_segments(&ss)
+            },
+            molex::analysis::merge_short_segments,
+        );
 
         let mut profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {

@@ -27,11 +27,11 @@ fn app() -> Element {
     let panel_pinned: Signal<bool> = use_signal(|| true);
     let load_status: Signal<Option<Value>> = use_signal(|| None);
     let scene_entities: Signal<Option<Value>> = use_signal(|| None);
+    let density_maps: Signal<Option<Value>> = use_signal(|| None);
 
     // Per-entity expanded state — lives at app level so it survives
     // tab switches (ScenePanel unmounts/remounts when switching tabs).
-    let expanded_ids: Signal<HashSet<u64>> =
-        use_signal(HashSet::new);
+    let expanded_ids: Signal<HashSet<u64>> = use_signal(HashSet::new);
 
     let mut collapsed: Signal<bool> = use_signal(|| false);
     let mut top_tab: Signal<String> = use_signal(|| "load".to_string());
@@ -48,6 +48,7 @@ fn app() -> Element {
         bridge::register_panel_listener(panel_pinned);
         bridge::register_load_status_listener(load_status);
         bridge::register_scene_entities_listener(scene_entities);
+        bridge::register_density_maps_listener(density_maps);
         bridge::register_panel_size_listener(panel_size);
 
         // The host pushes orientation via a 'viso-orientation' custom event.
@@ -210,6 +211,8 @@ fn app() -> Element {
                             scene_ui::ScenePanel {
                                 scene_entities: scene_entities,
                                 expanded_ids: expanded_ids,
+                                density_maps: density_maps,
+                                options: options,
                             }
                         },
                         _ => rsx! {

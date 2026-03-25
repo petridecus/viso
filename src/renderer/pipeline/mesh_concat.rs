@@ -1,5 +1,5 @@
 use glam::Vec3;
-use molex::types::entity::MoleculeEntity;
+use molex::MoleculeEntity;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedEntityMesh,
@@ -211,7 +211,7 @@ impl MeshAccumulator {
         let mut atom_entries: Vec<(u32, u32)> = Vec::new();
         for entity in &self.non_protein {
             for atom_idx in 0..entity.atom_count() as u32 {
-                atom_entries.push((entity.entity_id, atom_idx));
+                atom_entries.push((*entity.id(), atom_idx));
             }
         }
         PickMap::new(self.residue_offset, atom_entries)

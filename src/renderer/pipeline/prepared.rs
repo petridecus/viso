@@ -1,10 +1,8 @@
 use glam::Vec3;
-use molex::render::sidechain::SidechainAtoms;
-use molex::secondary_structure::SSType;
-use molex::types::entity::MoleculeEntity;
+use molex::{MoleculeEntity, SSType};
 use rustc_hash::FxHashMap;
 
-use crate::engine::scene_data::PerEntityData;
+use crate::engine::scene_data::{PerEntityData, SidechainAtoms};
 use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;

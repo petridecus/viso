@@ -40,6 +40,10 @@ pub(crate) struct CameraUniform {
     pub(crate) hovered_residue: i32,
     /// Debug visualization mode (0 = off, 1 = show normals).
     pub(crate) debug_mode: u32,
+    /// Wall-clock elapsed time in seconds (for shader animations).
+    pub(crate) time: f32,
+    /// Padding to maintain 16-byte alignment.
+    pub(crate) _pad: f32,
 }
 
 impl Camera {
@@ -87,6 +91,8 @@ impl CameraUniform {
             fovy: 45.0,
             hovered_residue: -1,
             debug_mode: 0,
+            time: 0.0,
+            _pad: 0.0,
         }
     }
 

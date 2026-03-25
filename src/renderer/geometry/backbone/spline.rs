@@ -60,6 +60,102 @@ pub(crate) fn catmull_rom(
     result
 }
 
+/// Evaluate a single point on the Catmull-Rom spline.
+///
+/// `span` selects which pair of control points (0..n-2), and `t` is the
+/// parameter within that span (0.0 = start control point, 1.0 = end).
+/// Uses the same phantom-point extrapolation as [`catmull_rom`] for
+/// boundary spans.
+pub(crate) fn catmull_rom_eval(
+    points: &[Vec3],
+    span: usize,
+    t: f32,
+) -> Option<Vec3> {
+    let n = points.len();
+    if n < 2 || span >= n - 1 {
+        return None;
+    }
+
+    let p0 = if span == 0 {
+        points[0] * 2.0 - points[1]
+    } else {
+        points[span - 1]
+    };
+    let p1 = points[span];
+    let p2 = points[span + 1];
+    let p3 = if span + 2 >= n {
+        points[n - 1] * 2.0 - points[n - 2]
+    } else {
+        points[span + 2]
+    };
+
+    let t2 = t * t;
+    let t3 = t2 * t;
+
+    Some(
+        0.5 * ((2.0 * p1)
+            + (-p0 + p2) * t
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+            + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3),
+    )
+}
+
+/// Project backbone N and C atom positions onto the Catmull-Rom spline
+/// defined by CA control points.
+///
+/// Returns `(n_positions, c_positions)` — one per residue — sitting on
+/// the rendered backbone curve. Fractional positions are derived from
+/// standard peptide bond lengths (CA→C ≈ 1.52 Å, C→N ≈ 1.33 Å,
+/// N→CA ≈ 1.47 Å).
+///
+/// Edge residues (first N, last C in each chain) use the raw backbone
+/// positions since they fall outside the spline's control-point range.
+pub(crate) fn project_backbone_atoms(
+    backbone_chains: &[Vec<Vec3>],
+) -> (Vec<Vec3>, Vec<Vec3>) {
+    /// Fraction of CA→CA span where C sits (CA→C / total).
+    const C_FRAC: f32 = 0.35;
+    /// Fraction of CA→CA span where N sits (measured from previous CA).
+    const N_FRAC: f32 = 0.66;
+
+    let mut all_n = Vec::new();
+    let mut all_c = Vec::new();
+
+    for chain in backbone_chains {
+        let residues: Vec<[Vec3; 3]> = chain
+            .chunks_exact(3)
+            .map(|tri| [tri[0], tri[1], tri[2]])
+            .collect();
+        let n = residues.len();
+        if n == 0 {
+            continue;
+        }
+
+        let ca: Vec<Vec3> = residues.iter().map(|r| r[1]).collect();
+
+        for (i, res) in residues.iter().enumerate() {
+            // N position: on the spline at N_FRAC into span (i-1 → i).
+            let n_pos = if i == 0 || ca.len() < 2 {
+                res[0] // raw N for first residue
+            } else {
+                catmull_rom_eval(&ca, i - 1, N_FRAC).unwrap_or(res[0])
+            };
+
+            // C position: on the spline at C_FRAC into span (i → i+1).
+            let c_pos = if i >= n - 1 || ca.len() < 2 {
+                res[2] // raw C for last residue
+            } else {
+                catmull_rom_eval(&ca, i, C_FRAC).unwrap_or(res[2])
+            };
+
+            all_n.push(n_pos);
+            all_c.push(c_pos);
+        }
+    }
+
+    (all_n, all_c)
+}
+
 /// Cubic B-spline (smooth approximation, does not pass through control points).
 /// Used for helix axis smoothing.
 pub(crate) fn cubic_bspline(

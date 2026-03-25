@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
-use molex::render::sidechain::SidechainAtoms;
-use molex::secondary_structure::SSType;
+use molex::SSType;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::engine::scene_data::PerEntityData;
-use crate::options::{ColorOptions, DisplayOptions, DrawingMode, GeometryOptions};
+use crate::engine::scene_data::{PerEntityData, SidechainAtoms};
+use crate::options::{
+    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
+};
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
@@ -125,13 +126,13 @@ pub fn generate_entity_mesh(
             None,
         )
     } else {
-        let na_base_colors: Vec<[f32; 3]> =
-            if display.na_color_mode == crate::options::NaColorMode::BaseColor
-            {
-                g.nucleic_acid_rings.iter().map(|r| r.color).collect()
-            } else {
-                Vec::new()
-            };
+        let na_base_colors: Vec<[f32; 3]> = if display.na_color_mode
+            == crate::options::NaColorMode::BaseColor
+        {
+            g.nucleic_acid_rings.iter().map(|r| r.color).collect()
+        } else {
+            Vec::new()
+        };
         let na_colors_ref = if na_base_colors.is_empty() {
             None
         } else {

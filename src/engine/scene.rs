@@ -6,11 +6,13 @@
 //! recomputed when entities change.
 
 use glam::Vec3;
-use molex::render::sidechain::{SidechainAtomData, SidechainAtoms};
-use molex::secondary_structure::SSType;
+use molex::entity::molecule::protein::ProteinEntity;
+use molex::{MoleculeEntity, SSType};
 use rustc_hash::FxHashMap;
 
-use super::scene_data::EntityResidueRange;
+use super::scene_data::{
+    EntityResidueRange, PerEntityData, SidechainAtomData, SidechainAtoms,
+};
 
 // ---------------------------------------------------------------------------
 // Focus
@@ -189,6 +191,15 @@ pub struct SceneTopology {
     pub(crate) ss_types: Vec<SSType>,
     /// Per-residue colors derived from scores or color mode.
     pub(crate) per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// Per-residue colors for Cartoon-mode entities only (matches the
+    /// backbone chains sent to the GPU).
+    pub(crate) cartoon_per_residue_colors: Option<Vec<[f32; 3]>>,
+
+    // -- Structural bonds (detected via molex) --
+    /// Backbone H-bonds detected by Kabsch-Sander energy.
+    pub(crate) hbonds: Vec<molex::HBond>,
+    /// Disulfide bonds detected by SG-SG distance.
+    pub(crate) disulfides: Vec<molex::DisulfideBond>,
 }
 
 impl SceneTopology {
@@ -202,14 +213,22 @@ impl SceneTopology {
             backbone_chain_offsets: Vec::new(),
             ss_types: Vec::new(),
             per_residue_colors: None,
+            cartoon_per_residue_colors: None,
+            hbonds: Vec::new(),
+            disulfides: Vec::new(),
         }
     }
 
     /// Rebuild structural metadata from visible entity data.
     ///
     /// Recomputes entity residue ranges, sidechain topology, secondary
-    /// structure types, and nucleic acid chains. Call when entities change.
-    pub fn rebuild(&mut self, entities: &[super::scene_data::PerEntityData]) {
+    /// structure types, nucleic acid chains, and structural bonds.
+    /// Call when entities change.
+    pub fn rebuild(
+        &mut self,
+        entities: &[PerEntityData],
+        molecule_entities: &[MoleculeEntity],
+    ) {
         let ranges = super::scene_data::compute_entity_residue_ranges(entities);
         let sidechain =
             super::scene_data::concatenate_sidechain_atoms(entities, &ranges);
@@ -233,6 +252,26 @@ impl SceneTopology {
                 start
             })
             .collect();
+
+        // Detect structural bonds via molex.
+        self.detect_bonds(molecule_entities);
+    }
+
+    /// Detect backbone H-bonds and disulfide bonds via molex.
+    fn detect_bonds(&mut self, molecule_entities: &[MoleculeEntity]) {
+        let backbone: Vec<molex::ResidueBackbone> = molecule_entities
+            .iter()
+            .filter_map(MoleculeEntity::as_protein)
+            .flat_map(ProteinEntity::to_backbone)
+            .collect();
+        self.hbonds = molex::analysis::detect_hbonds(&backbone);
+
+        let atoms: Vec<molex::Atom> = molecule_entities
+            .iter()
+            .flat_map(MoleculeEntity::atom_set)
+            .cloned()
+            .collect();
+        self.disulfides = molex::analysis::detect_disulfide_bonds(&atoms);
     }
 
     /// Update sidechain topology and target positions from prepared data.
@@ -265,8 +304,6 @@ impl SceneTopology {
 // Scene lifecycle (impl VisoEngine)
 // ---------------------------------------------------------------------------
 
-use molex::types::entity::MoleculeEntity;
-
 impl super::VisoEngine {
     /// Replace the current scene with new entities.
     ///
@@ -282,6 +319,8 @@ impl super::VisoEngine {
         self.entities.clear();
         self.visual = VisualState::new();
         self.animation = crate::animation::AnimationState::new();
+        self.entity_surfaces.clear();
+        self.regenerate_entity_surfaces();
         self.load_entities(entities, true)
     }
 
@@ -293,6 +332,8 @@ impl super::VisoEngine {
         self.entities.clear();
         self.visual = VisualState::new();
         self.animation = crate::animation::AnimationState::new();
+        self.entity_surfaces.clear();
+        self.regenerate_entity_surfaces();
         self.sync_scene_to_renderers(std::collections::HashMap::new());
     }
 }

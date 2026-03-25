@@ -28,24 +28,33 @@ impl VisoEngine {
         HashMap<u32, Transition>,
         FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
     ) {
-        let mut entities = self.entities.per_entity_data();
+        let mut entities = self.entities.per_entity_data(&self.options.display);
 
         // Rebuild structural topology (residue ranges, sidechain topology,
-        // SS types, NA chains) from entity data.
-        self.topology.rebuild(&entities);
+        // SS types, NA chains, structural bonds) from entity data.
+        let molecule_entities: Vec<molex::MoleculeEntity> = self
+            .entities
+            .entities()
+            .iter()
+            .filter(|se| se.visible)
+            .map(|se| se.entity.clone())
+            .collect();
+        self.topology.rebuild(&entities, &molecule_entities);
 
-        // Resolve per-entity display overrides into concrete options.
-        let resolved_geometry = self.options.geometry.resolve_cartoon_style();
+        // Resolve per-entity appearance overrides into concrete options.
+        // The base geometry incorporates display helix/sheet style so
+        // entities without per-entity style overrides inherit the global.
+        let resolved_geometry = self.resolved_geometry();
         let entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)> =
             self.entities
-                .display_overrides()
+                .appearance_overrides()
                 .iter()
                 .map(|(&id, ovr)| {
                     (
                         id,
                         (
-                            ovr.resolve_display(&self.options.display),
-                            ovr.resolve_geometry(&resolved_geometry),
+                            ovr.to_display_options(&self.options.display),
+                            ovr.to_geometry_options(&resolved_geometry),
                         ),
                     )
                 })
@@ -69,9 +78,7 @@ impl VisoEngine {
         // but must NOT feed into the LOD/animation backbone mesh path.
         let cartoon_backbone_chains: Vec<Vec<Vec3>> = entities
             .iter()
-            .filter(|e| {
-                e.drawing_mode == crate::options::DrawingMode::Cartoon
-            })
+            .filter(|e| e.drawing_mode == crate::options::DrawingMode::Cartoon)
             .flat_map(|e| e.backbone_chains.iter().cloned())
             .collect();
         self.visual
@@ -87,14 +94,6 @@ impl VisoEngine {
             .iter()
             .map(|e| e.per_residue_scores.as_deref())
             .collect();
-        let entity_molecule_types: Vec<molex::types::entity::MoleculeType> =
-            self.entities
-                .entities()
-                .iter()
-                .filter(|e| e.visible)
-                .filter(|e| !e.entity.extract_backbone().chains.is_empty())
-                .map(|e| e.entity.molecule_type)
-                .collect();
 
         // Default (session-wide) colors for entities without overrides.
         let colors =
@@ -105,7 +104,6 @@ impl VisoEngine {
                 &self.options.display.backbone_color_scheme,
                 &self.options.display.backbone_palette(),
                 Some(&entity_chain_counts),
-                Some(&entity_molecule_types),
             );
 
         // Per-entity color override: recompute colors for entities that
@@ -144,7 +142,23 @@ impl VisoEngine {
             e.per_residue_colors =
                 final_colors.get(start..end).map(<[_]>::to_vec);
         }
+        // Build a separate color array with only Cartoon-mode entities'
+        // colors — this must match `cartoon_backbone_chains` for the GPU
+        // color buffer.
+        let cartoon_colors: Vec<[f32; 3]> = entities
+            .iter()
+            .zip(&self.topology.entity_residue_ranges)
+            .filter(|(e, _)| {
+                e.drawing_mode == crate::options::DrawingMode::Cartoon
+            })
+            .flat_map(|(_, range)| {
+                let start = range.start as usize;
+                let end = range.end() as usize;
+                final_colors.get(start..end).unwrap_or(&[]).iter().copied()
+            })
+            .collect();
         self.topology.per_residue_colors = Some(final_colors);
+        self.topology.cartoon_per_residue_colors = Some(cartoon_colors);
 
         (entities, entity_transitions, entity_options)
     }
@@ -162,14 +176,6 @@ impl VisoEngine {
         let entity_ss = self.topology.ss_types.get(start..end).unwrap_or(&[]);
         let entity_scores =
             per_entity_scores.get(e.id as usize).copied().flatten();
-        let mol_types: Vec<_> = self
-            .entities
-            .entities()
-            .iter()
-            .filter(|se| se.id() == e.id && se.visible)
-            .filter(|se| !se.entity.extract_backbone().chains.is_empty())
-            .map(|se| se.entity.molecule_type)
-            .collect();
         let chain_counts: Vec<usize> = e
             .backbone_chains
             .iter()
@@ -183,7 +189,6 @@ impl VisoEngine {
             &disp.backbone_color_scheme,
             &disp.backbone_palette(),
             Some(&chain_counts),
-            Some(&mol_types),
         )
     }
 
@@ -211,11 +216,43 @@ impl VisoEngine {
             entities.len(),
             self.visual.backbone_chains.len(),
         );
+        // Resolve detected structural bonds to renderable positions and
+        // upload to the bond renderer.
+        {
+            let atoms: Vec<molex::Atom> = self
+                .entities
+                .entities()
+                .iter()
+                .filter(|se| se.visible)
+                .flat_map(|se| se.entity.atom_set())
+                .cloned()
+                .collect();
+            let backbone_chains: Vec<Vec<Vec3>> = entities
+                .iter()
+                .filter(|e| !e.backbone_chains.is_empty())
+                .flat_map(|e| e.backbone_chains.clone())
+                .collect();
+            let bonds =
+                crate::renderer::geometry::bond::resolve_structural_bonds(
+                    &self.topology.hbonds,
+                    &self.topology.disulfides,
+                    &backbone_chains,
+                    &atoms,
+                    &self.options.display.bonds,
+                    &self.options.colors,
+                );
+            let _ = self.gpu.renderers.bond.update(
+                &self.gpu.context.device,
+                &self.gpu.context.queue,
+                &bonds,
+            );
+        }
+
         self.gpu.scene_processor.submit(SceneRequest::FullRebuild {
             entities,
             display: self.options.display.clone(),
             colors: self.options.colors.clone(),
-            geometry: self.options.geometry.resolve_cartoon_style(),
+            geometry: self.resolved_geometry(),
             entity_options,
             generation,
         });
@@ -306,8 +343,9 @@ impl VisoEngine {
             );
         self.gpu.ensure_residue_capacity(total_residues);
 
-        // Colors already computed in prepare_scene_metadata
-        if let Some(ref colors) = self.topology.per_residue_colors {
+        // Upload colors for Cartoon-mode entities only (matching
+        // the backbone chains in self.visual.backbone_chains).
+        if let Some(ref colors) = self.topology.cartoon_per_residue_colors {
             self.gpu.set_colors_immediate(colors);
         }
     }
@@ -334,7 +372,7 @@ impl VisoEngine {
             );
         self.gpu.ensure_residue_capacity(total_residues);
 
-        if let Some(ref colors) = self.topology.per_residue_colors {
+        if let Some(ref colors) = self.topology.cartoon_per_residue_colors {
             self.gpu.set_target_colors(colors);
         }
     }
@@ -402,14 +440,23 @@ impl VisoEngine {
     /// chain's tier has changed.
     pub(crate) fn check_and_submit_lod(&mut self) {
         let camera_eye = self.camera_controller.camera.eye;
-        self.gpu
-            .check_and_submit_lod(camera_eye, &self.options.geometry);
+        let geo = self.resolved_geometry();
+        self.gpu.check_and_submit_lod(camera_eye, &geo);
     }
 
     /// Submit a backbone-only remesh with per-chain LOD to the background
     /// thread.
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
-        self.gpu
-            .submit_lod_remesh(camera_eye, &self.options.geometry);
+        let geo = self.resolved_geometry();
+        self.gpu.submit_lod_remesh(camera_eye, &geo);
+    }
+
+    /// Geometry options with display helix/sheet style folded in.
+    fn resolved_geometry(&self) -> GeometryOptions {
+        self.options
+            .geometry
+            .resolve_cartoon_style()
+            .with_helix_style(self.options.display.helix_style)
+            .with_sheet_style(self.options.display.sheet_style)
     }
 }

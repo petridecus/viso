@@ -1,10 +1,10 @@
 //! All GPU infrastructure grouped together.
 
 use std::collections::HashMap;
+use std::sync::mpsc;
 
 use glam::{Mat4, Vec3};
-use molex::secondary_structure::SSType;
-use molex::types::entity::MoleculeEntity;
+use molex::{MoleculeEntity, SSType};
 
 use crate::animation::AnimationFrame;
 use crate::camera::controller::CameraController;
@@ -16,6 +16,7 @@ use crate::options::{
     ColorOptions, DisplayOptions, GeometryOptions, LightingOptions, VisoOptions,
 };
 use crate::renderer::draw_context::DrawBindGroups;
+use crate::renderer::geometry::isosurface::IsosurfaceVertex;
 use crate::renderer::geometry::{
     PreparedBackboneData, PreparedBallAndStickData, SidechainView,
 };
@@ -61,6 +62,10 @@ pub(crate) struct GpuPipeline {
     /// Retained so compiled shader modules stay alive for the engine lifetime.
     #[allow(dead_code)]
     pub(crate) shader_composer: ShaderComposer,
+    /// Sender for density mesh data (background thread → main thread).
+    pub(crate) density_tx: mpsc::Sender<(Vec<IsosurfaceVertex>, Vec<u32>)>,
+    /// Receiver for density mesh data.
+    pub(crate) density_rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
 }
 
 impl GpuPipeline {
@@ -409,6 +414,32 @@ impl GpuPipeline {
     pub(crate) fn update_headlamp(&mut self, camera: &Camera) {
         self.lighting.update_headlamp_from_camera(camera);
         self.lighting.update_gpu(&self.context.queue);
+    }
+
+    /// Poll for pending density mesh data and upload to GPU.
+    ///
+    /// Drains all queued results and only applies the latest one,
+    /// so rapid slider changes don't queue up stale meshes.
+    pub(crate) fn apply_pending_density_mesh(&mut self) -> bool {
+        let mut latest = None;
+        while let Ok(data) = self.density_rx.try_recv() {
+            latest = Some(data);
+        }
+        let Some((vertices, indices)) = latest else {
+            return false;
+        };
+        log::info!(
+            "applying density mesh: {} verts, {} indices",
+            vertices.len(),
+            indices.len()
+        );
+        self.renderers.isosurface.apply_prepared(
+            &self.context.device,
+            &self.context.queue,
+            &vertices,
+            &indices,
+        );
+        true
     }
 
     /// Stop the background scene processor thread.

@@ -122,10 +122,11 @@ pub fn panel_bounds(
             }
         }
         PanelAxis::Bottom => {
-            let y = window_height.saturating_sub(panel_size);
+            // macOS NSView coordinates: origin at bottom-left, y-up.
+            // y=0 places the panel at the bottom of the window.
             Rect {
                 position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-                    0, y as i32,
+                    0, 0,
                 )),
                 size: dpi::Size::Physical(dpi::PhysicalSize::new(
                     window_width,
@@ -222,6 +223,15 @@ pub fn push_scene_entities(webview: &WebView, entities_json: &str) {
         webview,
         "scene_entities",
         &bridge::escape_for_js(entities_json),
+    );
+}
+
+/// Push the density map list to the webview.
+pub fn push_density_maps(webview: &WebView, density_json: &str) {
+    safe_push(
+        webview,
+        "density_maps",
+        &bridge::escape_for_js(density_json),
     );
 }
 

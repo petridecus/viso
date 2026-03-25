@@ -11,7 +11,7 @@ pub(crate) mod spline;
 
 use glam::Vec3;
 pub(crate) use mesh::ChainRange;
-use molex::secondary_structure::SSType;
+use molex::SSType;
 
 /// Output of backbone mesh generation.
 #[derive(Default)]

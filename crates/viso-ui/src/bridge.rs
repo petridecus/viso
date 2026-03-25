@@ -327,10 +327,18 @@ pub fn send_remove_entity(id: u64) {
     post_message(&msg.to_string());
 }
 
-/// Send a `set_entity_option` action to override a per-entity display field.
-pub fn send_set_entity_option(id: u64, field: &str, value: &Value) {
+/// Send a `clear_entity_option` action to reset all per-entity overrides.
+pub fn send_clear_entity_option(id: u64) {
+    let msg =
+        serde_json::json!({ "action": "clear_entity_option", "entity_id": id });
+    post_message(&msg.to_string());
+}
+
+/// Send a `set_entity_appearance` action to set a per-entity appearance
+/// field. Pass `null` as value to clear the override for that field.
+pub fn send_set_entity_appearance(id: u64, field: &str, value: &Value) {
     let msg = serde_json::json!({
-        "action": "set_entity_option",
+        "action": "set_entity_appearance",
         "entity_id": id,
         "field": field,
         "value": value,
@@ -338,10 +346,48 @@ pub fn send_set_entity_option(id: u64, field: &str, value: &Value) {
     post_message(&msg.to_string());
 }
 
-/// Send a `clear_entity_option` action to reset all per-entity overrides.
-pub fn send_clear_entity_option(id: u64) {
+/// Register a listener for density map updates from the native engine.
+pub fn register_density_maps_listener(mut density_sig: Signal<Option<Value>>) {
+    let on_density = Closure::<dyn FnMut(web_sys::CustomEvent)>::new(
+        move |evt: web_sys::CustomEvent| {
+            if let Some(json_str) = evt.detail().as_string() {
+                if let Ok(val) = serde_json::from_str::<Value>(&json_str) {
+                    density_sig.set(Some(val));
+                }
+            }
+        },
+    );
+    web_sys::window()
+        .expect("no global window")
+        .add_event_listener_with_callback(
+            "viso-density-maps",
+            on_density.as_ref().unchecked_ref(),
+        )
+        .expect("failed to add viso-density-maps listener");
+    on_density.forget();
+}
+
+/// Send a `set_density_option` action to the native engine.
+pub fn send_set_density_option(id: u64, field: &str, value: &Value) {
+    let msg = serde_json::json!({
+        "action": "set_density_option",
+        "id": id,
+        "field": field,
+        "value": value,
+    });
+    post_message(&msg.to_string());
+}
+
+/// Send a `remove_density_map` action to the native engine.
+pub fn send_remove_density_map(id: u64) {
+    let msg = serde_json::json!({ "action": "remove_density_map", "id": id });
+    post_message(&msg.to_string());
+}
+
+/// Send a `toggle_density_visibility` action to the native engine.
+pub fn send_toggle_density_visibility(id: u64) {
     let msg =
-        serde_json::json!({ "action": "clear_entity_option", "entity_id": id });
+        serde_json::json!({ "action": "toggle_density_visibility", "id": id });
     post_message(&msg.to_string());
 }
 

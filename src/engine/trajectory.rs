@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use glam::Vec3;
 use molex::adapters::dcd::DcdFrame;
+use molex::entity::molecule::protein::ProteinEntity;
 use web_time::Instant;
 
 /// Minimal frame sequencer — auto-advances with configurable speed.
@@ -34,7 +35,7 @@ impl TrajectoryPlayer {
     ///   topology)
     /// - `backbone_atom_indices`: for each position in the flattened
     ///   backbone_chains, the corresponding atom index in the DCD's flat
-    ///   coordinate arrays. Built by the caller from the structure's `Coords`
+    ///   coordinate arrays. Built by the caller from the entity's residue
     ///   metadata.
     pub fn new(
         frames: Vec<DcdFrame>,
@@ -147,9 +148,7 @@ impl super::VisoEngine {
     /// Load a DCD trajectory file and begin playback.
     pub fn load_trajectory(&mut self, path: &std::path::Path) {
         use molex::adapters::dcd::dcd_file_to_frames;
-        use molex::ops::transform::protein_only;
-
-        use super::scene_data::SceneEntity;
+        use molex::MoleculeType;
 
         let (header, frames) = match dcd_file_to_frames(path) {
             Ok(r) => r,
@@ -159,38 +158,49 @@ impl super::VisoEngine {
             }
         };
 
-        // Get protein coords from the first visible entity to build backbone
-        // mapping
-        let protein_coords = self
+        // Get the first visible protein entity directly
+        let protein = self
             .entities
             .entities()
             .iter()
             .filter(|e| e.visible)
-            .find_map(SceneEntity::protein_coords);
+            .find_map(|e| {
+                if e.entity.molecule_type() == MoleculeType::Protein {
+                    e.entity.as_protein()
+                } else {
+                    None
+                }
+            });
 
-        let protein_coords = if let Some(c) = protein_coords {
-            protein_only(&c)
-        } else {
+        let Some(protein) = protein else {
             log::error!("No protein structure loaded — cannot play trajectory");
             return;
         };
 
         // Validate atom count
-        if (header.num_atoms as usize) < protein_coords.num_atoms {
+        let protein_atom_count = protein.atoms.len();
+        if (header.num_atoms as usize) < protein_atom_count {
             log::error!(
                 "DCD atom count ({}) is less than protein atom count ({})",
                 header.num_atoms,
-                protein_coords.num_atoms,
+                protein_atom_count,
             );
             return;
         }
 
-        // Build backbone atom index mapping
-        let backbone_indices = build_backbone_atom_indices(&protein_coords);
+        // Build backbone atom index mapping from protein residues
+        let backbone_indices = build_backbone_atom_indices(protein);
 
         // Get current backbone chains for topology
+        let entities_slice: Vec<molex::MoleculeEntity> = self
+            .entities
+            .entities()
+            .iter()
+            .filter(|e| e.visible && e.is_protein())
+            .map(|e| e.entity.clone())
+            .collect();
         let backbone_chains =
-            molex::ops::transform::extract_backbone_chains(&protein_coords);
+            molex::ops::transform::extract_backbone_segments(&entities_slice);
 
         let num_atoms = header.num_atoms as usize;
         self.animation.load_trajectory(
@@ -202,50 +212,57 @@ impl super::VisoEngine {
     }
 }
 
-/// Build the backbone atom index mapping from a `Coords` struct.
+/// Build the backbone atom index mapping from a [`ProteinEntity`].
 ///
 /// For each backbone atom (N, CA, C) that would appear in the backbone_chains
-/// produced by `extract_backbone_chains`, returns the corresponding index into
-/// the full atom array (i.e. the DCD's flat coordinate index).
+/// produced by `extract_backbone_segments`, returns the corresponding index
+/// into the full atom array (i.e. the DCD's flat coordinate index).
 ///
-/// This mirrors the logic in `extract_backbone_chains` from molex so
+/// This mirrors the logic in `extract_backbone_segments` from molex so
 /// the mapping is consistent with the chain topology the renderer uses.
-pub fn build_backbone_atom_indices(
-    coords: &molex::types::coords::Coords,
-) -> Vec<usize> {
+pub fn build_backbone_atom_indices(protein: &ProteinEntity) -> Vec<usize> {
     let mut indices = Vec::new();
-    let mut last_chain_id: Option<u8> = None;
     let mut last_res_num: Option<i32> = None;
     let mut current_chain_indices: Vec<usize> = Vec::new();
 
-    for i in 0..coords.num_atoms {
-        let atom_name = std::str::from_utf8(&coords.atom_names[i])
-            .unwrap_or("")
-            .trim();
+    for res in &protein.residues {
+        let atoms_in_res = &protein.atoms[res.atom_range.clone()];
 
-        if atom_name != "N" && atom_name != "CA" && atom_name != "C" {
-            continue;
+        // Find N, CA, C atom indices (global, into the entity atom array)
+        let mut n_idx = None;
+        let mut ca_idx = None;
+        let mut c_idx = None;
+
+        for (local_offset, atom) in atoms_in_res.iter().enumerate() {
+            let global_idx = res.atom_range.start + local_offset;
+            let name = std::str::from_utf8(&atom.name).unwrap_or("").trim();
+            match name {
+                "N" => n_idx = Some(global_idx),
+                "CA" => ca_idx = Some(global_idx),
+                "C" => c_idx = Some(global_idx),
+                _ => {}
+            }
         }
 
-        let chain_id = coords.chain_ids[i];
-        let res_num = coords.res_nums[i];
+        // Skip residues missing backbone atoms
+        let (Some(n), Some(ca), Some(c)) = (n_idx, ca_idx, c_idx) else {
+            continue;
+        };
 
-        let is_chain_break = last_chain_id.is_some_and(|c| c != chain_id);
+        // Detect sequence gaps (chain breaks are handled by segment_breaks
+        // in the protein entity, but for DCD mapping we just check residue
+        // number continuity)
         let is_sequence_gap =
-            last_res_num.is_some_and(|r| (res_num - r).abs() > 1);
+            last_res_num.is_some_and(|r| (res.number - r).abs() > 1);
 
-        if (is_chain_break || is_sequence_gap)
-            && !current_chain_indices.is_empty()
-        {
+        if is_sequence_gap && !current_chain_indices.is_empty() {
             indices.append(&mut current_chain_indices);
         }
 
-        current_chain_indices.push(i);
-        last_chain_id = Some(chain_id);
-
-        if atom_name == "CA" {
-            last_res_num = Some(res_num);
-        }
+        current_chain_indices.push(n);
+        current_chain_indices.push(ca);
+        current_chain_indices.push(c);
+        last_res_num = Some(res.number);
     }
 
     if !current_chain_indices.is_empty() {

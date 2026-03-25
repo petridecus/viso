@@ -8,4 +8,6 @@ struct CameraUniform {
     fovy: f32,
     hovered_residue: i32,
     debug_mode: u32,
+    time: f32,
+    _pad: f32,
 };

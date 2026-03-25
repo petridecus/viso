@@ -221,14 +221,19 @@ fn install_ipc_bridge(
     // -- window.__viso_load_bytes(bytes, formatHint) --
     let eng = Rc::clone(&engine);
     let load_bytes = Closure::<dyn FnMut(Vec<u8>, String)>::new(
-        move |bytes: Vec<u8>, hint: String| match bridge::parse_structure_bytes(
+        move |bytes: Vec<u8>, hint: String| match bridge::parse_file_bytes(
             &bytes, &hint,
         ) {
-            Ok(entities) => {
+            Ok(bridge::ParsedFile::Structure(entities)) => {
                 let mut e = eng.borrow_mut();
                 let _ids = e.replace_scene(entities);
                 push_load_status("loaded", "Structure loaded");
                 push_scene_entities(&e);
+            }
+            Ok(bridge::ParsedFile::Density(map)) => {
+                let mut e = eng.borrow_mut();
+                let _id = e.load_density_map(map);
+                push_load_status("loaded", "Density map loaded");
             }
             Err(msg) => {
                 log::error!("load failed: {msg}");
@@ -389,7 +394,19 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
         UiAction::SetOption { path, field, value } => {
             let mut eng = engine.borrow_mut();
             if let Ok(mut root) = serde_json::to_value(eng.options()) {
-                root[&path][&field] = value;
+                // Build a JSON pointer from the dot-separated path + field.
+                let pointer = format!(
+                    "/{}",
+                    path.split('.')
+                        .chain(std::iter::once(field.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("/")
+                );
+                if let Some(target) = root.pointer_mut(&pointer) {
+                    *target = value;
+                } else {
+                    log::warn!("Option path not found: {pointer}");
+                }
                 if let Ok(updated) = serde_json::from_value::<VisoOptions>(root)
                 {
                     eng.set_options(updated);
@@ -437,7 +454,16 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
         }
         UiAction::ClearEntityOption { entity_id } => {
             let mut eng = engine.borrow_mut();
-            eng.clear_entity_display_override(entity_id);
+            eng.clear_entity_appearance(entity_id);
+            push_scene_entities(&eng);
+        }
+        UiAction::SetEntityAppearance {
+            entity_id,
+            field,
+            value,
+        } => {
+            let mut eng = engine.borrow_mut();
+            apply_entity_option(&mut eng, entity_id, &field, &value);
             push_scene_entities(&eng);
         }
         UiAction::OpenFileDialog
@@ -448,42 +474,26 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
     }
 }
 
-/// Apply a single per-entity display override field.
+/// Apply a single per-entity appearance override field.
 fn apply_entity_option(
     engine: &mut VisoEngine,
     entity_id: u32,
     field: &str,
     value: &serde_json::Value,
 ) {
-    use crate::options::EntityDisplayOverride;
+    use crate::options::EntityAppearance;
 
     let mut ovr = engine
-        .entity_display_override(entity_id)
+        .entity_appearance(entity_id)
         .cloned()
         .unwrap_or_default();
 
     match field {
-        "backbone_color_scheme" => {
-            ovr.backbone_color_scheme =
-                serde_json::from_value(value.clone()).ok();
-        }
-        "backbone_palette_preset" => {
-            ovr.backbone_palette_preset =
-                serde_json::from_value(value.clone()).ok();
-        }
-        "backbone_palette_mode" => {
-            ovr.backbone_palette_mode =
-                serde_json::from_value(value.clone()).ok();
+        "backbone_color_scheme" | "color_scheme" => {
+            ovr.color_scheme = serde_json::from_value(value.clone()).ok();
         }
         "show_sidechains" => {
             ovr.show_sidechains = value.as_bool();
-        }
-        "sidechain_color_mode" => {
-            ovr.sidechain_color_mode =
-                serde_json::from_value(value.clone()).ok();
-        }
-        "cartoon_style" => {
-            ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
         }
         "drawing_mode" => {
             ovr.drawing_mode = serde_json::from_value(value.clone()).ok();
@@ -494,16 +504,34 @@ fn apply_entity_option(
         "sheet_style" => {
             ovr.sheet_style = serde_json::from_value(value.clone()).ok();
         }
+        "surface_kind" => {
+            ovr.surface_kind = serde_json::from_value(value.clone()).ok();
+        }
+        "surface_opacity" => {
+            ovr.surface_opacity = value.as_f64().map(|v| v as f32);
+        }
+        "show_hbonds" => {
+            ovr.show_hbonds = value.as_bool();
+        }
+        "hbond_style" => {
+            ovr.hbond_style = serde_json::from_value(value.clone()).ok();
+        }
+        "show_disulfides" => {
+            ovr.show_disulfides = value.as_bool();
+        }
+        "disulfide_style" => {
+            ovr.disulfide_style = serde_json::from_value(value.clone()).ok();
+        }
         _ => {
-            log::warn!("Unknown entity override field: {field}");
+            log::warn!("Unknown entity appearance field: {field}");
             return;
         }
     }
 
     if ovr.is_empty() {
-        engine.clear_entity_display_override(entity_id);
+        engine.clear_entity_appearance(entity_id);
     } else {
-        engine.set_entity_display_override(entity_id, ovr);
+        engine.set_entity_appearance(entity_id, ovr);
     }
 }
 

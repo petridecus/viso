@@ -5,12 +5,12 @@ use std::time::Duration;
 use glam::Vec3;
 #[cfg(not(target_arch = "wasm32"))]
 use molex::adapters::pdb::structure_file_to_entities;
-use molex::render::RenderCoords;
+use molex::entity::molecule::protein::ProteinEntity;
 use web_time::Instant;
 
+use super::density_store::DensityStore;
 use super::entity_store::EntityStore;
 use super::scene::{SceneTopology, VisualState};
-use super::scene_data::{get_residue_bonds, is_hydrophobic, SceneEntity};
 use super::{ConstraintSpecs, VisoEngine};
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
@@ -38,6 +38,7 @@ pub(crate) struct FrameTiming {
     last_frame: Instant,
     smoothed_fps: f32,
     smoothing: f32,
+    start: Instant,
 }
 
 impl FrameTiming {
@@ -54,6 +55,7 @@ impl FrameTiming {
             last_frame: Instant::now(),
             smoothed_fps: 60.0,
             smoothing: 0.05,
+            start: Instant::now(),
         }
     }
 
@@ -84,6 +86,11 @@ impl FrameTiming {
     pub(crate) fn fps(&self) -> f32 {
         self.smoothed_fps
     }
+
+    /// Wall-clock seconds since engine start.
+    pub(crate) fn elapsed_secs(&self) -> f32 {
+        self.start.elapsed().as_secs_f32()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,19 +111,31 @@ struct GpuBootstrap {
     entities: EntityStore,
 }
 
-/// Initialize all shared GPU subsystems from entity data and render coords.
+/// Initialize all shared GPU subsystems from entity data.
 ///
 /// This is the common pipeline setup for both empty and loaded constructors.
 fn init_gpu_pipeline(
     context: &RenderContext,
     entities: EntityStore,
-    render_coords: &RenderCoords,
 ) -> Result<GpuBootstrap, VisoError> {
     let mut shader_composer = ShaderComposer::new()?;
     let mut camera_controller = CameraController::new(context);
     let lighting = Lighting::new(context);
 
-    let n = render_coords.residue_count().max(1);
+    // Estimate residue count from visible protein entities.
+    let n = entities
+        .entities()
+        .iter()
+        .filter_map(|se| {
+            se.entity.as_protein().map(|p| {
+                p.to_interleaved_segments()
+                    .iter()
+                    .map(|c| c.len() / 3)
+                    .sum::<usize>()
+            })
+        })
+        .sum::<usize>()
+        .max(1);
     let selection = SelectionBuffer::new(&context.device, n);
     let residue_colors = ResidueColorBuffer::new(&context.device, n);
     let layouts = PipelineLayouts {
@@ -125,13 +144,8 @@ fn init_gpu_pipeline(
         selection: selection.layout.clone(),
         color: residue_colors.layout.clone(),
     };
-    let renderers = Renderers::new(
-        context,
-        &layouts,
-        render_coords,
-        &entities,
-        &mut shader_composer,
-    )?;
+    let renderers =
+        Renderers::new(context, &layouts, &entities, &mut shader_composer)?;
     let pick = PickingSystem::new(
         context,
         &camera_controller.layout,
@@ -160,12 +174,11 @@ fn init_gpu_pipeline(
 /// Load a structure from in-memory bytes, selecting the parser based on the
 /// file extension hint (`"cif"`, `"pdb"`, or `"bcif"`).
 ///
-/// Returns a populated [`EntityStore`] and the derived protein
-/// `RenderCoords`.
+/// Returns a populated [`EntityStore`].
 pub(super) fn load_scene_from_bytes(
     bytes: &[u8],
     format_hint: &str,
-) -> Result<(EntityStore, RenderCoords), VisoError> {
+) -> Result<EntityStore, VisoError> {
     let hint = format_hint.to_ascii_lowercase();
     let hint = hint.trim_start_matches('.');
     let entities = match hint {
@@ -173,7 +186,7 @@ pub(super) fn load_scene_from_bytes(
             let text = std::str::from_utf8(bytes).map_err(|e| {
                 VisoError::StructureLoad(format!("Invalid UTF-8 in CIF: {e}"))
             })?;
-            molex::adapters::pdb::mmcif_str_to_entities(text)
+            molex::adapters::cif::mmcif_str_to_entities(text)
                 .map_err(|e| VisoError::StructureLoad(e.to_string()))?
         }
         "pdb" | "ent" => {
@@ -195,94 +208,50 @@ pub(super) fn load_scene_from_bytes(
     for e in &entities {
         log::debug!(
             "  entity {} — {:?}: {} atoms",
-            e.entity_id,
-            e.molecule_type,
+            e.id(),
+            e.molecule_type(),
             e.atom_count()
         );
     }
 
     let mut store = EntityStore::new();
-    let entity_ids = store.add_entities(entities);
+    let _entity_ids = store.add_entities(entities);
 
-    let render_coords = extract_render_coords(&store, &entity_ids);
-    Ok((store, render_coords))
+    Ok(store)
 }
 
 /// Load a structure file and split into entities, returning a populated
-/// [`EntityStore`] and the derived protein `RenderCoords`.
+/// [`EntityStore`].
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn load_scene_from_file(
     cif_path: &str,
-) -> Result<(EntityStore, RenderCoords), VisoError> {
+) -> Result<EntityStore, VisoError> {
     let entities = structure_file_to_entities(std::path::Path::new(cif_path))
         .map_err(|e| VisoError::StructureLoad(e.to_string()))?;
 
     for e in &entities {
         log::debug!(
             "  entity {} — {:?}: {} atoms",
-            e.entity_id,
-            e.molecule_type,
+            e.id(),
+            e.molecule_type(),
             e.atom_count()
         );
     }
 
     let mut store = EntityStore::new();
-    let entity_ids = store.add_entities(entities);
+    let _entity_ids = store.add_entities(entities);
 
-    let render_coords = extract_render_coords(&store, &entity_ids);
-    Ok((store, render_coords))
+    Ok(store)
 }
 
-/// Derive protein `RenderCoords` from a populated entity store.
-pub(super) fn extract_render_coords(
-    store: &EntityStore,
-    entity_ids: &[u32],
-) -> RenderCoords {
-    let protein_entity_id = entity_ids
+/// Extract backbone chains from all protein entities in the store.
+fn extract_backbone_chains_from_store(store: &EntityStore) -> Vec<Vec<Vec3>> {
+    store
+        .entities()
         .iter()
-        .find(|&&id| store.entity(id).is_some_and(SceneEntity::is_protein));
-
-    if let Some(protein_coords) = protein_entity_id
-        .and_then(|&id| store.entity(id).and_then(SceneEntity::protein_coords))
-    {
-        log::debug!("protein_coords: {} atoms", protein_coords.num_atoms);
-        let protein_coords =
-            molex::ops::transform::protein_only(&protein_coords);
-        log::debug!("after protein_only: {} atoms", protein_coords.num_atoms);
-        let rc = RenderCoords::from_coords_with_topology(
-            &protein_coords,
-            is_hydrophobic,
-            |name| get_residue_bonds(name).map(<[(&str, &str)]>::to_vec),
-        );
-        log::debug!(
-            "render_coords: {} backbone chains, {} residues",
-            rc.backbone_chains.len(),
-            rc.backbone_chains
-                .iter()
-                .map(|c| c.len() / 3)
-                .sum::<usize>()
-        );
-        rc
-    } else {
-        log::debug!("no protein coords found");
-        empty_render_coords()
-    }
-}
-
-/// Build an empty `RenderCoords` (zero atoms, no topology).
-pub(super) fn empty_render_coords() -> RenderCoords {
-    let empty = molex::types::coords::Coords {
-        num_atoms: 0,
-        atoms: Vec::new(),
-        chain_ids: Vec::new(),
-        res_names: Vec::new(),
-        res_nums: Vec::new(),
-        atom_names: Vec::new(),
-        elements: Vec::new(),
-    };
-    RenderCoords::from_coords_with_topology(&empty, is_hydrophobic, |name| {
-        get_residue_bonds(name).map(<[(&str, &str)]>::to_vec)
-    })
+        .filter_map(|se| se.entity.as_protein())
+        .flat_map(ProteinEntity::to_interleaved_segments)
+        .collect()
 }
 
 /// Compute initial per-residue colors from chain hue ramp.
@@ -395,25 +364,20 @@ impl VisoEngine {
         bytes: &[u8],
         format_hint: &str,
     ) -> Result<Self, VisoError> {
-        let (mut entities, render_coords) =
-            load_scene_from_bytes(bytes, format_hint)?;
+        let mut entities = load_scene_from_bytes(bytes, format_hint)?;
         let options = VisoOptions::default();
         entities.apply_type_visibility(&options.display);
 
-        let mut bootstrap =
-            init_gpu_pipeline(&context, entities, &render_coords)?;
+        let backbone_chains = extract_backbone_chains_from_store(&entities);
+        let mut bootstrap = init_gpu_pipeline(&context, entities)?;
         bootstrap.renderers.init_ball_and_stick_entities(
             &context,
             &bootstrap.entities,
             &options,
         );
         let colors = initial_chain_colors(
-            &render_coords.backbone_chains,
-            render_coords
-                .backbone_chains
-                .iter()
-                .map(|c| c.len() / 3)
-                .sum(),
+            &backbone_chains,
+            backbone_chains.iter().map(|c| c.len() / 3).sum(),
         );
         bootstrap.pick.init_colors_and_groups(
             &context,
@@ -442,9 +406,8 @@ impl VisoEngine {
 
     /// Shared empty-init logic.
     fn init_empty(context: RenderContext) -> Result<Self, VisoError> {
-        let render_coords = empty_render_coords();
         let entities = EntityStore::new();
-        let bootstrap = init_gpu_pipeline(&context, entities, &render_coords)?;
+        let bootstrap = init_gpu_pipeline(&context, entities)?;
         let options = VisoOptions::default();
         Self::assemble(context, options, bootstrap)
     }
@@ -455,24 +418,20 @@ impl VisoEngine {
         context: RenderContext,
         cif_path: &str,
     ) -> Result<Self, VisoError> {
-        let (mut entities, render_coords) = load_scene_from_file(cif_path)?;
+        let mut entities = load_scene_from_file(cif_path)?;
         let options = VisoOptions::default();
         entities.apply_type_visibility(&options.display);
 
-        let mut bootstrap =
-            init_gpu_pipeline(&context, entities, &render_coords)?;
+        let backbone_chains = extract_backbone_chains_from_store(&entities);
+        let mut bootstrap = init_gpu_pipeline(&context, entities)?;
         bootstrap.renderers.init_ball_and_stick_entities(
             &context,
             &bootstrap.entities,
             &options,
         );
         let colors = initial_chain_colors(
-            &render_coords.backbone_chains,
-            render_coords
-                .backbone_chains
-                .iter()
-                .map(|c| c.len() / 3)
-                .sum(),
+            &backbone_chains,
+            backbone_chains.iter().map(|c| c.len() / 3).sum(),
         );
         bootstrap.pick.init_colors_and_groups(
             &context,
@@ -492,6 +451,7 @@ impl VisoEngine {
         options: VisoOptions,
         bootstrap: GpuBootstrap,
     ) -> Result<Self, VisoError> {
+        let (density_tx, density_rx) = std::sync::mpsc::channel();
         Ok(Self {
             gpu: GpuPipeline {
                 context,
@@ -504,6 +464,8 @@ impl VisoEngine {
                 cursor_pos: (0.0, 0.0),
                 last_cull_camera_eye: Vec3::ZERO,
                 shader_composer: bootstrap.shader_composer,
+                density_tx,
+                density_rx,
             },
             camera_controller: bootstrap.camera_controller,
             topology: SceneTopology::new(),
@@ -517,6 +479,8 @@ impl VisoEngine {
             options,
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
+            density: DensityStore::new(),
+            entity_surfaces: rustc_hash::FxHashMap::default(),
         })
     }
 }

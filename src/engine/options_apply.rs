@@ -42,22 +42,16 @@ impl VisoEngine {
             .iter()
             .filter(|e| e.visible)
             .filter_map(|e| {
-                let data = e.entity.extract_backbone();
-                if data.chains.is_empty() {
-                    None
-                } else {
-                    Some(data.chains.len())
-                }
+                e.entity.as_protein().and_then(|p| {
+                    let segs = p.to_interleaved_segments();
+                    if segs.is_empty() {
+                        None
+                    } else {
+                        Some(segs.len())
+                    }
+                })
             })
             .collect();
-        let entity_molecule_types: Vec<molex::types::entity::MoleculeType> =
-            self.entities
-                .entities()
-                .iter()
-                .filter(|e| e.visible)
-                .filter(|e| !e.entity.extract_backbone().chains.is_empty())
-                .map(|e| e.entity.molecule_type)
-                .collect();
         let new_colors = score_color::compute_per_residue_colors_styled(
             &chains,
             &self.topology.ss_types,
@@ -65,7 +59,6 @@ impl VisoEngine {
             &self.options.display.backbone_color_scheme,
             &self.options.display.backbone_palette(),
             Some(&entity_chain_counts),
-            Some(&entity_molecule_types),
         );
         self.gpu.set_target_colors(&new_colors);
         self.topology.per_residue_colors = Some(new_colors);

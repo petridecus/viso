@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
-use molex::secondary_structure::SSType;
-use molex::types::entity::MoleculeEntity;
+use molex::{MoleculeEntity, SSType};
 
 use super::command::{BandInfo, PullInfo};
 use super::scene_data::SceneEntity;
 use super::{constraint, VisoEngine};
 use crate::animation::transition::Transition;
-use crate::options::EntityDisplayOverride;
+use crate::options::{DrawingMode, EntityAppearance};
 use crate::renderer::geometry::BackboneUpdateData;
 
 // ── Entity behavior ──
@@ -33,16 +32,16 @@ impl VisoEngine {
         self.entities.clear_behavior(entity_id);
     }
 
-    /// Set per-entity display/geometry overrides.
+    /// Set per-entity appearance overrides.
     ///
     /// Overridden fields take effect on the next scene sync; `None` fields
-    /// fall back to the session-wide [`crate::options::VisoOptions`].
-    pub fn set_entity_display_override(
+    /// fall back to the global [`EntityAppearance`].
+    pub fn set_entity_appearance(
         &mut self,
         entity_id: u32,
-        overrides: EntityDisplayOverride,
+        overrides: EntityAppearance,
     ) {
-        self.entities.set_display_override(entity_id, overrides);
+        self.entities.set_appearance_override(entity_id, overrides);
         // Bump mesh version so the cache re-generates this entity.
         if let Some(se) = self.entities.entity_mut(entity_id) {
             se.invalidate_render_cache();
@@ -51,9 +50,9 @@ impl VisoEngine {
         self.sync_scene_to_renderers(HashMap::new());
     }
 
-    /// Clear a per-entity display override, reverting to session defaults.
-    pub fn clear_entity_display_override(&mut self, entity_id: u32) {
-        self.entities.clear_display_override(entity_id);
+    /// Clear a per-entity appearance override, reverting to global defaults.
+    pub fn clear_entity_appearance(&mut self, entity_id: u32) {
+        self.entities.clear_appearance_override(entity_id);
         if let Some(se) = self.entities.entity_mut(entity_id) {
             se.invalidate_render_cache();
         }
@@ -61,13 +60,13 @@ impl VisoEngine {
         self.sync_scene_to_renderers(HashMap::new());
     }
 
-    /// Look up a per-entity display override.
+    /// Look up a per-entity appearance override.
     #[must_use]
-    pub fn entity_display_override(
+    pub fn entity_appearance(
         &self,
         entity_id: u32,
-    ) -> Option<&EntityDisplayOverride> {
-        self.entities.display_override(entity_id)
+    ) -> Option<&EntityAppearance> {
+        self.entities.appearance_override(entity_id)
     }
 }
 
@@ -86,6 +85,22 @@ impl VisoEngine {
             && self.visual.backbone_chains.is_empty();
 
         let ids = self.entities.add_entities(entities);
+        // Auto-set drawing mode for non-cartoon-capable entities.
+        for &id in &ids {
+            if let Some(se) = self.entities.entity(id) {
+                let default_mode =
+                    DrawingMode::default_for(se.entity.molecule_type());
+                if default_mode != DrawingMode::Cartoon {
+                    let mut ovr = self
+                        .entities
+                        .appearance_override(id)
+                        .cloned()
+                        .unwrap_or_default();
+                    ovr.drawing_mode = Some(default_mode);
+                    self.entities.set_appearance_override(id, ovr);
+                }
+            }
+        }
         self.entities.apply_type_visibility(&self.options.display);
         if fit_camera {
             if was_empty {
@@ -219,7 +234,7 @@ impl VisoEngine {
         use std::collections::HashSet;
 
         let incoming_ids: HashSet<u32> =
-            entities.iter().map(|e| e.entity_id).collect();
+            entities.iter().map(|e| *e.id()).collect();
         let current_ids: Vec<u32> = self
             .entities
             .entities()
@@ -238,7 +253,7 @@ impl VisoEngine {
         // Add or update entities
         let mut entity_transitions = HashMap::new();
         for entity in entities {
-            let id = entity.entity_id;
+            let id = *entity.id();
             if self.entities.has_entity(id) {
                 // Update existing entity
                 self.entities.replace_entity(entity);
@@ -270,7 +285,7 @@ impl VisoEngine {
         entity: MoleculeEntity,
         transition: Transition,
     ) -> Result<(), crate::VisoError> {
-        let id = entity.entity_id;
+        let id = *entity.id();
         if !self.entities.has_entity(id) {
             return Err(crate::VisoError::StructureLoad(format!(
                 "Entity {id} not found"
@@ -296,7 +311,7 @@ impl VisoEngine {
     pub fn update_entity_coords(
         &mut self,
         id: u32,
-        coords: &molex::types::coords::Coords,
+        coords: &molex::ops::codec::Coords,
         transition: Transition,
     ) {
         self.entities.update_entity_protein_coords(id, coords);
@@ -324,7 +339,7 @@ impl VisoEngine {
         let mut entity_transitions = HashMap::new();
 
         for new_entity in updated {
-            let id = new_entity.entity_id;
+            let id = *new_entity.id();
             self.entities.replace_entity(new_entity);
 
             // Resolve per-entity behavior override
@@ -351,8 +366,8 @@ impl VisoEngine {
         if let Some(se) = self.entities.entity_mut(id) {
             if se.visible != visible {
                 // Sync display option for ambient types.
-                use molex::types::entity::MoleculeType;
-                match se.entity.molecule_type {
+                use molex::MoleculeType;
+                match se.entity.molecule_type() {
                     MoleculeType::Water => {
                         self.options.display.show_waters = visible;
                     }
@@ -368,6 +383,10 @@ impl VisoEngine {
                 se.invalidate_render_cache();
                 self.entities.force_dirty();
                 self.sync_scene_to_renderers(HashMap::new());
+                // Sync surface visibility if entity has a surface
+                if self.entity_surfaces.contains_key(&id) {
+                    self.regenerate_entity_surfaces();
+                }
             }
         }
     }

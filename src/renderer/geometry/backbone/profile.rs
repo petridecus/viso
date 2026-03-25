@@ -4,7 +4,7 @@
 //! roundness) and extrudes 3D cross-sections at each spline point.
 
 use glam::Vec3;
-use molex::secondary_structure::SSType;
+use molex::SSType;
 
 use super::spline::SplinePoint;
 use super::BackboneVertex;

@@ -2,7 +2,7 @@
 //! flattening (PyMOL-style), and sidechain offset computation.
 
 use glam::Vec3;
-use molex::secondary_structure::SSType;
+use molex::SSType;
 
 /// Segment a residue SS-type array into contiguous runs.
 #[derive(Debug)]

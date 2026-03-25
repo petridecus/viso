@@ -299,6 +299,19 @@ impl Palette {
         }
     }
 
+    /// Sample with smooth gradient interpolation regardless of palette mode.
+    ///
+    /// Used by color schemes like `ResidueIndex` that always need a
+    /// continuous N-to-C gradient.
+    #[must_use]
+    pub fn sample_gradient(&self, t: f32) -> [f32; 3] {
+        let stops = self.resolved_stops();
+        if stops.is_empty() {
+            return [0.5, 0.5, 0.5];
+        }
+        lerp_stops(&stops, t.clamp(0.0, 1.0))
+    }
+
     /// Direct index into categorical stops with wraparound.
     #[must_use]
     pub fn categorical_color(&self, index: usize) -> [f32; 3] {

@@ -8,7 +8,7 @@ mod pipeline;
 pub(crate) mod state;
 
 use glam::Vec3;
-use molex::secondary_structure::SSType;
+use molex::SSType;
 pub use pick_map::{PickMap, PickTarget};
 pub use pipeline::{Picking, PickingGeometry, SelectionBuffer};
 

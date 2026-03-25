@@ -23,13 +23,16 @@ pub(crate) mod pipeline_util;
 pub mod postprocess;
 
 use glam::Vec3;
-use molex::render::RenderCoords;
-use molex::types::entity::MoleculeEntity;
+use molex::entity::molecule::nucleic_acid::NAEntity;
+use molex::entity::molecule::protein::ProteinEntity;
+use molex::MoleculeEntity;
 
 use self::draw_context::DrawBindGroups;
+use self::geometry::isosurface::IsosurfaceRenderer;
 use self::geometry::{
-    BackboneRenderer, BallAndStickRenderer, BandRenderer, ChainPair,
-    NucleicAcidRenderer, PullRenderer, SidechainRenderer, SidechainView,
+    BackboneRenderer, BallAndStickRenderer, BandRenderer, BondRenderer,
+    ChainPair, NucleicAcidRenderer, PullRenderer, SidechainRenderer,
+    SidechainView,
 };
 use crate::camera::frustum::Frustum;
 use crate::engine::entity_store::EntityStore;
@@ -71,10 +74,12 @@ pub(crate) struct GeometryPassInput<'a> {
 pub(crate) struct Renderers {
     pub(crate) backbone: BackboneRenderer,
     pub(crate) sidechain: SidechainRenderer,
+    pub(crate) bond: BondRenderer,
     pub(crate) band: BandRenderer,
     pub(crate) pull: PullRenderer,
     pub(crate) ball_and_stick: BallAndStickRenderer,
     pub(crate) nucleic_acid: NucleicAcidRenderer,
+    pub(crate) isosurface: IsosurfaceRenderer,
 }
 
 impl Renderers {
@@ -82,46 +87,53 @@ impl Renderers {
     pub fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
-        render_coords: &RenderCoords,
         store: &EntityStore,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, crate::error::VisoError> {
         let na_chains: Vec<Vec<Vec3>> = store
             .nucleic_acid_entities()
-            .flat_map(|se| se.entity.extract_p_atom_chains())
+            .filter_map(|se| se.entity.as_nucleic_acid())
+            .flat_map(NAEntity::extract_p_atom_segments)
+            .collect();
+        // Extract protein backbone chains from all protein entities.
+        let protein_chains: Vec<Vec<Vec3>> = store
+            .entities()
+            .iter()
+            .filter_map(|se| se.entity.as_protein())
+            .flat_map(ProteinEntity::to_interleaved_segments)
             .collect();
         let backbone = BackboneRenderer::new(
             context,
             layouts,
             &ChainPair {
-                protein: &render_coords.backbone_chains,
+                protein: &protein_chains,
                 na: &na_chains,
             },
             shader_composer,
         )?;
-        let sidechain_positions = render_coords.sidechain_positions();
-        let sidechain_hydrophobicity = render_coords.sidechain_hydrophobicity();
-        let sidechain_residue_indices =
-            render_coords.sidechain_residue_indices();
+        // Start with empty sidechain data — it will be populated on first
+        // scene sync when per-entity data is computed.
         let sidechain = SidechainRenderer::new(
             context,
             layouts,
             &SidechainView {
-                positions: &sidechain_positions,
-                bonds: &render_coords.sidechain_bonds,
-                backbone_bonds: &render_coords.backbone_sidechain_bonds,
-                hydrophobicity: &sidechain_hydrophobicity,
-                residue_indices: &sidechain_residue_indices,
+                positions: &[],
+                bonds: &[],
+                backbone_bonds: &[],
+                hydrophobicity: &[],
+                residue_indices: &[],
             },
             shader_composer,
         )?;
+        let bond = BondRenderer::new(context, layouts, shader_composer)?;
         let band = BandRenderer::new(context, layouts, shader_composer)?;
         let pull = PullRenderer::new(context, layouts, shader_composer)?;
         let ball_and_stick =
             BallAndStickRenderer::new(context, layouts, shader_composer)?;
-        let na_rings: Vec<molex::types::entity::NucleotideRing> = store
+        let na_rings: Vec<molex::NucleotideRing> = store
             .nucleic_acid_entities()
-            .flat_map(|se| se.entity.extract_base_rings())
+            .filter_map(|se| se.entity.as_nucleic_acid())
+            .flat_map(NAEntity::extract_base_rings)
             .collect();
         let nucleic_acid = NucleicAcidRenderer::new(
             context,
@@ -130,13 +142,17 @@ impl Renderers {
             &na_rings,
             shader_composer,
         )?;
+        let isosurface =
+            IsosurfaceRenderer::new(context, layouts, shader_composer)?;
         Ok(Self {
             backbone,
             sidechain,
+            bond,
             band,
             pull,
             ball_and_stick,
             nucleic_acid,
+            isosurface,
         })
     }
 
@@ -212,8 +228,10 @@ impl Renderers {
 
         self.ball_and_stick.draw(&mut rp, bind_groups);
         self.nucleic_acid.draw(&mut rp, bind_groups);
+        self.bond.draw(&mut rp, bind_groups);
         self.band.draw(&mut rp, bind_groups);
         self.pull.draw(&mut rp, bind_groups);
+        self.isosurface.draw(&mut rp, bind_groups);
     }
 
     /// GPU buffer sizes across all renderers.
@@ -224,9 +242,11 @@ impl Renderers {
         stats.extend(self.backbone.buffer_info());
         stats.extend(self.sidechain.buffer_info());
         stats.extend(self.ball_and_stick.buffer_info());
+        stats.extend(self.bond.buffer_info());
         stats.extend(self.band.buffer_info());
         stats.extend(self.pull.buffer_info());
         stats.extend(self.nucleic_acid.buffer_info());
+        stats.extend(self.isosurface.buffer_info());
         stats
     }
 }

@@ -2,6 +2,8 @@ mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub mod command;
 mod constraint;
+mod density;
+pub(crate) mod density_store;
 mod entity;
 pub(crate) mod entity_store;
 mod options_apply;
@@ -9,6 +11,7 @@ mod options_apply;
 pub mod scene;
 /// Entity data types, bond topology, and scene aggregation functions.
 pub(crate) mod scene_data;
+pub(crate) mod surface;
 mod sync;
 pub(crate) mod trajectory;
 
@@ -17,8 +20,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub(crate) use bootstrap::FrameTiming;
+use density_store::DensityStore;
 use entity_store::EntityStore;
+use rustc_hash::FxHashMap;
 use scene::{Focus, SceneTopology, VisualState};
+use surface::EntitySurface;
 use web_time::Instant;
 
 use crate::animation::AnimationState;
@@ -87,6 +93,10 @@ pub struct VisoEngine {
     pub(crate) active_preset: Option<String>,
     /// Per-frame timing and FPS tracking.
     pub(crate) frame_timing: FrameTiming,
+    /// Loaded electron density maps.
+    pub(crate) density: DensityStore,
+    /// Per-entity molecular surfaces (internal mesh generation params).
+    pub(crate) entity_surfaces: FxHashMap<u32, EntitySurface>,
 }
 
 // ── Frame loop ──
@@ -97,9 +107,11 @@ impl VisoEngine {
         self.apply_pending_animation();
         self.tick_animation();
 
-        // Camera uniform (hover state from GPU picking)
+        // Camera uniform (hover state + time from GPU picking)
         self.camera_controller.uniform.hovered_residue =
             self.gpu.pick.hovered_target.as_residue_i32();
+        self.camera_controller.uniform.time =
+            self.frame_timing.elapsed_secs();
         self.camera_controller.update_gpu(&self.gpu.context.queue);
 
         // Depth-buffer fog from camera distance
@@ -128,6 +140,9 @@ impl VisoEngine {
         {
             self.resolve_and_render_constraints();
         }
+
+        // Poll for pending density mesh data from background thread
+        let _ = self.gpu.apply_pending_density_mesh();
     }
 
     /// Tick animation (both trajectory and structural), submitting any
@@ -305,7 +320,7 @@ impl VisoEngine {
                 self.options.display.show_ions =
                     !self.options.display.show_ions;
                 self.entities.set_type_visible(
-                    molex::types::entity::MoleculeType::Ion,
+                    molex::MoleculeType::Ion,
                     self.options.display.show_ions,
                 );
                 self.sync_scene_to_renderers(HashMap::new());
@@ -315,7 +330,7 @@ impl VisoEngine {
                 self.options.display.show_waters =
                     !self.options.display.show_waters;
                 self.entities.set_type_visible(
-                    molex::types::entity::MoleculeType::Water,
+                    molex::MoleculeType::Water,
                     self.options.display.show_waters,
                 );
                 self.sync_scene_to_renderers(HashMap::new());
@@ -325,7 +340,7 @@ impl VisoEngine {
                 self.options.display.show_solvent =
                     !self.options.display.show_solvent;
                 self.entities.set_type_visible(
-                    molex::types::entity::MoleculeType::Solvent,
+                    molex::MoleculeType::Solvent,
                     self.options.display.show_solvent,
                 );
                 self.sync_scene_to_renderers(HashMap::new());
@@ -525,33 +540,38 @@ impl VisoEngine {
             old_d.present_mode = new.display.present_mode;
             old_d != new.display
         };
-        let color_mode_changed =
-            old.display.backbone_color_mode != new.display.backbone_color_mode;
         let geometry_changed = old.geometry != new.geometry;
         let colors_changed = old.colors != new.colors;
         let waters_changed = old.display.show_waters != new.display.show_waters;
         let ions_changed = old.display.show_ions != new.display.show_ions;
         let solvent_changed =
             old.display.show_solvent != new.display.show_solvent;
+        let surface_changed = old.display.surface_kind
+            != new.display.surface_kind
+            || old.display.surface_opacity != new.display.surface_opacity;
+
+        let helix_sheet_changed = old.display.helix_style
+            != new.display.helix_style
+            || old.display.sheet_style != new.display.sheet_style;
 
         self.options = new;
 
         // Sync entity-level visibility with ambient type display toggles.
         if waters_changed {
             self.entities.set_type_visible(
-                molex::types::entity::MoleculeType::Water,
+                molex::MoleculeType::Water,
                 self.options.display.show_waters,
             );
         }
         if ions_changed {
             self.entities.set_type_visible(
-                molex::types::entity::MoleculeType::Ion,
+                molex::MoleculeType::Ion,
                 self.options.display.show_ions,
             );
         }
         if solvent_changed {
             self.entities.set_type_visible(
-                molex::types::entity::MoleculeType::Solvent,
+                molex::MoleculeType::Solvent,
                 self.options.display.show_solvent,
             );
         }
@@ -578,11 +598,9 @@ impl VisoEngine {
         }
         if display_changed {
             self.refresh_ball_and_stick();
-            if color_mode_changed {
-                self.recompute_backbone_colors();
-            }
+            self.recompute_backbone_colors();
         }
-        if geometry_changed {
+        if geometry_changed || helix_sheet_changed {
             let camera_eye = self.camera_controller.camera.eye;
             self.submit_per_chain_lod_remesh(camera_eye);
         }
@@ -592,6 +610,9 @@ impl VisoEngine {
         if display_changed || colors_changed {
             log::debug!("set_options: display/colors changed, triggering sync");
             self.sync_scene_to_renderers(HashMap::new());
+        }
+        if surface_changed {
+            self.regenerate_entity_surfaces();
         }
     }
 
@@ -673,124 +694,4 @@ impl VisoEngine {
 }
 
 #[cfg(test)]
-pub(crate) mod test_fixtures {
-    //! Minimal entity construction helpers for unit tests.
-
-    use molex::types::coords::{Coords, CoordsAtom, Element};
-    use molex::types::entity::{
-        coords_to_entity_kind, MoleculeEntity, MoleculeType,
-    };
-
-    fn res_name(s: &str) -> [u8; 3] {
-        let bytes = s.as_bytes();
-        let mut out = [b' '; 3];
-        for (i, &b) in bytes.iter().take(3).enumerate() {
-            out[i] = b;
-        }
-        out
-    }
-
-    fn atom_name(s: &str) -> [u8; 4] {
-        let bytes = s.as_bytes();
-        let mut out = [b' '; 4];
-        for (i, &b) in bytes.iter().take(4).enumerate() {
-            out[i] = b;
-        }
-        out
-    }
-
-    /// Build a minimal protein entity with `residue_count` residues, each
-    /// having N/CA/C at deterministic positions along the X axis.
-    pub fn make_protein_entity(
-        entity_id: u32,
-        chain_id: u8,
-        residue_count: u32,
-    ) -> MoleculeEntity {
-        let atom_count = residue_count as usize * 3;
-        let mut atoms = Vec::with_capacity(atom_count);
-        let mut chain_ids = Vec::with_capacity(atom_count);
-        let mut res_names = Vec::with_capacity(atom_count);
-        let mut res_nums = Vec::with_capacity(atom_count);
-        let mut atom_names = Vec::with_capacity(atom_count);
-        let mut elements = Vec::with_capacity(atom_count);
-
-        for r in 0..residue_count {
-            let base_x = r as f32 * 3.8;
-            for (offset, name, elem) in [
-                (0.0, "N", Element::N),
-                (1.5, "CA", Element::C),
-                (3.0, "C", Element::C),
-            ] {
-                atoms.push(CoordsAtom {
-                    x: base_x + offset,
-                    y: 0.0,
-                    z: 0.0,
-                    occupancy: 1.0,
-                    b_factor: 0.0,
-                });
-                chain_ids.push(chain_id);
-                res_names.push(res_name("ALA"));
-                res_nums.push(r as i32 + 1);
-                atom_names.push(atom_name(name));
-                elements.push(elem);
-            }
-        }
-
-        let coords = Coords {
-            num_atoms: atom_count,
-            atoms,
-            chain_ids,
-            res_names,
-            res_nums,
-            atom_names,
-            elements,
-        };
-        let kind = coords_to_entity_kind(MoleculeType::Protein, &coords);
-        MoleculeEntity {
-            entity_id,
-            molecule_type: MoleculeType::Protein,
-            kind,
-        }
-    }
-
-    /// Build a minimal water entity (non-focusable).
-    pub fn make_water_entity(entity_id: u32) -> MoleculeEntity {
-        let coords = Coords {
-            num_atoms: 3,
-            atoms: vec![
-                CoordsAtom {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                    occupancy: 1.0,
-                    b_factor: 0.0,
-                },
-                CoordsAtom {
-                    x: 0.96,
-                    y: 0.0,
-                    z: 0.0,
-                    occupancy: 1.0,
-                    b_factor: 0.0,
-                },
-                CoordsAtom {
-                    x: -0.24,
-                    y: 0.93,
-                    z: 0.0,
-                    occupancy: 1.0,
-                    b_factor: 0.0,
-                },
-            ],
-            chain_ids: vec![b'W'; 3],
-            res_names: vec![res_name("HOH"); 3],
-            res_nums: vec![1; 3],
-            atom_names: vec![atom_name("O"), atom_name("H1"), atom_name("H2")],
-            elements: vec![Element::O, Element::H, Element::H],
-        };
-        let kind = coords_to_entity_kind(MoleculeType::Water, &coords);
-        MoleculeEntity {
-            entity_id,
-            molecule_type: MoleculeType::Water,
-            kind,
-        }
-    }
-}
+pub(crate) mod test_fixtures;

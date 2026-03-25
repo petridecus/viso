@@ -85,7 +85,7 @@ impl AnimationState {
         entity_residue_ranges: &[EntityResidueRange],
     ) -> AnimationFrame {
         let ca_positions =
-            molex::render::backbone::ca_positions_from_chains(backbone_chains);
+            molex::ops::transform::extract_ca_from_chains(backbone_chains);
         let sidechain_positions = sidechain_topology.target_positions.clone();
         let sidechain_residue_indices =
             sidechain_topology.residue_indices.clone();

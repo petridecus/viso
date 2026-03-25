@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use web_time::Instant;
 use winit::window::Window;
-use wry::dpi;
 
 use super::webview;
 use crate::bridge::{self, PanelAxis, UiAction};
@@ -20,19 +19,14 @@ pub(crate) struct PanelController {
     webview: Option<wry::WebView>,
     action_rx: Option<mpsc::Receiver<UiAction>>,
     last_stats_push: Instant,
-    /// Whether the options panel is pinned open (visible).
-    pinned: bool,
-    /// Whether the panel is temporarily revealed by a mouse hover.
-    peek: bool,
+    /// Whether the panel content is collapsed (only arrow visible).
+    collapsed: bool,
     /// Current panel size in CSS (logical) pixels (width for Right,
     /// height for Bottom).  Converted to physical at the point of
     /// `set_bounds()`.
     size: u32,
     /// Current panel axis (right sidebar or bottom bar).
     axis: PanelAxis,
-    /// Animated slide position along the panel axis (physical px).
-    /// Only used for the unpinned slide; pinned mode ignores this.
-    slide_pos: f32,
     /// Receiver for background PDB fetch results (path or error message).
     load_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
@@ -40,32 +34,23 @@ pub(crate) struct PanelController {
 // ── Constants ────────────────────────────────────────────────────────────
 
 impl PanelController {
-    /// Margin around the panel when floating (not pinned).
-    const PANEL_MARGIN: u32 = 10;
-    /// How many pixels from the panel edge trigger a peek.
-    const EDGE_ZONE: f32 = 24.0;
-    /// Extra grace pixels past the panel edge before it hides.
-    const PEEK_GRACE: f32 = 40.0;
-    /// Lerp speed for the peek slide (fraction per second).
-    const SLIDE_SPEED: f32 = 12.0;
-    /// Snap when within this many pixels of the target.
-    const SNAP_PX: f32 = 0.5;
+    /// Size of the arrow strip in CSS pixels (matches `.arrow-column`
+    /// width/height in style.css).
+    const ARROW_SIZE_CSS: u32 = 32;
 }
 
 // ── Construction ─────────────────────────────────────────────────────────
 
 impl PanelController {
-    /// Create a new controller with default state (pinned, no webview yet).
+    /// Create a new controller with default state (expanded, no webview yet).
     pub(crate) fn new() -> Self {
         Self {
             webview: None,
             action_rx: None,
             last_stats_push: Instant::now(),
-            pinned: true,
-            peek: false,
+            collapsed: false,
             size: bridge::DEFAULT_PANEL_SIZE,
             axis: PanelAxis::Right,
-            slide_pos: 0.0,
             load_rx: None,
         }
     }
@@ -89,18 +74,10 @@ impl PanelController {
         match webview::create_webview(window, width, height, physical) {
             Ok((wv, rx)) => {
                 webview::push_schema(&wv, &engine.options);
-                webview::push_panel_pinned(&wv, self.pinned);
                 webview::push_orientation(&wv, self.axis);
                 webview::push_panel_size_css(&wv, self.size);
                 self.webview = Some(wv);
                 self.action_rx = Some(rx);
-                // Start the slide position off-screen along the current
-                // axis.
-                self.slide_pos = if self.axis == PanelAxis::Right {
-                    width as f32
-                } else {
-                    height as f32
-                };
                 self.apply_layout(window);
             }
             Err(e) => {
@@ -113,17 +90,15 @@ impl PanelController {
 // ── Runtime ──────────────────────────────────────────────────────────────
 
 impl PanelController {
-    /// Toggle pinned state and push it to the webview.
+    /// Toggle collapsed state. The arrow strip stays visible; only the
+    /// settings content is hidden/shown.
     pub(crate) fn toggle(&mut self) {
-        self.pinned = !self.pinned;
-        self.peek = false;
-        if let Some(ref wv) = self.webview {
-            webview::push_panel_pinned(wv, self.pinned);
-        }
+        self.collapsed = !self.collapsed;
     }
 
     /// Recompute the axis from window dimensions and set the webview
-    /// bounds.  Used by pinned mode and resize.
+    /// bounds. When collapsed, the webview shrinks to just the arrow
+    /// strip so it doesn't block canvas input.
     pub(crate) fn apply_layout(&mut self, window: &Window) {
         let inner = window.inner_size();
         let new_axis = PanelAxis::from_dimensions(inner.width, inner.height);
@@ -139,110 +114,28 @@ impl PanelController {
             return;
         };
 
-        if self.pinned {
-            let physical = self.physical_size(window.scale_factor());
-            let _ = wv.set_bounds(webview::panel_bounds(
-                inner.width,
-                inner.height,
-                physical,
-                self.axis,
-            ));
-        }
-        // Unpinned positioning is handled by `tick_slide`.
+        let panel_physical = if self.collapsed {
+            self.arrow_physical_size(window.scale_factor())
+        } else {
+            self.physical_size(window.scale_factor())
+        };
+
+        let _ = wv.set_bounds(webview::panel_bounds(
+            inner.width,
+            inner.height,
+            panel_physical,
+            self.axis,
+        ));
     }
 
-    /// Advance the unpinned slide animation by `dt` seconds.
-    /// Call every frame from `handle_redraw`.  Does nothing when pinned.
-    pub(crate) fn tick_slide(&mut self, dt: f32, window: &Window) {
-        if self.pinned {
-            return;
-        }
-        let inner = window.inner_size();
-        let Some(ref wv) = self.webview else {
-            return;
-        };
-
-        let physical = self.physical_size(window.scale_factor());
-        let margin = Self::PANEL_MARGIN as f32;
-
-        // The extent along the panel's axis (width for Right, height for
-        // Bottom).
-        let extent = match self.axis {
-            PanelAxis::Right => inner.width as f32,
-            PanelAxis::Bottom => inner.height as f32,
-        };
-
-        // Where the panel should end up.
-        let target = if self.peek {
-            extent - physical as f32 - margin
-        } else {
-            extent // off-screen
-        };
-
-        // Lerp toward target.
-        let diff = target - self.slide_pos;
-        if diff.abs() < Self::SNAP_PX {
-            self.slide_pos = target;
-        } else {
-            self.slide_pos += diff * (Self::SLIDE_SPEED * dt).min(1.0);
-        }
-
-        #[allow(clippy::cast_possible_truncation)]
-        let pos = self.slide_pos.round() as i32;
-        let margin_i = Self::PANEL_MARGIN as i32;
-
-        let bounds = match self.axis {
-            PanelAxis::Right => wry::Rect {
-                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-                    pos, margin_i,
-                )),
-                size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                    physical.min(inner.width),
-                    inner.height.saturating_sub(Self::PANEL_MARGIN * 2),
-                )),
-            },
-            PanelAxis::Bottom => wry::Rect {
-                position: dpi::Position::Physical(dpi::PhysicalPosition::new(
-                    margin_i, pos,
-                )),
-                size: dpi::Size::Physical(dpi::PhysicalSize::new(
-                    inner.width.saturating_sub(Self::PANEL_MARGIN * 2),
-                    physical.min(inner.height),
-                )),
-            },
-        };
-        let _ = wv.set_bounds(bounds);
-    }
-
-    /// Check if the mouse is near the panel edge and temporarily reveal
-    /// it.
-    pub(crate) fn update_peek(
-        &mut self,
-        mouse_x: f32,
-        mouse_y: f32,
-        window: &Window,
-    ) {
-        if self.pinned {
-            return;
-        }
-        let inner = window.inner_size();
-
-        // Pick the coordinate and extent along the panel's axis.
-        let (coord, extent) = match self.axis {
-            PanelAxis::Right => (mouse_x, inner.width as f32),
-            PanelAxis::Bottom => (mouse_y, inner.height as f32),
-        };
-
-        let physical = self.physical_size(window.scale_factor());
-        let near_edge = coord >= (extent - Self::EDGE_ZONE);
-        let in_panel = coord
-            >= (extent
-                - physical as f32
-                - Self::PANEL_MARGIN as f32
-                - Self::PEEK_GRACE);
-
-        self.peek = near_edge || (self.peek && in_panel);
-        // Slide is driven by `tick_slide` each frame.
+    /// Arrow strip size in physical pixels.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::unused_self
+    )]
+    fn arrow_physical_size(&self, scale: f64) -> u32 {
+        (f64::from(Self::ARROW_SIZE_CSS) * scale).round() as u32
     }
 
     /// Drain IPC actions from the webview, apply them to the engine, and
@@ -301,10 +194,18 @@ impl PanelController {
                     log::warn!("Failed to serialize options to JSON");
                     return;
                 };
-                if let Some(section) = root.get_mut(&path) {
-                    section[&field] = value;
+                // Build a JSON pointer from the dot-separated path + field.
+                let pointer = format!(
+                    "/{}",
+                    path.split('.')
+                        .chain(std::iter::once(field.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("/")
+                );
+                if let Some(target) = root.pointer_mut(&pointer) {
+                    *target = value;
                 } else {
-                    log::warn!("Section '{path}' not found in options JSON");
+                    log::warn!("Option path not found: {pointer}");
                 }
                 match serde_json::from_value(root) {
                     Ok(updated) => opts = updated,
@@ -316,6 +217,8 @@ impl PanelController {
                 if let Some(ref wv) = self.webview {
                     webview::push_options(wv, &engine.options);
                 }
+                // Surface kind/opacity changes affect entity summaries
+                self.push_scene_entities(engine);
             }
             UiAction::LoadFile { path } => {
                 self.load_local_file(engine, &path);
@@ -341,13 +244,66 @@ impl PanelController {
                 entity_id,
                 field,
                 value,
+            }
+            | UiAction::SetEntityAppearance {
+                entity_id,
+                field,
+                value,
             } => {
                 Self::apply_entity_option(engine, entity_id, &field, &value);
                 self.push_scene_entities(engine);
             }
             UiAction::ClearEntityOption { entity_id } => {
-                engine.clear_entity_display_override(entity_id);
+                engine.clear_entity_appearance(entity_id);
                 self.push_scene_entities(engine);
+            }
+            UiAction::SetEntitySurface { entity_id, kind } => {
+                let default_color = [0.7, 0.7, 0.7, 0.35];
+                match kind.as_str() {
+                    "gaussian" => {
+                        engine.add_gaussian_surface(entity_id, default_color);
+                    }
+                    "ses" => {
+                        engine.add_ses_surface(entity_id, default_color);
+                    }
+                    _ => {
+                        engine.remove_entity_surface(entity_id);
+                    }
+                }
+                self.push_scene_entities(engine);
+            }
+            UiAction::SetSurfaceOption {
+                entity_id,
+                field,
+                value,
+            } => {
+                if let Some(v) = value.as_f64() {
+                    let ch = match field.as_str() {
+                        "color_r" => Some(0),
+                        "color_g" => Some(1),
+                        "color_b" => Some(2),
+                        "opacity" => Some(3),
+                        _ => None,
+                    };
+                    if let Some(ch) = ch {
+                        engine
+                            .set_surface_color_channel(entity_id, ch, v as f32);
+                    }
+                }
+                self.push_scene_entities(engine);
+            }
+            UiAction::SetDensityOption { id, field, value } => {
+                Self::apply_density_option(engine, id, &field, &value);
+                self.push_density_maps(engine);
+            }
+            UiAction::RemoveDensityMap { id } => {
+                engine.remove_density_map(id);
+                self.push_density_maps(engine);
+            }
+            UiAction::ToggleDensityVisibility { id } => {
+                let vis = engine.density.get(id).is_some_and(|e| !e.visible);
+                engine.set_density_visible(id, vis);
+                self.push_density_maps(engine);
             }
             UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
                 // Handled in drain_and_apply directly
@@ -355,7 +311,44 @@ impl PanelController {
         }
     }
 
-    /// Apply a single per-entity display override field.
+    /// Apply a single density option field.
+    fn apply_density_option(
+        engine: &mut VisoEngine,
+        id: u32,
+        field: &str,
+        value: &serde_json::Value,
+    ) {
+        match field {
+            "threshold" => {
+                if let Some(v) = value.as_f64() {
+                    engine.set_density_threshold(id, v as f32);
+                }
+            }
+            "opacity" => {
+                if let Some(v) = value.as_f64() {
+                    engine.set_density_opacity(id, v as f32);
+                }
+            }
+            "color_r" | "color_g" | "color_b" => {
+                if let Some(v) = value.as_f64() {
+                    let mut color = engine
+                        .density
+                        .get(id)
+                        .map_or([0.3, 0.5, 0.8], |e| e.color);
+                    match field {
+                        "color_r" => color[0] = v as f32,
+                        "color_g" => color[1] = v as f32,
+                        "color_b" => color[2] = v as f32,
+                        _ => {}
+                    }
+                    engine.set_density_color(id, color);
+                }
+            }
+            _ => log::warn!("Unknown density field: {field}"),
+        }
+    }
+
+    /// Apply a single per-entity appearance override field.
     fn apply_entity_option(
         engine: &mut VisoEngine,
         entity_id: u32,
@@ -363,32 +356,16 @@ impl PanelController {
         value: &serde_json::Value,
     ) {
         let mut ovr = engine
-            .entity_display_override(entity_id)
+            .entity_appearance(entity_id)
             .cloned()
             .unwrap_or_default();
 
         match field {
-            "backbone_color_scheme" => {
-                ovr.backbone_color_scheme =
-                    serde_json::from_value(value.clone()).ok();
-            }
-            "backbone_palette_preset" => {
-                ovr.backbone_palette_preset =
-                    serde_json::from_value(value.clone()).ok();
-            }
-            "backbone_palette_mode" => {
-                ovr.backbone_palette_mode =
-                    serde_json::from_value(value.clone()).ok();
+            "backbone_color_scheme" | "color_scheme" => {
+                ovr.color_scheme = serde_json::from_value(value.clone()).ok();
             }
             "show_sidechains" => {
                 ovr.show_sidechains = value.as_bool();
-            }
-            "sidechain_color_mode" => {
-                ovr.sidechain_color_mode =
-                    serde_json::from_value(value.clone()).ok();
-            }
-            "cartoon_style" => {
-                ovr.cartoon_style = serde_json::from_value(value.clone()).ok();
             }
             "drawing_mode" => {
                 ovr.drawing_mode = serde_json::from_value(value.clone()).ok();
@@ -399,16 +376,35 @@ impl PanelController {
             "sheet_style" => {
                 ovr.sheet_style = serde_json::from_value(value.clone()).ok();
             }
+            "surface_kind" => {
+                ovr.surface_kind = serde_json::from_value(value.clone()).ok();
+            }
+            "surface_opacity" => {
+                ovr.surface_opacity = value.as_f64().map(|v| v as f32);
+            }
+            "show_hbonds" => {
+                ovr.show_hbonds = value.as_bool();
+            }
+            "hbond_style" => {
+                ovr.hbond_style = serde_json::from_value(value.clone()).ok();
+            }
+            "show_disulfides" => {
+                ovr.show_disulfides = value.as_bool();
+            }
+            "disulfide_style" => {
+                ovr.disulfide_style =
+                    serde_json::from_value(value.clone()).ok();
+            }
             _ => {
-                log::warn!("Unknown entity override field: {field}");
+                log::warn!("Unknown entity appearance field: {field}");
                 return;
             }
         }
 
         if ovr.is_empty() {
-            engine.clear_entity_display_override(entity_id);
+            engine.clear_entity_appearance(entity_id);
         } else {
-            engine.set_entity_display_override(entity_id, ovr);
+            engine.set_entity_appearance(entity_id, ovr);
         }
     }
 
@@ -442,6 +438,16 @@ impl PanelController {
         let json = serde_json::to_string(&summaries).unwrap_or_default();
         webview::push_scene_entities(wv, &json);
     }
+
+    /// Push the current density map list to the webview.
+    fn push_density_maps(&self, engine: &VisoEngine) {
+        let Some(ref wv) = self.webview else {
+            return;
+        };
+        let maps = bridge::density_summaries(engine);
+        let json = serde_json::to_string(&maps).unwrap_or_default();
+        webview::push_density_maps(wv, &json);
+    }
 }
 
 // ── Load handlers ────────────────────────────────────────────────────────
@@ -453,6 +459,7 @@ impl PanelController {
         match parse_and_load(engine, path) {
             Ok(()) => {
                 self.push_scene_entities(engine);
+                self.push_density_maps(engine);
                 if let Some(ref wv) = self.webview {
                     let name =
                         std::path::Path::new(path).file_name().map_or_else(
@@ -478,8 +485,13 @@ impl PanelController {
     /// Open a native file dialog and load the selected file.
     fn open_file_dialog(&self, engine: &mut VisoEngine) {
         let dialog = rfd::FileDialog::new()
-            .add_filter("Structure", &["cif", "pdb"])
-            .set_title("Open Structure File");
+            .add_filter("Structure", &["cif", "pdb", "ent", "bcif"])
+            .add_filter("Density Map", &["mrc", "map", "ccp4"])
+            .add_filter(
+                "All Supported",
+                &["cif", "pdb", "ent", "bcif", "mrc", "map", "ccp4"],
+            )
+            .set_title("Open File");
 
         if let Some(path) = dialog.pick_file() {
             let path_str = path.to_string_lossy().into_owned();
@@ -549,19 +561,33 @@ impl PanelController {
 
 // ── Helpers (free functions) ─────────────────────────────────────────────
 
-/// Parse a structure file via `molex` and load entities into the
-/// engine, replacing the current scene.
+/// Parse a file (structure or density) and load it into the engine.
 fn parse_and_load(engine: &mut VisoEngine, path: &str) -> Result<(), String> {
-    use molex::adapters::pdb::structure_file_to_entities;
+    use crate::bridge;
 
-    let entities = structure_file_to_entities(std::path::Path::new(path))
-        .map_err(|e| format!("Parse error: {e}"))?;
-    if entities.is_empty() {
-        return Err("No entities found in file".into());
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map_or("", |e| e.to_str().unwrap_or(""));
+
+    if bridge::is_density_extension(ext) {
+        let map = molex::adapters::mrc::mrc_file_to_density(
+            std::path::Path::new(path),
+        )
+        .map_err(|e| format!("Density parse error: {e}"))?;
+        let _ = engine.load_density_map(map);
+        Ok(())
+    } else {
+        use molex::adapters::pdb::structure_file_to_entities;
+
+        let entities = structure_file_to_entities(std::path::Path::new(path))
+            .map_err(|e| format!("Parse error: {e}"))?;
+        if entities.is_empty() {
+            return Err("No entities found in file".into());
+        }
+
+        let _ = engine.replace_scene(entities);
+        Ok(())
     }
-
-    let _ = engine.replace_scene(entities);
-    Ok(())
 }
 
 /// Download a PDB structure to the local cache. Returns the cached path.

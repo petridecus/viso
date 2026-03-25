@@ -8,7 +8,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use glam::Vec3;
-use molex::types::entity::NucleotideRing;
+use molex::NucleotideRing;
 
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};

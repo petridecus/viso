@@ -11,6 +11,10 @@ pub mod backbone;
 pub mod ball_and_stick;
 /// Constraint band renderer (pulls, H-bonds, disulfides).
 pub mod band;
+/// Structural bond renderer (H-bonds, disulfide bonds).
+pub mod bond;
+/// Isosurface mesh renderer (electron density maps).
+pub(crate) mod isosurface;
 /// Nucleic acid ring + stem renderer.
 pub mod nucleic_acid;
 /// Interactive pull arrow renderer.
@@ -25,6 +29,7 @@ pub use backbone::{
 };
 pub use ball_and_stick::{BallAndStickRenderer, PreparedBallAndStickData};
 pub use band::BandRenderer;
+pub use bond::BondRenderer;
 pub use nucleic_acid::NucleicAcidRenderer;
 pub use pull::PullRenderer;
 pub use sidechain::{SidechainRenderer, SidechainView};

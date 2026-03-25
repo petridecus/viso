@@ -61,32 +61,19 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
 /// entity (parallel to `entity_chain_counts`), used by `EntityType` coloring.
 pub(crate) fn compute_per_residue_colors_styled(
     backbone_chains: &[Vec<glam::Vec3>],
-    ss_types: &[molex::secondary_structure::SSType],
+    ss_types: &[molex::SSType],
     per_residue_scores: &[Option<&[f64]>],
     scheme: &super::ColorScheme,
     palette: &super::palette::Palette,
     entity_chain_counts: Option<&[usize]>,
-    entity_molecule_types: Option<&[molex::types::entity::MoleculeType]>,
 ) -> Vec<[f32; 3]> {
-    use molex::secondary_structure::SSType;
+    use molex::SSType;
 
     let residue_count = ss_types.len().max(1);
     match scheme {
-        super::ColorScheme::Chain => per_chain_colors_with_palette(
-            backbone_chains,
-            residue_count,
-            palette,
-        ),
         super::ColorScheme::Entity => per_entity_colors(
             backbone_chains,
             entity_chain_counts,
-            residue_count,
-            palette,
-        ),
-        super::ColorScheme::EntityType => per_entity_type_colors(
-            backbone_chains,
-            entity_chain_counts,
-            entity_molecule_types,
             residue_count,
             palette,
         ),
@@ -207,7 +194,7 @@ fn per_chain_gradient(
             } else {
                 i as f32 / (n_residues - 1) as f32
             };
-            colors.push(palette.sample(t));
+            colors.push(palette.sample_gradient(t));
         }
     }
     colors
@@ -224,103 +211,21 @@ fn per_entity_colors(
         return vec![[0.5, 0.5, 0.5]; residue_count];
     }
 
+    let mut chain_to_entity = Vec::with_capacity(backbone_chains.len());
     if let Some(counts) = entity_chain_counts {
-        let mut chain_to_entity = Vec::with_capacity(backbone_chains.len());
         for (entity_idx, &count) in counts.iter().enumerate() {
             for _ in 0..count {
                 chain_to_entity.push(entity_idx);
             }
         }
-        let mut colors = Vec::with_capacity(residue_count);
-        for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-            let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
-            let color = palette.categorical_color(eidx);
-            let n_residues = chain.len() / 3;
-            colors.extend(std::iter::repeat_n(color, n_residues));
-        }
-        return colors;
-    }
-
-    // Fallback: treat each chain as its own entity
-    per_chain_colors_with_palette(backbone_chains, residue_count, palette)
-}
-
-/// Color by molecule type — all entities of the same type share one color.
-///
-/// Maps each `MoleculeType` variant to a fixed palette index so Protein,
-/// DNA, RNA, Ligand, etc. each get a consistent, distinct color.
-fn per_entity_type_colors(
-    backbone_chains: &[Vec<glam::Vec3>],
-    entity_chain_counts: Option<&[usize]>,
-    entity_molecule_types: Option<&[molex::types::entity::MoleculeType]>,
-    residue_count: usize,
-    palette: &super::palette::Palette,
-) -> Vec<[f32; 3]> {
-    if backbone_chains.is_empty() {
-        return vec![[0.5, 0.5, 0.5]; residue_count];
-    }
-
-    let (Some(counts), Some(mol_types)) =
-        (entity_chain_counts, entity_molecule_types)
-    else {
-        // Without molecule type data, fall back to per-entity coloring.
-        return per_entity_colors(
-            backbone_chains,
-            entity_chain_counts,
-            residue_count,
-            palette,
-        );
-    };
-
-    // Build chain → molecule type index mapping.
-    let mut chain_to_type_idx = Vec::with_capacity(backbone_chains.len());
-    for (entity_idx, &count) in counts.iter().enumerate() {
-        let type_idx = mol_types
-            .get(entity_idx)
-            .map_or(0, |&mt| molecule_type_index(mt));
-        for _ in 0..count {
-            chain_to_type_idx.push(type_idx);
-        }
-    }
-
-    let mut colors = Vec::with_capacity(residue_count);
-    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let tidx = chain_to_type_idx.get(chain_idx).copied().unwrap_or(0);
-        let color = palette.categorical_color(tidx);
-        let n_residues = chain.len() / 3;
-        colors.extend(std::iter::repeat_n(color, n_residues));
-    }
-    colors
-}
-
-/// Map a `MoleculeType` to a stable palette index.
-fn molecule_type_index(mt: molex::types::entity::MoleculeType) -> usize {
-    use molex::types::entity::MoleculeType;
-    match mt {
-        MoleculeType::Protein => 0,
-        MoleculeType::DNA => 1,
-        MoleculeType::RNA => 2,
-        MoleculeType::Ligand => 3,
-        MoleculeType::Cofactor => 4,
-        MoleculeType::Ion => 5,
-        MoleculeType::Water => 6,
-        MoleculeType::Lipid => 7,
-        MoleculeType::Solvent => 8,
-    }
-}
-
-/// Each backbone chain gets its own color from the palette.
-fn per_chain_colors_with_palette(
-    backbone_chains: &[Vec<glam::Vec3>],
-    residue_count: usize,
-    palette: &super::palette::Palette,
-) -> Vec<[f32; 3]> {
-    if backbone_chains.is_empty() {
-        return vec![[0.5, 0.5, 0.5]; residue_count];
+    } else {
+        // Fallback: treat each chain as its own entity.
+        chain_to_entity.extend(0..backbone_chains.len());
     }
     let mut colors = Vec::with_capacity(residue_count);
     for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let color = palette.categorical_color(chain_idx);
+        let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
+        let color = palette.categorical_color(eidx);
         let n_residues = chain.len() / 3;
         colors.extend(std::iter::repeat_n(color, n_residues));
     }

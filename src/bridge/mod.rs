@@ -114,6 +114,50 @@ pub enum UiAction {
         /// Entity ID to clear.
         entity_id: u32,
     },
+    /// Set a density map display parameter.
+    SetDensityOption {
+        /// Density map ID.
+        id: u32,
+        /// Field name (`"sigma"`, `"opacity"`, `"color_r"`, etc.).
+        field: String,
+        /// New JSON value for the field.
+        value: serde_json::Value,
+    },
+    /// Remove a density map from the scene.
+    RemoveDensityMap {
+        /// Density map ID.
+        id: u32,
+    },
+    /// Set molecular surface type for an entity (or remove it).
+    SetEntitySurface {
+        /// Entity ID.
+        entity_id: u32,
+        /// Surface kind: `"none"`, `"gaussian"`, or `"ses"`.
+        kind: String,
+    },
+    /// Set a molecular surface display parameter.
+    SetSurfaceOption {
+        /// Entity ID.
+        entity_id: u32,
+        /// Field name (`"color_r"`, `"color_g"`, `"color_b"`, `"opacity"`).
+        field: String,
+        /// New value.
+        value: serde_json::Value,
+    },
+    /// Toggle visibility of a density map.
+    ToggleDensityVisibility {
+        /// Density map ID.
+        id: u32,
+    },
+    /// Set a field on a per-entity appearance override.
+    SetEntityAppearance {
+        /// Entity ID.
+        entity_id: u32,
+        /// Field name.
+        field: String,
+        /// New JSON value (null clears the override for that field).
+        value: serde_json::Value,
+    },
     /// An engine command to forward via `engine.execute()`.
     Command(VisoCommand),
 }
@@ -178,6 +222,45 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             let entity_id = msg.get("entity_id")?.as_u64()? as u32;
             Some(UiAction::ClearEntityOption { entity_id })
         }
+        "set_entity_surface" => {
+            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
+            let kind = msg.get("kind")?.as_str()?.to_owned();
+            Some(UiAction::SetEntitySurface { entity_id, kind })
+        }
+        "set_surface_option" => {
+            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
+            let field = msg.get("field")?.as_str()?.to_owned();
+            let value = msg.get("value")?.clone();
+            Some(UiAction::SetSurfaceOption {
+                entity_id,
+                field,
+                value,
+            })
+        }
+        "set_density_option" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            let field = msg.get("field")?.as_str()?.to_owned();
+            let value = msg.get("value")?.clone();
+            Some(UiAction::SetDensityOption { id, field, value })
+        }
+        "remove_density_map" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            Some(UiAction::RemoveDensityMap { id })
+        }
+        "toggle_density_visibility" => {
+            let id = msg.get("id")?.as_u64()? as u32;
+            Some(UiAction::ToggleDensityVisibility { id })
+        }
+        "set_entity_appearance" => {
+            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
+            let field = msg.get("field")?.as_str()?.to_owned();
+            let value = msg.get("value")?.clone();
+            Some(UiAction::SetEntityAppearance {
+                entity_id,
+                field,
+                value,
+            })
+        }
         _ => None,
     }
 }
@@ -195,8 +278,9 @@ pub fn escape_for_js(s: &str) -> String {
 /// Build a JSON-serializable summary of all entities for the viso-ui
 /// panel.
 pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+    use molex::MoleculeType;
+
     use crate::options::DrawingMode;
-    use molex::types::entity::MoleculeType;
 
     let focus = engine.entities.focus();
     engine
@@ -204,7 +288,7 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
         .entities()
         .iter()
         .map(|se| {
-            let mol_type = match se.entity.molecule_type {
+            let mol_type = match se.entity.molecule_type() {
                 MoleculeType::Protein => "Protein",
                 MoleculeType::DNA => "DNA",
                 MoleculeType::RNA => "RNA",
@@ -215,25 +299,34 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 MoleculeType::Lipid => "Lipid",
                 MoleculeType::Ligand => "Ligand",
             };
-            let chain_ids: Vec<String> =
-                se.entity.as_polymer().map_or_else(Vec::new, |data| {
-                    data.chains
-                        .iter()
-                        .map(|c| String::from(c.chain_id as char))
-                        .collect()
-                });
+            let chain_ids: Vec<String> = se
+                .entity
+                .pdb_chain_id()
+                .map_or_else(Vec::new, |cid| vec![String::from(cid as char)]);
             let focused = matches!(
                 focus,
                 Focus::Entity(eid) if *eid == se.id()
             );
-            let ovr_data = engine.entities.display_override(se.id());
-            let overrides =
-                ovr_data.and_then(|ovr| serde_json::to_value(ovr).ok());
-            // Effective drawing mode (override or type default)
-            let effective_mode = ovr_data.map_or_else(
-                || DrawingMode::default_for(se.entity.molecule_type),
-                |ovr| ovr.effective_drawing_mode(se.entity.molecule_type),
+            let ovr = engine.entities.appearance_override(se.id());
+            let resolved_display = ovr.map_or_else(
+                || engine.options.display.clone(),
+                |o| o.to_display_options(&engine.options.display),
             );
+            let has_overrides = ovr.is_some_and(|o| !o.is_empty());
+
+            // Per-entity override wins; otherwise global mode, with
+            // type-based default when global is Cartoon.
+            let effective_mode =
+                ovr.and_then(|o| o.drawing_mode).unwrap_or_else(|| {
+                    if engine.options.display.drawing_mode
+                        == DrawingMode::Cartoon
+                    {
+                        DrawingMode::default_for(se.entity.molecule_type())
+                    } else {
+                        engine.options.display.drawing_mode
+                    }
+                });
+
             let mut entry = serde_json::json!({
                 "id": se.id(),
                 "molecule_type": mol_type,
@@ -244,34 +337,144 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 "focused": focused,
                 "focusable": se.entity.is_focusable(),
                 "drawing_mode": effective_mode,
+                "color_scheme": resolved_display.backbone_color_scheme,
+                "show_sidechains": resolved_display.show_sidechains,
+                "surface": effective_surface_kind(engine, se.id()),
+                "surface_color": effective_surface_color(engine, se.id()),
+                "helix_style": resolved_display.helix_style,
+                "sheet_style": resolved_display.sheet_style,
+                "has_overrides": has_overrides,
             });
-            // Include individual override fields at top level for easy
-            // UI access (avoids digging into display_overrides object).
-            if let Some(ovr) = ovr_data {
-                if let Some(hs) = ovr.helix_style {
-                    entry["helix_style"] = serde_json::json!(hs);
+            if let Some(ovr_val) = ovr {
+                if let Ok(ovr_json) = serde_json::to_value(ovr_val) {
+                    entry["appearance_overrides"] = ovr_json;
                 }
-                if let Some(ss) = ovr.sheet_style {
-                    entry["sheet_style"] = serde_json::json!(ss);
-                }
-                if let Some(sc) = ovr.show_sidechains {
-                    entry["show_sidechains_override"] = serde_json::json!(sc);
-                }
-                if let Some(ref cs) = ovr.backbone_color_scheme {
-                    entry["color_scheme"] = serde_json::json!(cs);
-                }
-            }
-            if let Some(ovr) = overrides {
-                entry["display_overrides"] = ovr;
             }
             entry
         })
         .collect()
 }
 
-// ── Structure parsing ────────────────────────────────────────────────────
+/// Effective surface kind string for an entity, accounting for per-entity
+/// overrides (including invisible opt-outs) and global fallback.
+fn effective_surface_kind(engine: &VisoEngine, eid: u32) -> &'static str {
+    use crate::engine::surface::SurfaceKind;
+    use crate::options::SurfaceKindOption;
 
-/// Parse a structure file from in-memory bytes.
+    if let Some(s) = engine.entity_surfaces.get(&eid) {
+        if !s.visible {
+            return "none";
+        }
+        return match s.kind {
+            SurfaceKind::Gaussian => "gaussian",
+            SurfaceKind::Ses => "ses",
+        };
+    }
+    // No per-entity entry — fall back to global
+    match engine.options.display.surface_kind {
+        SurfaceKindOption::Gaussian => "gaussian",
+        SurfaceKindOption::Ses => "ses",
+        SurfaceKindOption::None => "none",
+    }
+}
+
+/// Effective surface color for an entity (per-entity or global default).
+fn effective_surface_color(engine: &VisoEngine, eid: u32) -> serde_json::Value {
+    if let Some(s) = engine.entity_surfaces.get(&eid) {
+        if s.visible {
+            return serde_json::json!([
+                s.color[0], s.color[1], s.color[2], s.color[3]
+            ]);
+        }
+    }
+    serde_json::json!(null)
+}
+
+// ── Density summaries ────────────────────────────────────────────────────
+
+/// Build a JSON-serializable summary of all density maps for the viso-ui
+/// panel.
+pub fn density_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+    engine
+        .density
+        .all_entries()
+        .map(|(id, entry)| {
+            serde_json::json!({
+                "id": id,
+                "visible": entry.visible,
+                "threshold": entry.threshold,
+                "dmin": entry.map.dmin,
+                "dmax": entry.map.dmax,
+                "color": [entry.color[0], entry.color[1], entry.color[2]],
+                "opacity": entry.opacity,
+            })
+        })
+        .collect()
+}
+
+// ── File parsing ─────────────────────────────────────────────────────────
+
+/// Result of parsing a file — either a structure or a density map.
+#[allow(dead_code)]
+pub enum ParsedFile {
+    /// Molecular structure (protein, ligand, etc.).
+    Structure(Vec<molex::MoleculeEntity>),
+    /// Electron density map (CCP4/MRC format).
+    Density(molex::entity::surface::Density),
+}
+
+/// Returns `true` if the extension indicates a density map format.
+pub fn is_density_extension(ext: &str) -> bool {
+    let lower = ext.to_ascii_lowercase();
+    let trimmed = lower.trim_start_matches('.');
+    matches!(trimmed, "mrc" | "map" | "ccp4")
+}
+
+/// Parse a file from in-memory bytes, auto-detecting structure vs density
+/// by extension.
+///
+/// `format_hint` should be the file extension (e.g. `"cif"`, `"mrc"`),
+/// with or without a leading dot.
+#[allow(dead_code)]
+pub fn parse_file_bytes(
+    bytes: &[u8],
+    format_hint: &str,
+) -> Result<ParsedFile, String> {
+    let hint = format_hint.to_ascii_lowercase();
+    let hint = hint.trim_start_matches('.');
+    match hint {
+        "mrc" | "map" | "ccp4" => {
+            let map = molex::adapters::mrc::mrc_to_density(bytes)
+                .map_err(|e| format!("Density parse error: {e}"))?;
+            Ok(ParsedFile::Density(map))
+        }
+        "cif" | "mmcif" => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|e| format!("Invalid UTF-8 in CIF: {e}"))?;
+            let entities = molex::adapters::cif::mmcif_str_to_entities(text)
+                .map_err(|e| format!("CIF parse error: {e}"))?;
+            Ok(ParsedFile::Structure(entities))
+        }
+        "pdb" | "ent" => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|e| format!("Invalid UTF-8 in PDB: {e}"))?;
+            let entities = molex::adapters::pdb::pdb_str_to_entities(text)
+                .map_err(|e| format!("PDB parse error: {e}"))?;
+            Ok(ParsedFile::Structure(entities))
+        }
+        "bcif" => {
+            let entities = molex::adapters::bcif::bcif_to_entities(bytes)
+                .map_err(|e| format!("BCIF parse error: {e}"))?;
+            Ok(ParsedFile::Structure(entities))
+        }
+        other => Err(format!(
+            "Unsupported format '{other}'. Use 'cif', 'pdb', 'bcif', 'mrc', \
+             'map', or 'ccp4'."
+        )),
+    }
+}
+
+/// Parse a structure file from in-memory bytes (structure formats only).
 ///
 /// `format_hint` should be the file extension (e.g. `"cif"`, `"pdb"`),
 /// with or without a leading dot.
@@ -279,24 +482,11 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
 pub fn parse_structure_bytes(
     bytes: &[u8],
     format_hint: &str,
-) -> Result<Vec<molex::types::entity::MoleculeEntity>, String> {
-    let hint = format_hint.to_ascii_lowercase();
-    let hint = hint.trim_start_matches('.');
-    match hint {
-        "cif" | "mmcif" => {
-            let text = std::str::from_utf8(bytes)
-                .map_err(|e| format!("Invalid UTF-8 in CIF: {e}"))?;
-            molex::adapters::pdb::mmcif_str_to_entities(text)
-                .map_err(|e| format!("CIF parse error: {e}"))
-        }
-        "pdb" | "ent" => {
-            let text = std::str::from_utf8(bytes)
-                .map_err(|e| format!("Invalid UTF-8 in PDB: {e}"))?;
-            molex::adapters::pdb::pdb_str_to_entities(text)
-                .map_err(|e| format!("PDB parse error: {e}"))
-        }
-        other => {
-            Err(format!("Unsupported format '{other}'. Use 'cif' or 'pdb'."))
+) -> Result<Vec<molex::MoleculeEntity>, String> {
+    match parse_file_bytes(bytes, format_hint)? {
+        ParsedFile::Structure(entities) => Ok(entities),
+        ParsedFile::Density(_) => {
+            Err("Expected structure file, got density map".into())
         }
     }
 }
@@ -329,6 +519,7 @@ pub const BRIDGE_JS: &str = r"
     makePush('scene_entities', 'viso-scene-entities');
     makePush('orientation', 'viso-orientation');
     makePush('panel_size', 'viso-panel-size');
+    makePush('density_maps', 'viso-density-maps');
 
     // Allow late listeners (e.g. dioxus WASM) to replay any values
     // that were pushed before they registered.

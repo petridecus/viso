@@ -269,9 +269,6 @@ impl ViewerApp {
 
         let Some(w) = &self.window else { return };
 
-        #[cfg(feature = "gui")]
-        self.panel.tick_slide(dt, w);
-
         w.request_redraw();
     }
 
@@ -317,9 +314,6 @@ impl ViewerApp {
         });
 
         let Some(window) = &self.window else { return };
-        #[cfg(feature = "gui")]
-        self.panel
-            .update_peek(position.x as f32, position.y as f32, window);
         window.request_redraw();
     }
 

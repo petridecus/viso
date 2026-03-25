@@ -8,6 +8,8 @@
 //! [`InputProcessor`](crate::input::InputProcessor), not here — they are an
 //! input concern, not a rendering option.
 
+/// Unified per-entity visual appearance settings.
+pub mod appearance;
 mod camera;
 mod colors;
 mod debug;
@@ -23,13 +25,15 @@ pub(crate) mod score_color;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
+pub use appearance::EntityAppearance;
 pub use camera::CameraOptions;
 pub use colors::ColorOptions;
 pub use debug::DebugOptions;
 pub use display::{
-    BackboneColorMode, ColorScheme, DisplayOptions, DrawingMode,
-    EntityDisplayOverride, HelixStyle, LipidMode, NaColorMode, PresentMode,
-    SheetStyle, SidechainColorMode,
+    BackboneColorMode, BondOptions, BondSource, BondStyle, BondTypeOptions,
+    ColorScheme, DisplayOptions, DrawingMode, HelixStyle, LipidMode,
+    NaColorMode, PresentMode, SheetStyle, SidechainColorMode,
+    SurfaceKindOption,
 };
 pub use geometry::{
     lod_params, lod_scaled, select_chain_lod_tier, select_lod_tier,
@@ -50,7 +54,9 @@ use crate::error::VisoError;
 )]
 #[serde(default)]
 pub struct VisoOptions {
-    /// Display toggles and coloring modes.
+    /// Display toggles and coloring modes (rendered in Scene tab, not Options
+    /// tab).
+    #[schemars(skip)]
     pub display: DisplayOptions,
     /// Lighting parameters.
     pub lighting: LightingOptions,
@@ -164,12 +170,12 @@ shininess = 80.0
         let props = schema_value["properties"].as_object().unwrap();
 
         // UI-exposed sections should be present
-        assert!(props.contains_key("display"));
         assert!(props.contains_key("lighting"));
         assert!(props.contains_key("post_processing"));
         assert!(props.contains_key("camera"));
 
-        // Skipped sections should be absent
+        // Skipped sections should be absent (display is now Scene tab)
+        assert!(!props.contains_key("display"));
         assert!(!props.contains_key("colors"));
 
         // Geometry and debug should be present (exposed in UI)
@@ -182,34 +188,5 @@ shininess = 80.0
         assert!(lighting.get("ambient").is_some());
         assert!(lighting.get("light1_dir").is_none());
         assert!(lighting.get("specular_intensity").is_none());
-    }
-
-    #[test]
-    fn palette_fields_are_flat_enums_in_schema() {
-        let schema_value =
-            serde_json::to_value(VisoOptions::json_schema()).unwrap();
-        let display = &schema_value["properties"]["display"]["properties"];
-
-        // backbone_palette_preset should be a $ref to PalettePreset enum
-        let preset = &display["backbone_palette_preset"];
-        assert!(
-            preset.get("$ref").is_some(),
-            "backbone_palette_preset should be a $ref, got: {preset}",
-        );
-
-        // backbone_palette_mode should be a $ref to PaletteMode enum
-        let mode = &display["backbone_palette_mode"];
-        assert!(
-            mode.get("$ref").is_some(),
-            "backbone_palette_mode should be a $ref, got: {mode}",
-        );
-
-        // PalettePreset definition should have oneOf with enum values
-        let defs = &schema_value["$defs"];
-        let preset_def = &defs["PalettePreset"];
-        assert!(
-            preset_def.get("oneOf").is_some(),
-            "PalettePreset should have oneOf variants",
-        );
     }
 }

@@ -2,15 +2,14 @@
 //! structural dirty tracking.
 
 use glam::Vec3;
-use molex::types::assembly::update_protein_entities;
-use molex::types::coords::Coords;
-use molex::types::entity::{MoleculeEntity, MoleculeType};
+use molex::ops::codec::{update_protein_entities, Coords};
+use molex::{MoleculeEntity, MoleculeType};
 use rustc_hash::FxHashMap;
 
 use super::scene::Focus;
 use super::scene_data::{PerEntityData, SceneEntity};
 use crate::animation::transition::Transition;
-use crate::options::{DisplayOptions, DrawingMode, EntityDisplayOverride};
+use crate::options::{DisplayOptions, DrawingMode, EntityAppearance};
 
 /// Consolidated entity storage.
 ///
@@ -23,8 +22,8 @@ pub(crate) struct EntityStore {
     id_index: FxHashMap<u32, usize>,
     /// Per-entity animation behavior overrides.
     behaviors: FxHashMap<u32, Transition>,
-    /// Per-entity display/geometry overrides.
-    display_overrides: FxHashMap<u32, EntityDisplayOverride>,
+    /// Per-entity appearance overrides (None fields inherit global).
+    appearance_overrides: FxHashMap<u32, EntityAppearance>,
     focus: Focus,
     next_entity_id: u32,
     /// Monotonically increasing generation; bumped on any structural mutation
@@ -41,7 +40,7 @@ impl EntityStore {
             scene_entities: Vec::new(),
             id_index: FxHashMap::default(),
             behaviors: FxHashMap::default(),
-            display_overrides: FxHashMap::default(),
+            appearance_overrides: FxHashMap::default(),
             focus: Focus::Session,
             next_entity_id: 0,
             generation: 0,
@@ -80,7 +79,7 @@ impl EntityStore {
     pub fn add_entities(&mut self, entities: Vec<MoleculeEntity>) -> Vec<u32> {
         let mut ids = Vec::with_capacity(entities.len());
         for entity in entities {
-            let id = entity.entity_id;
+            let id = *entity.id();
             // Track the highest ID we've seen so auto-assignment stays safe
             if id >= self.next_entity_id {
                 self.next_entity_id = id + 1;
@@ -99,7 +98,7 @@ impl EntityStore {
     /// entity-level visibility with display toggles.
     pub fn apply_type_visibility(&mut self, display: &DisplayOptions) {
         for se in &mut self.scene_entities {
-            let visible = match se.entity.molecule_type {
+            let visible = match se.entity.molecule_type() {
                 MoleculeType::Water => display.show_waters,
                 MoleculeType::Ion => display.show_ions,
                 MoleculeType::Solvent => display.show_solvent,
@@ -113,7 +112,7 @@ impl EntityStore {
     pub fn set_type_visible(&mut self, mol_type: MoleculeType, visible: bool) {
         let mut changed = false;
         for se in &mut self.scene_entities {
-            if se.entity.molecule_type == mol_type && se.visible != visible {
+            if se.entity.molecule_type() == mol_type && se.visible != visible {
                 se.visible = visible;
                 se.invalidate_render_cache();
                 changed = true;
@@ -141,7 +140,7 @@ impl EntityStore {
         self.scene_entities.clear();
         self.id_index.clear();
         self.behaviors.clear();
-        self.display_overrides.clear();
+        self.appearance_overrides.clear();
         self.focus = Focus::Session;
         self.invalidate();
     }
@@ -165,7 +164,7 @@ impl EntityStore {
             return false;
         };
         drop(self.scene_entities.swap_remove(idx));
-        let _ = self.display_overrides.remove(&id);
+        let _ = self.appearance_overrides.remove(&id);
         // If swap_remove moved the last element into `idx`, update its index.
         if idx < self.scene_entities.len() {
             let swapped_id = self.scene_entities[idx].id();
@@ -254,53 +253,61 @@ impl EntityStore {
         self.behaviors.get(&entity_id)
     }
 
-    // -- Per-entity display overrides --
+    // -- Per-entity appearance overrides --
 
-    /// Set a display override for a specific entity.
-    pub fn set_display_override(
+    /// Set an appearance override for a specific entity.
+    pub fn set_appearance_override(
         &mut self,
         entity_id: u32,
-        overrides: EntityDisplayOverride,
+        overrides: EntityAppearance,
     ) {
-        let _ = self.display_overrides.insert(entity_id, overrides);
+        let _ = self.appearance_overrides.insert(entity_id, overrides);
     }
 
-    /// Clear a per-entity display override, reverting to session defaults.
-    pub fn clear_display_override(&mut self, entity_id: u32) {
-        let _ = self.display_overrides.remove(&entity_id);
+    /// Clear a per-entity appearance override, reverting to global defaults.
+    pub fn clear_appearance_override(&mut self, entity_id: u32) {
+        let _ = self.appearance_overrides.remove(&entity_id);
     }
 
-    /// Look up a per-entity display override.
+    /// Look up a per-entity appearance override.
     #[must_use]
-    pub fn display_override(
+    pub fn appearance_override(
         &self,
         entity_id: u32,
-    ) -> Option<&EntityDisplayOverride> {
-        self.display_overrides.get(&entity_id)
+    ) -> Option<&EntityAppearance> {
+        self.appearance_overrides.get(&entity_id)
     }
 
-    /// All display overrides (for building per-entity options maps).
+    /// All appearance overrides (for building per-entity options maps).
     #[must_use]
-    pub fn display_overrides(&self) -> &FxHashMap<u32, EntityDisplayOverride> {
-        &self.display_overrides
+    pub fn appearance_overrides(&self) -> &FxHashMap<u32, EntityAppearance> {
+        &self.appearance_overrides
     }
 
     // -- Per-entity data --
 
     /// Collect per-entity render data for all visible entities.
     ///
-    /// Resolves the drawing mode per entity from display overrides.
-    pub fn per_entity_data(&self) -> Vec<PerEntityData> {
+    /// Resolves the drawing mode per entity: per-entity override wins,
+    /// then global `DisplayOptions`, then type-based default.
+    pub fn per_entity_data(
+        &self,
+        display: &DisplayOptions,
+    ) -> Vec<PerEntityData> {
         self.scene_entities
             .iter()
             .filter(|e| e.visible)
             .filter_map(|e| {
                 let mode = self
-                    .display_overrides
+                    .appearance_overrides
                     .get(&e.id())
                     .and_then(|ovr| ovr.drawing_mode)
                     .unwrap_or_else(|| {
-                        DrawingMode::default_for(e.entity.molecule_type)
+                        if display.drawing_mode == DrawingMode::Cartoon {
+                            DrawingMode::default_for(e.entity.molecule_type())
+                        } else {
+                            display.drawing_mode
+                        }
                     });
                 e.to_per_entity_data(mode)
             })
@@ -356,7 +363,7 @@ impl EntityStore {
     /// Bumps mesh version, recomputes bounds, and invalidates the generation
     /// counter.
     pub fn replace_entity(&mut self, entity: MoleculeEntity) {
-        if let Some(&idx) = self.id_index.get(&entity.entity_id) {
+        if let Some(&idx) = self.id_index.get(&*entity.id()) {
             let se = &mut self.scene_entities[idx];
             se.entity = entity;
             se.recompute_bounds();
@@ -399,12 +406,14 @@ mod tests {
     }
 
     #[test]
-    fn add_preserves_caller_ids() {
+    fn add_returns_entity_ids() {
         let mut store = EntityStore::new();
         let ids_a = store.add_entities(vec![make_protein_entity(10, b'A', 3)]);
         let ids_b = store.add_entities(vec![make_protein_entity(20, b'B', 2)]);
-        assert_eq!(ids_a, vec![10]);
-        assert_eq!(ids_b, vec![20]);
+        assert_eq!(ids_a.len(), 1);
+        assert_eq!(ids_b.len(), 1);
+        // IDs are allocated by molex — just verify they're distinct.
+        assert_ne!(ids_a[0], ids_b[0]);
     }
 
     #[test]

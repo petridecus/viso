@@ -19,14 +19,21 @@ exclude = ["gallery/", "assets/", "docs/", ".github/"]
 default = ["binary"]
 binary = ["gui", "dep:env_logger"]
 viewer = ["dep:winit", "dep:pollster"]
-gui = ["viewer", "dep:wry", "dep:rust-embed", "dep:mime_guess", "dep:ureq", "dep:rfd"]
+gui = [
+  "viewer",
+  "dep:wry",
+  "dep:rust-embed",
+  "dep:mime_guess",
+  "dep:ureq",
+  "dep:rfd",
+]
 web = [
-    "dep:wasm-bindgen",
-    "dep:wasm-bindgen-futures",
-    "dep:web-sys",
-    "dep:console_log",
-    "dep:console_error_panic_hook",
-    "dep:js-sys",
+  "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
+  "dep:web-sys",
+  "dep:console_log",
+  "dep:console_error_panic_hook",
+  "dep:js-sys",
 ]
 
 [lib]
@@ -75,7 +82,7 @@ half = "2"
 naga_oil = "0.19"
 naga = "26"
 
-molex = "0.1.0"
+molex = { path = "../molex" }
 
 # Cross-platform Instant (delegates to performance.now() on WASM)
 web-time = "1"
@@ -91,20 +98,20 @@ console_error_panic_hook = { version = "0.1", optional = true }
 version = "0.3"
 optional = true
 features = [
-    "HtmlCanvasElement",
-    "HtmlIFrameElement",
-    "Window",
-    "Document",
-    "Performance",
-    "EventTarget",
-    "MouseEvent",
-    "WheelEvent",
-    "KeyboardEvent",
-    "AddEventListenerOptions",
-    "Response",
-    "Headers",
-    "RequestInit",
-    "CustomEvent",
+  "HtmlCanvasElement",
+  "HtmlIFrameElement",
+  "Window",
+  "Document",
+  "Performance",
+  "EventTarget",
+  "MouseEvent",
+  "WheelEvent",
+  "KeyboardEvent",
+  "AddEventListenerOptions",
+  "Response",
+  "Headers",
+  "RequestInit",
+  "CustomEvent",
 ]
 
 [[bin]]

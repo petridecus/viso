@@ -5,15 +5,120 @@
 //! single subsystem.
 
 use glam::Vec3;
-use molex::render::sidechain::{SidechainAtomData, SidechainAtoms};
-use molex::secondary_structure::SSType;
-use molex::types::assembly::protein_coords as assembly_protein_coords;
-use molex::types::coords::Coords;
-use molex::types::entity::{MoleculeEntity, MoleculeType, NucleotideRing};
+use molex::{
+    MoleculeEntity, MoleculeType, NucleotideRing, ProteinResidue, SSType,
+};
 
 use crate::animation::transition::Transition;
 use crate::animation::SidechainAnimPositions;
 use crate::options::DrawingMode;
+
+// ---------------------------------------------------------------------------
+// Flat sidechain types (scene-level, concatenated across residues/entities)
+// ---------------------------------------------------------------------------
+
+/// Data for a single sidechain atom in the flat scene-level layout.
+#[derive(Debug, Clone)]
+pub(crate) struct SidechainAtomData {
+    /// 3D position of this atom.
+    pub(crate) position: Vec3,
+    /// Global residue index (across the entire scene).
+    pub(crate) residue_idx: u32,
+    /// PDB atom name (e.g. "CB", "CG").
+    pub(crate) atom_name: String,
+    /// Whether the parent residue is hydrophobic.
+    pub(crate) is_hydrophobic: bool,
+}
+
+/// Flat sidechain data concatenated across all residues in an entity or scene.
+///
+/// Molex provides per-residue [`molex::Sidechain`] with local indices; this
+/// type flattens those into global indices for the GPU pipeline.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SidechainAtoms {
+    /// Per-atom data (all residues concatenated).
+    pub(crate) atoms: Vec<SidechainAtomData>,
+    /// Intra-sidechain bonds as `(atom_idx_a, atom_idx_b)` with global
+    /// indices.
+    pub(crate) bonds: Vec<(u32, u32)>,
+    /// Backbone-to-sidechain bonds as `(CA_position, sidechain_atom_idx)`.
+    pub(crate) backbone_bonds: Vec<(Vec3, u32)>,
+}
+
+impl SidechainAtoms {
+    /// All sidechain atom positions.
+    #[must_use]
+    pub(crate) fn positions(&self) -> Vec<Vec3> {
+        self.atoms.iter().map(|a| a.position).collect()
+    }
+
+    /// Per-atom hydrophobicity flags.
+    #[must_use]
+    pub(crate) fn hydrophobicity(&self) -> Vec<bool> {
+        self.atoms.iter().map(|a| a.is_hydrophobic).collect()
+    }
+
+    /// Per-atom residue indices.
+    #[must_use]
+    pub(crate) fn residue_indices(&self) -> Vec<u32> {
+        self.atoms.iter().map(|a| a.residue_idx).collect()
+    }
+
+    /// Per-atom PDB names.
+    #[must_use]
+    pub(crate) fn atom_names(&self) -> Vec<String> {
+        self.atoms.iter().map(|a| a.atom_name.clone()).collect()
+    }
+
+    /// Build flat sidechain data from per-residue protein residues.
+    ///
+    /// `residue_offset` is the global residue index of the first residue
+    /// (used when concatenating multiple entities).
+    #[must_use]
+    pub(crate) fn from_protein_residues(
+        residues: &[ProteinResidue],
+        residue_offset: u32,
+    ) -> Self {
+        let mut atoms = Vec::new();
+        let mut bonds = Vec::new();
+        let mut backbone_bonds = Vec::new();
+
+        for (i, res) in residues.iter().enumerate() {
+            let global_res_idx = residue_offset + i as u32;
+            let atom_offset = atoms.len() as u32;
+
+            // Flatten sidechain atoms with global residue index
+            for atom in &res.sidechain.atoms {
+                let name = std::str::from_utf8(&atom.name)
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
+                atoms.push(SidechainAtomData {
+                    position: atom.position,
+                    residue_idx: global_res_idx,
+                    atom_name: name,
+                    is_hydrophobic: res.sidechain.is_hydrophobic,
+                });
+            }
+
+            // Remap local bond indices to global
+            for &(a, b) in &res.sidechain.bonds {
+                bonds.push((atom_offset + a as u32, atom_offset + b as u32));
+            }
+
+            // CA → first sidechain atom (CB) bond
+            if !res.sidechain.atoms.is_empty() {
+                backbone_bonds.push((res.backbone.ca, atom_offset));
+            }
+        }
+
+        Self {
+            atoms,
+            bonds,
+            backbone_bonds,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Bounding sphere
@@ -22,18 +127,15 @@ use crate::options::DrawingMode;
 /// Compute (centroid, radius) for a molecule entity's atom positions.
 /// Returns `(Vec3::ZERO, 0.0)` when the entity has no atoms.
 fn compute_bounding_sphere(entity: &MoleculeEntity) -> (Vec3, f32) {
-    let atoms = entity.atoms();
+    let atoms = entity.atom_set();
     if atoms.is_empty() {
         return (Vec3::ZERO, 0.0);
     }
     let n = atoms.len() as f32;
-    let centroid = atoms
-        .iter()
-        .fold(Vec3::ZERO, |acc, a| acc + Vec3::new(a.x, a.y, a.z))
-        / n;
+    let centroid = atoms.iter().fold(Vec3::ZERO, |acc, a| acc + a.position) / n;
     let radius = atoms
         .iter()
-        .map(|a| (Vec3::new(a.x, a.y, a.z) - centroid).length())
+        .map(|a| (a.position - centroid).length())
         .fold(0.0f32, f32::max);
     (centroid, radius)
 }
@@ -83,23 +185,23 @@ impl SceneEntity {
         self.cached_bounding_radius = radius;
     }
 
-    /// Entity identifier (delegates to `entity.entity_id`).
+    /// Entity identifier.
     #[must_use]
     pub fn id(&self) -> u32 {
-        self.entity.entity_id
+        *self.entity.id()
     }
 
     /// Whether this entity is a protein.
     #[must_use]
     pub fn is_protein(&self) -> bool {
-        self.entity.molecule_type == MoleculeType::Protein
+        self.entity.molecule_type() == MoleculeType::Protein
     }
 
     /// Whether this entity is a nucleic acid (DNA or RNA).
     #[must_use]
     pub fn is_nucleic_acid(&self) -> bool {
         matches!(
-            self.entity.molecule_type,
+            self.entity.molecule_type(),
             MoleculeType::DNA | MoleculeType::RNA
         )
     }
@@ -113,21 +215,6 @@ impl SceneEntity {
     /// Invalidate (bump mesh version after coord changes).
     pub fn invalidate_render_cache(&mut self) {
         self.mesh_version += 1;
-    }
-
-    /// Get protein-only Coords for this entity.
-    #[must_use]
-    pub fn protein_coords(&self) -> Option<Coords> {
-        if self.entity.molecule_type != MoleculeType::Protein {
-            return None;
-        }
-        let coords =
-            assembly_protein_coords(std::slice::from_ref(&self.entity));
-        if coords.num_atoms == 0 {
-            None
-        } else {
-            Some(coords)
-        }
     }
 
     /// Build [`PerEntityData`] from this entity's current state.
@@ -145,7 +232,7 @@ impl SceneEntity {
         if mode != DrawingMode::Cartoon {
             return self.per_entity_data_as_bns(mode);
         }
-        match self.entity.molecule_type {
+        match self.entity.molecule_type() {
             MoleculeType::Protein => self.per_entity_data_protein(),
             MoleculeType::DNA | MoleculeType::RNA => {
                 self.per_entity_data_nucleic_acid()
@@ -156,23 +243,32 @@ impl SceneEntity {
 
     /// Render data for a protein entity.
     fn per_entity_data_protein(&self) -> Option<PerEntityData> {
-        let backbone = self.entity.extract_backbone();
-        if backbone.chains.is_empty() {
+        let protein = self.entity.as_protein()?;
+        let backbone_chains = protein.to_interleaved_segments();
+        if backbone_chains.is_empty() {
             return None;
         }
-        let res_count = backbone.residue_count() as u32;
-        let sidechains =
-            self.entity.extract_sidechains(is_hydrophobic, |name| {
+        let res_count =
+            backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>() as u32;
+        let protein_residues = protein
+            .to_protein_residues(is_hydrophobic, |name| {
                 get_residue_bonds(name).map(<[(&str, &str)]>::to_vec)
             });
+        let sidechains =
+            SidechainAtoms::from_protein_residues(&protein_residues, 0);
 
         Some(PerEntityData {
-            id: self.entity.entity_id,
+            id: *self.entity.id(),
             mesh_version: self.mesh_version,
             drawing_mode: DrawingMode::Cartoon,
-            backbone_chains: backbone.into_chain_vecs(),
+            backbone_chains,
+
             sidechains,
-            ss_override: self.ss_override.clone(),
+            ss_override: Some(
+                self.ss_override
+                    .clone()
+                    .unwrap_or_else(|| protein.detect_ss()),
+            ),
             per_residue_colors: None,
             non_protein_entities: vec![],
             nucleic_acid_chains: vec![],
@@ -183,16 +279,18 @@ impl SceneEntity {
 
     /// Render data for a DNA/RNA entity.
     fn per_entity_data_nucleic_acid(&self) -> Option<PerEntityData> {
-        let chains = self.entity.extract_p_atom_chains();
-        let rings = self.entity.extract_base_rings();
+        let na = self.entity.as_nucleic_acid()?;
+        let chains = na.extract_p_atom_segments();
+        let rings = na.extract_base_rings();
         if chains.is_empty() && rings.is_empty() {
             return None;
         }
         Some(PerEntityData {
-            id: self.entity.entity_id,
+            id: *self.entity.id(),
             mesh_version: self.mesh_version,
             drawing_mode: DrawingMode::Cartoon,
             backbone_chains: vec![],
+
             sidechains: SidechainAtoms::default(),
             ss_override: None,
             per_residue_colors: None,
@@ -209,10 +307,11 @@ impl SceneEntity {
             return None;
         }
         Some(PerEntityData {
-            id: self.entity.entity_id,
+            id: *self.entity.id(),
             mesh_version: self.mesh_version,
             drawing_mode: DrawingMode::BallAndStick,
             backbone_chains: vec![],
+
             sidechains: SidechainAtoms::default(),
             ss_override: None,
             per_residue_colors: None,
@@ -240,18 +339,20 @@ impl SceneEntity {
             return None;
         }
         // For proteins, extract backbone so colors can be computed.
-        if self.entity.molecule_type == MoleculeType::Protein {
-            let backbone = self.entity.extract_backbone();
-            let res_count = if backbone.chains.is_empty() {
+        if let Some(protein) = self.entity.as_protein() {
+            let backbone_chains = protein.to_interleaved_segments();
+            let res_count = if backbone_chains.is_empty() {
                 0
             } else {
-                backbone.residue_count() as u32
+                backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
+                    as u32
             };
             return Some(PerEntityData {
-                id: self.entity.entity_id,
+                id: *self.entity.id(),
                 mesh_version: self.mesh_version,
                 drawing_mode: mode,
-                backbone_chains: backbone.into_chain_vecs(),
+                backbone_chains,
+
                 sidechains: SidechainAtoms::default(),
                 ss_override: self.ss_override.clone(),
                 per_residue_colors: None,
@@ -262,10 +363,11 @@ impl SceneEntity {
             });
         }
         Some(PerEntityData {
-            id: self.entity.entity_id,
+            id: *self.entity.id(),
             mesh_version: self.mesh_version,
             drawing_mode: mode,
             backbone_chains: vec![],
+
             sidechains: SidechainAtoms::default(),
             ss_override: None,
             per_residue_colors: None,
@@ -391,8 +493,6 @@ pub fn concatenate_ss_types(
     entities: &[PerEntityData],
     ranges: &[EntityResidueRange],
 ) -> Vec<SSType> {
-    use molex::secondary_structure::auto::detect as detect_ss;
-
     let total: usize = ranges.iter().map(|r| r.count as usize).sum();
     if total == 0 {
         return Vec::new();
@@ -404,26 +504,30 @@ pub fn concatenate_ss_types(
         let start = range.start as usize;
         let end = (start + range.count as usize).min(total);
 
-        if let Some(ref overrides) = e.ss_override {
-            let n = (end - start).min(overrides.len());
-            ss[start..start + n].copy_from_slice(&overrides[..n]);
-        } else {
-            // DSSP fallback per-chain
-            let mut offset = start;
-            for chain in &e.backbone_chains {
-                let ca_positions =
-                    molex::render::backbone::ca_positions_from_chains(
-                        std::slice::from_ref(chain),
-                    );
-                let chain_ss = detect_ss(&ca_positions);
-                let n = chain_ss.len().min(end.saturating_sub(offset));
-                ss[offset..offset + n].copy_from_slice(&chain_ss[..n]);
-                offset += n;
-            }
+        if let Some(ref types) = e.ss_override {
+            let n = (end - start).min(types.len());
+            ss[start..start + n].copy_from_slice(&types[..n]);
         }
     }
 
     ss
+}
+
+/// Estimate carbonyl O position from CA(i), C(i), N(i+1).
+pub(crate) fn estimate_carbonyl_o(next_n: Vec3, ca: Vec3, c: Vec3) -> Vec3 {
+    let c_to_n = (next_n - c).normalize_or_zero();
+    let c_to_ca = (ca - c).normalize_or_zero();
+    let plane_normal = c_to_n.cross(c_to_ca);
+    if plane_normal.length_squared() < 1e-6 {
+        // Degenerate — place O arbitrarily
+        return c + c_to_ca * 1.231;
+    }
+    let rot = glam::Quat::from_axis_angle(
+        plane_normal.normalize(),
+        -2.1031, // ~120.5° C=O angle
+    );
+    let c_to_o = rot * c_to_n;
+    c + c_to_o * 1.231
 }
 
 /// Compute entity residue ranges from per-entity data.

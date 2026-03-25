@@ -13,14 +13,8 @@ use serde_json::Value;
 use crate::bridge;
 
 /// Desired tab order (left to right in the tab bar).
-const TAB_ORDER: &[&str] = &[
-    "display",
-    "lighting",
-    "post_processing",
-    "camera",
-    "geometry",
-    "debug",
-];
+const TAB_ORDER: &[&str] =
+    &["lighting", "post_processing", "camera", "geometry", "debug"];
 
 /// Convert a `snake_case` string to `Title Case`.
 fn display_name(s: &str) -> String {

@@ -217,7 +217,6 @@ impl SceneProcessor {
                     generation,
                 } => {
                     last_rebuild_generation = generation;
-                    cache.clear_meshes();
                     cache.cache_stable_data(&entities, &display);
                     let entity_meshes = cache.update(
                         &entities,
@@ -296,7 +295,7 @@ struct MeshCache {
     /// Cached NA chains from the last `FullRebuild`.
     cached_na_chains: Vec<Vec<glam::Vec3>>,
     /// Cached SS types from the last `FullRebuild`.
-    cached_ss_types: Option<Vec<molex::secondary_structure::SSType>>,
+    cached_ss_types: Option<Vec<molex::SSType>>,
     /// Cached per-residue colors from the last `FullRebuild`.
     cached_per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Cached NA base colors from the last `FullRebuild`.
@@ -317,11 +316,6 @@ impl MeshCache {
         }
     }
 
-    /// Clear all cached entity meshes.
-    fn clear_meshes(&mut self) {
-        self.meshes.clear();
-    }
-
     /// Cache stable per-scene data from entities so animation frames can
     /// reference it without cloning every frame.
     fn cache_stable_data(
@@ -333,15 +327,23 @@ impl MeshCache {
             .iter()
             .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
             .collect();
-        let ss: Vec<molex::secondary_structure::SSType> =
+        // Only cache SS types and colors for Cartoon-mode entities —
+        // these must align with `cached_chains` (also Cartoon-only) so
+        // animation frames and LOD remeshes index correctly.
+        let cartoon: Vec<_> = entities
+            .iter()
+            .filter(|e| e.drawing_mode == crate::options::DrawingMode::Cartoon)
+            .cloned()
+            .collect::<Vec<_>>();
+        let cartoon_ranges =
+            crate::engine::scene_data::compute_entity_residue_ranges(&cartoon);
+        let ss: Vec<molex::SSType> =
             crate::engine::scene_data::concatenate_ss_types(
-                entities,
-                &crate::engine::scene_data::compute_entity_residue_ranges(
-                    entities,
-                ),
+                &cartoon,
+                &cartoon_ranges,
             );
         self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
-        let colors: Vec<[f32; 3]> = entities
+        let colors: Vec<[f32; 3]> = cartoon
             .iter()
             .flat_map(|e| {
                 e.per_residue_colors.iter().flat_map(|c| c.iter().copied())

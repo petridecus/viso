@@ -25,6 +25,7 @@ pub enum Shader {
     PickingMesh,
     PickingCapsule,
     PickingSphere,
+    Isosurface,
 }
 
 /// Expands each `Variant => "path"` into a match arm returning
@@ -67,6 +68,7 @@ shader_registry! {
     PickingMesh    => "utility/picking_mesh.wgsl",
     PickingCapsule => "utility/picking_capsule.wgsl",
     PickingSphere  => "utility/picking_sphere.wgsl",
+    Isosurface     => "raster/mesh/isosurface.wgsl",
 }
 
 /// Shared shader modules registered with naga-oil for `#import` support.

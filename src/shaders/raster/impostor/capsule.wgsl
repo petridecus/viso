@@ -23,6 +23,8 @@ struct VertexOutput {
     @location(4) color_a: vec3<f32>,
     @location(5) color_b: vec3<f32>,
     @location(6) @interpolate(flat) residue_idx: u32,
+    @location(7) @interpolate(flat) emissive: f32,
+    @location(8) @interpolate(flat) opacity: f32,
 };
 
 struct FragOut {
@@ -104,6 +106,8 @@ fn vs_main(
     out.color_a = color_a;
     out.color_b = color_b;
     out.residue_idx = residue_idx;
+    out.emissive = cap.color_a.w;
+    out.opacity = cap.color_b.w;
 
     return out;
 }
@@ -145,9 +149,31 @@ fn fs_main(in: VertexOutput) -> FragOut {
         lighting.roughness * MAX_IBL_MIP).rgb;
     let brdf = textureSample(brdf_lut, env_sampler, vec2<f32>(NdotV, lighting.roughness)).rg;
 
+    // Pulse glow for structural bonds (opacity > 0): a bright wavefront
+    // travels from donor (A) to acceptor (B) at 0.5 Hz with fade-in at
+    // the donor end and fade-out at the acceptor end, plus a rest period
+    // between cycles to avoid a hard jump.
+    var pulse = 0.0;
+    if (in.opacity > 0.0) {
+        // Cycle phase [0, 1). Travel occupies [0, 0.7), rest is [0.7, 1).
+        let phase = fract(camera.time * 0.25);
+        let travel = 0.7;
+        if (phase < travel) {
+            let pulse_pos = phase / travel; // normalize to [0, 1]
+            let dist = abs(axis_param - pulse_pos);
+            let raw = exp(-dist * dist * 40.0);
+            // Fade in from donor end, fade out toward acceptor end.
+            let fade_in = smoothstep(0.0, 0.15, pulse_pos);
+            let fade_out = smoothstep(1.0, 0.85, pulse_pos);
+            pulse = raw * fade_in * fade_out;
+        }
+        base_color = mix(base_color, vec3<f32>(1.0), pulse * 0.6);
+    }
+
     let result = shade_geometry(normal, view_dir, base_color, outline_factor,
         lighting, irradiance, prefiltered, brdf);
-    let final_color = result.color;
+    // Mix shaded result with emissive self-illumination.
+    let final_color = mix(result.color, base_color * 1.5, in.emissive);
     let ambient_ratio = result.ambient_ratio;
 
     let clip_pos = camera.view_proj * vec4<f32>(world_hit, 1.0);
@@ -159,7 +185,12 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     let sdf = length(pa - ba * h) - in.radius;
     let aa_edge = fwidth(sdf);
-    let alpha = smoothstep(aa_edge, -aa_edge, sdf);
+    let edge_alpha = smoothstep(aa_edge, -aa_edge, sdf);
+    // Opacity of 0 means use full edge alpha (legacy/default behavior
+    // for sidechains etc. that don't set opacity). Nonzero values scale
+    // the alpha for semi-transparency, boosted in the pulse region.
+    let boosted_opacity = in.opacity + pulse * 0.3 * (1.0 - in.opacity);
+    let alpha = select(edge_alpha, edge_alpha * boosted_opacity, in.opacity > 0.0);
 
     var out: FragOut;
     out.depth = ndc_depth;
