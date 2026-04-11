@@ -36,6 +36,9 @@ pub struct EntityAppearance {
     /// Surface opacity (alpha channel, 0.0–1.0).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub surface_opacity: Option<f32>,
+    /// Whether to render internal cavity meshes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_cavities: Option<bool>,
     /// Helix rendering style within Cartoon mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helix_style: Option<HelixStyle>,
@@ -91,6 +94,7 @@ impl EntityAppearance {
             show_sidechains: self.show_sidechains.or(global.show_sidechains),
             surface_kind: self.surface_kind.or(global.surface_kind),
             surface_opacity: self.surface_opacity.or(global.surface_opacity),
+            show_cavities: self.show_cavities.or(global.show_cavities),
             helix_style: self.helix_style.or(global.helix_style),
             sheet_style: self.sheet_style.or(global.sheet_style),
             sidechain_color_mode: self
@@ -129,6 +133,7 @@ impl EntityAppearance {
             && self.show_sidechains.is_none()
             && self.surface_kind.is_none()
             && self.surface_opacity.is_none()
+            && self.show_cavities.is_none()
             && self.helix_style.is_none()
             && self.sheet_style.is_none()
             && self.sidechain_color_mode.is_none()
@@ -164,6 +169,9 @@ impl EntityAppearance {
         }
         if let Some(v) = self.surface_opacity {
             out.surface_opacity = v;
+        }
+        if let Some(v) = self.show_cavities {
+            out.show_cavities = v;
         }
         if let Some(v) = self.helix_style {
             out.helix_style = v;
@@ -232,6 +240,7 @@ impl EntityAppearance {
             show_sidechains: Some(true),
             surface_kind: Some(SurfaceKindOption::None),
             surface_opacity: Some(0.35),
+            show_cavities: Some(false),
             helix_style: Some(HelixStyle::Ribbon),
             sheet_style: Some(SheetStyle::Ribbon),
             sidechain_color_mode: Some(SidechainColorMode::default()),

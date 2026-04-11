@@ -119,6 +119,7 @@ fn global_appearance_section(options: &Option<Value>) -> Element {
     let show_sidechains = display_bool(opts, "show_sidechains", true);
     let surface_kind = display_str(opts, "surface_kind", "none").to_owned();
     let surface_opacity = display_f64(opts, "surface_opacity", 0.35);
+    let show_cavities = display_bool(opts, "show_cavities", false);
     let helix_style = display_str(opts, "helix_style", "ribbon").to_owned();
     let sheet_style = display_str(opts, "sheet_style", "ribbon").to_owned();
 
@@ -158,6 +159,7 @@ fn global_appearance_section(options: &Option<Value>) -> Element {
             if surface_kind != "none" {
                 {global_slider("Opacity", "surface_opacity", surface_opacity, 0.0, 1.0, 0.01)}
             }
+            {global_toggle("Cavities", "show_cavities", show_cavities)}
             {global_select(
                 "Helix Style", "helix_style", &helix_style,
                 &[("ribbon", "Ribbon"), ("tube", "Tube"), ("cylinder", "Cylinder")],

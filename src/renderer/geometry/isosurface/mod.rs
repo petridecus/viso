@@ -6,9 +6,12 @@
 //! Integrates with depth, normals, SSAO, and bloom through the standard
 //! dual render target (color + normal).
 
+pub mod cavity;
 pub(crate) mod cpu_marching_cubes;
 pub mod density;
 pub mod gaussian_surface;
+pub(crate) mod mesh_smooth;
+pub(crate) mod sdf_grid;
 pub mod ses;
 pub(crate) mod tables;
 

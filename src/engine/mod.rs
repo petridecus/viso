@@ -548,7 +548,8 @@ impl VisoEngine {
             old.display.show_solvent != new.display.show_solvent;
         let surface_changed = old.display.surface_kind
             != new.display.surface_kind
-            || old.display.surface_opacity != new.display.surface_opacity;
+            || old.display.surface_opacity != new.display.surface_opacity
+            || old.display.show_cavities != new.display.show_cavities;
 
         let helix_sheet_changed = old.display.helix_style
             != new.display.helix_style

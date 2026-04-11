@@ -376,6 +376,10 @@ pub struct DisplayOptions {
     /// Global surface opacity (0.0–1.0).
     #[serde(default = "default_surface_opacity")]
     pub surface_opacity: f32,
+    /// Whether to render internal cavity meshes extracted from the same
+    /// SDF pipeline as the molecular surface. Cavities use a fixed
+    /// bluish translucent color and are not configurable per-entity.
+    pub show_cavities: bool,
     /// Helix rendering style within Cartoon mode.
     pub helix_style: HelixStyle,
     /// Sheet rendering style within Cartoon mode.
@@ -423,6 +427,7 @@ impl Default for DisplayOptions {
             show_sidechains: false,
             surface_kind: SurfaceKindOption::default(),
             surface_opacity: default_surface_opacity(),
+            show_cavities: false,
             helix_style: HelixStyle::default(),
             sheet_style: SheetStyle::default(),
             sidechain_color_mode: SidechainColorMode::default(),
