@@ -160,6 +160,7 @@ mod tests {
             position: [x, y, z],
             normal: [0.0, 1.0, 0.0],
             color: [1.0; 4],
+            kind: super::super::isosurface_kind::SURFACE,
         }
     }
 

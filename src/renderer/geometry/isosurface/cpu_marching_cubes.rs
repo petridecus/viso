@@ -316,6 +316,7 @@ fn process_cube(
                 position: grid_to_world(ev[0], ev[1], ev[2]),
                 normal: gradient_normal(data, dims, ev),
                 color,
+                kind: super::isosurface_kind::SURFACE,
             });
             edge_emitted[edge] = base + local_count;
             local_count += 1;

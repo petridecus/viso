@@ -19,6 +19,7 @@
 use glam::Vec3;
 
 use super::cpu_marching_cubes::extract_isosurface;
+use super::isosurface_kind;
 use super::mesh_smooth::taubin_smooth;
 use super::sdf_grid::{binary_to_sdf, detect_cavity_mask, edt_3d, voxelize_sas};
 use super::IsosurfaceVertex;
@@ -238,6 +239,13 @@ fn extract_cavity_mesh(
     // alternating λ/μ passes prevent the volume shrinkage that plain
     // Laplacian smoothing would cause for small cavities.
     taubin_smooth(&mut vertices, &indices, CAVITY_SMOOTHING_ITERATIONS);
+
+    // Tag every vertex as a cavity so the isosurface shader can apply
+    // cavity-specific effects (pulsing rim, etc.) without inspecting
+    // color or relying on a separate draw call.
+    for v in &mut vertices {
+        v.kind = isosurface_kind::CAVITY;
+    }
 
     Some(CavityMesh {
         id,

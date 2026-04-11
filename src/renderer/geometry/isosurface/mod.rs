@@ -22,6 +22,28 @@ use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef};
 use crate::renderer::PipelineLayouts;
 
+/// Discriminator tagging which kind of isosurface a vertex belongs to.
+///
+/// Stored as a `u32` in [`IsosurfaceVertex::kind`] so the shared
+/// isosurface shader can branch on the source kind without inspecting
+/// vertex color or relying on separate draw calls. Cavity-specific
+/// effects (pulsing rim, future depth absorption, etc.) gate on this.
+///
+/// Values are pinned because they're mirrored verbatim in the WGSL
+/// shader (`isosurface.wgsl`).
+pub mod isosurface_kind {
+    /// Generic surface mesh — Gaussian, SES, or any future PBR-shaded
+    /// surface that doesn't need special-case effects. Default value.
+    pub const SURFACE: u32 = 0;
+    /// Internal cavity mesh — gets the cavity-specific pulsing rim and
+    /// (eventually) volumetric / depth-absorption shading.
+    pub const CAVITY: u32 = 1;
+    /// Electron-density isosurface — currently rendered like a
+    /// surface, reserved here so future density-specific effects don't
+    /// require another schema change.
+    pub const DENSITY: u32 = 2;
+}
+
 /// A vertex on the extracted isosurface.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,6 +54,8 @@ pub struct IsosurfaceVertex {
     pub normal: [f32; 3],
     /// Vertex color RGBA (alpha controls transparency).
     pub color: [f32; 4],
+    /// Source kind discriminator — see [`isosurface_kind`].
+    pub kind: u32,
 }
 
 /// Isosurface vertex buffer layout for wgpu.
@@ -54,6 +78,11 @@ pub fn isosurface_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 format: wgpu::VertexFormat::Float32x4,
                 offset: 24,
                 shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 40,
+                shader_location: 3,
             },
         ],
     }
