@@ -17,6 +17,7 @@ pub(crate) mod tables;
 
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::DynamicBuffer;
+use crate::gpu::pipeline_helpers::texture_2d_unfilterable;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::mesh::{create_mesh_pipeline, MeshPass, MeshPipelineDef};
@@ -56,6 +57,11 @@ pub struct IsosurfaceVertex {
     pub color: [f32; 4],
     /// Source kind discriminator — see [`isosurface_kind`].
     pub kind: u32,
+    /// World-space centroid of the parent cavity, baked at mesh build
+    /// time. Only meaningful when `kind == isosurface_kind::CAVITY` —
+    /// other kinds set this to `[0.0; 3]` and the shader ignores it.
+    /// Used by the vertex shader for radial-breath displacement.
+    pub cavity_center: [f32; 3],
 }
 
 /// Isosurface vertex buffer layout for wgpu.
@@ -84,28 +90,51 @@ pub fn isosurface_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 40,
                 shader_location: 3,
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 44,
+                shader_location: 4,
+            },
         ],
     }
 }
 
-/// Renderer for isosurface meshes (electron density, etc.).
+/// Renderer for isosurface meshes (cavities, SES, Gaussian, density).
 ///
-/// Owns a vertex buffer and a `MeshPass` (index buffer + pipeline).
-/// Uses only camera + lighting bind groups (groups 0-1) — no selection
-/// or per-residue color, since density maps have no residue concept.
+/// Owns the vertex buffer, the main `MeshPass` (index buffer + main
+/// pipeline) and a separate back-face depth pipeline used for the
+/// thickness pre-pass. The back-face pre-pass writes linear view-space
+/// z to an external R32Float texture; the main pass samples that
+/// texture (bound as group 2) to compute thickness for Beer-Lambert.
 pub(crate) struct IsosurfaceRenderer {
     mesh_pass: MeshPass,
     vertex_buffer: DynamicBuffer,
     vertex_count: u32,
+    back_face_pipeline: wgpu::RenderPipeline,
+    back_face_bind_group_layout: wgpu::BindGroupLayout,
+    back_face_bind_group: wgpu::BindGroup,
 }
 
 impl IsosurfaceRenderer {
-    /// Create a new isosurface renderer with empty buffers.
+    /// Create a new isosurface renderer.
+    ///
+    /// `back_face_depth_view` is the external R32Float texture view that
+    /// the back-face pre-pass writes to and the main pass samples. Pass
+    /// the same view that's resized in lockstep with the framebuffer
+    /// (see `PostProcessStack::backface_depth_view`).
     pub fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
         shader_composer: &mut ShaderComposer,
+        back_face_depth_view: &wgpu::TextureView,
     ) -> Result<Self, VisoError> {
+        let back_face_bind_group_layout = context
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Isosurface Backface Depth Layout"),
+                entries: &[texture_2d_unfilterable(0)],
+            });
+
         let pipeline = create_mesh_pipeline(
             context,
             &MeshPipelineDef {
@@ -114,8 +143,18 @@ impl IsosurfaceRenderer {
                 cull_mode: Some(wgpu::Face::Back),
                 vertex_layout: isosurface_vertex_layout(),
             },
-            &[&layouts.camera, &layouts.lighting],
+            &[
+                &layouts.camera,
+                &layouts.lighting,
+                &back_face_bind_group_layout,
+            ],
             shader_composer,
+        )?;
+
+        let back_face_pipeline = create_back_face_depth_pipeline(
+            context,
+            shader_composer,
+            &layouts.camera,
         )?;
 
         let mesh_pass =
@@ -128,11 +167,34 @@ impl IsosurfaceRenderer {
             wgpu::BufferUsages::VERTEX,
         );
 
+        let back_face_bind_group = create_back_face_bind_group(
+            &context.device,
+            &back_face_bind_group_layout,
+            back_face_depth_view,
+        );
+
         Ok(Self {
             mesh_pass,
             vertex_buffer,
             vertex_count: 0,
+            back_face_pipeline,
+            back_face_bind_group_layout,
+            back_face_bind_group,
         })
+    }
+
+    /// Rebuild the back-face depth bind group when the underlying
+    /// texture is recreated (e.g. after a window resize).
+    pub fn set_back_face_depth_view(
+        &mut self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+    ) {
+        self.back_face_bind_group = create_back_face_bind_group(
+            device,
+            &self.back_face_bind_group_layout,
+            view,
+        );
     }
 
     /// Upload new isosurface mesh data to the GPU.
@@ -154,9 +216,6 @@ impl IsosurfaceRenderer {
     }
 
     /// Draw the isosurface mesh into the given render pass.
-    ///
-    /// Only binds camera (group 0) and lighting (group 1) — no selection
-    /// or color groups needed.
     pub fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -167,8 +226,34 @@ impl IsosurfaceRenderer {
         }
         render_pass.set_bind_group(0, bind_groups.camera, &[]);
         render_pass.set_bind_group(1, bind_groups.lighting, &[]);
+        render_pass.set_bind_group(2, &self.back_face_bind_group, &[]);
         self.mesh_pass
             .draw_indexed(render_pass, self.vertex_buffer.buffer());
+    }
+
+    /// Draw the back-face depth pre-pass.
+    ///
+    /// Caller is responsible for setting up a render pass with the
+    /// R32Float color attachment and binding the camera bind group.
+    /// Renders all isosurface back-faces (front-face culling) writing
+    /// linear view-space z.
+    pub fn draw_back_face_pass<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        camera_bind_group: &'a wgpu::BindGroup,
+    ) {
+        if self.vertex_count == 0 {
+            return;
+        }
+        render_pass.set_pipeline(&self.back_face_pipeline);
+        render_pass.set_bind_group(0, camera_bind_group, &[]);
+        render_pass
+            .set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
+        render_pass.set_index_buffer(
+            self.mesh_pass.index_buffer().slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(0..self.mesh_pass.index_count, 0, 0..1);
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
@@ -186,4 +271,69 @@ impl IsosurfaceRenderer {
             ),
         ]
     }
+}
+
+fn create_back_face_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Isosurface Backface Depth Bind Group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(view),
+        }],
+    })
+}
+
+fn create_back_face_depth_pipeline(
+    context: &RenderContext,
+    shader_composer: &mut ShaderComposer,
+    camera_layout: &wgpu::BindGroupLayout,
+) -> Result<wgpu::RenderPipeline, VisoError> {
+    let shader = shader_composer.compose(&context.device, Shader::BackfaceDepth)?;
+
+    let pipeline_layout =
+        context
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Isosurface Backface Depth Layout"),
+                bind_group_layouts: &[camera_layout],
+                push_constant_ranges: &[],
+            });
+
+    let vertex_layout = isosurface_vertex_layout();
+    Ok(context
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Isosurface Backface Depth"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: std::slice::from_ref(&vertex_layout),
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R32Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Front),
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        }))
 }

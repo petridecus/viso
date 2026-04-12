@@ -89,6 +89,7 @@ impl Renderers {
         layouts: &PipelineLayouts,
         store: &EntityStore,
         shader_composer: &mut ShaderComposer,
+        backface_depth_view: &wgpu::TextureView,
     ) -> Result<Self, crate::error::VisoError> {
         let na_chains: Vec<Vec<Vec3>> = store
             .nucleic_acid_entities()
@@ -142,8 +143,12 @@ impl Renderers {
             &na_rings,
             shader_composer,
         )?;
-        let isosurface =
-            IsosurfaceRenderer::new(context, layouts, shader_composer)?;
+        let isosurface = IsosurfaceRenderer::new(
+            context,
+            layouts,
+            shader_composer,
+            backface_depth_view,
+        )?;
         Ok(Self {
             backbone,
             sidechain,
@@ -175,6 +180,41 @@ impl Renderers {
             &options.display,
             Some(&options.colors),
         );
+    }
+
+    /// Encode the isosurface back-face depth pre-pass.
+    ///
+    /// Renders all isosurface back-faces (front-face culling) into the
+    /// R32Float `backface_depth_view`, writing linear view-space z. The
+    /// main isosurface fragment shader samples this texture to compute
+    /// thickness for Beer-Lambert absorption.
+    pub fn encode_isosurface_backface_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        backface_depth_view: &wgpu::TextureView,
+        camera_bind_group: &wgpu::BindGroup,
+    ) {
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("isosurface backface depth pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: backface_depth_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+        self.isosurface
+            .draw_back_face_pass(&mut rp, camera_bind_group);
     }
 
     /// Encode the main geometry render pass.

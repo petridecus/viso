@@ -24,6 +24,8 @@ pub(crate) struct PostProcessStack {
     pub(crate) depth_view: wgpu::TextureView,
     pub(crate) normal_texture: wgpu::Texture,
     pub(crate) normal_view: wgpu::TextureView,
+    pub(crate) backface_depth_texture: wgpu::Texture,
+    pub(crate) backface_depth_view: wgpu::TextureView,
     pub(crate) ssao_renderer: SsaoRenderer,
     pub(crate) bloom_pass: BloomPass,
     pub(crate) composite_pass: CompositePass,
@@ -40,6 +42,8 @@ impl PostProcessStack {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
         let (normal_texture, normal_view) =
             Self::create_normal_texture(context);
+        let (backface_depth_texture, backface_depth_view) =
+            Self::create_backface_depth_texture(context);
 
         let ssao_renderer = SsaoRenderer::new(
             context,
@@ -80,6 +84,8 @@ impl PostProcessStack {
             depth_view,
             normal_texture,
             normal_view,
+            backface_depth_texture,
+            backface_depth_view,
             ssao_renderer,
             bloom_pass,
             composite_pass,
@@ -96,6 +102,10 @@ impl PostProcessStack {
             Self::create_normal_texture(context);
         self.normal_texture = normal_texture;
         self.normal_view = normal_view;
+        let (backface_depth_texture, backface_depth_view) =
+            Self::create_backface_depth_texture(context);
+        self.backface_depth_texture = backface_depth_texture;
+        self.backface_depth_view = backface_depth_view;
 
         self.ssao_renderer.set_geometry_views(
             self.depth_view.clone(),
@@ -205,6 +215,18 @@ impl PostProcessStack {
             context.render_height(),
             wgpu::TextureFormat::Rgba16Float,
             "Normal G-Buffer",
+        )
+    }
+
+    fn create_backface_depth_texture(
+        context: &RenderContext,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        create_render_texture(
+            &context.device,
+            context.render_width(),
+            context.render_height(),
+            wgpu::TextureFormat::R32Float,
+            "Isosurface Backface Depth",
         )
     }
 }

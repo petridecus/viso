@@ -144,8 +144,14 @@ fn init_gpu_pipeline(
         selection: selection.layout.clone(),
         color: residue_colors.layout.clone(),
     };
-    let renderers =
-        Renderers::new(context, &layouts, &entities, &mut shader_composer)?;
+    let post_process = PostProcessStack::new(context, &mut shader_composer)?;
+    let renderers = Renderers::new(
+        context,
+        &layouts,
+        &entities,
+        &mut shader_composer,
+        &post_process.backface_depth_view,
+    )?;
     let pick = PickingSystem::new(
         context,
         &camera_controller.layout,
@@ -153,7 +159,6 @@ fn init_gpu_pipeline(
         residue_colors,
         &mut shader_composer,
     )?;
-    let post_process = PostProcessStack::new(context, &mut shader_composer)?;
     camera_controller.fit_to_sphere(Vec3::ZERO, 0.0);
 
     Ok(GpuBootstrap {

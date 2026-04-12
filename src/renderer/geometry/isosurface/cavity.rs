@@ -4,9 +4,9 @@
 //! 1. Voxelize SAS + probe-carve (same as SES)
 //! 2. Detect cavity mask (shared with SES sealing step)
 //! 3. Connected-component label the cavity mask → per-cavity IDs + bboxes
-//! 4. For each cavity: extract a padded sub-grid, build a per-cavity
-//!    binary mask in sub-grid coordinates, run [`binary_to_sdf`] on the
-//!    sub-grid, extract marching-cubes triangles
+//! 4. For each cavity: extract a padded sub-grid, build a per-cavity binary
+//!    mask in sub-grid coordinates, run [`binary_to_sdf`] on the sub-grid,
+//!    extract marching-cubes triangles
 //!
 //! Each cavity gets an independent sub-grid SDF, so cavities near each
 //! other cannot cross-contaminate each other's meshes. The sub-grids
@@ -19,10 +19,11 @@
 use glam::Vec3;
 
 use super::cpu_marching_cubes::extract_isosurface;
-use super::isosurface_kind;
 use super::mesh_smooth::taubin_smooth;
-use super::sdf_grid::{binary_to_sdf, detect_cavity_mask, edt_3d, voxelize_sas};
-use super::IsosurfaceVertex;
+use super::sdf_grid::{
+    binary_to_sdf, detect_cavity_mask, edt_3d, voxelize_sas,
+};
+use super::{isosurface_kind, IsosurfaceVertex};
 
 /// Number of Taubin smoothing iterations applied to each cavity mesh
 /// after marching cubes. Each iteration is one λ pass + one μ pass.
@@ -33,6 +34,12 @@ const CAVITY_SMOOTHING_ITERATIONS: usize = 8;
 
 /// Default solvent probe radius (water) in Angstroms.
 const DEFAULT_PROBE_RADIUS: f32 = 1.4;
+
+/// Unified RGBA tint baked into every cavity vertex. All cavities share
+/// this color so the visual reads as a property of the negative space
+/// itself, not of any particular chain. The alpha is a baseline that
+/// gets modulated by Beer-Lambert thickness in the fragment shader.
+const CAVITY_RGBA: [f32; 4] = [0.22, 0.30, 1.0, 0.90];
 
 /// A single detected cavity with its extracted mesh.
 #[derive(Clone)]
@@ -61,18 +68,20 @@ struct VoxelBbox {
 
 /// Generate cavity meshes from atom positions.
 ///
+/// All cavities share the unified [`CAVITY_RGBA`] tint — the color is
+/// not a parameter because cavities are meant to read as "negative
+/// space", not as a per-entity visual.
+///
 /// - `positions`: atom world-space positions (Angstroms)
 /// - `radii`: per-atom van der Waals radii (Angstroms)
 /// - `probe_radius`: solvent probe radius; defaults to 1.4 Å
 /// - `resolution`: grid spacing in Angstroms (lower = finer, typ. 0.5–1.0)
-/// - `color`: RGBA color for all cavity vertices (alpha for translucency)
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn generate_cavities(
     positions: &[Vec3],
     radii: &[f32],
     probe_radius: Option<f32>,
     resolution: f32,
-    color: [f32; 4],
 ) -> CavitySet {
     if positions.is_empty() {
         return CavitySet::default();
@@ -133,9 +142,7 @@ pub fn generate_cavities(
         .enumerate()
         .filter_map(|(cavity_idx, bbox)| {
             let id = cavity_idx as u32 + 1;
-            extract_cavity_mesh(
-                id, bbox, &labels, dims, &origin, &spacing, color,
-            )
+            extract_cavity_mesh(id, bbox, &labels, dims, &origin, &spacing)
         })
         .collect();
 
@@ -148,7 +155,6 @@ pub fn generate_cavities(
 /// the target cavity, converts to an SDF, then marching-cubes the
 /// sub-grid. The result is in world-space thanks to the per-cavity
 /// sub-origin.
-#[allow(clippy::too_many_arguments)]
 fn extract_cavity_mesh(
     id: u32,
     bbox: &VoxelBbox,
@@ -156,7 +162,6 @@ fn extract_cavity_mesh(
     dims: [usize; 3],
     origin: &[f32; 3],
     spacing: &[f32; 3],
-    color: [f32; 4],
 ) -> Option<CavityMesh> {
     let [nx, ny, nz] = dims;
 
@@ -228,7 +233,7 @@ fn extract_cavity_mesh(
                 gz.mul_add(spacing[2], sub_origin[2]),
             ]
         },
-        color,
+        CAVITY_RGBA,
     );
 
     if vertices.is_empty() || indices.is_empty() {
@@ -240,11 +245,24 @@ fn extract_cavity_mesh(
     // Laplacian smoothing would cause for small cavities.
     taubin_smooth(&mut vertices, &indices, CAVITY_SMOOTHING_ITERATIONS);
 
-    // Tag every vertex as a cavity so the isosurface shader can apply
-    // cavity-specific effects (pulsing rim, etc.) without inspecting
-    // color or relying on a separate draw call.
+    // World-space centroid of the cavity's voxel bbox — baked into
+    // every vertex so the vertex shader can do radial-breath
+    // displacement away from / toward the cavity's center.
+    let center = [
+        ((bbox.min[0] + bbox.max[0]) as f32 * 0.5)
+            .mul_add(spacing[0], origin[0]),
+        ((bbox.min[1] + bbox.max[1]) as f32 * 0.5)
+            .mul_add(spacing[1], origin[1]),
+        ((bbox.min[2] + bbox.max[2]) as f32 * 0.5)
+            .mul_add(spacing[2], origin[2]),
+    ];
+
+    // Tag every vertex as a cavity (so the isosurface shader can apply
+    // cavity-specific effects without inspecting color) and bake the
+    // centroid for radial displacement.
     for v in &mut vertices {
         v.kind = isosurface_kind::CAVITY;
+        v.cavity_center = center;
     }
 
     Some(CavityMesh {
@@ -331,8 +349,7 @@ fn flood_fill(
             if nx2 < 0 || ny2 < 0 || nz2 < 0 {
                 continue;
             }
-            let (nx2, ny2, nz2) =
-                (nx2 as usize, ny2 as usize, nz2 as usize);
+            let (nx2, ny2, nz2) = (nx2 as usize, ny2 as usize, nz2 as usize);
             if nx2 >= nx || ny2 >= ny || nz2 >= nz {
                 continue;
             }
@@ -416,20 +433,14 @@ mod tests {
 
     #[test]
     fn generate_cavities_empty_atoms() {
-        let set = generate_cavities(&[], &[], None, 1.0, [1.0; 4]);
+        let set = generate_cavities(&[], &[], None, 1.0);
         assert!(set.meshes.is_empty());
     }
 
     #[test]
     fn generate_cavities_single_atom_has_none() {
         // A lone atom is a solid blob with no interior voids.
-        let set = generate_cavities(
-            &[Vec3::ZERO],
-            &[1.5],
-            Some(1.4),
-            0.5,
-            [1.0; 4],
-        );
+        let set = generate_cavities(&[Vec3::ZERO], &[1.5], Some(1.4), 0.5);
         assert!(set.meshes.is_empty());
     }
 }

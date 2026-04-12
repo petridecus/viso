@@ -7,14 +7,6 @@
 use super::VisoEngine;
 use crate::renderer::geometry::isosurface::IsosurfaceVertex;
 
-/// Fixed RGBA tint for cavity meshes — a violet-shifted blue with
-/// fixed semitransparent alpha, meant to read as "empty space / air
-/// pocket". Cavities deliberately don't pick up the per-entity backbone
-/// palette or the user opacity slider: every cavity in the scene shares
-/// this color so the visual reads as a property of the negative space,
-/// not of any particular chain.
-const CAVITY_RGBA: [f32; 4] = [0.22, 0.30, 1.0, 0.50];
-
 /// Which kind of molecular surface to generate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum SurfaceKind {
@@ -280,7 +272,6 @@ impl VisoEngine {
                     radii,
                     Some(1.4),
                     0.6,
-                    CAVITY_RGBA,
                 );
                 for mesh in &set.meshes {
                     let base = all_verts.len() as u32;

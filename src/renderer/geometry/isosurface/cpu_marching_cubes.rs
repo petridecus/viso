@@ -317,6 +317,7 @@ fn process_cube(
                 normal: gradient_normal(data, dims, ev),
                 color,
                 kind: super::isosurface_kind::SURFACE,
+                cavity_center: [0.0; 3],
             });
             edge_emitted[edge] = base + local_count;
             local_count += 1;

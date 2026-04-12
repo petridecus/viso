@@ -93,6 +93,11 @@ impl GpuPipeline {
             color: Some(&self.pick.residue_colors.bind_group),
         };
         let frustum = camera.frustum();
+        self.renderers.encode_isosurface_backface_pass(
+            &mut encoder,
+            &self.post_process.backface_depth_view,
+            &camera.bind_group,
+        );
         self.renderers.encode_geometry_pass(
             &mut encoder,
             &input,
@@ -131,6 +136,10 @@ impl GpuPipeline {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.context.resize(width, height);
         self.post_process.resize(&self.context);
+        self.renderers.isosurface.set_back_face_depth_view(
+            &self.context.device,
+            &self.post_process.backface_depth_view,
+        );
         self.pick
             .picking
             .resize(&self.context.device, width, height);

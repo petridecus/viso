@@ -26,6 +26,7 @@ pub enum Shader {
     PickingCapsule,
     PickingSphere,
     Isosurface,
+    BackfaceDepth,
 }
 
 /// Expands each `Variant => "path"` into a match arm returning
@@ -69,6 +70,7 @@ shader_registry! {
     PickingCapsule => "utility/picking_capsule.wgsl",
     PickingSphere  => "utility/picking_sphere.wgsl",
     Isosurface     => "raster/mesh/isosurface.wgsl",
+    BackfaceDepth  => "raster/mesh/backface_depth.wgsl",
 }
 
 /// Shared shader modules registered with naga-oil for `#import` support.
