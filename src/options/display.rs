@@ -468,4 +468,3 @@ impl DisplayOptions {
 fn default_surface_opacity() -> f32 {
     0.35
 }
-

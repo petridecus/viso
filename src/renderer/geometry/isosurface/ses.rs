@@ -1,22 +1,16 @@
-//! Solvent-Excluded Surface (SES / Connolly surface) generation.
+//! Solvent-Excluded Surface (SES / Connolly surface) mesh rendering.
 //!
-//! Uses the EDTSurf algorithm:
-//! 1. Voxelize the SAS solid (binary: inside any atom's vdW + probe)
-//! 2. 3D Euclidean Distance Transform on the solid interior
-//! 3. Carve voxels where EDT < probe (probe can reach from outside)
-//! 4. Convert the resulting SES solid to a signed distance field
-//! 5. Extract isosurface at threshold 0
+//! The analytical half — voxelization, SES erosion, cavity sealing,
+//! signed distance field — lives in
+//! [`molex::analysis::volumetric::ses`]. This file only covers the
+//! rendering-bound half: marching cubes on the returned SDF and
+//! per-vertex mean-curvature coloring (blue = convex, red = concave).
 
 use glam::Vec3;
+use molex::analysis::volumetric::compute_ses_sdf;
 
 use super::cpu_marching_cubes::extract_isosurface;
-use super::sdf_grid::{
-    binary_to_sdf, detect_cavity_mask, edt_3d, voxelize_sas,
-};
 use super::IsosurfaceVertex;
-
-/// Default solvent probe radius (water) in Angstroms.
-const DEFAULT_PROBE_RADIUS: f32 = 1.4;
 
 /// Generate a solvent-excluded (Connolly) surface from atom positions.
 ///
@@ -33,72 +27,28 @@ pub fn generate_ses(
         return (Vec::new(), Vec::new());
     }
 
-    let probe = probe_radius.unwrap_or(DEFAULT_PROBE_RADIUS);
-    let padding = probe + 2.0;
-
-    // Compute grid bounds
-    let mut min_bound = positions[0];
-    let mut max_bound = positions[0];
-    for &p in positions {
-        min_bound = min_bound.min(p);
-        max_bound = max_bound.max(p);
-    }
-    let max_radius = radii.iter().copied().fold(0.0f32, f32::max);
-    let expand = max_radius + probe + padding;
-    min_bound -= Vec3::splat(expand);
-    max_bound += Vec3::splat(expand);
-
-    let extent = max_bound - min_bound;
-    let nx = ((extent.x / resolution).ceil() as usize).max(2);
-    let ny = ((extent.y / resolution).ceil() as usize).max(2);
-    let nz = ((extent.z / resolution).ceil() as usize).max(2);
-    let spacing = [
-        extent.x / (nx - 1) as f32,
-        extent.y / (ny - 1) as f32,
-        extent.z / (nz - 1) as f32,
-    ];
-    let origin = [min_bound.x, min_bound.y, min_bound.z];
-    let dims = [nx, ny, nz];
-
-    // Step 1: Build binary SAS solid
-    let sas_solid =
-        voxelize_sas(positions, radii, probe, dims, &origin, &spacing);
-
-    // Step 2: EDT on interior → distance to nearest outside voxel
-    let interior_edt = edt_3d(&sas_solid, dims, &spacing);
-
-    // Step 3: Carve — voxels where EDT < probe become outside
-    let total = nx * ny * nz;
-    let mut ses_solid = vec![false; total];
-    for i in 0..total {
-        ses_solid[i] = sas_solid[i] && interior_edt[i] >= probe;
+    let grid = compute_ses_sdf(positions, radii, probe_radius, resolution);
+    if grid.data.is_empty() {
+        return (Vec::new(), Vec::new());
     }
 
-    // Step 3b: Fill interior voids so marching cubes only produces the
-    // outer envelope. The cavity detection is shared with the cavity
-    // pipeline — here we just consume the mask to seal up the solid.
-    let cavity_mask = detect_cavity_mask(&ses_solid, dims);
-    for (i, &in_cavity) in cavity_mask.iter().enumerate() {
-        if in_cavity {
-            ses_solid[i] = true;
-        }
-    }
-
-    // Step 4: Convert SES solid to signed distance field.
-    // Negate so the field is positive-inside (matches density convention
-    // expected by marching cubes gradient_normal).
-    let mut sdf = binary_to_sdf(&ses_solid, dims, &spacing);
+    // molex returns the standard SDF convention (negative inside,
+    // positive outside). Our marching cubes extractor expects
+    // positive-inside to match the density pipeline, so flip the sign.
+    let mut sdf = grid.data;
     for v in &mut sdf {
         *v = -*v;
     }
 
-    // Step 5: Extract isosurface at threshold 0
+    let origin = grid.origin;
+    let spacing = grid.spacing;
+
     let (mut verts, idxs) = extract_isosurface(
         &sdf,
-        dims,
+        grid.dims,
         0.0,
         [0, 0, 0],
-        dims,
+        grid.dims,
         |gx, gy, gz| {
             [
                 gx.mul_add(spacing[0], origin[0]),
@@ -109,7 +59,6 @@ pub fn generate_ses(
         color,
     );
 
-    // Step 6: Color by mean curvature (blue=convex, white=flat, red=concave)
     apply_curvature_coloring(&mut verts, &idxs, color[3]);
 
     (verts, idxs)
@@ -153,7 +102,7 @@ fn apply_curvature_coloring(
         let tri_area = ab.cross(ac).length() * 0.5;
         let third_area = tri_area / 3.0;
 
-        // Accumulate cotangent-weighted displacement for each edge
+        // Accumulate cotangent-weighted displacement for each edge.
         // Edge bc opposite vertex a: contributes to b and c
         let d_bc = c - b;
         laplacian[bi][0] += cot_a * d_bc.x;
@@ -208,8 +157,8 @@ fn apply_curvature_coloring(
         curvatures[i] = sign * mag;
     }
 
-    // Map curvature to color. Clamp to a reasonable range for visualization.
-    // Use percentile-based clamping for robustness.
+    // Map curvature to color. Clamp to a reasonable range for visualization
+    // using percentile-based robust clamping.
     let mut sorted: Vec<f32> = curvatures.clone();
     sorted.sort_unstable_by(|a, b| {
         a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)

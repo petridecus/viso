@@ -11,7 +11,6 @@ pub(crate) mod cpu_marching_cubes;
 pub mod density;
 pub mod gaussian_surface;
 pub(crate) mod mesh_smooth;
-pub(crate) mod sdf_grid;
 pub mod ses;
 pub(crate) mod tables;
 
@@ -247,8 +246,7 @@ impl IsosurfaceRenderer {
         }
         render_pass.set_pipeline(&self.back_face_pipeline);
         render_pass.set_bind_group(0, camera_bind_group, &[]);
-        render_pass
-            .set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer().slice(..));
         render_pass.set_index_buffer(
             self.mesh_pass.index_buffer().slice(..),
             wgpu::IndexFormat::Uint32,
@@ -293,16 +291,16 @@ fn create_back_face_depth_pipeline(
     shader_composer: &mut ShaderComposer,
     camera_layout: &wgpu::BindGroupLayout,
 ) -> Result<wgpu::RenderPipeline, VisoError> {
-    let shader = shader_composer.compose(&context.device, Shader::BackfaceDepth)?;
+    let shader =
+        shader_composer.compose(&context.device, Shader::BackfaceDepth)?;
 
-    let pipeline_layout =
-        context
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Isosurface Backface Depth Layout"),
-                bind_group_layouts: &[camera_layout],
-                push_constant_ranges: &[],
-            });
+    let pipeline_layout = context.device.create_pipeline_layout(
+        &wgpu::PipelineLayoutDescriptor {
+            label: Some("Isosurface Backface Depth Layout"),
+            bind_group_layouts: &[camera_layout],
+            push_constant_ranges: &[],
+        },
+    );
 
     let vertex_layout = isosurface_vertex_layout();
     Ok(context

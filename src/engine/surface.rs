@@ -267,12 +267,8 @@ impl VisoEngine {
             // benchmark structures (e.g. 1bbc has 3).
             let mut cavity_count = 0usize;
             for (positions, radii) in &cavity_jobs {
-                let set = cavity::generate_cavities(
-                    positions,
-                    radii,
-                    Some(1.4),
-                    0.6,
-                );
+                let set =
+                    cavity::generate_cavities(positions, radii, Some(1.4), 0.6);
                 for mesh in &set.meshes {
                     let base = all_verts.len() as u32;
                     all_verts.extend(mesh.vertices.iter().copied());

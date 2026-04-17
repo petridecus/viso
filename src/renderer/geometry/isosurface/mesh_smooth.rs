@@ -89,7 +89,9 @@ fn smoothing_pass(
     let new_positions: Vec<[f32; 3]> = vertices
         .iter()
         .enumerate()
-        .map(|(i, v)| smooth_vertex(v.position, &adjacency[i], vertices, factor))
+        .map(|(i, v)| {
+            smooth_vertex(v.position, &adjacency[i], vertices, factor)
+        })
         .collect();
     for (v, p) in vertices.iter_mut().zip(new_positions) {
         v.position = p;

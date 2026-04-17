@@ -110,8 +110,7 @@ impl VisoEngine {
         // Camera uniform (hover state + time from GPU picking)
         self.camera_controller.uniform.hovered_residue =
             self.gpu.pick.hovered_target.as_residue_i32();
-        self.camera_controller.uniform.time =
-            self.frame_timing.elapsed_secs();
+        self.camera_controller.uniform.time = self.frame_timing.elapsed_secs();
         self.camera_controller.update_gpu(&self.gpu.context.queue);
 
         // Depth-buffer fog from camera distance

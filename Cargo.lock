@@ -2921,6 +2921,7 @@ version = "0.2.2"
 dependencies = [
  "flate2",
  "glam",
+ "log",
  "ndarray",
  "pdbtbx",
  "rmp",
