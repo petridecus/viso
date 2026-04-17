@@ -10,8 +10,8 @@ use super::profile::{
     resolve_na_profile, resolve_profile, CrossSectionProfile,
 };
 use super::spline::{
-    catmull_rom, compute_frenet_frames, compute_helix_axis_points, compute_rmf,
-    cubic_bspline, SplinePoint,
+    compute_frenet_frames, compute_helix_axis_points, compute_rmf,
+    cubic_bspline, dual_hermite_spline, helix_aware_spline, SplinePoint,
 };
 use super::{BackboneMeshOutput, BackboneVertex};
 use crate::engine::scene_data::estimate_carbonyl_o;
@@ -51,6 +51,7 @@ pub(crate) fn generate_mesh_colored(
     chains: &super::ChainPair,
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
+    sheet_plane_normals: &[(u32, Vec3)],
     geo: &GeometryOptions,
     per_chain_lod: Option<&[(usize, usize)]>,
     na_residue_colors: Option<&[[f32; 3]]>,
@@ -59,6 +60,7 @@ pub(crate) fn generate_mesh_colored(
         chains.protein,
         ss_override,
         per_residue_colors,
+        sheet_plane_normals,
         geo,
         per_chain_lod,
     );
@@ -79,6 +81,7 @@ fn process_protein_chains(
     chains: &[Vec<Vec3>],
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
+    sheet_plane_normals: &[(u32, Vec3)],
     geo: &GeometryOptions,
     per_chain_lod: Option<&[(usize, usize)]>,
 ) -> (BackboneMeshOutput, u32) {
@@ -154,11 +157,22 @@ fn process_protein_chains(
             segments_per_residue: chain_spr,
         };
         let (center, radius) = bounding_sphere(&atoms.ca);
+
+        // Slice the sparse sheet-plane-normal table for this chain.
+        // The input is sorted by residue_idx, so we just binary-search
+        // the chain's [start, end) window.
+        let chain_start = global_residue_idx;
+        let chain_end = global_residue_idx + n_residues as u32;
+        let lo = sheet_plane_normals.partition_point(|&(i, _)| i < chain_start);
+        let hi = sheet_plane_normals.partition_point(|&(i, _)| i < chain_end);
+        let chain_sheet_normals = &sheet_plane_normals[lo..hi];
+
         let chain_mesh = generate_protein_chain_mesh(
             &atoms,
             &ss_types,
             &profiles,
             global_residue_idx,
+            chain_sheet_normals,
             &params,
         );
         out.push_chain(chain_mesh, center, radius);
@@ -309,6 +323,7 @@ fn generate_protein_chain_mesh(
     ss_types: &[SSType],
     profiles: &[CrossSectionProfile],
     global_residue_base: u32,
+    sheet_plane_normals: &[(u32, Vec3)],
     params: &MeshParams,
 ) -> BackboneMeshOutput {
     let n = atoms.ca.len();
@@ -322,10 +337,11 @@ fn generate_protein_chain_mesh(
         &atoms.c,
         ss_types,
         global_residue_base,
+        sheet_plane_normals,
     );
 
     let spr = params.segments_per_residue;
-    let spline_points = catmull_rom(&flat_ca, spr);
+    let spline_points = helix_aware_spline(&flat_ca, ss_types, spr);
     let total = spline_points.len();
     if total < 2 {
         return BackboneMeshOutput::default();
@@ -347,7 +363,6 @@ fn generate_protein_chain_mesh(
         &frames,
         &spline_helix_centers,
         &spline_sheet_normals,
-        ss_types,
         &spline_profiles,
     );
 
@@ -378,7 +393,7 @@ fn generate_na_chain_mesh(
     }
 
     let spr = params.segments_per_residue;
-    let spline_points = catmull_rom(positions, spr);
+    let spline_points = dual_hermite_spline(positions, spr);
     let total = spline_points.len();
     if total < 2 {
         return BackboneMeshOutput::default();
@@ -472,29 +487,20 @@ fn compute_final_frames(
     rmf_frames: &[SplinePoint],
     helix_centers: &[Vec3],
     sheet_normals: &[Vec3],
-    ss_types: &[SSType],
     profiles: &[CrossSectionProfile],
 ) -> Vec<SplinePoint> {
     let total_spline = rmf_frames.len();
-    let n_residues = ss_types.len();
     let mut result = Vec::with_capacity(total_spline);
 
     for i in 0..total_spline {
         let frame = &rmf_frames[i];
         let profile = &profiles[i];
 
-        let residue_frac = if total_spline > 1 {
-            i as f32 / (total_spline - 1) as f32
-        } else {
-            0.0
-        };
-        let residue_idx = ((residue_frac * (n_residues - 1) as f32) as usize)
-            .min(n_residues - 1);
-        let ss = ss_types[residue_idx];
-
         let tangent = frame.tangent;
         let rmf_normal = frame.normal;
 
+        // Radial candidate: outward from helix axis, projected perp to
+        // tangent. Falls back to rmf_normal when degenerate.
         let radial_normal = if profile.radial_blend > 0.01 {
             let ci = i.min(helix_centers.len().saturating_sub(1));
             let to_surface = frame.pos - helix_centers[ci];
@@ -509,17 +515,8 @@ fn compute_final_frames(
             rmf_normal
         };
 
-        let sheet_n = sheet_normals[i];
-        let has_sheet = ss == SSType::Sheet && sheet_n.length_squared() > 0.01;
-
-        let normal = if has_sheet {
-            let proj = sheet_n - tangent * sheet_n.dot(tangent);
-            if proj.length_squared() > 1e-6 {
-                proj.normalize()
-            } else {
-                rmf_normal
-            }
-        } else {
+        // Non-sheet candidate: RMF blended toward radial by radial_blend.
+        let non_sheet_candidate = {
             let blended = rmf_normal
                 .lerp(radial_normal, profile.radial_blend)
                 .normalize_or_zero();
@@ -527,6 +524,35 @@ fn compute_final_frames(
                 blended
             } else {
                 rmf_normal
+            }
+        };
+
+        // Sheet candidate: peptide-plane normal projected perp to
+        // tangent. Falls back to the non-sheet candidate when
+        // degenerate.
+        let sheet_n = sheet_normals[i];
+        let sheet_candidate = {
+            let proj = sheet_n - tangent * sheet_n.dot(tangent);
+            if proj.length_squared() > 1e-6 {
+                proj.normalize()
+            } else {
+                non_sheet_candidate
+            }
+        };
+
+        // Smooth blend between the two candidates via sheet_blend,
+        // which `interpolate_profiles` already ramps 0→1 across sheet
+        // boundaries. Replaces the old binary `has_sheet` switch that
+        // caused one-sample ~90° flips at every sheet↔non-sheet
+        // transition.
+        let normal = {
+            let blended = non_sheet_candidate
+                .lerp(sheet_candidate, profile.sheet_blend)
+                .normalize_or_zero();
+            if blended.length_squared() > 0.01 {
+                blended
+            } else {
+                non_sheet_candidate
             }
         };
 

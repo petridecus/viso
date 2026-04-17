@@ -121,6 +121,7 @@ pub fn generate_entity_mesh(
             },
             None,
             None,
+            &[],
             geometry,
             None,
             None,
@@ -145,6 +146,7 @@ pub fn generate_entity_mesh(
             },
             g.ss_override.as_deref(),
             g.per_residue_colors.as_deref(),
+            &g.sheet_plane_normals,
             geometry,
             None,
             na_colors_ref,
@@ -217,6 +219,11 @@ pub struct AnimationFrameInput<'a> {
     pub sidechains: Option<&'a SidechainAtoms>,
     pub ss_types: Option<&'a [SSType]>,
     pub per_residue_colors: Option<&'a [[f32; 3]]>,
+    /// Snapshot of fitted sheet plane normals from the static frame.
+    /// `None` during animation means "fall back to local peptide
+    /// plane" — acceptable for transient frames where strand face
+    /// directions may briefly regress to the pre-fit behavior.
+    pub sheet_plane_normals: Option<&'a [(u32, Vec3)]>,
     pub na_base_colors: Option<&'a [[f32; 3]]>,
     pub geometry: &'a GeometryOptions,
     pub per_chain_lod: Option<&'a [(usize, usize)]>,
@@ -242,6 +249,7 @@ pub fn process_animation_frame(
         },
         input.ss_types,
         input.per_residue_colors,
+        input.sheet_plane_normals.unwrap_or(&[]),
         &safe_geo,
         input.per_chain_lod,
         input.na_base_colors,

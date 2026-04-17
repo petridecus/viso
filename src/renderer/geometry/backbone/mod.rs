@@ -7,6 +7,7 @@
 pub(crate) mod mesh;
 pub(crate) mod path;
 pub(crate) mod profile;
+pub(crate) mod sheet_fit;
 pub(crate) mod spline;
 
 use glam::Vec3;
@@ -444,13 +445,22 @@ impl BackboneRenderer {
         ss_override: Option<&[SSType]>,
         geo: &GeometryOptions,
     ) -> BackboneMeshOutput {
-        mesh::generate_mesh_colored(chains, ss_override, None, geo, None, None)
+        mesh::generate_mesh_colored(
+            chains,
+            ss_override,
+            None,
+            &[],
+            geo,
+            None,
+            None,
+        )
     }
 
     pub(crate) fn generate_mesh_colored(
         chains: &ChainPair,
         ss_override: Option<&[SSType]>,
         per_residue_colors: Option<&[[f32; 3]]>,
+        sheet_plane_normals: &[(u32, Vec3)],
         geo: &GeometryOptions,
         per_chain_lod: Option<&[(usize, usize)]>,
         na_residue_colors: Option<&[[f32; 3]]>,
@@ -459,6 +469,7 @@ impl BackboneRenderer {
             chains,
             ss_override,
             per_residue_colors,
+            sheet_plane_normals,
             geo,
             per_chain_lod,
             na_residue_colors,

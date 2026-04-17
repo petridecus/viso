@@ -261,6 +261,7 @@ impl SceneProcessor {
                             sidechains: sidechains.as_ref(),
                             ss_types: ss,
                             per_residue_colors: colors,
+                            sheet_plane_normals: None,
                             na_base_colors: cache
                                 .cached_na_base_colors
                                 .as_deref(),

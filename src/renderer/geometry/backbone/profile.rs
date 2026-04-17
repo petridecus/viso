@@ -18,7 +18,14 @@ pub(crate) struct CrossSectionProfile {
     pub width: f32,
     pub thickness: f32,
     pub roundness: f32,
+    /// Weight [0, 1] for blending the RMF-derived normal toward the
+    /// radial-outward direction (1.0 for helices, 0 elsewhere).
     pub radial_blend: f32,
+    /// Weight [0, 1] for blending in the peptide-plane "sheet" normal
+    /// (1.0 for sheet residues, 0 elsewhere). Interpolated across SS
+    /// boundaries by `interpolate_profiles`, giving a smooth ramp
+    /// through the sheet↔coil transition instead of a hard switch.
+    pub sheet_blend: f32,
     pub color: [f32; 3],
     pub residue_idx: u32,
 }
@@ -31,6 +38,8 @@ impl CrossSectionProfile {
             roundness: self.roundness + (other.roundness - self.roundness) * t,
             radial_blend: self.radial_blend
                 + (other.radial_blend - self.radial_blend) * t,
+            sheet_blend: self.sheet_blend
+                + (other.sheet_blend - self.sheet_blend) * t,
             color: [
                 self.color[0] + (other.color[0] - self.color[0]) * t,
                 self.color[1] + (other.color[1] - self.color[1]) * t,
@@ -53,28 +62,35 @@ pub(crate) fn resolve_profile(
     color: [f32; 3],
     geo: &GeometryOptions,
 ) -> CrossSectionProfile {
-    let (width, thickness, roundness, radial_blend) = match ss {
+    let (width, thickness, roundness, radial_blend, sheet_blend) = match ss {
         SSType::Helix => (
             geo.helix_width,
             geo.helix_thickness,
             geo.helix_roundness,
             1.0_f32,
+            0.0_f32,
         ),
         SSType::Sheet => (
             geo.sheet_width,
             geo.sheet_thickness,
             geo.sheet_roundness,
             0.0,
+            1.0,
         ),
-        SSType::Coil => {
-            (geo.coil_width, geo.coil_thickness, geo.coil_roundness, 0.0)
-        }
+        SSType::Coil => (
+            geo.coil_width,
+            geo.coil_thickness,
+            geo.coil_roundness,
+            0.0,
+            0.0,
+        ),
     };
     CrossSectionProfile {
         width,
         thickness,
         roundness,
         radial_blend,
+        sheet_blend,
         color,
         residue_idx,
     }
@@ -91,6 +107,7 @@ pub(crate) fn resolve_na_profile(
         thickness: geo.na_thickness,
         roundness: geo.na_roundness,
         radial_blend: 0.0,
+        sheet_blend: 0.0,
         color,
         residue_idx,
     }
@@ -238,6 +255,7 @@ mod tests {
             thickness: hw * 2.0,
             roundness: 1.0,
             radial_blend: 0.0,
+            sheet_blend: 0.0,
             color: [1.0, 0.0, 0.0],
             residue_idx: 0,
         };
@@ -285,6 +303,7 @@ mod tests {
             thickness: 0.2,
             roundness: 1.0,
             radial_blend: 0.0,
+            sheet_blend: 0.0,
             color: [1.0, 0.0, 0.0],
             residue_idx: 0,
         };
@@ -353,6 +372,7 @@ mod tests {
                 thickness: ht * 2.0,
                 roundness,
                 radial_blend: 0.0,
+                sheet_blend: 0.0,
                 color: [1.0, 0.0, 0.0],
                 residue_idx: 0,
             };

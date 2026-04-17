@@ -12,6 +12,7 @@ use molex::{
 use crate::animation::transition::Transition;
 use crate::animation::SidechainAnimPositions;
 use crate::options::DrawingMode;
+use crate::renderer::geometry::backbone::sheet_fit;
 
 // ---------------------------------------------------------------------------
 // Flat sidechain types (scene-level, concatenated across residues/entities)
@@ -257,6 +258,24 @@ impl SceneEntity {
         let sidechains =
             SidechainAtoms::from_protein_residues(&protein_residues, 0);
 
+        let ss = self
+            .ss_override
+            .clone()
+            .unwrap_or_else(|| protein.detect_ss());
+
+        // Fit one plane per β-sheet from the H-bond topology so every
+        // strand in a given sheet shares the same face orientation.
+        // `to_backbone()` and `to_interleaved_segments()` apply the
+        // same "has complete backbone atoms" filter, so residue
+        // indices align with `ss` and with the backbone_chains
+        // counting used downstream.
+        let residue_backbones = protein.to_backbone();
+        let hbonds = molex::analysis::detect_hbonds(&residue_backbones);
+        let ca_positions: Vec<Vec3> =
+            residue_backbones.iter().map(|r| r.ca).collect();
+        let sheet_plane_normals =
+            sheet_fit::compute_sheet_plane_normals(&hbonds, &ss, &ca_positions);
+
         Some(PerEntityData {
             id: *self.entity.id(),
             mesh_version: self.mesh_version,
@@ -264,11 +283,8 @@ impl SceneEntity {
             backbone_chains,
 
             sidechains,
-            ss_override: Some(
-                self.ss_override
-                    .clone()
-                    .unwrap_or_else(|| protein.detect_ss()),
-            ),
+            ss_override: Some(ss),
+            sheet_plane_normals,
             per_residue_colors: None,
             non_protein_entities: vec![],
             nucleic_acid_chains: vec![],
@@ -293,6 +309,7 @@ impl SceneEntity {
 
             sidechains: SidechainAtoms::default(),
             ss_override: None,
+            sheet_plane_normals: Vec::new(),
             per_residue_colors: None,
             non_protein_entities: vec![self.entity.clone()],
             nucleic_acid_chains: chains,
@@ -314,6 +331,7 @@ impl SceneEntity {
 
             sidechains: SidechainAtoms::default(),
             ss_override: None,
+            sheet_plane_normals: Vec::new(),
             per_residue_colors: None,
             non_protein_entities: vec![self.entity.clone()],
             nucleic_acid_chains: vec![],
@@ -355,6 +373,7 @@ impl SceneEntity {
 
                 sidechains: SidechainAtoms::default(),
                 ss_override: self.ss_override.clone(),
+                sheet_plane_normals: Vec::new(),
                 per_residue_colors: None,
                 non_protein_entities: vec![self.entity.clone()],
                 nucleic_acid_chains: vec![],
@@ -370,6 +389,7 @@ impl SceneEntity {
 
             sidechains: SidechainAtoms::default(),
             ss_override: None,
+            sheet_plane_normals: Vec::new(),
             per_residue_colors: None,
             non_protein_entities: vec![self.entity.clone()],
             nucleic_acid_chains: vec![],
@@ -399,6 +419,13 @@ pub(crate) struct PerEntityData {
     pub(crate) sidechains: SidechainAtoms,
     /// Pre-computed secondary structure assignments.
     pub(crate) ss_override: Option<Vec<SSType>>,
+    /// Sparse per-residue β-sheet plane normals, fitted from the
+    /// backbone H-bond topology. One `(residue_idx, normal)` pair per
+    /// residue that belongs to a multi-strand sheet whose plane was
+    /// successfully fitted; residues not in the list fall back to the
+    /// local peptide-plane computation. Empty when no sheets were
+    /// found or during animation frames (see `compute_sheet_geometry`).
+    pub(crate) sheet_plane_normals: Vec<(u32, Vec3)>,
     /// Pre-computed per-residue colors (derived from scores on main thread).
     pub(crate) per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Non-protein entities (ligands, ions, etc.).

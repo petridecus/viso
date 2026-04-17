@@ -51,13 +51,15 @@ pub(crate) fn compute_sheet_geometry(
     c_positions: &[Vec3],
     ss_types: &[SSType],
     global_residue_base: u32,
+    sheet_plane_normals: &[(u32, Vec3)],
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<(u32, Vec3)>) {
     let n = ca_positions.len();
     let mut flat_ca = ca_positions.to_vec();
     let mut normals = vec![Vec3::ZERO; n];
     let mut offsets = Vec::new();
 
-    // Peptide plane normal: cross(CA→N, CA→C)
+    // Start from per-residue peptide plane normals: cross(CA→N, CA→C).
+    // These are used everywhere the fitted sheet plane is absent.
     for i in 0..n {
         if i < n_positions.len() && i < c_positions.len() {
             let ca_n = (n_positions[i] - ca_positions[i]).normalize_or_zero();
@@ -71,10 +73,28 @@ pub(crate) fn compute_sheet_geometry(
         }
     }
 
-    // Ensure consistent orientation
+    // Ensure consistent orientation of the local peptide-plane normals
+    // along the chain (within-strand sidechain alternation gives raw
+    // normals that flip every residue — fix that by propagating sign).
     for i in 1..n {
         if normals[i].dot(normals[i - 1]) < 0.0 {
             normals[i] = -normals[i];
+        }
+    }
+
+    // Overlay fitted sheet-plane normals where available. Each residue
+    // in a multi-strand β-sheet gets the sheet's global plane normal
+    // instead of its local peptide plane, so every strand in the sheet
+    // shares one face direction. `sheet_plane_normals` is already
+    // sliced to this chain's [base, base+n) window and sorted by
+    // global residue idx.
+    for &(global_idx, normal) in sheet_plane_normals {
+        if global_idx < global_residue_base {
+            continue;
+        }
+        let local = (global_idx - global_residue_base) as usize;
+        if local < n {
+            normals[local] = normal;
         }
     }
 

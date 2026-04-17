@@ -1,8 +1,9 @@
 //! Spline math and frame computation for backbone geometry.
 //!
-//! Pure Vec3 → Vec3 transforms with no GPU or SS-type dependencies.
+//! Pure Vec3 → Vec3 transforms.
 
 use glam::Vec3;
+use molex::SSType;
 
 /// A point along the spline with position, tangent, and frame vectors.
 #[derive(Clone, Copy)]
@@ -98,6 +99,201 @@ pub(crate) fn catmull_rom_eval(
             + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
             + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3),
     )
+}
+
+/// Cubic Hermite evaluation with explicit endpoint positions and tangents.
+///
+/// `t ∈ [0, 1]`. Tangent magnitudes are in "position units per unit `t`",
+/// so their scale must be commensurate with the knot spacing (roughly one
+/// knot interval) or the curve will overshoot.
+fn hermite(p0: Vec3, m0: Vec3, p1: Vec3, m1: Vec3, t: f32) -> Vec3 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    p0 * h00 + m0 * h10 + p1 * h01 + m1 * h11
+}
+
+/// Emit `segments_per_span` Catmull-Rom samples for the span starting at
+/// control point `j` (ending just before control point `j + 1`). Uses
+/// phantom endpoints (mirror extrapolation) at chain boundaries, matching
+/// [`catmull_rom`].
+fn append_catmull_rom_span(
+    points: &[Vec3],
+    j: usize,
+    segments_per_span: usize,
+    out: &mut Vec<Vec3>,
+) {
+    let n = points.len();
+    let p0 = if j == 0 {
+        points[0] * 2.0 - points[1]
+    } else {
+        points[j - 1]
+    };
+    let p1 = points[j];
+    let p2 = points[j + 1];
+    let p3 = if j + 2 >= n {
+        points[n - 1] * 2.0 - points[n - 2]
+    } else {
+        points[j + 2]
+    };
+
+    for s in 0..segments_per_span {
+        let t = s as f32 / segments_per_span as f32;
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let pos = 0.5
+            * ((2.0 * p1)
+                + (-p0 + p2) * t
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+        out.push(pos);
+    }
+}
+
+/// 4-tap filtered midpoint between `points[j]` and `points[j + 1]`.
+///
+/// Uses a cardinal-B-spline-like 4-tap kernel with extension coefficient
+/// 0.25, so the midpoint sits slightly outside the straight chord
+/// midpoint to track curvature. Reflects at chain boundaries.
+fn filtered_midpoint(points: &[Vec3], j: usize) -> Vec3 {
+    let n = points.len();
+    let ca_prev = if j == 0 {
+        points[0] * 2.0 - points[1]
+    } else {
+        points[j - 1]
+    };
+    let ca_j = points[j];
+    let ca_j1 = points[j + 1];
+    let ca_next = if j + 2 >= n {
+        points[n - 1] * 2.0 - points[n - 2]
+    } else {
+        points[j + 2]
+    };
+    // 0.5·((1 + 0.25)·(ca[j] + ca[j+1]) − 0.25·(ca[j−1] + ca[j+2]))
+    //   = 0.625·(ca[j] + ca[j+1]) − 0.125·(ca[j−1] + ca[j+2])
+    (ca_j + ca_j1) * 0.625 - (ca_prev + ca_next) * 0.125
+}
+
+/// Emit `segments_per_span` samples for the span starting at control
+/// point `j` using a dual cubic Hermite with a filtered midpoint knot.
+///
+/// The span `CA[j] → CA[j+1]` is split in half by a 4-tap filtered
+/// midpoint, and each half becomes a cubic Hermite segment. Tangents at
+/// all four knots (CA[j−1]-ish, CA[j], mid, CA[j+1]) are derived from
+/// Catmull-Rom central differences on the interleaved CA/midpoint
+/// sequence, so their magnitudes are naturally proportional to the
+/// local knot spacing — no hand-tuned scalars. Inserting the midpoint
+/// halves each cubic span, which keeps each cubic "honest" and
+/// eliminates the square-fold overshoot Catmull-Rom produces when it
+/// tries to interpolate a rotating helical CA sequence across a full
+/// residue.
+fn append_dual_hermite_span(
+    points: &[Vec3],
+    j: usize,
+    segments_per_span: usize,
+    out: &mut Vec<Vec3>,
+) {
+    let ca_j = points[j];
+    let ca_j1 = points[j + 1];
+    let mid = filtered_midpoint(points, j);
+
+    // Midpoints of the flanking spans. At chain boundaries, reflect
+    // through the adjacent CA so the tangents stay symmetric.
+    let mid_prev = if j == 0 {
+        ca_j * 2.0 - mid
+    } else {
+        filtered_midpoint(points, j - 1)
+    };
+    let mid_next = if j + 2 >= points.len() {
+        ca_j1 * 2.0 - mid
+    } else {
+        filtered_midpoint(points, j + 1)
+    };
+
+    // Catmull-Rom tangents on the interleaved sequence
+    //     [..., mid_prev, CA[j], mid, CA[j+1], mid_next, ...]
+    // which gives each tangent magnitude ≈ half the two-knot chord,
+    // i.e. naturally proportional to the local spacing. C1 continuous
+    // across both the CA and the midpoint joins by construction.
+    let tangent_j = (mid - mid_prev) * 0.5;
+    let tangent_mid = (ca_j1 - ca_j) * 0.5;
+    let tangent_j1 = (mid_next - mid) * 0.5;
+
+    // Split samples evenly between the two half-Hermites. For odd
+    // `segments_per_span`, the first half gets the extra sample.
+    let k1 = (segments_per_span + 1) / 2;
+    let k2 = segments_per_span - k1;
+
+    for s in 0..k1 {
+        let t = s as f32 / k1 as f32;
+        out.push(hermite(ca_j, tangent_j, mid, tangent_mid, t));
+    }
+    for s in 0..k2 {
+        let t = s as f32 / k2 as f32;
+        out.push(hermite(mid, tangent_mid, ca_j1, tangent_j1, t));
+    }
+}
+
+/// Spline a chain of control points, using dual Hermite interpolation
+/// with filtered midpoint knots (see [`append_dual_hermite_span`]) for
+/// spans where both endpoints are helix residues, and standard
+/// Catmull-Rom elsewhere.
+///
+/// Produces the same sample layout as [`catmull_rom`]:
+/// `segments_per_span` samples per span plus one final endpoint.
+pub(crate) fn helix_aware_spline(
+    points: &[Vec3],
+    ss_types: &[SSType],
+    segments_per_span: usize,
+) -> Vec<Vec3> {
+    let n = points.len();
+    if n < 2 {
+        return points.to_vec();
+    }
+    if n < 3 {
+        return linear_interpolate(points, segments_per_span);
+    }
+
+    let mut result = Vec::with_capacity((n - 1) * segments_per_span + 1);
+    for j in 0..n - 1 {
+        let both_helix = ss_types.get(j).copied() == Some(SSType::Helix)
+            && ss_types.get(j + 1).copied() == Some(SSType::Helix);
+        if both_helix {
+            append_dual_hermite_span(points, j, segments_per_span, &mut result);
+        } else {
+            append_catmull_rom_span(points, j, segments_per_span, &mut result);
+        }
+    }
+    result.push(points[n - 1]);
+    result
+}
+
+/// Spline a chain of control points using dual Hermite interpolation
+/// with filtered midpoint knots for every span.
+///
+/// Same sample layout as [`catmull_rom`]: `segments_per_span` samples
+/// per span plus one final endpoint.
+pub(crate) fn dual_hermite_spline(
+    points: &[Vec3],
+    segments_per_span: usize,
+) -> Vec<Vec3> {
+    let n = points.len();
+    if n < 2 {
+        return points.to_vec();
+    }
+    if n < 3 {
+        return linear_interpolate(points, segments_per_span);
+    }
+
+    let mut result = Vec::with_capacity((n - 1) * segments_per_span + 1);
+    for j in 0..n - 1 {
+        append_dual_hermite_span(points, j, segments_per_span, &mut result);
+    }
+    result.push(points[n - 1]);
+    result
 }
 
 /// Project backbone N and C atom positions onto the Catmull-Rom spline
