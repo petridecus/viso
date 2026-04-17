@@ -1,3 +1,4 @@
+pub(crate) mod assembly_consumer;
 mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub mod command;
@@ -14,6 +15,7 @@ pub(crate) mod scene_data;
 pub(crate) mod surface;
 mod sync;
 pub(crate) mod trajectory;
+pub(crate) mod viso_state;
 
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
