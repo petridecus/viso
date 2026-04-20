@@ -224,7 +224,7 @@ fn append_dual_hermite_span(
 
     // Split samples evenly between the two half-Hermites. For odd
     // `segments_per_span`, the first half gets the extra sample.
-    let k1 = (segments_per_span + 1) / 2;
+    let k1 = segments_per_span.div_ceil(2);
     let k2 = segments_per_span - k1;
 
     for s in 0..k1 {

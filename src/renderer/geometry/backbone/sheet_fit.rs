@@ -191,8 +191,10 @@ fn smallest_eigenvalue(
     let b01 = a01 / p;
     let b02 = a02 / p;
     let b12 = a12 / p;
-    let det_b = b00 * (b11 * b22 - b12 * b12) - b01 * (b01 * b22 - b12 * b02)
-        + b02 * (b01 * b12 - b11 * b02);
+    let m00 = b11 * b22 - b12.powi(2);
+    let m01 = b01 * b22 - b12 * b02;
+    let m02 = b01 * b12 - b11 * b02;
+    let det_b = b00 * m00 - b01 * m01 + b02 * m02;
     let r = (det_b / 2.0).clamp(-1.0, 1.0);
     let phi = r.acos() / 3.0;
 
