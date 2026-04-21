@@ -115,14 +115,6 @@ pub struct ChainPair<'a> {
     pub na: &'a [Vec<Vec3>],
 }
 
-/// Input data for [`BackboneRenderer::update`].
-pub struct BackboneUpdateData<'a> {
-    pub protein_chains: &'a [Vec<Vec3>],
-    pub na_chains: &'a [Vec<Vec3>],
-    pub ss_types: Option<&'a [SSType]>,
-    pub geometry: &'a GeometryOptions,
-}
-
 // ==================== PREPARED DATA ====================
 
 /// Pre-computed backbone mesh for GPU upload (from scene processor).
@@ -136,7 +128,6 @@ pub struct PreparedBackboneData<'a> {
     pub chain_ranges: Vec<ChainRange>,
     pub cached_chains: &'a [Vec<Vec3>],
     pub cached_na_chains: &'a [Vec<Vec3>],
-    pub ss_override: Option<Vec<SSType>>,
 }
 
 // ==================== RENDERER ====================
@@ -149,7 +140,6 @@ pub struct BackboneRenderer {
     last_hash: u64,
     cached_chains: Vec<Vec<Vec3>>,
     cached_na_chains: Vec<Vec<Vec3>>,
-    ss_override: Option<Vec<SSType>>,
     sheet_offsets: Vec<(u32, Vec3)>,
     chain_ranges: Vec<ChainRange>,
     cached_lod_tiers: Vec<u8>,
@@ -222,7 +212,6 @@ impl BackboneRenderer {
             last_hash: combined_hash(chains.protein, chains.na),
             cached_chains: chains.protein.to_vec(),
             cached_na_chains: chains.na.to_vec(),
-            ss_override: None,
             sheet_offsets: Vec::new(),
             chain_ranges: Vec::new(),
             cached_lod_tiers: Vec::new(),
@@ -275,30 +264,6 @@ impl BackboneRenderer {
         }
     }
 
-    // ── Live update ──
-
-    pub fn update(
-        &mut self,
-        context: &RenderContext,
-        data: &BackboneUpdateData,
-    ) {
-        let new_hash = combined_hash(data.protein_chains, data.na_chains);
-        if new_hash == self.last_hash && data.ss_types.is_none() {
-            return;
-        }
-        self.last_hash = new_hash;
-        self.cached_chains = data.protein_chains.to_vec();
-        self.cached_na_chains = data.na_chains.to_vec();
-        if let Some(ss) = data.ss_types {
-            self.ss_override = Some(ss.to_vec());
-        }
-        self.write_mesh(&context.device, &context.queue, data.geometry);
-    }
-
-    pub fn set_ss_override(&mut self, ss_types: Option<Vec<SSType>>) {
-        self.ss_override = ss_types;
-    }
-
     // ── Scene-processor path ──
 
     pub fn apply_prepared(
@@ -332,16 +297,12 @@ impl BackboneRenderer {
             .extend_from_slice(data.cached_na_chains);
         self.last_hash =
             combined_hash(&self.cached_chains, &self.cached_na_chains);
-        if let Some(ss) = data.ss_override {
-            self.ss_override = Some(ss);
-        }
     }
 
     pub fn update_metadata(
         &mut self,
         cached_chains: &[Vec<Vec3>],
         cached_na_chains: &[Vec<Vec3>],
-        ss_override: Option<Vec<SSType>>,
     ) {
         self.cached_chains.clear();
         self.cached_chains.extend_from_slice(cached_chains);
@@ -349,9 +310,6 @@ impl BackboneRenderer {
         self.cached_na_chains.extend_from_slice(cached_na_chains);
         self.last_hash =
             combined_hash(&self.cached_chains, &self.cached_na_chains);
-        if let Some(ss) = ss_override {
-            self.ss_override = Some(ss);
-        }
     }
 
     pub fn apply_mesh(
@@ -440,22 +398,6 @@ impl BackboneRenderer {
 
     // ── Static mesh generation ──
 
-    pub(crate) fn generate_mesh(
-        chains: &ChainPair,
-        ss_override: Option<&[SSType]>,
-        geo: &GeometryOptions,
-    ) -> BackboneMeshOutput {
-        mesh::generate_mesh_colored(
-            chains,
-            ss_override,
-            None,
-            &[],
-            geo,
-            None,
-            None,
-        )
-    }
-
     pub(crate) fn generate_mesh_colored(
         chains: &ChainPair,
         ss_override: Option<&[SSType]>,
@@ -474,35 +416,6 @@ impl BackboneRenderer {
             per_chain_lod,
             na_residue_colors,
         )
-    }
-
-    // ── Internal ──
-
-    fn write_mesh(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        geo: &GeometryOptions,
-    ) {
-        let chains = ChainPair {
-            protein: &self.cached_chains,
-            na: &self.cached_na_chains,
-        };
-        let mesh =
-            Self::generate_mesh(&chains, self.ss_override.as_deref(), geo);
-        if mesh.vertices.is_empty() {
-            self.tube_pass.index_count = 0;
-            self.ribbon_pass.index_count = 0;
-            self.chain_ranges.clear();
-            return;
-        }
-        let _ = self.vertex_buffer.write(device, queue, &mesh.vertices);
-        self.tube_pass
-            .write_indices(device, queue, &mesh.tube_indices);
-        self.ribbon_pass
-            .write_indices(device, queue, &mesh.ribbon_indices);
-        self.sheet_offsets = mesh.sheet_offsets;
-        self.chain_ranges = mesh.chain_ranges;
     }
 }
 

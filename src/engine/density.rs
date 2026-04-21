@@ -14,7 +14,7 @@ impl VisoEngine {
     pub fn load_density_map(&mut self, map: Density) -> u32 {
         let id = self.density.add(map);
         log::info!("loaded density map id={id}");
-        if let Some((centroid, radius)) = self.entities.bounding_sphere() {
+        if let Some((centroid, radius)) = self.session_bounds() {
             log::info!(
                 "protein bounding sphere: center=[{:.1},{:.1},{:.1}], \
                  radius={:.1}, range=[{:.1},{:.1},{:.1}]→[{:.1},{:.1},{:.1}]",

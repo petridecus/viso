@@ -212,30 +212,4 @@ impl PickingSystem {
             .update(queue, &self.picking.selected_residues);
     }
 
-    /// Set initial per-residue colors and build picking bind groups.
-    pub fn init_colors_and_groups(
-        &mut self,
-        context: &RenderContext,
-        initial_colors: &[[f32; 3]],
-        renderers: &Renderers,
-    ) {
-        self.residue_colors
-            .set_colors_immediate(&context.queue, initial_colors);
-
-        self.groups.rebuild_capsule(
-            &self.picking,
-            &context.device,
-            &renderers.sidechain,
-        );
-        self.groups.rebuild_bns_bond(
-            &self.picking,
-            &context.device,
-            &renderers.ball_and_stick,
-        );
-        self.groups.rebuild_bns_sphere(
-            &self.picking,
-            &context.device,
-            &renderers.ball_and_stick,
-        );
-    }
 }

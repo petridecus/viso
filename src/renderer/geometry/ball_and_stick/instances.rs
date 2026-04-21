@@ -13,7 +13,7 @@ use super::{
     BOND_RADIUS, DOUBLE_BOND_OFFSET, ION_RADIUS_SCALE, STICK_BOND_RADIUS,
     STICK_SPHERE_RADIUS, WATER_RADIUS,
 };
-use crate::engine::viso_state::EntityTopology;
+use crate::renderer::entity_topology::EntityTopology;
 use crate::options::{ColorOptions, DrawingMode};
 use crate::renderer::impostor::{CapsuleInstance, SphereInstance};
 

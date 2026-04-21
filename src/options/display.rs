@@ -397,7 +397,7 @@ pub struct DisplayOptions {
     /// How backbone palette colors are distributed.
     pub backbone_palette_mode: PaletteMode,
 
-    // --- Ambient visibility (synced with EntityStore, not per-entity) ---
+    // --- Ambient visibility (type-level toggles, not per-entity) ---
     /// Whether to render water molecules.
     pub show_waters: bool,
     /// Whether to render ion atoms.

@@ -10,7 +10,8 @@ use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     FullRebuildEntity, NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::engine::viso_state::{EntityPositions, EntityTopology};
+use crate::renderer::entity_topology::EntityTopology;
+use crate::engine::positions::EntityPositions;
 use crate::options::{
     ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
     SidechainColorMode,

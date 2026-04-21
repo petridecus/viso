@@ -1,0 +1,486 @@
+//! Standalone-application layer for viso.
+//!
+//! In the real deployment (`foldit-rs`), the host application owns the
+//! [`Assembly`] and publishes snapshots through a triple buffer; viso
+//! holds only the consumer side. In standalone deployments
+//! (`feature = "viewer"`, `"gui"`, `"web"`), viso plays that same host
+//! role: this module owns [`VisoApp`] (the authoritative `Assembly` +
+//! its publisher) and the executable layer that wraps it — the winit
+//! [`viewer`], the wry-webview [`gui`] panel, and the wasm [`web`]
+//! entry.
+//!
+//! Each [`VisoApp`] mutation method takes `&mut VisoEngine` so
+//! viso-side bookkeeping (animation transitions, camera fit,
+//! per-entity overlays) can be updated atomically alongside the
+//! `Assembly` mutation and `publisher.commit`. `VisoEngine` has no
+//! mutation surface for structural state — all mutations route through
+//! [`VisoApp`].
+
+mod channel;
+
+#[cfg(feature = "viewer")]
+pub mod viewer;
+
+#[cfg(feature = "gui")]
+pub mod gui;
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub mod web;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use molex::ops::codec::{update_protein_entities, Coords};
+use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
+
+use crate::animation::transition::Transition;
+use crate::engine::assembly_consumer::AssemblyConsumer;
+use crate::error::VisoError;
+use crate::VisoEngine;
+
+pub(crate) use channel::{assembly_channel, AssemblyPublisher};
+
+/// Owns the authoritative `Assembly` and its `AssemblyPublisher`.
+///
+/// Produced by [`VisoApp::new_empty`], [`VisoApp::from_entities`],
+/// [`VisoApp::from_bytes`], or [`VisoApp::from_file`], each paired
+/// with the matching [`AssemblyConsumer`] for the engine. Standalone
+/// entry points (viewer, gui, web) hold a `VisoApp` alongside their
+/// `VisoEngine` and drive mutations through the app.
+pub struct VisoApp {
+    assembly: Assembly,
+    publisher: AssemblyPublisher,
+}
+
+impl VisoApp {
+    // ── Construction ───────────────────────────────────────────────
+
+    /// An empty app — a zero-entity `Assembly`. Publishes the initial
+    /// snapshot so the consumer's first poll returns a usable
+    /// (empty) assembly.
+    #[must_use]
+    pub fn new_empty() -> (Self, AssemblyConsumer) {
+        Self::from_entities(Vec::new())
+    }
+
+    /// App seeded with the given entities. Publishes the initial
+    /// snapshot.
+    #[must_use]
+    pub fn from_entities(
+        entities: Vec<MoleculeEntity>,
+    ) -> (Self, AssemblyConsumer) {
+        let assembly = Assembly::new(entities);
+        let (mut publisher, consumer) = assembly_channel();
+        publisher.commit(Arc::new(assembly.clone()));
+        let app = Self {
+            assembly,
+            publisher,
+        };
+        (app, consumer)
+    }
+
+    /// Parse structure bytes with the given format hint (`"cif"`,
+    /// `"pdb"`, or `"bcif"`) and seed the app with the parsed
+    /// entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::StructureLoad`] if parsing fails or the
+    /// format hint is unsupported.
+    pub fn from_bytes(
+        bytes: &[u8],
+        format_hint: &str,
+    ) -> Result<(Self, AssemblyConsumer), VisoError> {
+        let entities = parse_structure_bytes(bytes, format_hint)?;
+        Ok(Self::from_entities(entities))
+    }
+
+    /// Parse a structure file (`.cif` / `.pdb` / `.bcif`) and seed
+    /// the app with the parsed entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::StructureLoad`] if the file cannot be
+    /// read or parsed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_file(path: &str) -> Result<(Self, AssemblyConsumer), VisoError> {
+        let entities = molex::adapters::pdb::structure_file_to_entities(
+            std::path::Path::new(path),
+        )
+        .map_err(|e| VisoError::StructureLoad(e.to_string()))?;
+        Ok(Self::from_entities(entities))
+    }
+
+    // ── Read accessors ─────────────────────────────────────────────
+
+    /// Read-only access to the app's current `Assembly`.
+    ///
+    /// Exposed for panel/bridge code that needs to iterate entities
+    /// (molecule type, label, chain id). The engine's per-frame sync
+    /// ultimately consumes this same assembly via the triple buffer.
+    #[must_use]
+    pub fn assembly(&self) -> &Assembly {
+        &self.assembly
+    }
+
+    // ── Internal publish helper ────────────────────────────────────
+
+    fn publish(&mut self) {
+        self.publisher.commit(Arc::new(self.assembly.clone()));
+    }
+
+    // ── Lifecycle mutations ────────────────────────────────────────
+
+    /// Load entities into the scene. Returns the assigned entity IDs.
+    /// If `fit_camera` is true, fits the viewer to the combined
+    /// bounding sphere after loading.
+    pub fn load_entities(
+        &mut self,
+        engine: &mut VisoEngine,
+        entities: Vec<MoleculeEntity>,
+        fit_camera: bool,
+    ) -> Vec<u32> {
+        let was_empty = self.assembly.entities().is_empty()
+            && !engine.animation.animator.is_animating();
+
+        let ids: Vec<u32> =
+            entities.iter().map(|e| e.id().raw()).collect();
+        // Rebuild the assembly in one shot rather than calling
+        // `add_entity` per entity: every `&mut Assembly` mutation
+        // re-runs DSSP + H-bond detection over *all* entities, so
+        // the incremental form is O(N²) for a load of N entities and
+        // wedges the main thread for minutes on large complexes.
+        let mut combined: Vec<MoleculeEntity> =
+            self.assembly.entities().to_vec();
+        combined.extend(entities);
+        self.assembly = Assembly::new(combined);
+
+        apply_type_visibility(self, engine);
+
+        let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
+        if !was_empty {
+            for &id in &ids {
+                let _ = entity_transitions.insert(id, Transition::snap());
+            }
+        }
+        engine.animation.pending_transitions = entity_transitions;
+
+        self.publish();
+        engine.sync_now();
+
+        if fit_camera {
+            engine.fit_session_camera();
+        }
+        ids
+    }
+
+    /// Replace the current scene with `entities`. All existing
+    /// entities are removed from the assembly first. Fits the camera
+    /// to the new combined bounding sphere.
+    pub fn replace_scene(
+        &mut self,
+        engine: &mut VisoEngine,
+        entities: Vec<MoleculeEntity>,
+    ) -> Vec<u32> {
+        self.remove_all_internal(engine);
+        self.load_entities(engine, entities, true)
+    }
+
+    /// Remove all entities from the scene.
+    pub fn clear_scene(&mut self, engine: &mut VisoEngine) {
+        self.remove_all_internal(engine);
+        engine.animation.pending_transitions.clear();
+        self.publish();
+        engine.sync_now();
+    }
+
+    fn remove_all_internal(&mut self, engine: &mut VisoEngine) {
+        // Skip the per-entity `remove_entity` loop: each call re-runs
+        // DSSP + H-bond detection over the remaining entities. A bulk
+        // replace with an empty `Assembly::new` costs one recompute
+        // (and that recompute walks zero entities).
+        self.assembly = Assembly::new(Vec::new());
+        engine.reset_scene_local_state();
+    }
+
+    /// Replace one or more entities with new [`MoleculeEntity`] data.
+    /// Each entity is matched by its id. Per-entity behavior overrides
+    /// are used when set, otherwise `default_transition` is applied.
+    pub fn update_entities(
+        &mut self,
+        engine: &mut VisoEngine,
+        updated: Vec<MoleculeEntity>,
+        default_transition: &Transition,
+    ) {
+        let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
+        for new_entity in updated {
+            let raw_id = new_entity.id().raw();
+            if self.assembly.entity(new_entity.id()).is_none() {
+                continue;
+            }
+            self.assembly.remove_entity(new_entity.id());
+            self.assembly.add_entity(new_entity);
+            let transition = engine
+                .entity_behavior(raw_id)
+                .cloned()
+                .unwrap_or_else(|| default_transition.clone());
+            let _ = entity_transitions.insert(raw_id, transition);
+        }
+
+        if entity_transitions.is_empty() {
+            return;
+        }
+        engine.animation.pending_transitions = entity_transitions;
+        self.publish();
+        engine.sync_now();
+    }
+
+    /// Update a single entity by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisoError::StructureLoad`] if no entity with the
+    /// given ID exists.
+    pub fn update_entity(
+        &mut self,
+        engine: &mut VisoEngine,
+        entity: MoleculeEntity,
+        transition: Transition,
+    ) -> Result<(), VisoError> {
+        let raw_id = entity.id().raw();
+        if self.assembly.entity(entity.id()).is_none() {
+            return Err(VisoError::StructureLoad(format!(
+                "Entity {raw_id} not found"
+            )));
+        }
+        self.assembly.remove_entity(entity.id());
+        self.assembly.add_entity(entity);
+
+        let effective = engine
+            .entity_behavior(raw_id)
+            .cloned()
+            .unwrap_or(transition);
+        let mut transitions = HashMap::new();
+        let _ = transitions.insert(raw_id, effective);
+        engine.animation.pending_transitions = transitions;
+
+        self.publish();
+        engine.sync_now();
+        Ok(())
+    }
+
+    /// Update atom coordinates for an entity. For proteins this uses
+    /// the shared `update_protein_entities` codec so caller-provided
+    /// [`Coords`] values are applied consistently with the byte
+    /// format.
+    pub fn update_entity_coords(
+        &mut self,
+        engine: &mut VisoEngine,
+        id: u32,
+        coords: &Coords,
+        transition: Transition,
+    ) {
+        let Some(eid) =
+            self.assembly.entities().iter().map(MoleculeEntity::id).find(
+                |e| e.raw() == id,
+            )
+        else {
+            return;
+        };
+        let Some(entity) = self.assembly.entity(eid).cloned() else {
+            return;
+        };
+
+        let mut entities = vec![entity];
+        update_protein_entities(&mut entities, coords);
+        if let Some(updated) = entities.into_iter().next() {
+            self.assembly.remove_entity(eid);
+            self.assembly.add_entity(updated);
+        }
+
+        let effective = engine
+            .entity_behavior(id)
+            .cloned()
+            .unwrap_or(transition);
+        let mut transitions = HashMap::new();
+        let _ = transitions.insert(id, effective);
+        engine.animation.pending_transitions = transitions;
+
+        self.publish();
+        engine.sync_now();
+    }
+
+    /// Reconcile the scene with `entities`. New IDs are added; IDs
+    /// missing from the input are removed; existing IDs with changed
+    /// data are replaced. `default_transition` applies to new and
+    /// updated entities that lack a per-entity behavior.
+    pub fn sync_entities(
+        &mut self,
+        engine: &mut VisoEngine,
+        entities: Vec<MoleculeEntity>,
+        default_transition: &Transition,
+    ) {
+        use std::collections::HashSet;
+
+        let incoming_ids: HashSet<u32> =
+            entities.iter().map(|e| e.id().raw()).collect();
+        let current_ids: Vec<_> = self
+            .assembly
+            .entities()
+            .iter()
+            .map(MoleculeEntity::id)
+            .collect();
+
+        for eid in current_ids {
+            if !incoming_ids.contains(&eid.raw()) {
+                engine.clear_entity_behavior_internal(eid.raw());
+                self.assembly.remove_entity(eid);
+            }
+        }
+
+        let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
+        for entity in entities {
+            let raw_id = entity.id().raw();
+            let present = self.assembly.entity(entity.id()).is_some();
+            if present {
+                self.assembly.remove_entity(entity.id());
+                self.assembly.add_entity(entity);
+                let transition = engine
+                    .entity_behavior(raw_id)
+                    .cloned()
+                    .unwrap_or_else(|| default_transition.clone());
+                let _ = entity_transitions.insert(raw_id, transition);
+            } else {
+                self.assembly.add_entity(entity);
+                let _ =
+                    entity_transitions.insert(raw_id, default_transition.clone());
+            }
+        }
+
+        engine.animation.pending_transitions = entity_transitions;
+        self.publish();
+        engine.sync_now();
+    }
+
+    /// Remove an entity by ID. No-op if the entity is not present.
+    pub fn remove_entity(&mut self, engine: &mut VisoEngine, id: u32) {
+        let Some(eid) =
+            self.assembly.entities().iter().map(MoleculeEntity::id).find(
+                |e| e.raw() == id,
+            )
+        else {
+            return;
+        };
+        engine.clear_entity_behavior_internal(id);
+        self.assembly.remove_entity(eid);
+        self.publish();
+        engine.sync_now();
+    }
+
+    /// Set visibility for a specific entity. For ambient types
+    /// (water, ion, solvent), also syncs the corresponding display
+    /// option so the renderer safety net stays consistent.
+    pub fn set_entity_visible(
+        &mut self,
+        engine: &mut VisoEngine,
+        id: u32,
+        visible: bool,
+    ) {
+        let eid = self
+            .assembly
+            .entities()
+            .iter()
+            .map(MoleculeEntity::id)
+            .find(|e| e.raw() == id);
+        let Some(eid) = eid else {
+            return;
+        };
+        let mol_type = match self.assembly.entity(eid) {
+            Some(e) => e.molecule_type(),
+            None => return,
+        };
+        match mol_type {
+            MoleculeType::Water => {
+                engine.options.display.show_waters = visible;
+            }
+            MoleculeType::Ion => {
+                engine.options.display.show_ions = visible;
+            }
+            MoleculeType::Solvent => {
+                engine.options.display.show_solvent = visible;
+            }
+            _ => {}
+        }
+        engine.set_entity_visible_internal(id, visible);
+        engine.sync_scene_to_renderers(HashMap::new());
+    }
+
+    /// Set per-residue scores for a specific entity. Scores drive
+    /// color-by-score visualization. Pass `None` to clear.
+    pub fn set_per_residue_scores(
+        &mut self,
+        engine: &mut VisoEngine,
+        id: u32,
+        scores: Option<Vec<f64>>,
+    ) {
+        engine.set_per_residue_scores_internal(id, scores);
+        engine.sync_scene_to_renderers(HashMap::new());
+    }
+
+    /// Set an SS override for an entity (used for puzzle annotations).
+    pub fn set_ss_override(
+        &mut self,
+        engine: &mut VisoEngine,
+        id: u32,
+        ss: Vec<SSType>,
+    ) {
+        engine.set_ss_override_internal(id, ss);
+        engine.sync_scene_to_renderers(HashMap::new());
+    }
+}
+
+/// Apply ambient-type visibility defaults (water, ion, solvent) to
+/// every entity currently in the assembly, using the engine's current
+/// display options.
+fn apply_type_visibility(app: &VisoApp, engine: &mut VisoEngine) {
+    for entity in app.assembly.entities() {
+        let raw_id = entity.id().raw();
+        let visible = match entity.molecule_type() {
+            MoleculeType::Water => engine.options.display.show_waters,
+            MoleculeType::Ion => engine.options.display.show_ions,
+            MoleculeType::Solvent => engine.options.display.show_solvent,
+            _ => true,
+        };
+        engine.set_entity_visible_internal(raw_id, visible);
+    }
+}
+
+/// Parse structure bytes as in the bootstrap loader.
+fn parse_structure_bytes(
+    bytes: &[u8],
+    format_hint: &str,
+) -> Result<Vec<MoleculeEntity>, VisoError> {
+    let hint = format_hint.to_ascii_lowercase();
+    let hint = hint.trim_start_matches('.');
+    match hint {
+        "cif" | "mmcif" => {
+            let text = std::str::from_utf8(bytes).map_err(|e| {
+                VisoError::StructureLoad(format!("Invalid UTF-8 in CIF: {e}"))
+            })?;
+            molex::adapters::cif::mmcif_str_to_entities(text)
+                .map_err(|e| VisoError::StructureLoad(e.to_string()))
+        }
+        "pdb" | "ent" => {
+            let text = std::str::from_utf8(bytes).map_err(|e| {
+                VisoError::StructureLoad(format!("Invalid UTF-8 in PDB: {e}"))
+            })?;
+            molex::adapters::pdb::pdb_str_to_entities(text)
+                .map_err(|e| VisoError::StructureLoad(e.to_string()))
+        }
+        "bcif" => molex::adapters::bcif::bcif_to_entities(bytes)
+            .map_err(|e| VisoError::StructureLoad(e.to_string())),
+        other => Err(VisoError::StructureLoad(format!(
+            "Unsupported format '{other}'. Use 'cif', 'pdb', or 'bcif'."
+        ))),
+    }
+}

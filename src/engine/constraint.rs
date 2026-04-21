@@ -1,31 +1,24 @@
-//! Constraint resolution: resolve band/pull specs to world-space positions.
+//! Constraint resolution: resolve band/pull specs to world-space
+//! positions by walking
+//! [`crate::renderer::entity_topology::EntityTopology`] +
+//! [`super::positions::EntityPositions`].
 
 use glam::{UVec2, Vec2, Vec3};
 
 use super::command::{
     AtomRef, BandInfo, BandTarget, PullInfo, ResolvedBand, ResolvedPull,
 };
-use super::scene::{SceneTopology, VisualState};
+use super::VisoEngine;
 use crate::camera::controller::CameraController;
-
-/// Borrowed scene state needed for atom position lookups.
-pub(super) struct ScenePositions<'a> {
-    /// Interpolated animation output (backbone chains, sidechain positions).
-    pub visual: &'a VisualState,
-    /// Derived metadata (sidechain topology with target positions/names).
-    pub topology: &'a SceneTopology,
-    /// Backbone renderer's cached chain positions (pre-animation fallback).
-    pub cached_chains: &'a [Vec<Vec3>],
-}
 
 /// Resolve a single band spec to world-space endpoint positions.
 pub(super) fn resolve_band(
-    scene: &ScenePositions<'_>,
+    engine: &VisoEngine,
     band: &BandInfo,
 ) -> Option<ResolvedBand> {
-    let endpoint_a = resolve_atom_ref(scene, &band.anchor_a)?;
+    let endpoint_a = resolve_atom_ref(engine, &band.anchor_a)?;
     let endpoint_b = match &band.anchor_b {
-        BandTarget::Atom(atom) => resolve_atom_ref(scene, atom)?,
+        BandTarget::Atom(atom) => resolve_atom_ref(engine, atom)?,
         BandTarget::Position(pos) => *pos,
     };
     let is_space_pull = matches!(band.anchor_b, BandTarget::Position(_));
@@ -45,12 +38,12 @@ pub(super) fn resolve_band(
 
 /// Resolve a pull spec to world-space atom and target positions.
 pub(super) fn resolve_pull(
-    scene: &ScenePositions<'_>,
+    engine: &VisoEngine,
     camera: &CameraController,
     viewport: (u32, u32),
     pull: &PullInfo,
 ) -> Option<ResolvedPull> {
-    let atom_pos = resolve_atom_ref(scene, &pull.atom)?;
+    let atom_pos = resolve_atom_ref(engine, &pull.atom)?;
     let target_pos = camera.screen_to_world_at_depth(
         Vec2::new(pull.screen_target.0, pull.screen_target.1),
         UVec2::new(viewport.0, viewport.1),
@@ -65,193 +58,117 @@ pub(super) fn resolve_pull(
 }
 
 /// Public entry point for [`resolve_atom_ref`] (used by
-/// [`super::VisoEngine::resolve_atom_position`]).
+/// [`VisoEngine::resolve_atom_position`]).
 pub(super) fn resolve_atom_ref_pub(
-    scene: &ScenePositions<'_>,
+    engine: &VisoEngine,
     atom: &AtomRef,
 ) -> Option<Vec3> {
-    resolve_atom_ref(scene, atom)
+    resolve_atom_ref(engine, atom)
 }
 
-/// Resolve an [`AtomRef`] to a world-space position from scene data.
+/// Resolve an [`AtomRef`] to a world-space position.
 ///
-/// Uses interpolated visual positions during animation so constraints
-/// track animated atoms. Falls back to `cached_chains` (from the backbone
-/// renderer) before the first animation frame is available.
-///
-/// Backbone atoms (N, CA, C) use precomputed chain offsets for O(log n)
-/// lookup. Sidechain atoms use a hash map for O(1) lookup.
-fn resolve_atom_ref(
-    scene: &ScenePositions<'_>,
-    atom: &AtomRef,
+/// The `residue` index is treated as a flat index across Cartoon-mode
+/// protein entities in assembly order (matching the convention of
+/// [`VisoEngine::concatenated_cartoon_ss`] and the GPU picking path
+/// that produced it). Backbone atoms (`N`, `CA`, `C`) resolve against
+/// each entity's topology `backbone_chain_layout`; other atom names
+/// search the entity's sidechain layout by name.
+fn resolve_atom_ref(engine: &VisoEngine, atom: &AtomRef) -> Option<Vec3> {
+    let mut residues_seen: u32 = 0;
+    for entity in engine.current_assembly.entities() {
+        let eid = entity.id();
+        if !engine.is_entity_visible(eid.raw()) {
+            continue;
+        }
+        let state = engine.entity_state.get(&eid)?;
+        if !state.topology.is_protein() {
+            continue;
+        }
+        let residue_count = state.topology.residue_atom_ranges.len() as u32;
+        if atom.residue >= residues_seen + residue_count {
+            residues_seen += residue_count;
+            continue;
+        }
+        let local_residue = atom.residue - residues_seen;
+        let positions = engine.positions.get(eid)?;
+        return resolve_atom_in_entity(
+            state,
+            positions,
+            local_residue,
+            &atom.atom_name,
+        );
+    }
+    None
+}
+
+fn resolve_atom_in_entity(
+    state: &super::entity_view::EntityView,
+    positions: &[Vec3],
+    local_residue: u32,
+    atom_name: &str,
 ) -> Option<Vec3> {
-    let name = atom.atom_name.as_str();
-
-    // Backbone atoms: N, CA, C — use chain offset index
-    if name == "N" || name == "CA" || name == "C" {
-        let offset = match name {
-            "N" => 0,
-            "CA" => 1,
-            "C" => 2,
-            _ => return None,
-        };
-        let chains = if scene.visual.backbone_chains.is_empty() {
-            scene.cached_chains
-        } else {
-            &scene.visual.backbone_chains
-        };
-        let offsets = &scene.topology.backbone_chain_offsets;
-        // Binary search: find the chain containing this residue
-        let chain_idx = match offsets.binary_search(&atom.residue) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
-        };
-        let chain = chains.get(chain_idx)?;
-        let chain_start = offsets.get(chain_idx).copied().unwrap_or(0);
-        let local = (atom.residue - chain_start) as usize;
-        return chain.get(local * 3 + offset).copied();
-    }
-
-    // Sidechain atoms — O(1) hash lookup
-    let positions = if scene.visual.sidechain_positions.is_empty() {
-        &scene.topology.sidechain_topology.target_positions
-    } else {
-        &scene.visual.sidechain_positions
-    };
-    let idx = scene
-        .topology
-        .sidechain_topology
-        .atom_index
-        .get(&(atom.residue, name.to_owned()))?;
-    positions.get(*idx).copied()
-}
-
-#[cfg(test)]
-mod tests {
-    use glam::Vec3;
-    use rustc_hash::FxHashMap;
-
-    use super::*;
-    use crate::engine::scene::{SceneTopology, SidechainTopology, VisualState};
-
-    /// Build a minimal scene with 1 chain, 2 residues (6 backbone atoms),
-    /// and 1 sidechain atom ("CB" at residue 0).
-    fn test_scene() -> (VisualState, SceneTopology, Vec<Vec<Vec3>>) {
-        // Backbone: 2 residues × 3 atoms (N, CA, C)
-        let chain = vec![
-            Vec3::new(0.0, 0.0, 0.0), // res 0 N
-            Vec3::new(1.5, 0.0, 0.0), // res 0 CA
-            Vec3::new(3.0, 0.0, 0.0), // res 0 C
-            Vec3::new(3.8, 0.0, 0.0), // res 1 N
-            Vec3::new(5.3, 0.0, 0.0), // res 1 CA
-            Vec3::new(6.8, 0.0, 0.0), // res 1 C
-        ];
-
-        let mut visual = VisualState::new();
-        visual.backbone_chains = vec![chain.clone()];
-        visual.sidechain_positions = vec![Vec3::new(1.5, 2.0, 0.0)]; // CB
-
-        let mut atom_index = FxHashMap::default();
-        let _ = atom_index.insert((0_u32, "CB".to_owned()), 0_usize);
-
-        let mut topology = SceneTopology::new();
-        topology.backbone_chain_offsets = vec![0];
-        topology.sidechain_topology = SidechainTopology {
-            bonds: vec![],
-            hydrophobicity: vec![false],
-            residue_indices: vec![0],
-            atom_names: vec!["CB".to_owned()],
-            target_positions: vec![Vec3::new(1.5, 2.0, 0.0)],
-            target_backbone_bonds: vec![],
-            atom_index,
-        };
-
-        let cached = vec![chain];
-        (visual, topology, cached)
-    }
-
-    fn make_ref(residue: u32, name: &str) -> AtomRef {
-        AtomRef {
-            residue,
-            atom_name: name.to_owned(),
+    match atom_name {
+        "N" | "CA" | "C" => {
+            let range =
+                state.topology.residue_atom_ranges.get(local_residue as usize)?;
+            let offset = match atom_name {
+                "N" => 0,
+                "CA" => 1,
+                "C" => 2,
+                _ => return None,
+            };
+            let idx = range.start as usize + offset;
+            positions.get(idx).copied()
+        }
+        other => {
+            let layout = &state.topology.sidechain_layout;
+            for (i, (&ri, name)) in layout
+                .residue_indices
+                .iter()
+                .zip(layout.atom_names.iter())
+                .enumerate()
+            {
+                if ri == local_residue && name == other {
+                    let atom_idx = layout.atom_indices.get(i)?;
+                    return positions.get(*atom_idx as usize).copied();
+                }
+            }
+            None
         }
     }
+}
 
-    #[test]
-    fn resolve_ca_from_visual() {
-        let (visual, topology, cached) = test_scene();
-        let scene = ScenePositions {
-            visual: &visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        let pos = resolve_atom_ref(&scene, &make_ref(0, "CA"));
-        assert_eq!(pos, Some(Vec3::new(1.5, 0.0, 0.0)));
-    }
+// ── Engine-side wiring ──
 
-    #[test]
-    fn resolve_n_and_c() {
-        let (visual, topology, cached) = test_scene();
-        let scene = ScenePositions {
-            visual: &visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        assert_eq!(
-            resolve_atom_ref(&scene, &make_ref(0, "N")),
-            Some(Vec3::new(0.0, 0.0, 0.0))
+impl VisoEngine {
+    /// Resolve stored band/pull specs to world-space and update
+    /// renderers.
+    pub(super) fn resolve_and_render_constraints(&mut self) {
+        let resolved_bands: Vec<_> = self
+            .constraints
+            .band_specs
+            .iter()
+            .filter_map(|b| resolve_band(self, b))
+            .collect();
+        self.gpu.renderers.band.update(
+            &self.gpu.context.device,
+            &self.gpu.context.queue,
+            &resolved_bands,
+            Some(&self.options.colors),
         );
-        assert_eq!(
-            resolve_atom_ref(&scene, &make_ref(0, "C")),
-            Some(Vec3::new(3.0, 0.0, 0.0))
+
+        let viewport = (
+            self.gpu.context.config.width,
+            self.gpu.context.config.height,
         );
-    }
-
-    #[test]
-    fn resolve_falls_back_to_cached() {
-        let (_, topology, cached) = test_scene();
-        let empty_visual = VisualState::new(); // empty backbone_chains
-        let scene = ScenePositions {
-            visual: &empty_visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        // Should fall back to cached_chains
-        let pos = resolve_atom_ref(&scene, &make_ref(1, "CA"));
-        assert_eq!(pos, Some(Vec3::new(5.3, 0.0, 0.0)));
-    }
-
-    #[test]
-    fn resolve_sidechain_atom() {
-        let (visual, topology, cached) = test_scene();
-        let scene = ScenePositions {
-            visual: &visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        let pos = resolve_atom_ref(&scene, &make_ref(0, "CB"));
-        assert_eq!(pos, Some(Vec3::new(1.5, 2.0, 0.0)));
-    }
-
-    #[test]
-    fn resolve_unknown_returns_none() {
-        let (visual, topology, cached) = test_scene();
-        let scene = ScenePositions {
-            visual: &visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        assert_eq!(resolve_atom_ref(&scene, &make_ref(0, "XYZ")), None);
-    }
-
-    #[test]
-    fn resolve_out_of_range_returns_none() {
-        let (visual, topology, cached) = test_scene();
-        let scene = ScenePositions {
-            visual: &visual,
-            topology: &topology,
-            cached_chains: &cached,
-        };
-        assert_eq!(resolve_atom_ref(&scene, &make_ref(99, "CA")), None);
+        let resolved_pull = self.constraints.pull_spec.as_ref().and_then(|p| {
+            resolve_pull(self, &self.camera_controller, viewport, p)
+        });
+        self.gpu.renderers.pull.update(
+            &self.gpu.context.device,
+            &self.gpu.context.queue,
+            resolved_pull.as_ref(),
+        );
     }
 }

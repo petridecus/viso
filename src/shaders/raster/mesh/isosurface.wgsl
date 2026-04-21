@@ -7,7 +7,6 @@
 // Keep these in sync — they're the per-vertex source-kind discriminator.
 const ISO_KIND_SURFACE: u32 = 0u;
 const ISO_KIND_CAVITY: u32 = 1u;
-const ISO_KIND_DENSITY: u32 = 2u;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -182,7 +181,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     //   - CAVITY : strong blue-biased absorption → deep saturated blue
     //              centers, clear edges. Makes cavities read as dense
     //              pockets of glowing gel.
-    //   - SURFACE / DENSITY : mild neutral absorption → center slightly
+    //   - SURFACE : mild neutral absorption → center slightly
     //              more opaque than edges, gives the translucent shell
     //              a sense of depth without heavy tinting.
     let pixel_coord = vec2<i32>(in.clip_position.xy);

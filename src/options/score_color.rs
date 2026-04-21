@@ -26,57 +26,30 @@ fn score_to_t_absolute(score: f64) -> f32 {
     }
 }
 
-/// Legacy API: positional \[0,1\] → color (still used by
-/// `initial_chain_colors`).
-pub(crate) fn chain_color(t: f32) -> [f32; 3] {
-    let hue = t * 360.0;
-    hsl_to_rgb(hue, 0.6, 0.55)
-}
-
-/// Convert HSL (h in degrees, s and l in \[0,1\]) to linear RGB.
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let h2 = h / 60.0;
-    let x = c * (1.0 - (h2 % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match h2 as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c / 2.0;
-    [r1 + m, g1 + m, b1 + m]
-}
-
 /// Compute per-residue colors using the scheme + palette system.
 ///
 /// Supports all [`ColorScheme`](super::ColorScheme) variants. For schemes
 /// that require data not available in the current pipeline (BFactor,
 /// Hydrophobicity), falls back to neutral gray.
 ///
-/// `entity_chain_counts` maps each entity to the number of backbone chains
-/// it contributed. `entity_molecule_types` gives the `MoleculeType` per
-/// entity (parallel to `entity_chain_counts`), used by `EntityType` coloring.
+/// `entity_index` is the position of the entity within the assembly, used
+/// by [`ColorScheme::Entity`](super::ColorScheme::Entity) so every entity
+/// gets a distinct categorical color.
 pub(crate) fn compute_per_residue_colors_styled(
     backbone_chains: &[Vec<glam::Vec3>],
     ss_types: &[molex::SSType],
     per_residue_scores: &[Option<&[f64]>],
     scheme: &super::ColorScheme,
     palette: &super::palette::Palette,
-    entity_chain_counts: Option<&[usize]>,
+    entity_index: usize,
 ) -> Vec<[f32; 3]> {
     use molex::SSType;
 
     let residue_count = ss_types.len().max(1);
     match scheme {
-        super::ColorScheme::Entity => per_entity_colors(
-            backbone_chains,
-            entity_chain_counts,
-            residue_count,
-            palette,
-        ),
+        super::ColorScheme::Entity => {
+            per_entity_color(entity_index, backbone_chains, residue_count, palette)
+        }
         super::ColorScheme::SecondaryStructure => {
             if ss_types.is_empty() {
                 vec![[0.5, 0.5, 0.5]; residue_count]
@@ -200,34 +173,20 @@ fn per_chain_gradient(
     colors
 }
 
-/// One color per entity (all chains from the same entity share one color).
-fn per_entity_colors(
+/// Solid color per entity: every residue of every chain of the entity
+/// gets the same `palette.categorical_color(entity_index)`.
+fn per_entity_color(
+    entity_index: usize,
     backbone_chains: &[Vec<glam::Vec3>],
-    entity_chain_counts: Option<&[usize]>,
     residue_count: usize,
     palette: &super::palette::Palette,
 ) -> Vec<[f32; 3]> {
+    let color = palette.categorical_color(entity_index);
     if backbone_chains.is_empty() {
-        return vec![[0.5, 0.5, 0.5]; residue_count];
+        return vec![color; residue_count];
     }
-
-    let mut chain_to_entity = Vec::with_capacity(backbone_chains.len());
-    if let Some(counts) = entity_chain_counts {
-        for (entity_idx, &count) in counts.iter().enumerate() {
-            for _ in 0..count {
-                chain_to_entity.push(entity_idx);
-            }
-        }
-    } else {
-        // Fallback: treat each chain as its own entity.
-        chain_to_entity.extend(0..backbone_chains.len());
-    }
-    let mut colors = Vec::with_capacity(residue_count);
-    for (chain_idx, chain) in backbone_chains.iter().enumerate() {
-        let eidx = chain_to_entity.get(chain_idx).copied().unwrap_or(0);
-        let color = palette.categorical_color(eidx);
-        let n_residues = chain.len() / 3;
-        colors.extend(std::iter::repeat_n(color, n_residues));
-    }
-    colors
+    backbone_chains
+        .iter()
+        .flat_map(|chain| std::iter::repeat_n(color, chain.len() / 3))
+        .collect()
 }

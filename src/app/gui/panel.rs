@@ -142,11 +142,12 @@ impl PanelController {
     /// handle panel toggle/resize.
     pub(crate) fn drain_and_apply(
         &mut self,
+        app: &mut crate::app::VisoApp,
         engine: &mut VisoEngine,
         window: &Window,
     ) {
         // Poll background fetch result.
-        self.poll_load_result(engine);
+        self.poll_load_result(app, engine);
 
         let actions: Vec<UiAction> = self
             .action_rx
@@ -161,7 +162,7 @@ impl PanelController {
             match action {
                 UiAction::TogglePanel => toggled = true,
                 UiAction::ResizePanel { size } => resize_width = Some(size),
-                _ => self.apply_action(action, engine),
+                _ => self.apply_action(action, app, engine),
             }
         }
 
@@ -185,7 +186,12 @@ impl PanelController {
     }
 
     /// Apply a single UI action to the engine.
-    fn apply_action(&mut self, action: UiAction, engine: &mut VisoEngine) {
+    fn apply_action(
+        &mut self,
+        action: UiAction,
+        app: &mut crate::app::VisoApp,
+        engine: &mut VisoEngine,
+    ) {
         match action {
             UiAction::SetOption { path, field, value } => {
                 log::debug!("SetOption: {path}.{field} = {value}");
@@ -221,13 +227,13 @@ impl PanelController {
                 self.push_scene_entities(engine);
             }
             UiAction::LoadFile { path } => {
-                self.load_local_file(engine, &path);
+                self.load_local_file(app, engine, &path);
             }
             UiAction::FetchPdb { id, source } => {
                 self.start_fetch_pdb(&id, &source);
             }
             UiAction::OpenFileDialog => {
-                self.open_file_dialog(engine);
+                self.open_file_dialog(app, engine);
             }
             UiAction::KeyPress { key } => {
                 if let Some(cmd) =
@@ -454,9 +460,14 @@ impl PanelController {
 
 impl PanelController {
     /// Parse a local file and load its entities into the engine.
-    fn load_local_file(&self, engine: &mut VisoEngine, path: &str) {
+    fn load_local_file(
+        &self,
+        app: &mut crate::app::VisoApp,
+        engine: &mut VisoEngine,
+        path: &str,
+    ) {
         log::info!("Loading local file: {path}");
-        match parse_and_load(engine, path) {
+        match parse_and_load(app, engine, path) {
             Ok(()) => {
                 self.push_scene_entities(engine);
                 self.push_density_maps(engine);
@@ -483,7 +494,11 @@ impl PanelController {
     }
 
     /// Open a native file dialog and load the selected file.
-    fn open_file_dialog(&self, engine: &mut VisoEngine) {
+    fn open_file_dialog(
+        &self,
+        app: &mut crate::app::VisoApp,
+        engine: &mut VisoEngine,
+    ) {
         let dialog = rfd::FileDialog::new()
             .add_filter("Structure", &["cif", "pdb", "ent", "bcif"])
             .add_filter("Density Map", &["mrc", "map", "ccp4"])
@@ -495,7 +510,7 @@ impl PanelController {
 
         if let Some(path) = dialog.pick_file() {
             let path_str = path.to_string_lossy().into_owned();
-            self.load_local_file(engine, &path_str);
+            self.load_local_file(app, engine, &path_str);
         }
     }
 
@@ -533,7 +548,11 @@ impl PanelController {
     }
 
     /// Poll the background fetch channel for a result.
-    fn poll_load_result(&mut self, engine: &mut VisoEngine) {
+    fn poll_load_result(
+        &mut self,
+        app: &mut crate::app::VisoApp,
+        engine: &mut VisoEngine,
+    ) {
         let Some(ref rx) = self.load_rx else {
             return;
         };
@@ -548,7 +567,7 @@ impl PanelController {
         self.load_rx = None;
 
         match result {
-            Ok(path) => self.load_local_file(engine, &path),
+            Ok(path) => self.load_local_file(app, engine, &path),
             Err(msg) => {
                 log::error!("PDB fetch failed: {msg}");
                 if let Some(ref wv) = self.webview {
@@ -562,7 +581,11 @@ impl PanelController {
 // ── Helpers (free functions) ─────────────────────────────────────────────
 
 /// Parse a file (structure or density) and load it into the engine.
-fn parse_and_load(engine: &mut VisoEngine, path: &str) -> Result<(), String> {
+fn parse_and_load(
+    app: &mut crate::app::VisoApp,
+    engine: &mut VisoEngine,
+    path: &str,
+) -> Result<(), String> {
     use crate::bridge;
 
     let ext = std::path::Path::new(path)
@@ -585,7 +608,7 @@ fn parse_and_load(engine: &mut VisoEngine, path: &str) -> Result<(), String> {
             return Err("No entities found in file".into());
         }
 
-        let _ = engine.replace_scene(entities);
+        let _ = app.replace_scene(engine, entities);
         Ok(())
     }
 }

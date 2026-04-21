@@ -12,8 +12,11 @@ use molex::Assembly;
 /// Reader side of the host → viso assembly channel.
 ///
 /// [`latest`](Self::latest) returns the most recently committed snapshot
-/// once per publish, otherwise `None`.
-pub(crate) struct AssemblyConsumer {
+/// once per publish, otherwise `None`. Constructed by
+/// [`crate::app::VisoApp`] (standalone deployments) or by the real host
+/// application; passed into [`crate::VisoEngine::new`] at construction
+/// time.
+pub struct AssemblyConsumer {
     pub(crate) rx: triple_buffer::Output<Option<Arc<Assembly>>>,
 }
 
@@ -23,7 +26,7 @@ impl AssemblyConsumer {
     /// Returns `None` until the host has committed at least once, and
     /// `None` between publishes after the most recent snapshot has been
     /// consumed.
-    pub(crate) fn latest(&mut self) -> Option<Arc<Assembly>> {
+    pub fn latest(&mut self) -> Option<Arc<Assembly>> {
         let _ = self.rx.update();
         self.rx.output_buffer_mut().take()
     }

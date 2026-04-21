@@ -33,8 +33,6 @@ const CAVITY_RGBA: [f32; 4] = [0.22, 0.30, 1.0, 0.90];
 /// A single detected cavity with its extracted mesh.
 #[derive(Clone)]
 pub struct CavityMesh {
-    /// Cavity ID (1-based; 0 is reserved for "not a cavity").
-    pub id: u32,
     /// Isosurface vertices for this cavity.
     pub vertices: Vec<IsosurfaceVertex>,
     /// Triangle indices into `vertices`.
@@ -72,11 +70,7 @@ pub fn generate_cavities(
 ) -> CavitySet {
     let detected = detect_cavities(positions, radii, probe_radius, resolution);
 
-    let meshes = detected
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, cavity)| extract_cavity_mesh(idx as u32 + 1, cavity))
-        .collect();
+    let meshes = detected.iter().filter_map(extract_cavity_mesh).collect();
 
     CavitySet { meshes }
 }
@@ -89,7 +83,7 @@ pub fn generate_cavities(
 /// appearance gets smoothed away on the triangle side after marching
 /// cubes, not by blurring the field — blurring the field would shrink
 /// small cavities below the iso-threshold and lose them entirely.
-fn extract_cavity_mesh(id: u32, cavity: &DetectedCavity) -> Option<CavityMesh> {
+fn extract_cavity_mesh(cavity: &DetectedCavity) -> Option<CavityMesh> {
     let mut sub_sdf =
         binary_to_sdf(&cavity.sub_mask, cavity.sub_dims, &cavity.spacing);
     for v in &mut sub_sdf {
@@ -126,11 +120,7 @@ fn extract_cavity_mesh(id: u32, cavity: &DetectedCavity) -> Option<CavityMesh> {
         v.cavity_center = cavity.centroid;
     }
 
-    Some(CavityMesh {
-        id,
-        vertices,
-        indices,
-    })
+    Some(CavityMesh { vertices, indices })
 }
 
 #[cfg(test)]

@@ -24,7 +24,11 @@
 //! For integration guides and deep dives, see the companion mdBook
 //! documentation.
 
+#![deny(deprecated)]
+
 pub(crate) mod animation;
+#[cfg(any(feature = "viewer", feature = "web"))]
+pub mod app;
 pub(crate) mod bridge;
 pub(crate) mod camera;
 pub(crate) mod engine;
@@ -37,23 +41,17 @@ pub(crate) mod util;
 /// Runtime display, lighting, camera, and color options.
 pub mod options;
 
-#[cfg(feature = "viewer")]
-pub mod viewer;
-
-#[cfg(feature = "gui")]
-pub mod gui;
-
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
-pub mod web;
-
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
+#[cfg(any(feature = "viewer", feature = "web"))]
+pub use app::VisoApp;
 #[cfg(feature = "gui")]
 pub use bridge::UiAction;
+pub use engine::assembly_consumer::AssemblyConsumer;
 pub use engine::command::{
     AtomRef, BandInfo, BandTarget, BandType, PullInfo, VisoCommand,
 };
-pub use engine::scene::Focus;
+pub use engine::focus::Focus;
 pub use engine::VisoEngine;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
@@ -66,6 +64,6 @@ pub use options::{DrawingMode, EntityAppearance, HelixStyle, SheetStyle};
 pub use renderer::picking::PickTarget;
 // Feature-gated
 #[cfg(feature = "viewer")]
-pub use viewer::{Viewer, ViewerBuilder};
+pub use app::viewer::{Viewer, ViewerBuilder};
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub use wasm_bindgen_rayon::init_thread_pool;

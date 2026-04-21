@@ -5,6 +5,9 @@
 
 /// Bind groups shared across all molecular draw calls.
 pub mod draw_context;
+/// Render-ready per-entity contract — `EntityTopology` plus the
+/// sidechain / nucleotide-ring layouts consumed across the renderer.
+pub mod entity_topology;
 /// All GPU infrastructure grouped together (device, renderers, picking, etc.).
 pub(crate) mod gpu_pipeline;
 pub(crate) use gpu_pipeline::GpuPipeline;

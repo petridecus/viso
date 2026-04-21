@@ -3,11 +3,10 @@
 use std::sync::mpsc;
 
 use glam::{Mat4, Vec3};
-use molex::SSType;
 
 use crate::camera::controller::CameraController;
 use crate::camera::core::Camera;
-use crate::engine::viso_state::EntityPositions;
+use crate::engine::positions::EntityPositions;
 use crate::gpu::lighting::Lighting;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::{
@@ -33,8 +32,6 @@ pub(crate) struct SceneChainData<'a> {
     pub backbone_chains: &'a [Vec<Vec3>],
     /// Nucleic-acid chains.
     pub na_chains: &'a [Vec<Vec3>],
-    /// Per-residue secondary-structure types.
-    pub ss_types: &'a [SSType],
 }
 
 /// All GPU infrastructure grouped together: device/queue, renderers,
@@ -153,17 +150,10 @@ impl GpuPipeline {
         suppress_sidechains: bool,
         scene: &SceneChainData<'_>,
     ) {
-        let ss_override = if scene.ss_types.is_empty() {
-            None
-        } else {
-            Some(scene.ss_types.to_vec())
-        };
-
         if animating {
             self.renderers.backbone.update_metadata(
                 scene.backbone_chains,
                 scene.na_chains,
-                ss_override,
             );
         } else {
             self.renderers.backbone.apply_prepared(
@@ -179,7 +169,6 @@ impl GpuPipeline {
                     chain_ranges: prepared.backbone.chain_ranges.clone(),
                     cached_chains: scene.backbone_chains,
                     cached_na_chains: scene.na_chains,
-                    ss_override,
                 },
             );
             if !suppress_sidechains {

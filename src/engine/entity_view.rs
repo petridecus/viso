@@ -1,44 +1,43 @@
-//! Viso-side derived state rederived from [`molex::Assembly`] on every
-//! sync. The render path reads only these types; [`molex::Assembly`] and
-//! [`molex::MoleculeEntity`] do not appear in any render-path signature.
+//! Engine-main-thread per-entity state.
 //!
-//! - [`VisoEntityState`] — per-entity drawing mode, SS override, topology,
-//!   and mesh version.
-//! - [`EntityTopology`] — self-sufficient render-ready view of a single
-//!   entity: backbone layout, sidechain layout, NA ring layout, sheet
-//!   plane normals, per-residue colors, SS types, plus the structural
-//!   atom-element / bond / residue metadata the renderer consumes.
-//! - [`EntityPositions`] — animator write surface + renderer read surface,
-//!   keyed by entity id.
-//! - [`SceneRenderState`] — cross-entity renderable data (disulfide
-//!   endpoints + H-bond endpoints), rederived on sync.
+//! - [`EntityView`] holds the engine's per-entity overlays (drawing
+//!   mode, SS override, mesh-cache version) plus an `Arc` handle to the
+//!   render-ready
+//!   [`EntityTopology`](crate::renderer::entity_topology::EntityTopology)
+//!   shared with the background mesh worker.
+//! - [`EntityTopology::from_entity`] is the sync-time factory that
+//!   derives the renderer contract from a `MoleculeEntity`. Defined
+//!   here (not in the renderer module) because derivation is an
+//!   engine-side concern; the renderer only defines the shape it wants.
+//! - [`RibbonBackbone`] is a per-sync cache of spline-projected backbone
+//!   anchor positions used by the bond resolver to attach H-bond
+//!   capsules to the rendered ribbon in Cartoon mode.
 
 use std::ops::Range;
 use std::sync::Arc;
 
 use glam::Vec3;
-use molex::entity::molecule::id::EntityId;
-use molex::{
-    Assembly, AtomId, CovalentBond, Element, MoleculeEntity, MoleculeType,
-    NucleotideRing, SSType,
-};
+use molex::{Element, MoleculeEntity, SSType};
 use rustc_hash::FxHashMap;
 
 use crate::options::DrawingMode;
+use crate::renderer::entity_topology::{
+    EntityTopology, NucleotideRingLayout, SidechainLayout,
+};
+use crate::renderer::geometry::backbone::spline::project_backbone_atoms;
 
 // ---------------------------------------------------------------------------
-// VisoEntityState
+// EntityView
 // ---------------------------------------------------------------------------
 
-/// Per-entity state held by [`VisoEngine`].
+/// Per-entity state held by [`VisoEngine`](super::VisoEngine).
 ///
-/// Has four fields: the drawing mode chosen for this entity, an optional
-/// SS override (used by the viewer to pin SS assignments), the rederived
-/// [`EntityTopology`], and a monotonically increasing `mesh_version`
-/// used by the mesh cache to detect when geometry needs to be regenerated.
-///
-/// [`VisoEngine`]: super::VisoEngine
-pub struct VisoEntityState {
+/// Four fields: the drawing mode chosen for this entity, an optional
+/// SS override (used by the viewer to pin SS assignments), the
+/// Arc-shared [`EntityTopology`], and a monotonically increasing
+/// `mesh_version` the mesh cache uses to detect when geometry needs
+/// regeneration.
+pub struct EntityView {
     /// Drawing mode for this entity (Cartoon / Stick / `BallAndStick`).
     pub drawing_mode: DrawingMode,
     /// Optional secondary-structure override. When present, takes
@@ -53,321 +52,76 @@ pub struct VisoEntityState {
 }
 
 // ---------------------------------------------------------------------------
-// EntityTopology
+// RibbonBackbone — per-sync cache for Cartoon-mode H-bond anchoring
 // ---------------------------------------------------------------------------
 
-/// Self-sufficient render-ready view of a single entity.
+/// Per-residue spline-projected backbone positions for Cartoon-mode
+/// H-bond anchoring.
 ///
-/// Duplicates the structural metadata the renderer needs (atom elements,
-/// bond list, residue ranges) at sync time so the render path is a pure
-/// function of `(&EntityTopology, &[Vec3])` for per-entity mesh-gen.
-/// Neither `&Assembly` nor `&MoleculeEntity` appear in render-path
-/// signatures.
-#[derive(Clone)]
-pub struct EntityTopology {
-    /// Molecule type of the source entity, so the render dispatcher can
-    /// pick the right mesh-gen path without looking at the `Assembly`.
-    pub molecule_type: MoleculeType,
+/// The cartoon ribbon is a smooth spline through a protein's `[N, CA, C]`
+/// control points; the rendered curve doesn't pass exactly through the
+/// raw atoms. [`project_backbone_atoms`] derives where N and C would sit
+/// on the curve using standard peptide-bond fractions, producing the
+/// anchor positions an H-bond capsule should attach to so it visually
+/// connects to the ribbon rather than to atoms floating off it.
+pub(crate) struct RibbonBackbone {
+    /// Ribbon-projected N position per residue (donor anchoring).
+    pub per_residue_n: Vec<Vec3>,
+    /// Ribbon-projected C position per residue (acceptor anchoring).
+    pub per_residue_c: Vec<Vec3>,
+}
 
-    /// Polymer-backbone atom indices, split into continuous chain
-    /// segments. Semantics depend on [`molecule_type`](Self::molecule_type):
+impl RibbonBackbone {
+    /// Project per-residue N and C onto the rendered cartoon ribbon.
     ///
-    /// - **Protein:** each inner `Vec` is `[N₀, CA₀, C₀, N₁, CA₁, C₁, …]`
-    ///   (stride 3), as consumed by the protein backbone renderer.
-    /// - **Nucleic acid:** each inner `Vec` is `[P₀, P₁, …]` (stride 1),
-    ///   as consumed by the NA renderer.
-    /// - **Other:** empty.
-    pub backbone_chain_layout: Vec<Vec<usize>>,
-
-    /// Sidechain atom indices and bond topology for ball-and-stick /
-    /// sidechain-capsule rendering. Empty for non-protein entities.
-    pub sidechain_layout: SidechainLayout,
-
-    /// Nucleotide ring atom-index layout per residue, for DNA/RNA
-    /// rendering. Empty for non-NA entities.
-    pub ring_topology: Vec<NucleotideRingLayout>,
-
-    /// Fitted β-sheet plane normals `(residue_idx, normal)`. Empty when
-    /// no multi-strand sheets were detected or fit. See
-    /// `renderer/geometry/backbone/sheet_fit.rs`.
-    pub sheet_plane_normals: Vec<(u32, Vec3)>,
-
-    /// Per-residue vertex colors (Cartoon-mode). `None` when the current
-    /// color scheme doesn't produce per-residue colors.
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
-
-    /// Per-residue secondary structure from
-    /// [`molex::Assembly::ss_types`]. Empty for non-protein entities.
-    pub ss_types: Vec<SSType>,
-
-    /// Element of each atom, in entity-local index order.
-    pub atom_elements: Vec<Element>,
-    /// Which residue each atom belongs to (index into
-    /// [`residue_atom_ranges`](Self::residue_atom_ranges)).
-    pub atom_residue_index: Vec<u32>,
-    /// 3-byte residue name (`b"ALA"`, `b"GLY"`, …) per residue.
-    pub residue_names: Vec<[u8; 3]>,
-    /// Atom-index range per residue, in entity-local indices.
-    pub residue_atom_ranges: Vec<Range<u32>>,
-    /// Every intra-entity covalent bond. Endpoints use
-    /// [`AtomId`](molex::AtomId) so the renderer can map back to
-    /// positions via the owning entity.
-    pub bonds: Vec<CovalentBond>,
-}
-
-/// Sidechain atom-index layout for a single entity.
-///
-/// All indices are entity-local (into the entity's atom positions slice
-/// in [`EntityPositions`]).
-#[derive(Clone)]
-pub struct SidechainLayout {
-    /// Atom index (entity-local) of each sidechain atom.
-    pub atom_indices: Vec<u32>,
-    /// Residue index (entity-local) of each sidechain atom. Parallel to
-    /// [`atom_indices`](Self::atom_indices).
-    pub residue_indices: Vec<u32>,
-    /// Packed atom name for each sidechain atom (`"CB"`, `"CG"`, …).
-    /// Trimmed of trailing padding; always valid UTF-8. Parallel to
-    /// [`atom_indices`](Self::atom_indices).
-    pub atom_names: Vec<String>,
-    /// Hydrophobicity flag per sidechain atom. Parallel to
-    /// [`atom_indices`](Self::atom_indices).
-    pub hydrophobicity: Vec<bool>,
-    /// Intra-sidechain bonds as `(a, b)` indices into
-    /// [`atom_indices`](Self::atom_indices).
-    pub bonds: Vec<(u32, u32)>,
-    /// Backbone → sidechain bonds as `(ca_atom_idx, cb_layout_idx)` where
-    /// `ca_atom_idx` is an entity-local atom index of CA and
-    /// `cb_layout_idx` is the index into
-    /// [`atom_indices`](Self::atom_indices) of the CB that CA connects
-    /// to.
-    pub backbone_bonds: Vec<(u32, u32)>,
-}
-
-impl SidechainLayout {
-    /// Empty layout (no sidechain atoms).
+    /// Returns `None` for non-protein topologies and for inputs too
+    /// short to support a spline projection — callers fall back to raw
+    /// atom positions in that case.
     #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            atom_indices: Vec::new(),
-            residue_indices: Vec::new(),
-            atom_names: Vec::new(),
-            hydrophobicity: Vec::new(),
-            bonds: Vec::new(),
-            backbone_bonds: Vec::new(),
+    pub(crate) fn project(
+        topology: &EntityTopology,
+        positions: &[Vec3],
+    ) -> Option<Self> {
+        if !topology.is_protein() {
+            return None;
         }
-    }
-}
-
-/// Atom-index layout for a single nucleotide's ring(s).
-///
-/// All indices are entity-local.
-#[derive(Clone)]
-pub struct NucleotideRingLayout {
-    /// Residue index (entity-local) this ring belongs to.
-    pub residue_index: u32,
-    /// Six atom indices for the hexagonal ring (N1, C2, N3, C4, C5, C6).
-    pub hex_ring: [u32; 6],
-    /// Optional five atom indices for the pentagonal ring on purines
-    /// (C4, C5, N7, C8, N9). `None` for pyrimidines.
-    pub pent_ring: Option<[u32; 5]>,
-    /// Atom index of C1' (sugar anchor for stem → backbone connection).
-    pub c1_prime: Option<u32>,
-    /// NDB base color.
-    pub color: [f32; 3],
-}
-
-impl NucleotideRingLayout {
-    /// Resolve atom indices to world positions using the provided slice.
-    /// Returns `None` if any hex-ring atom is out of range.
-    #[must_use]
-    pub fn resolve(&self, positions: &[Vec3]) -> Option<NucleotideRing> {
-        let hex_ring: Vec<Vec3> = self
-            .hex_ring
-            .iter()
-            .map(|&idx| positions.get(idx as usize).copied())
-            .collect::<Option<Vec<_>>>()?;
-        let pent_ring = self.pent_ring.as_ref().map_or(Vec::new(), |pent| {
-            pent.iter()
-                .filter_map(|&idx| positions.get(idx as usize).copied())
-                .collect()
-        });
-        let c1_prime = self
-            .c1_prime
-            .and_then(|idx| positions.get(idx as usize).copied());
-        Some(NucleotideRing {
-            hex_ring,
-            pent_ring,
-            c1_prime,
-            color: self.color,
+        let chains = topology.backbone_chain_positions(positions);
+        if chains.is_empty() {
+            return None;
+        }
+        let (per_residue_n, per_residue_c) = project_backbone_atoms(&chains);
+        if per_residue_n.is_empty() && per_residue_c.is_empty() {
+            return None;
+        }
+        Some(Self {
+            per_residue_n,
+            per_residue_c,
         })
     }
-}
 
-// ---------------------------------------------------------------------------
-// EntityPositions
-// ---------------------------------------------------------------------------
-
-/// Per-entity animator write surface and renderer read surface.
-///
-/// Animator writes `per_entity[id]` every frame. Renderer reads. Never
-/// touches [`molex::Assembly`] directly. Reconciled on every sync: new
-/// entities get an initial reference snapshot inserted; removed entities
-/// are dropped.
-#[derive(Default, Clone)]
-pub struct EntityPositions {
-    /// Per-entity atom positions, keyed by entity id.
-    pub per_entity: FxHashMap<EntityId, Vec<Vec3>>,
-}
-
-impl EntityPositions {
-    /// Empty positions map.
+    /// Residue-indexed ribbon-projected N position (donor anchor).
     #[must_use]
-    pub fn new() -> Self {
-        Self {
-            per_entity: FxHashMap::default(),
-        }
+    pub(crate) fn n_at(&self, residue: u32) -> Option<Vec3> {
+        self.per_residue_n.get(residue as usize).copied()
     }
 
-    /// Read-only position slice for an entity.
+    /// Residue-indexed ribbon-projected C position (acceptor anchor).
     #[must_use]
-    pub fn get(&self, id: EntityId) -> Option<&[Vec3]> {
-        self.per_entity.get(&id).map(Vec::as_slice)
-    }
-
-    /// Mutable position slice for an entity.
-    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Vec<Vec3>> {
-        self.per_entity.get_mut(&id)
-    }
-
-    /// Replace the positions for an entity (overwrites existing slot).
-    pub fn set(&mut self, id: EntityId, positions: Vec<Vec3>) {
-        let _ = self.per_entity.insert(id, positions);
-    }
-
-    /// Insert a new entity from a reference position snapshot if absent.
-    ///
-    /// Used on sync when a new entity joined the assembly: the initial
-    /// positions are copied from the assembly's reference positions so
-    /// the animator has a visual state to interpolate from.
-    pub fn insert_from_reference(&mut self, id: EntityId, reference: &[Vec3]) {
-        let _ = self
-            .per_entity
-            .entry(id)
-            .or_insert_with(|| reference.to_vec());
-    }
-
-    /// Drop positions for an entity that is no longer in the assembly.
-    pub fn remove(&mut self, id: EntityId) {
-        let _ = self.per_entity.remove(&id);
-    }
-
-    /// Keep only entities for which `keep` returns true.
-    pub fn retain(&mut self, mut keep: impl FnMut(EntityId) -> bool) {
-        self.per_entity.retain(|&id, _| keep(id));
+    pub(crate) fn c_at(&self, residue: u32) -> Option<Vec3> {
+        self.per_residue_c.get(residue as usize).copied()
     }
 }
 
 // ---------------------------------------------------------------------------
-// SceneRenderState
-// ---------------------------------------------------------------------------
-
-/// Cross-entity rendering data derived from [`molex::Assembly`] at sync.
-///
-/// Disulfides and backbone H-bonds live at scene level because their
-/// endpoints span two entities. Both are `(AtomId, AtomId)` pairs so the
-/// renderer resolves positions through [`EntityPositions`] at render
-/// time without touching [`molex::Assembly`].
-#[derive(Default)]
-pub struct SceneRenderState {
-    /// Disulfide endpoints (SG–SG pairs). Populated from
-    /// [`molex::Assembly::disulfides`] on sync.
-    pub disulfide_endpoints: Vec<(AtomId, AtomId)>,
-    /// Backbone H-bond endpoints (donor N/carbonyl-C heavy atom pairs).
-    /// Populated from [`molex::Assembly::hbonds`] on sync.
-    pub hbond_endpoints: Vec<(AtomId, AtomId)>,
-}
-
-impl SceneRenderState {
-    /// Empty scene render state.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Rederive cross-entity rendering data from an `Assembly` snapshot.
-    #[must_use]
-    pub fn from_assembly(assembly: &Assembly) -> Self {
-        Self {
-            disulfide_endpoints: assembly
-                .disulfides()
-                .map(|b| (b.a, b.b))
-                .collect(),
-            hbond_endpoints: hbond_endpoints(assembly),
-        }
-    }
-}
-
-/// Resolve the `Assembly`'s flat-backbone H-bond list back to per-entity
-/// `AtomId` pairs.
-///
-/// `Assembly::hbonds` indexes into the flattened backbone sequence (one
-/// `ResidueBackbone` per kept protein residue, concatenated in entity
-/// order). To get atom identities the renderer can resolve through
-/// [`EntityPositions`], we walk the same concatenation and remember which
-/// entity and which local atom index each flat residue slot maps to.
-fn hbond_endpoints(assembly: &Assembly) -> Vec<(AtomId, AtomId)> {
-    let mut flat_to_atoms: Vec<[AtomId; 4]> = Vec::new();
-    for entity in assembly.entities() {
-        let Some(protein) = entity.as_protein() else {
-            continue;
-        };
-        let eid = protein.id;
-        for residue in &protein.residues {
-            let start = residue.atom_range.start as u32;
-            flat_to_atoms.push([
-                AtomId {
-                    entity: eid,
-                    index: start,
-                },
-                AtomId {
-                    entity: eid,
-                    index: start + 1,
-                },
-                AtomId {
-                    entity: eid,
-                    index: start + 2,
-                },
-                AtomId {
-                    entity: eid,
-                    index: start + 3,
-                },
-            ]);
-        }
-    }
-
-    assembly
-        .hbonds()
-        .iter()
-        .filter_map(|h| {
-            let donor = flat_to_atoms.get(h.donor)?;
-            let acceptor = flat_to_atoms.get(h.acceptor)?;
-            // Donor N → acceptor C=O carbonyl carbon.
-            Some((donor[0], acceptor[2]))
-        })
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// EntityTopology builder
+// EntityTopology::from_entity — engine-side derivation factory
 // ---------------------------------------------------------------------------
 
 impl EntityTopology {
     /// Rederive the render-ready view of a single entity.
     ///
     /// `ss` is the per-residue secondary structure for the entity, as
-    /// produced by [`Assembly::ss_types`]. For non-protein entities it
-    /// should be an empty slice.
+    /// produced by [`Assembly::ss_types`](molex::Assembly::ss_types).
+    /// For non-protein entities it should be an empty slice.
     #[must_use]
     pub fn from_entity(entity: &MoleculeEntity, ss: &[SSType]) -> Self {
         let molecule_type = entity.molecule_type();
@@ -454,53 +208,10 @@ impl EntityTopology {
             },
         }
     }
-
-    /// Whether this entity renders through the protein backbone path.
-    #[must_use]
-    pub fn is_protein(&self) -> bool {
-        self.molecule_type == MoleculeType::Protein
-    }
-
-    /// Whether this entity renders through the nucleic acid path.
-    #[must_use]
-    pub fn is_nucleic_acid(&self) -> bool {
-        matches!(self.molecule_type, MoleculeType::DNA | MoleculeType::RNA)
-    }
-
-    /// Reconstruct the backbone chains the protein / NA renderers expect
-    /// by resolving atom indices in [`backbone_chain_layout`] against the
-    /// provided positions slice.
-    ///
-    /// Per [`backbone_chain_layout`](Self::backbone_chain_layout) semantics:
-    /// protein chains come out as interleaved `[N, CA, C, …]` triplets;
-    /// nucleic-acid chains come out as `[P₀, P₁, …]` P-atom sequences.
-    #[must_use]
-    pub fn backbone_chain_positions(&self, positions: &[Vec3]) -> Vec<Vec<Vec3>> {
-        self.backbone_chain_layout
-            .iter()
-            .map(|chain| {
-                chain
-                    .iter()
-                    .filter_map(|&idx| positions.get(idx).copied())
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Resolve the nucleotide ring layouts into renderer-facing
-    /// `NucleotideRing` instances, pulling atom positions from the
-    /// provided slice.
-    #[must_use]
-    pub fn resolve_rings(&self, positions: &[Vec3]) -> Vec<NucleotideRing> {
-        self.ring_topology
-            .iter()
-            .filter_map(|layout| layout.resolve(positions))
-            .collect()
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Builder helpers
+// Builder helpers — private derivation used only by from_entity
 // ---------------------------------------------------------------------------
 
 fn atom_elements(atoms: &[molex::Atom]) -> Vec<Element> {
@@ -660,10 +371,6 @@ fn atom_name_string(raw: [u8; 4]) -> String {
         .to_owned()
 }
 
-// ---------------------------------------------------------------------------
-// NA topology helpers
-// ---------------------------------------------------------------------------
-
 /// Per-segment P-atom indices for an NA entity, reusing the canonical
 /// atom ordering (P is at `residue.atom_range.start` on every kept
 /// residue) and `segment_breaks` (residue indices where a new segment
@@ -727,7 +434,7 @@ fn na_ring_topology(
     na: &molex::entity::molecule::nucleic_acid::NAEntity,
 ) -> Vec<NucleotideRingLayout> {
     let mut rings = Vec::new();
-    for (res_idx, residue) in na.residues.iter().enumerate() {
+    for residue in &na.residues {
         let Some(color) = ndb_base_color(residue.name) else {
             continue;
         };
@@ -772,7 +479,6 @@ fn na_ring_topology(
             .or_else(|| name_to_idx.get(b"C1*".as_slice()))
             .copied();
         rings.push(NucleotideRingLayout {
-            residue_index: res_idx as u32,
             hex_ring,
             pent_ring,
             c1_prime,

@@ -5,7 +5,7 @@
 //! (wasm) hosts inject into viso-ui.
 
 use crate::engine::command::VisoCommand;
-use crate::engine::scene::Focus;
+use crate::engine::focus::Focus;
 use crate::VisoEngine;
 
 // ── Panel layout model ──────────────────────────────────────────────────
@@ -282,13 +282,14 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
 
     use crate::options::DrawingMode;
 
-    let focus = engine.entities.focus();
+    let focus = engine.focus();
     engine
-        .entities
+        .assembly()
         .entities()
         .iter()
-        .map(|se| {
-            let mol_type = match se.entity.molecule_type() {
+        .map(|entity| {
+            let raw_id = entity.id().raw();
+            let mol_type = match entity.molecule_type() {
                 MoleculeType::Protein => "Protein",
                 MoleculeType::DNA => "DNA",
                 MoleculeType::RNA => "RNA",
@@ -299,48 +300,43 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 MoleculeType::Lipid => "Lipid",
                 MoleculeType::Ligand => "Ligand",
             };
-            let chain_ids: Vec<String> = se
-                .entity
+            let chain_ids: Vec<String> = entity
                 .pdb_chain_id()
                 .map_or_else(Vec::new, |cid| vec![String::from(cid as char)]);
-            let focused = matches!(
-                focus,
-                Focus::Entity(eid) if *eid == se.id()
-            );
-            let ovr = engine.entities.appearance_override(se.id());
+            let focused = matches!(focus, Focus::Entity(id) if id == raw_id);
+            let ovr = engine.entity_appearance(raw_id);
             let resolved_display = ovr.map_or_else(
-                || engine.options.display.clone(),
-                |o| o.to_display_options(&engine.options.display),
+                || engine.options().display.clone(),
+                |o| o.to_display_options(&engine.options().display),
             );
-            let has_overrides = ovr.is_some_and(|o| !o.is_empty());
+            let has_overrides =
+                ovr.is_some_and(|o| !o.is_empty());
 
-            // Per-entity override wins; otherwise global mode, with
-            // type-based default when global is Cartoon.
             let effective_mode =
                 ovr.and_then(|o| o.drawing_mode).unwrap_or_else(|| {
-                    if engine.options.display.drawing_mode
+                    if engine.options().display.drawing_mode
                         == DrawingMode::Cartoon
                     {
-                        DrawingMode::default_for(se.entity.molecule_type())
+                        DrawingMode::default_for(entity.molecule_type())
                     } else {
-                        engine.options.display.drawing_mode
+                        engine.options().display.drawing_mode
                     }
                 });
 
             let mut entry = serde_json::json!({
-                "id": se.id(),
+                "id": raw_id,
                 "molecule_type": mol_type,
-                "label": se.entity.label(),
-                "visible": se.visible,
-                "atom_count": se.entity.atom_count(),
+                "label": entity.label(),
+                "visible": engine.is_entity_visible(raw_id),
+                "atom_count": entity.atom_count(),
                 "chain_ids": chain_ids,
                 "focused": focused,
-                "focusable": se.entity.is_focusable(),
+                "focusable": entity.is_focusable(),
                 "drawing_mode": effective_mode,
                 "color_scheme": resolved_display.backbone_color_scheme,
                 "show_sidechains": resolved_display.show_sidechains,
-                "surface": effective_surface_kind(engine, se.id()),
-                "surface_color": effective_surface_color(engine, se.id()),
+                "surface": effective_surface_kind(engine, raw_id),
+                "surface_color": effective_surface_color(engine, raw_id),
                 "helix_style": resolved_display.helix_style,
                 "sheet_style": resolved_display.sheet_style,
                 "has_overrides": has_overrides,

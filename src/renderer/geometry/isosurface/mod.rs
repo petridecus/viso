@@ -38,10 +38,6 @@ pub mod isosurface_kind {
     /// Internal cavity mesh — gets the cavity-specific pulsing rim and
     /// (eventually) volumetric / depth-absorption shading.
     pub const CAVITY: u32 = 1;
-    /// Electron-density isosurface — currently rendered like a
-    /// surface, reserved here so future density-specific effects don't
-    /// require another schema change.
-    pub const DENSITY: u32 = 2;
 }
 
 /// A vertex on the extracted isosurface.

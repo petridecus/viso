@@ -14,7 +14,6 @@ use super::spline::{
     cubic_bspline, dual_hermite_spline, helix_aware_spline, SplinePoint,
 };
 use super::{BackboneMeshOutput, BackboneVertex};
-use crate::engine::scene_data::estimate_carbonyl_o;
 use crate::options::GeometryOptions;
 
 /// Per-chain index range and bounding sphere for frustum culling.
@@ -99,31 +98,17 @@ fn process_protein_chains(
         }
 
         let n_residues = atoms.ca.len();
-        let chain_override = ss_override.and_then(|o| {
+        let chain_slice = ss_override.and_then(|o| {
             let start = global_residue_idx as usize;
             let end = (start + n_residues).min(o.len());
-            (start < o.len()).then(|| &o[start..end])
+            (end.saturating_sub(start) == n_residues).then(|| &o[start..end])
         });
-        let ss_types = chain_override.map_or_else(
-            || {
-                // Build ResidueBackbone from N/CA/C, estimating O.
-                let backbone: Vec<molex::ResidueBackbone> = (0..n_residues)
-                    .filter_map(|r| {
-                        let n = *atoms.n.get(r)?;
-                        let ca = *atoms.ca.get(r)?;
-                        let c = *atoms.c.get(r)?;
-                        let o = if r + 1 < n_residues {
-                            let next_n = atoms.n[r + 1];
-                            estimate_carbonyl_o(next_n, ca, c)
-                        } else {
-                            ca + (c - ca).normalize_or_zero() * 1.231
-                        };
-                        Some(molex::ResidueBackbone { n, ca, c, o })
-                    })
-                    .collect();
-                let (ss, _) = molex::analysis::detect_dssp(&backbone);
-                molex::analysis::merge_short_segments(&ss)
-            },
+        // Engine sync always installs per-entity SS via
+        // `Assembly::ss_types`, so every protein chain with ≥ 2 CA atoms
+        // has a matching slice. If that invariant is ever violated the
+        // chain renders as coil — it doesn't recompute DSSP here.
+        let ss_types = chain_slice.map_or_else(
+            || vec![SSType::Coil; n_residues],
             molex::analysis::merge_short_segments,
         );
 

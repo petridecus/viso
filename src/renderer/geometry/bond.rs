@@ -5,12 +5,10 @@
 //! static structural annotations, not scoring-engine constraints.
 
 use glam::Vec3;
-use molex::AtomId;
 
-use crate::engine::viso_state::{EntityPositions, SceneRenderState};
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
-use crate::options::{BondOptions, BondStyle, ColorOptions};
+use crate::options::BondStyle;
 use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
 
 /// A single structural bond to be rendered.
@@ -32,118 +30,6 @@ pub struct StructuralBond {
     pub emissive: f32,
     /// Opacity (0.0 = fully transparent, 1.0 = fully opaque).
     pub opacity: f32,
-}
-
-/// Resolve cross-entity structural bonds from derived scene state into
-/// renderable [`StructuralBond`]s.
-///
-/// Both endpoint lists are `(AtomId, AtomId)` pairs rederived from the
-/// `Assembly` at sync time. Positions are resolved through
-/// [`EntityPositions`] so the render path reads only derived state and
-/// animator output — never `&Assembly` or `&MoleculeEntity`.
-pub(crate) fn resolve_structural_bonds(
-    scene_state: &SceneRenderState,
-    positions: &EntityPositions,
-    bond_opts: &BondOptions,
-    colors: &ColorOptions,
-) -> Vec<StructuralBond> {
-    let mut bonds = Vec::new();
-
-    if bond_opts.hydrogen_bonds.visible {
-        bonds.extend(resolve_hbonds(
-            &scene_state.hbond_endpoints,
-            positions,
-            bond_opts,
-            colors,
-        ));
-    }
-
-    if bond_opts.disulfide_bonds.visible {
-        bonds.extend(resolve_disulfides(
-            &scene_state.disulfide_endpoints,
-            positions,
-            bond_opts,
-            colors,
-        ));
-    }
-
-    bonds
-}
-
-/// Resolve an [`AtomId`] to a world-space position via
-/// [`EntityPositions`].
-fn atom_position(atom: AtomId, positions: &EntityPositions) -> Option<Vec3> {
-    positions
-        .get(atom.entity)
-        .and_then(|slice| slice.get(atom.index as usize).copied())
-}
-
-/// Emit an H-bond capsule per `(donor_N, acceptor_C)` endpoint pair.
-fn resolve_hbonds(
-    endpoints: &[(AtomId, AtomId)],
-    positions: &EntityPositions,
-    bond_opts: &BondOptions,
-    colors: &ColorOptions,
-) -> Vec<StructuralBond> {
-    let base_color = colors.band_hbond;
-    let w = 0.5;
-    let color = [
-        base_color[0] + (1.0 - base_color[0]) * w,
-        base_color[1] + (1.0 - base_color[1]) * w,
-        base_color[2] + (1.0 - base_color[2]) * w,
-    ];
-
-    endpoints
-        .iter()
-        .filter_map(|&(donor, acceptor)| {
-            let pos_a = atom_position(donor, positions)?;
-            let pos_b = atom_position(acceptor, positions)?;
-            Some(StructuralBond {
-                pos_a,
-                pos_b,
-                color,
-                radius: bond_opts.hydrogen_bonds.radius,
-                residue_idx: donor.index,
-                style: bond_opts.hydrogen_bonds.style,
-                emissive: 0.6,
-                opacity: 0.5,
-            })
-        })
-        .collect()
-}
-
-/// Emit a disulfide capsule per `(SG, SG)` endpoint pair.
-fn resolve_disulfides(
-    endpoints: &[(AtomId, AtomId)],
-    positions: &EntityPositions,
-    bond_opts: &BondOptions,
-    colors: &ColorOptions,
-) -> Vec<StructuralBond> {
-    let base_color = colors.band_disulfide;
-    let w = 0.5;
-    let color = [
-        base_color[0] + (1.0 - base_color[0]) * w,
-        base_color[1] + (1.0 - base_color[1]) * w,
-        base_color[2] + (1.0 - base_color[2]) * w,
-    ];
-
-    endpoints
-        .iter()
-        .filter_map(|&(a, b)| {
-            let pos_a = atom_position(a, positions)?;
-            let pos_b = atom_position(b, positions)?;
-            Some(StructuralBond {
-                pos_a,
-                pos_b,
-                color,
-                radius: bond_opts.disulfide_bonds.radius,
-                residue_idx: 0,
-                style: bond_opts.disulfide_bonds.style,
-                emissive: 0.6,
-                opacity: 0.5,
-            })
-        })
-        .collect()
 }
 
 /// Renders structural bonds as thin capsules.

@@ -5,9 +5,9 @@ use molex::entity::molecule::id::EntityId;
 use molex::SSType;
 use rustc_hash::FxHashMap;
 
-use crate::engine::viso_state::{
-    EntityPositions, EntityTopology, SceneRenderState,
-};
+use crate::renderer::entity_topology::EntityTopology;
+use crate::engine::positions::EntityPositions;
+use crate::engine::scene_state::SceneRenderState;
 use crate::options::{ColorOptions, DisplayOptions, DrawingMode, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;

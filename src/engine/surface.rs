@@ -125,7 +125,7 @@ impl VisoEngine {
             cavity, gaussian_surface, ses,
         };
 
-        let all_entities = self.entities.entities();
+        let all_entities = self.current_assembly.entities();
         let palette = self.options.display.backbone_palette();
         let global_kind = self.options.display.surface_kind;
         let global_opacity = self.options.display.surface_opacity;
@@ -139,8 +139,8 @@ impl VisoEngine {
         let mut cavity_jobs: Vec<(Vec<glam::Vec3>, Vec<f32>)> = Vec::new();
 
         for (entity_idx, se) in all_entities.iter().enumerate() {
-            let eid = se.id();
-            if !se.visible {
+            let eid = se.id().raw();
+            if !self.is_entity_visible(eid) {
                 continue;
             }
 
@@ -169,12 +169,11 @@ impl VisoEngine {
                 continue;
             }
 
-            let positions = se.entity.positions();
+            let positions = se.positions();
             if positions.is_empty() {
                 continue;
             }
             let radii: Vec<f32> = se
-                .entity
                 .atom_set()
                 .iter()
                 .map(|a| a.element.vdw_radius())

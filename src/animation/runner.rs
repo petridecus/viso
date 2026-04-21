@@ -1,125 +1,60 @@
-//! Animation runner executes a single animation.
+//! Animation runner: tracks phase-based progress for a single entity.
 
 use std::time::Duration;
 
-use glam::Vec3;
 use web_time::Instant;
 
 use super::transition::{AnimationPhase, Transition};
 
-/// Per-entity sidechain animation positions.
+/// Executes phase-based progress for a single entity's animation.
 ///
-/// Start and target positions for a single entity's sidechain atoms,
-/// lerped with the same `eased_t` as the backbone.
-pub struct SidechainAnimPositions {
-    /// Start sidechain atom positions.
-    pub(crate) start: Vec<Vec3>,
-    /// Target sidechain atom positions.
-    pub(crate) target: Vec<Vec3>,
-}
-
-/// The visual state of a residue at a point in time.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ResidueVisualState {
-    /// Backbone atom positions: N, CA, C
-    pub(crate) backbone: [Vec3; 3],
-}
-
-impl ResidueVisualState {
-    /// Residue state from backbone atom positions.
-    pub fn new(backbone: [Vec3; 3]) -> Self {
-        Self { backbone }
-    }
-
-    /// Linear interpolation between two states.
-    pub fn lerp(&self, other: &Self, t: f32) -> Self {
-        let backbone = [
-            self.backbone[0].lerp(other.backbone[0], t),
-            self.backbone[1].lerp(other.backbone[1], t),
-            self.backbone[2].lerp(other.backbone[2], t),
-        ];
-        Self { backbone }
-    }
-}
-
-/// Data for animating a single residue.
-#[derive(Debug, Clone)]
-pub(crate) struct ResidueAnimationData {
-    /// Global residue index.
-    pub(crate) residue_idx: usize,
-    /// Start state for this animation.
-    pub(crate) start: ResidueVisualState,
-    /// Target state for this animation.
-    pub(crate) target: ResidueVisualState,
-}
-
-/// Executes a single animation from start to target states.
-///
-/// The runner holds:
-/// - Animation phases (easing, duration, lerp range per phase)
-/// - Per-residue start/target backbone states
-/// - Optional sidechain atom positions (lerped with the same eased_t)
-/// - Timing information
+/// The runner tracks start time + phases and computes `eased_t` on
+/// demand. Per-atom interpolation is done by the caller using the
+/// eased value; the runner stays purely about *when*, not *what*.
 pub struct AnimationRunner {
-    /// When the animation started.
     start_time: Instant,
-    /// Animation phases.
     phases: Vec<AnimationPhase>,
-    /// Total duration across all phases.
     total_duration: Duration,
-    /// Debug name.
     name: &'static str,
-    /// Per-residue animation data (backbone).
-    residues: Vec<ResidueAnimationData>,
-    /// Optional sidechain atom start/target positions.
-    sidechain: Option<SidechainAnimPositions>,
 }
 
 impl AnimationRunner {
     /// Start a new animation from the given transition.
-    pub fn new(
-        transition: &Transition,
-        residues: Vec<ResidueAnimationData>,
-        sidechain: Option<SidechainAnimPositions>,
-    ) -> Self {
+    pub fn new(transition: &Transition) -> Self {
         Self {
             start_time: Instant::now(),
             phases: transition.phases.clone(),
             total_duration: transition.total_duration(),
             name: transition.name,
-            residues,
-            sidechain,
         }
     }
 
     /// Create with explicit start time (for testing).
     #[cfg(test)]
-    pub fn with_start_time(
-        start_time: Instant,
-        transition: &Transition,
-        residues: Vec<ResidueAnimationData>,
-        sidechain: Option<SidechainAnimPositions>,
-    ) -> Self {
+    pub fn with_start_time(start_time: Instant, transition: &Transition) -> Self {
         Self {
             start_time,
             phases: transition.phases.clone(),
             total_duration: transition.total_duration(),
             name: transition.name,
-            residues,
-            sidechain,
         }
     }
 
-    /// Get the total animation duration.
-    #[allow(dead_code)] // public API, not yet called internally
+    /// Transition's human-readable name (for logging).
+    #[allow(dead_code)]
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// Total animation duration across all phases.
+    #[allow(dead_code)]
     pub fn duration(&self) -> Duration {
         self.total_duration
     }
 
-    /// Calculate normalized progress (0.0 to 1.0).
+    /// Normalized progress 0.0..=1.0.
     pub fn progress(&self, now: Instant) -> f32 {
         let elapsed = now.saturating_duration_since(self.start_time);
-
         if self.total_duration.is_zero() {
             1.0
         } else {
@@ -133,10 +68,8 @@ impl AnimationRunner {
         self.progress(now) >= 1.0
     }
 
-    /// Compute the eased interpolation value for the given progress.
-    ///
-    /// Maps `raw_t` (0→1 over total duration) through the phase
-    /// sequence. Each phase applies its own easing within its lerp range.
+    /// Eased interpolation value for the given raw progress, respecting
+    /// the phase sequence.
     pub fn eased_t(&self, raw_t: f32) -> f32 {
         if raw_t >= 1.0 {
             return 1.0;
@@ -151,7 +84,10 @@ impl AnimationRunner {
         }
     }
 
-    /// Whether sidechains should be visible at the given progress.
+    /// Whether sidechains should be drawn at the given raw progress.
+    ///
+    /// Multi-phase behaviors hide sidechains during the backbone-lerp
+    /// phase so new atoms don't flash at their final positions.
     pub fn should_include_sidechains(&self, raw_t: f32) -> bool {
         if raw_t >= 1.0 {
             return true;
@@ -160,42 +96,6 @@ impl AnimationRunner {
             .is_none_or(|(phase, _)| phase.include_sidechains)
     }
 
-    /// Compute interpolated backbone states for this runner's residues.
-    ///
-    /// Returns an iterator of `(residue_idx, lerped_visual)` pairs using
-    /// the same eased_t as sidechain interpolation.
-    pub fn interpolate_residues(
-        &self,
-        t: f32,
-    ) -> impl Iterator<Item = (usize, ResidueVisualState)> + '_ {
-        let eased = self.eased_t(t);
-        self.residues.iter().map(move |data| {
-            (data.residue_idx, data.start.lerp(&data.target, eased))
-        })
-    }
-
-    /// Compute interpolated sidechain positions at the given progress.
-    ///
-    /// Uses the same `eased_t` as backbone interpolation. Returns `None`
-    /// if this runner has no sidechain data.
-    pub fn interpolate_sidechain(&self, t: f32) -> Option<Vec<Vec3>> {
-        let sc = self.sidechain.as_ref()?;
-        if t >= 1.0 {
-            return Some(sc.target.clone());
-        }
-        let eased = self.eased_t(t);
-        Some(
-            sc.start
-                .iter()
-                .zip(sc.target.iter())
-                .map(|(s, e)| s.lerp(*e, eased))
-                .collect(),
-        )
-    }
-
-    /// Find the current phase and local progress for a given `raw_t`.
-    ///
-    /// Returns the active phase and the local progress (0→1) within it.
     fn current_phase(&self, raw_t: f32) -> Option<(&AnimationPhase, f32)> {
         if self.phases.is_empty() {
             return None;
@@ -233,7 +133,6 @@ impl std::fmt::Debug for AnimationRunner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimationRunner")
             .field("name", &self.name)
-            .field("residue_count", &self.residues.len())
             .field("duration", &self.total_duration)
             .field("phases", &self.phases.len())
             .finish_non_exhaustive()
@@ -242,65 +141,28 @@ impl std::fmt::Debug for AnimationRunner {
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec3;
-
     use super::*;
 
-    fn make_residue_data(
-        idx: usize,
-        start_y: f32,
-        end_y: f32,
-    ) -> ResidueAnimationData {
-        ResidueAnimationData {
-            residue_idx: idx,
-            start: ResidueVisualState::new([
-                Vec3::new(0.0, start_y, 0.0),
-                Vec3::new(1.0, start_y, 0.0),
-                Vec3::new(2.0, start_y, 0.0),
-            ]),
-            target: ResidueVisualState::new([
-                Vec3::new(0.0, end_y, 0.0),
-                Vec3::new(1.0, end_y, 0.0),
-                Vec3::new(2.0, end_y, 0.0),
-            ]),
-        }
-    }
-
     #[test]
-    fn test_runner_progress() {
+    fn runner_progress() {
         let transition = Transition::linear(Duration::from_millis(100));
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
         let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(
-            start,
-            &transition,
-            residues,
-            None,
-        );
+        let runner = AnimationRunner::with_start_time(start, &transition);
 
         assert!((runner.progress(start) - 0.0).abs() < 0.01);
-
         let mid = start + Duration::from_millis(50);
         assert!((runner.progress(mid) - 0.5).abs() < 0.01);
-
         let end = start + Duration::from_millis(100);
         assert!((runner.progress(end) - 1.0).abs() < 0.01);
-
         let past = start + Duration::from_millis(200);
         assert!((runner.progress(past) - 1.0).abs() < 0.01);
     }
 
     #[test]
-    fn test_runner_eased_t_linear() {
+    fn runner_eased_t_linear() {
         let transition = Transition::linear(Duration::from_millis(100));
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
         let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(
-            start,
-            &transition,
-            residues,
-            None,
-        );
+        let runner = AnimationRunner::with_start_time(start, &transition);
 
         assert!((runner.eased_t(0.0) - 0.0).abs() < 0.01);
         assert!((runner.eased_t(0.5) - 0.5).abs() < 0.01);
@@ -308,67 +170,38 @@ mod tests {
     }
 
     #[test]
-    fn test_runner_snap() {
+    fn runner_snap() {
         let transition = Transition::snap();
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
-        let runner = AnimationRunner::new(&transition, residues, None);
+        let runner = AnimationRunner::new(&transition);
 
         assert!(runner.is_complete(Instant::now()));
         assert_eq!(runner.duration(), Duration::ZERO);
     }
 
     #[test]
-    fn test_runner_is_complete() {
-        let transition = Transition::linear(Duration::from_millis(100));
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
-        let start = Instant::now();
-        let runner = AnimationRunner::with_start_time(
-            start,
-            &transition,
-            residues,
-            None,
-        );
-
-        assert!(!runner.is_complete(start));
-        assert!(!runner.is_complete(start + Duration::from_millis(50)));
-        assert!(runner.is_complete(start + Duration::from_millis(100)));
-        assert!(runner.is_complete(start + Duration::from_millis(200)));
-    }
-
-    #[test]
-    fn test_two_phase_eased_t() {
+    fn two_phase_eased_t() {
         let transition = Transition::collapse_expand(
             Duration::from_millis(200),
             Duration::from_millis(300),
         );
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
-        let runner = AnimationRunner::new(&transition, residues, None);
+        let runner = AnimationRunner::new(&transition);
 
-        // At start
         assert!((runner.eased_t(0.0) - 0.0).abs() < 0.01);
-        // At end
         assert!((runner.eased_t(1.0) - 1.0).abs() < 0.01);
-        // Phase boundary (t=0.4 = end of phase 1)
-        // QuadraticIn at local_t=1.0 gives 1.0
-        // eased = 0.0 + 1.0 * 0.4 = 0.4
         assert!((runner.eased_t(0.4) - 0.4).abs() < 0.01);
     }
 
     #[test]
-    fn test_should_include_sidechains() {
+    fn should_include_sidechains() {
         let transition = Transition::backbone_then_expand(
             Duration::from_millis(300),
             Duration::from_millis(200),
         );
-        let residues = vec![make_residue_data(0, 0.0, 10.0)];
-        let runner = AnimationRunner::new(&transition, residues, None);
+        let runner = AnimationRunner::new(&transition);
 
-        // Phase 1 (0→0.6): sidechains hidden
         assert!(!runner.should_include_sidechains(0.0));
         assert!(!runner.should_include_sidechains(0.3));
-        // Phase 2 (0.6→1.0): sidechains visible
         assert!(runner.should_include_sidechains(0.7));
-        // Completed: always visible
         assert!(runner.should_include_sidechains(1.0));
     }
 }

@@ -20,6 +20,7 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+use crate::app::VisoApp;
 use crate::error::VisoError;
 use crate::input::processor::InputProcessor;
 use crate::input::{InputEvent, MouseButton};
@@ -140,9 +141,10 @@ impl Viewer {
             EventLoop::new().map_err(|e| VisoError::Viewer(e.to_string()))?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let mut app = ViewerApp {
+        let mut shell = ViewerShell {
             window: None,
             engine: None,
+            app: None,
             input: InputProcessor::new(),
             last_frame_time: Instant::now(),
             path: self.path,
@@ -150,23 +152,25 @@ impl Viewer {
             title: self.title,
             shown: false,
             #[cfg(feature = "gui")]
-            panel: crate::gui::panel::PanelController::new(),
+            panel: crate::app::gui::panel::PanelController::new(),
             #[cfg(all(target_os = "linux", feature = "gui"))]
             last_gtk_pump: Instant::now(),
         };
 
         event_loop
-            .run_app(&mut app)
+            .run_app(&mut shell)
             .map_err(|e| VisoError::Viewer(e.to_string()))
     }
 }
 
-// ── Winit app ────────────────────────────────────────────────────────────
+// ── Winit shell ──────────────────────────────────────────────────────────
 
-/// Internal winit application handler.
-struct ViewerApp {
+/// Winit [`ApplicationHandler`] that owns the [`VisoApp`] + engine
+/// pair, the window, and per-frame input routing.
+struct ViewerShell {
     window: Option<Arc<Window>>,
     engine: Option<VisoEngine>,
+    app: Option<VisoApp>,
     input: InputProcessor,
     last_frame_time: Instant,
     path: Option<String>,
@@ -175,7 +179,7 @@ struct ViewerApp {
     /// Whether the window has been made visible after the first frame.
     shown: bool,
     #[cfg(feature = "gui")]
-    panel: crate::gui::panel::PanelController,
+    panel: crate::app::gui::panel::PanelController,
     /// Throttle GTK event pumping so it doesn't starve the render loop.
     #[cfg(all(target_os = "linux", feature = "gui"))]
     last_gtk_pump: Instant,
@@ -189,28 +193,30 @@ fn viewport_size(inner: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
     (inner.width.max(1), inner.height.max(1))
 }
 
-/// Create a [`VisoEngine`], optionally loading a structure file.
+/// Build a [`VisoApp`] + [`VisoEngine`] pair, optionally seeding the
+/// app from a structure file. Returns `(app, engine)`.
 ///
-/// When `path` is `None`, an empty scene is created (no geometry loaded).
-fn create_engine(
+/// When `path` is `None` the app starts with an empty `Assembly`.
+fn create_app_and_engine(
     window: Arc<Window>,
     size: (u32, u32),
     scale: f64,
     path: Option<&str>,
-) -> Result<VisoEngine, VisoError> {
-    if let Some(path) = path {
-        pollster::block_on(VisoEngine::new_with_path(window, size, scale, path))
-    } else {
-        let mut context =
-            pollster::block_on(crate::gpu::RenderContext::new(window, size))?;
-        if scale < 2.0 {
-            context.render_scale = 2;
-        }
-        VisoEngine::new_empty(context)
+) -> Result<(VisoApp, VisoEngine), VisoError> {
+    let (app, consumer) = match path {
+        Some(p) => VisoApp::from_file(p)?,
+        None => VisoApp::new_empty(),
+    };
+    let mut context =
+        pollster::block_on(crate::gpu::RenderContext::new(window, size))?;
+    if scale < 2.0 {
+        context.render_scale = 2;
     }
+    let engine = VisoEngine::new(context, consumer, VisoOptions::default())?;
+    Ok((app, engine))
 }
 
-impl ViewerApp {
+impl ViewerShell {
     fn handle_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         let (vp_w, vp_h) = viewport_size(size);
         let Some(engine) = &mut self.engine else {
@@ -237,8 +243,10 @@ impl ViewerApp {
     /// Drain GUI actions, update, render, and push stats.
     fn handle_redraw(&mut self) {
         #[cfg(feature = "gui")]
-        if let (Some(window), Some(engine)) = (&self.window, &mut self.engine) {
-            self.panel.drain_and_apply(engine, window);
+        if let (Some(window), Some(engine), Some(app)) =
+            (&self.window, &mut self.engine, &mut self.app)
+        {
+            self.panel.drain_and_apply(app, engine, window);
         }
 
         let now = Instant::now();
@@ -390,7 +398,7 @@ fn window_attrs(event_loop: &ActiveEventLoop, title: &str) -> WindowAttributes {
     attrs
 }
 
-impl ApplicationHandler for ViewerApp {
+impl ApplicationHandler for ViewerShell {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -411,13 +419,13 @@ impl ApplicationHandler for ViewerApp {
         let scale = window.scale_factor();
         let (vp_w, vp_h) = viewport_size(inner);
 
-        let mut engine = match create_engine(
+        let (app, mut engine) = match create_app_and_engine(
             window.clone(),
             (vp_w, vp_h),
             scale,
             self.path.as_deref(),
         ) {
-            Ok(e) => e,
+            Ok(pair) => pair,
             Err(e) => {
                 log::error!("Failed to initialize engine: {e}");
                 event_loop.exit();
@@ -449,6 +457,7 @@ impl ApplicationHandler for ViewerApp {
         window.request_redraw();
         self.window = Some(window);
         self.engine = Some(engine);
+        self.app = Some(app);
     }
 
     fn window_event(

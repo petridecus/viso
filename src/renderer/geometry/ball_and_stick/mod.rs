@@ -9,7 +9,7 @@ mod instances;
 use glam::Vec3;
 use molex::MoleculeType;
 
-use crate::engine::viso_state::EntityTopology;
+use crate::renderer::entity_topology::EntityTopology;
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::{ColorOptions, DisplayOptions, DrawingMode};

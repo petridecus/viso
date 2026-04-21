@@ -13,6 +13,7 @@ use wasm_bindgen::JsCast;
 pub use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::HtmlCanvasElement;
 
+use crate::app::VisoApp;
 use crate::bridge::{self, PanelAxis, UiAction};
 use crate::gpu::RenderContext;
 use crate::input::InputProcessor;
@@ -20,12 +21,17 @@ use crate::options::VisoOptions;
 use crate::VisoEngine;
 
 // ---------------------------------------------------------------------------
-// Shared engine handle
+// Shared handles
 // ---------------------------------------------------------------------------
 
-/// Thread-local engine state shared between the rAF loop, input listeners,
-/// and the IPC bridge.
+/// Thread-local engine state shared between the rAF loop, input
+/// listeners, and the IPC bridge.
 type EngineHandle = Rc<RefCell<VisoEngine>>;
+
+/// Thread-local handle to the standalone-host [`VisoApp`]. The web
+/// build plays the same host role the native GUI does — owning
+/// `Assembly` + publisher and exposing the mutation surface.
+type AppHandle = Rc<RefCell<VisoApp>>;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -84,10 +90,12 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
         context.render_scale = 2;
     }
 
-    let engine = VisoEngine::new_empty(context)
+    let (app, consumer) = VisoApp::new_empty();
+    let engine = VisoEngine::new(context, consumer, VisoOptions::default())
         .map_err(|e| JsValue::from_str(&format!("Engine init failed: {e}")))?;
 
     let engine = Rc::new(RefCell::new(engine));
+    let app = Rc::new(RefCell::new(app));
     let input = Rc::new(RefCell::new(InputProcessor::new()));
 
     // Track panel axis and push orientation on init.  On resize, if the
@@ -101,6 +109,7 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
     // parent) because viso-ui runs inside the iframe and has its own
     // window object.  We defer the initial push until the iframe loads.
     install_ipc_bridge(
+        Rc::clone(&app),
         Rc::clone(&engine),
         Rc::clone(&panel_axis),
         Rc::clone(&panel_collapsed),
@@ -184,6 +193,7 @@ struct WebPanelState {
 }
 
 fn install_ipc_bridge(
+    app: AppHandle,
     engine: EngineHandle,
     axis: Rc<RefCell<PanelAxis>>,
     collapsed: Rc<RefCell<bool>>,
@@ -199,10 +209,11 @@ fn install_ipc_bridge(
 
     // -- Build the ipc object with a postMessage handler --
     let eng = Rc::clone(&engine);
+    let app_for_msg = Rc::clone(&app);
     let p = panel.clone();
     let on_message = Closure::<dyn FnMut(String)>::new(move |json: String| {
         log::info!("[bridge] ipc.postMessage received: {json}");
-        handle_ipc_action(&eng, &p, &json);
+        handle_ipc_action(&app_for_msg, &eng, &p, &json);
     });
 
     let ipc = js_sys::Object::new();
@@ -220,13 +231,15 @@ fn install_ipc_bridge(
 
     // -- window.__viso_load_bytes(bytes, formatHint) --
     let eng = Rc::clone(&engine);
+    let app_for_load = Rc::clone(&app);
     let load_bytes = Closure::<dyn FnMut(Vec<u8>, String)>::new(
         move |bytes: Vec<u8>, hint: String| match bridge::parse_file_bytes(
             &bytes, &hint,
         ) {
             Ok(bridge::ParsedFile::Structure(entities)) => {
+                let mut a = app_for_load.borrow_mut();
                 let mut e = eng.borrow_mut();
-                let _ids = e.replace_scene(entities);
+                let _ids = a.replace_scene(&mut e, entities);
                 push_load_status("loaded", "Structure loaded");
                 push_scene_entities(&e);
             }
@@ -377,7 +390,12 @@ fn eval_in(target_window: &JsValue, js: &str) {
 }
 
 /// Handle a JSON action from viso-ui (same format as native wry IPC).
-fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
+fn handle_ipc_action(
+    app: &AppHandle,
+    engine: &EngineHandle,
+    panel: &WebPanelState,
+    json: &str,
+) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(json) else {
         log::warn!("invalid IPC JSON: {json}");
         return;
@@ -417,9 +435,10 @@ fn handle_ipc_action(engine: &EngineHandle, panel: &WebPanelState, json: &str) {
             }
         }
         UiAction::FetchPdb { id, source } => {
+            let app_clone = Rc::clone(app);
             let eng_clone = Rc::clone(engine);
             wasm_bindgen_futures::spawn_local(async move {
-                fetch_and_load(&eng_clone, &id, &source).await;
+                fetch_and_load(&app_clone, &eng_clone, &id, &source).await;
             });
         }
         UiAction::Command(cmd) => {
@@ -536,7 +555,12 @@ fn apply_entity_option(
 }
 
 /// Fetch a structure from RCSB/PDB-REDO and load it.
-async fn fetch_and_load(engine: &EngineHandle, id: &str, source: &str) {
+async fn fetch_and_load(
+    app: &AppHandle,
+    engine: &EngineHandle,
+    id: &str,
+    source: &str,
+) {
     push_load_status("loading", &format!("Fetching {id}..."));
 
     let url = match source {
@@ -603,8 +627,9 @@ async fn fetch_and_load(engine: &EngineHandle, id: &str, source: &str) {
 
     match bridge::parse_structure_bytes(&bytes, "cif") {
         Ok(entities) => {
+            let mut a = app.borrow_mut();
             let mut eng = engine.borrow_mut();
-            let _ids = eng.replace_scene(entities);
+            let _ids = a.replace_scene(&mut eng, entities);
             push_load_status("loaded", &format!("Loaded {id}"));
             push_scene_entities(&eng);
         }
