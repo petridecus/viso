@@ -1,19 +1,17 @@
 //! All GPU infrastructure grouped together.
 
-use std::collections::HashMap;
 use std::sync::mpsc;
 
 use glam::{Mat4, Vec3};
-use molex::{MoleculeEntity, SSType};
+use molex::SSType;
 
-use crate::animation::AnimationFrame;
 use crate::camera::controller::CameraController;
 use crate::camera::core::Camera;
-use crate::engine::scene::{SceneTopology, SidechainTopology, VisualState};
+use crate::engine::viso_state::EntityPositions;
 use crate::gpu::lighting::Lighting;
 use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::{
-    ColorOptions, DisplayOptions, GeometryOptions, LightingOptions, VisoOptions,
+    GeometryOptions, LightingOptions, VisoOptions,
 };
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::isosurface::IsosurfaceVertex;
@@ -21,7 +19,9 @@ use crate::renderer::geometry::{
     PreparedBackboneData, PreparedBallAndStickData, SidechainView,
 };
 use crate::renderer::picking::PickingSystem;
-use crate::renderer::pipeline::prepared::PreparedScene;
+use crate::renderer::pipeline::prepared::{
+    AnimationFrameBody, PreparedScene,
+};
 use crate::renderer::pipeline::{SceneProcessor, SceneRequest};
 use crate::renderer::postprocess::post_process::PostProcessCamera;
 use crate::renderer::postprocess::PostProcessStack;
@@ -253,41 +253,24 @@ impl GpuPipeline {
         true
     }
 
-    /// Submit an animation frame to the background thread for mesh
-    /// generation, using a unified [`AnimationFrame`] from the animator.
+    /// Submit an animation frame to the background thread using the
+    /// engine's current interpolated positions. The worker reconstructs
+    /// per-entity backbone / sidechain mesh from cached topology.
     pub(crate) fn submit_animation_frame(
         &self,
-        frame: &AnimationFrame,
-        sidechain_topology: &SidechainTopology,
+        positions: &EntityPositions,
         geometry: &GeometryOptions,
+        include_sidechains: bool,
     ) {
-        let has_sc = !sidechain_topology.target_positions.is_empty()
-            && frame.sidechains_visible;
-
-        let sidechains = if has_sc {
-            let positions = frame
-                .sidechain_positions
-                .as_deref()
-                .unwrap_or(&sidechain_topology.target_positions);
-            let bonds = frame
-                .backbone_sidechain_bonds
-                .as_deref()
-                .unwrap_or(&sidechain_topology.target_backbone_bonds);
-            Some(sidechain_topology.to_interpolated_atoms(positions, bonds))
-        } else {
-            None
-        };
-
-        self.scene_processor.submit(SceneRequest::AnimationFrame {
-            backbone_chains: frame.backbone_chains.clone(),
-            na_chains: None,
-            sidechains,
-            ss_types: None,
-            per_residue_colors: None,
-            geometry: geometry.clone(),
-            per_chain_lod: None,
-            generation: self.scene_processor.generation(),
-        });
+        self.scene_processor.submit(SceneRequest::AnimationFrame(Box::new(
+            AnimationFrameBody {
+                positions: positions.clone(),
+                geometry: geometry.clone(),
+                per_chain_lod: None,
+                include_sidechains,
+                generation: self.scene_processor.generation(),
+            },
+        )));
     }
 
     /// Submit a backbone-only remesh with per-chain LOD to the background
@@ -303,6 +286,7 @@ impl GpuPipeline {
         &self,
         camera_eye: Vec3,
         geometry: &GeometryOptions,
+        positions: &EntityPositions,
     ) {
         // While a FullRebuild is in flight, the backbone renderer's
         // cached chains are stale. Submitting a LOD remesh now would
@@ -339,16 +323,15 @@ impl GpuPipeline {
             })
             .collect();
 
-        self.scene_processor.submit(SceneRequest::AnimationFrame {
-            backbone_chains: self.renderers.backbone.cached_chains().to_vec(),
-            na_chains: None,
-            sidechains: None,
-            ss_types: None,
-            per_residue_colors: None,
-            geometry: base_geo,
-            per_chain_lod: Some(per_chain_lod),
-            generation: self.scene_processor.generation(),
-        });
+        self.scene_processor.submit(SceneRequest::AnimationFrame(Box::new(
+            AnimationFrameBody {
+                positions: positions.clone(),
+                geometry: base_geo,
+                per_chain_lod: Some(per_chain_lod),
+                include_sidechains: false,
+                generation: self.scene_processor.generation(),
+            },
+        )));
     }
 
     /// Check per-chain LOD tiers and submit a background remesh if any
@@ -358,6 +341,7 @@ impl GpuPipeline {
         &mut self,
         camera_eye: Vec3,
         geometry: &GeometryOptions,
+        positions: &EntityPositions,
     ) {
         if self.scene_processor.is_scene_pending() {
             return;
@@ -378,7 +362,7 @@ impl GpuPipeline {
             self.renderers
                 .backbone
                 .set_cached_lod_tiers(per_chain_tiers);
-            self.submit_lod_remesh(camera_eye, geometry);
+            self.submit_lod_remesh(camera_eye, geometry, positions);
         }
     }
 
@@ -391,32 +375,6 @@ impl GpuPipeline {
     pub(crate) fn apply_post_processing(&mut self, options: &VisoOptions) {
         self.post_process
             .apply_options(options, &self.context.queue);
-    }
-
-    /// Refresh ball-and-stick renderer with current visibility flags.
-    pub(crate) fn refresh_ball_and_stick(
-        &mut self,
-        entities: impl Iterator<Item = MoleculeEntity>,
-        display: &DisplayOptions,
-        colors: Option<&ColorOptions>,
-    ) {
-        let entities: Vec<MoleculeEntity> = entities.collect();
-        self.renderers.ball_and_stick.update_from_entities(
-            &self.context,
-            &entities,
-            display,
-            colors,
-        );
-        self.pick.groups.rebuild_bns_bond(
-            &self.pick.picking,
-            &self.context.device,
-            &self.renderers.ball_and_stick,
-        );
-        self.pick.groups.rebuild_bns_sphere(
-            &self.pick.picking,
-            &self.context.device,
-            &self.renderers.ball_and_stick,
-        );
     }
 
     /// Update headlamp direction from the camera and push to the GPU.
@@ -478,68 +436,39 @@ impl GpuPipeline {
         self.pick.residue_colors.set_target_colors(colors);
     }
 
-    /// Update sidechain instances with frustum culling.
-    ///
-    /// Builds the sidechain view from visual/topology state, applies
-    /// sheet-surface adjustment, frustum-culls, and uploads to GPU.
-    /// Rebuilds the capsule pick bind group afterward.
-    pub(crate) fn update_frustum_culling(
+    /// Upload a sheet-adjusted, frustum-culled sidechain view and
+    /// rebuild the capsule pick bind group. Exposed as a primitive so
+    /// the engine can compose it against whichever state feeds the
+    /// sidechain topology.
+    pub(crate) fn upload_frustum_culled_sidechains(
         &mut self,
-        camera: &CameraController,
-        visual: &VisualState,
-        topology: &SceneTopology,
+        view: &SidechainView,
+        frustum: &crate::camera::frustum::Frustum,
         per_residue_colors: Option<&[[f32; 3]]>,
     ) {
-        self.last_cull_camera_eye = camera.camera.eye;
-
-        let frustum = camera.frustum();
-        let positions = if visual.sidechain_positions.is_empty() {
-            &topology.sidechain_topology.target_positions
-        } else {
-            &visual.sidechain_positions
-        };
-        let bs_bonds = if visual.backbone_sidechain_bonds.is_empty() {
-            topology.sidechain_topology.target_backbone_bonds.clone()
-        } else {
-            visual.backbone_sidechain_bonds.clone()
-        };
-
-        // Build sheet offset map from backbone renderer state
-        let offset_map: HashMap<u32, Vec3> = self
-            .renderers
-            .backbone
-            .sheet_offsets()
-            .iter()
-            .copied()
-            .collect();
-
-        // Translate sidechains onto sheet surface and apply frustum culling
-        let raw_view = SidechainView {
-            positions,
-            bonds: &topology.sidechain_topology.bonds,
-            backbone_bonds: &bs_bonds,
-            hydrophobicity: &topology.sidechain_topology.hydrophobicity,
-            residue_indices: &topology.sidechain_topology.residue_indices,
-        };
-        let adjusted =
-            crate::renderer::geometry::sheet_adjust::sheet_adjusted_view(
-                &raw_view,
-                &offset_map,
-            );
-
         self.renderers.sidechain.update_with_frustum(
             &self.context.device,
             &self.context.queue,
-            &adjusted.as_view(),
-            Some(&frustum),
+            view,
+            Some(frustum),
             per_residue_colors,
         );
-
-        // Recreate picking bind group since buffer may have changed
         self.pick.groups.rebuild_capsule(
             &self.pick.picking,
             &self.context.device,
             &self.renderers.sidechain,
         );
+    }
+
+    /// Record the camera eye at which frustum culling last ran. Used
+    /// by the engine to gate re-culling on camera motion.
+    pub(crate) fn set_last_cull_camera_eye(&mut self, eye: Vec3) {
+        self.last_cull_camera_eye = eye;
+    }
+
+    /// Read-only access to the backbone renderer's current sheet-offset
+    /// list for main-thread sidechain adjustment.
+    pub(crate) fn backbone_sheet_offsets(&self) -> &[(u32, Vec3)] {
+        self.renderers.backbone.sheet_offsets()
     }
 }

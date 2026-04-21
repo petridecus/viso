@@ -1,14 +1,15 @@
 //! Ball-and-stick renderer for small molecules (ligands, ions, waters).
 //!
 //! Renders atoms as ray-cast sphere impostors and bonds as capsule impostors.
-//! Uses distance-based bond inference from
-//! `molex::analysis::bonds::covalent`.
+//! Consumes entity-level [`EntityTopology`] + positions slice; the
+//! render path never sees `&MoleculeEntity` or `&Assembly`.
 
 mod instances;
 
 use glam::Vec3;
-use molex::MoleculeEntity;
+use molex::MoleculeType;
 
+use crate::engine::viso_state::EntityTopology;
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::{ColorOptions, DisplayOptions, DrawingMode};
@@ -51,35 +52,6 @@ pub(super) fn atom_color(
         (molex::Element::C, Some(tint)) => tint,
         _ => elem.cpk_color(),
     }
-}
-
-/// Build a map from atom index to sequential residue index for a polymer
-/// entity (protein or nucleic acid). Returns `None` for non-polymer entities.
-pub(super) fn build_atom_residue_map(
-    entity: &MoleculeEntity,
-    atom_count: usize,
-) -> Option<Vec<usize>> {
-    // Collect residue atom ranges from whichever polymer type matches.
-    let ranges: Vec<std::ops::Range<usize>> =
-        if let Some(protein) = entity.as_protein() {
-            protein
-                .residues
-                .iter()
-                .map(|r| r.atom_range.clone())
-                .collect()
-        } else {
-            let na = entity.as_nucleic_acid()?;
-            na.residues.iter().map(|r| r.atom_range.clone()).collect()
-        };
-    let mut map = vec![0usize; atom_count];
-    for (seq_idx, range) in ranges.into_iter().enumerate() {
-        for atom_idx in range {
-            if atom_idx < map.len() {
-                map[atom_idx] = seq_idx;
-            }
-        }
-    }
-    Some(map)
 }
 
 /// Pre-computed instance data for GPU upload.
@@ -172,156 +144,40 @@ impl BallAndStickRenderer {
         })
     }
 
-    /// Generate all instances from entity data (pure CPU, no GPU access
-    /// needed).
+    /// Generate sphere + capsule instances for a single entity using the
+    /// entity's derived topology and current positions.
     ///
-    /// `pick_id_offset` is added to all per-atom pick IDs so that IDs are
-    /// globally unique when multiple entities are concatenated. Pass `0` for
-    /// the live-update path (the scene processor concatenation applies offsets
-    /// at the byte level instead).
+    /// `pick_id_offset` is the base atom pick ID for this entity so pick
+    /// IDs remain globally unique across concatenated meshes.
     ///
-    /// `mode` controls Stick vs BallAndStick rendering for
-    /// protein/NA entities that were routed through this pipeline via a
-    /// drawing mode override. For non-protein entities this is ignored.
+    /// `drawing_mode` controls Stick vs BallAndStick for protein / NA
+    /// entities routed through this pipeline via a per-entity drawing
+    /// mode override. For non-polymer entities this is ignored.
     ///
     /// `per_residue_colors`, when provided, overrides CPK element
     /// coloring for polymer entities (Stick/BnS) — each atom is colored
     /// by its residue's backbone color (chain, SS, score, etc.).
-    ///
-    /// Returns (sphere_instances, bond_instances).
-    pub(crate) fn generate_all_instances(
-        entities: &[MoleculeEntity],
+    pub(crate) fn generate_entity_instances(
+        topology: &EntityTopology,
+        positions: &[Vec3],
         display: &DisplayOptions,
         colors: Option<&ColorOptions>,
         pick_id_offset: u32,
-        mode: DrawingMode,
+        drawing_mode: DrawingMode,
         per_residue_colors: Option<&[[f32; 3]]>,
     ) -> (Vec<SphereInstance>, Vec<CapsuleInstance>) {
         let mut out = InstanceCollector::default();
-        let mut atom_offset = pick_id_offset;
-
-        for entity in entities {
-            let entity_atom_count = entity.atom_count() as u32;
-            Self::generate_entity_instances(
-                entity,
-                display,
-                colors,
-                atom_offset,
-                mode,
-                per_residue_colors,
-                &mut out,
-            );
-            atom_offset += entity_atom_count;
-        }
-
-        (out.spheres, out.bonds)
-    }
-
-    /// Generate instances for a single entity, dispatching by molecule type.
-    ///
-    /// Proteins and nucleic acids only appear here when the user has
-    /// overridden their drawing mode to Stick or `BallAndStick`.
-    fn generate_entity_instances(
-        entity: &MoleculeEntity,
-        display: &DisplayOptions,
-        colors: Option<&ColorOptions>,
-        atom_offset: u32,
-        mode: DrawingMode,
-        per_residue_colors: Option<&[[f32; 3]]>,
-        out: &mut InstanceCollector,
-    ) {
-        use molex::MoleculeType;
-
-        let atoms = entity.atom_set();
-        match entity.molecule_type() {
-            // Protein/NA in Stick or BnS mode only — Cartoon-mode
-            // polymers are in non_protein_entities for the NA renderer
-            // but must NOT produce BnS instances.
-            MoleculeType::Protein | MoleculeType::DNA | MoleculeType::RNA
-                if mode != DrawingMode::Cartoon =>
-            {
-                instances::generate_polymer_bns_instances(
-                    entity,
-                    atom_offset,
-                    mode,
-                    per_residue_colors,
-                    out,
-                );
-            }
-            MoleculeType::Ligand | MoleculeType::Cofactor => {
-                let tint = (entity.molecule_type() == MoleculeType::Cofactor)
-                    .then(|| instances::resolve_cofactor_tint(entity, colors));
-                instances::generate_ligand_instances(
-                    atoms,
-                    tint,
-                    atom_offset,
-                    out,
-                );
-            }
-            MoleculeType::Lipid => {
-                let lipid_tint =
-                    colors.map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
-                if display.lipid_ball_and_stick() {
-                    instances::generate_ligand_instances(
-                        atoms,
-                        Some(lipid_tint),
-                        atom_offset,
-                        out,
-                    );
-                } else {
-                    instances::generate_coarse_lipid_instances(
-                        atoms,
-                        lipid_tint,
-                        atom_offset,
-                        out,
-                    );
-                }
-            }
-            MoleculeType::Ion if display.show_ions => {
-                instances::generate_ion_instances(atoms, atom_offset, out);
-            }
-            MoleculeType::Water if display.show_waters => {
-                instances::generate_water_instances(atoms, atom_offset, out);
-            }
-            MoleculeType::Solvent if display.show_solvent => {
-                let sc = colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
-                instances::generate_solvent_instances(
-                    atoms,
-                    sc,
-                    atom_offset,
-                    out,
-                );
-            }
-            _ => {}
-        }
-    }
-
-    /// Regenerate all instances from entity data.
-    pub fn update_from_entities(
-        &mut self,
-        context: &RenderContext,
-        entities: &[MoleculeEntity],
-        display: &DisplayOptions,
-        colors: Option<&ColorOptions>,
-    ) {
-        let (sphere_instances, bond_instances) = Self::generate_all_instances(
-            entities,
+        dispatch_entity(
+            topology,
+            positions,
             display,
             colors,
-            0,
-            DrawingMode::BallAndStick,
-            None,
+            pick_id_offset,
+            drawing_mode,
+            per_residue_colors,
+            &mut out,
         );
-        let _ = self.sphere_pass.write_instances(
-            &context.device,
-            &context.queue,
-            &sphere_instances,
-        );
-        let _ = self.bond_pass.write_instances(
-            &context.device,
-            &context.queue,
-            &bond_instances,
-        );
+        (out.spheres, out.bonds)
     }
 
     /// Apply pre-computed instance data (GPU upload only, no CPU generation).
@@ -381,5 +237,92 @@ impl BallAndStickRenderer {
             self.sphere_pass.buffer_info("BnS Spheres"),
             self.bond_pass.buffer_info("BnS Bonds"),
         ]
+    }
+}
+
+/// Dispatch a single entity by molecule type to the appropriate instance
+/// generator. Polymer entities produce no instances in `Cartoon` mode.
+fn dispatch_entity(
+    topology: &EntityTopology,
+    positions: &[Vec3],
+    display: &DisplayOptions,
+    colors: Option<&ColorOptions>,
+    atom_offset: u32,
+    drawing_mode: DrawingMode,
+    per_residue_colors: Option<&[[f32; 3]]>,
+    out: &mut InstanceCollector,
+) {
+    match topology.molecule_type {
+        MoleculeType::Protein | MoleculeType::DNA | MoleculeType::RNA
+            if drawing_mode != DrawingMode::Cartoon =>
+        {
+            instances::generate_polymer_bns_instances(
+                topology,
+                positions,
+                atom_offset,
+                drawing_mode,
+                per_residue_colors,
+                out,
+            );
+        }
+        MoleculeType::Ligand | MoleculeType::Cofactor => {
+            let tint = (topology.molecule_type == MoleculeType::Cofactor)
+                .then(|| instances::resolve_cofactor_tint(topology, colors));
+            instances::generate_ligand_instances(
+                topology,
+                positions,
+                tint,
+                atom_offset,
+                out,
+            );
+        }
+        MoleculeType::Lipid => {
+            let lipid_tint =
+                colors.map_or(LIPID_CARBON_TINT, |c| c.lipid_carbon_tint);
+            if display.lipid_ball_and_stick() {
+                instances::generate_ligand_instances(
+                    topology,
+                    positions,
+                    Some(lipid_tint),
+                    atom_offset,
+                    out,
+                );
+            } else {
+                instances::generate_coarse_lipid_instances(
+                    topology,
+                    positions,
+                    lipid_tint,
+                    atom_offset,
+                    out,
+                );
+            }
+        }
+        MoleculeType::Ion if display.show_ions => {
+            instances::generate_ion_instances(
+                topology,
+                positions,
+                atom_offset,
+                out,
+            );
+        }
+        MoleculeType::Water if display.show_waters => {
+            instances::generate_water_instances(
+                topology,
+                positions,
+                atom_offset,
+                out,
+            );
+        }
+        MoleculeType::Solvent if display.show_solvent => {
+            let sc = colors.map_or([0.6, 0.6, 0.6], |c| c.solvent_color);
+            instances::generate_solvent_instances(
+                topology,
+                positions,
+                sc,
+                atom_offset,
+                out,
+            );
+        }
+        _ => {}
     }
 }

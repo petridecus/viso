@@ -5,11 +5,12 @@
 //! static structural annotations, not scoring-engine constraints.
 
 use glam::Vec3;
+use molex::AtomId;
 
+use crate::engine::viso_state::{EntityPositions, SceneRenderState};
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::{BondOptions, BondStyle, ColorOptions};
-use crate::renderer::geometry::backbone::spline::project_backbone_atoms;
 use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
 
 /// A single structural bond to be rendered.
@@ -33,17 +34,16 @@ pub struct StructuralBond {
     pub opacity: f32,
 }
 
-/// Resolve detected bonds (from molex) into renderable [`StructuralBond`]s.
+/// Resolve cross-entity structural bonds from derived scene state into
+/// renderable [`StructuralBond`]s.
 ///
-/// H-bond endpoints are projected onto the backbone Catmull-Rom spline
-/// via [`project_backbone_atoms`] so they sit on the rendered ribbon.
-/// Disulfide endpoints use raw SG atom positions (sidechain atoms are
-/// not spline-smoothed).
+/// Both endpoint lists are `(AtomId, AtomId)` pairs rederived from the
+/// `Assembly` at sync time. Positions are resolved through
+/// [`EntityPositions`] so the render path reads only derived state and
+/// animator output — never `&Assembly` or `&MoleculeEntity`.
 pub(crate) fn resolve_structural_bonds(
-    hbonds: &[molex::HBond],
-    disulfides: &[molex::DisulfideBond],
-    backbone_chains: &[Vec<Vec3>],
-    atoms: &[molex::Atom],
+    scene_state: &SceneRenderState,
+    positions: &EntityPositions,
     bond_opts: &BondOptions,
     colors: &ColorOptions,
 ) -> Vec<StructuralBond> {
@@ -51,29 +51,40 @@ pub(crate) fn resolve_structural_bonds(
 
     if bond_opts.hydrogen_bonds.visible {
         bonds.extend(resolve_hbonds(
-            hbonds,
-            backbone_chains,
+            &scene_state.hbond_endpoints,
+            positions,
             bond_opts,
             colors,
         ));
     }
 
     if bond_opts.disulfide_bonds.visible {
-        bonds.extend(resolve_disulfides(disulfides, atoms, bond_opts, colors));
+        bonds.extend(resolve_disulfides(
+            &scene_state.disulfide_endpoints,
+            positions,
+            bond_opts,
+            colors,
+        ));
     }
 
     bonds
 }
 
-/// Map detected H-bonds to spline-projected backbone positions.
+/// Resolve an [`AtomId`] to a world-space position via
+/// [`EntityPositions`].
+fn atom_position(atom: AtomId, positions: &EntityPositions) -> Option<Vec3> {
+    positions
+        .get(atom.entity)
+        .and_then(|slice| slice.get(atom.index as usize).copied())
+}
+
+/// Emit an H-bond capsule per `(donor_N, acceptor_C)` endpoint pair.
 fn resolve_hbonds(
-    hbonds: &[molex::HBond],
-    backbone_chains: &[Vec<Vec3>],
+    endpoints: &[(AtomId, AtomId)],
+    positions: &EntityPositions,
     bond_opts: &BondOptions,
     colors: &ColorOptions,
 ) -> Vec<StructuralBond> {
-    let (n_positions, c_positions) = project_backbone_atoms(backbone_chains);
-
     let base_color = colors.band_hbond;
     let w = 0.5;
     let color = [
@@ -82,19 +93,17 @@ fn resolve_hbonds(
         base_color[2] + (1.0 - base_color[2]) * w,
     ];
 
-    hbonds
+    endpoints
         .iter()
-        .filter_map(|hb| {
-            // Donor N-H → acceptor C=O: render from donor's N to
-            // acceptor's C projected onto the backbone spline.
-            let pos_a = n_positions.get(hb.donor).copied()?;
-            let pos_b = c_positions.get(hb.acceptor).copied()?;
+        .filter_map(|&(donor, acceptor)| {
+            let pos_a = atom_position(donor, positions)?;
+            let pos_b = atom_position(acceptor, positions)?;
             Some(StructuralBond {
                 pos_a,
                 pos_b,
                 color,
                 radius: bond_opts.hydrogen_bonds.radius,
-                residue_idx: hb.donor as u32,
+                residue_idx: donor.index,
                 style: bond_opts.hydrogen_bonds.style,
                 emissive: 0.6,
                 opacity: 0.5,
@@ -103,10 +112,10 @@ fn resolve_hbonds(
         .collect()
 }
 
-/// Map detected disulfide bonds to SG atom positions.
+/// Emit a disulfide capsule per `(SG, SG)` endpoint pair.
 fn resolve_disulfides(
-    disulfides: &[molex::DisulfideBond],
-    atoms: &[molex::Atom],
+    endpoints: &[(AtomId, AtomId)],
+    positions: &EntityPositions,
     bond_opts: &BondOptions,
     colors: &ColorOptions,
 ) -> Vec<StructuralBond> {
@@ -118,11 +127,11 @@ fn resolve_disulfides(
         base_color[2] + (1.0 - base_color[2]) * w,
     ];
 
-    disulfides
+    endpoints
         .iter()
-        .filter_map(|ds| {
-            let pos_a = atoms.get(ds.sg_a).map(|a| a.position)?;
-            let pos_b = atoms.get(ds.sg_b).map(|a| a.position)?;
+        .filter_map(|&(a, b)| {
+            let pos_a = atom_position(a, positions)?;
+            let pos_b = atom_position(b, positions)?;
             Some(StructuralBond {
                 pos_a,
                 pos_b,

@@ -1,5 +1,4 @@
 use glam::Vec3;
-use molex::MoleculeEntity;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedEntityMesh,
@@ -96,14 +95,15 @@ struct MeshAccumulator {
     na_stem_count: u32,
     na_ring_bytes: Vec<u8>,
     na_ring_count: u32,
-    // Non-protein entities (for pick map)
-    non_protein: Vec<MoleculeEntity>,
+    /// Pick-map entries per entity that produced BnS content:
+    /// `(entity_id, atom_count)`.
+    bns_pick_entities: Vec<(u32, u32)>,
     // Residue tracking
     residue_offset: u32,
 }
 
 impl MeshAccumulator {
-    fn push_entity(&mut self, _entity_id: u32, mesh: &CachedEntityMesh) {
+    fn push_entity(&mut self, mesh: &CachedEntityMesh) {
         self.push_backbone(mesh);
 
         // Sidechain instances (self-contained)
@@ -121,7 +121,10 @@ impl MeshAccumulator {
             .extend_from_slice(&mesh.na.ring_instances);
         self.na_ring_count += mesh.na.ring_count;
 
-        self.push_non_protein(mesh);
+        if mesh.bns_atom_count > 0 {
+            self.bns_pick_entities
+                .push((mesh.entity_id, mesh.bns_atom_count));
+        }
 
         self.residue_offset += mesh.residue_count;
     }
@@ -186,14 +189,7 @@ impl MeshAccumulator {
             },
         );
         self.bns_capsule_count += mesh.bns.capsule_count;
-        for npe in &mesh.non_protein_entities {
-            self.bns_pick_offset += npe.atom_count() as u32;
-        }
-    }
-
-    fn push_non_protein(&mut self, mesh: &CachedEntityMesh) {
-        self.non_protein
-            .extend(mesh.non_protein_entities.iter().cloned());
+        self.bns_pick_offset += mesh.bns_atom_count;
     }
 
     /// Shift all BnS pick IDs by the global residue offset so they sit
@@ -209,9 +205,9 @@ impl MeshAccumulator {
 
     fn build_pick_map(&self) -> PickMap {
         let mut atom_entries: Vec<(u32, u32)> = Vec::new();
-        for entity in &self.non_protein {
-            for atom_idx in 0..entity.atom_count() as u32 {
-                atom_entries.push((*entity.id(), atom_idx));
+        for &(entity_id, atom_count) in &self.bns_pick_entities {
+            for atom_idx in 0..atom_count {
+                atom_entries.push((entity_id, atom_idx));
             }
         }
         PickMap::new(self.residue_offset, atom_entries)
@@ -275,11 +271,11 @@ fn patch_pick_id_buffer(
 
 /// Concatenate per-entity cached meshes into a single `PreparedScene`.
 pub fn concatenate_meshes(
-    entity_meshes: &[(u32, &CachedEntityMesh)],
+    entity_meshes: &[&CachedEntityMesh],
 ) -> PreparedScene {
     let mut acc = MeshAccumulator::default();
-    for &(entity_id, mesh) in entity_meshes {
-        acc.push_entity(entity_id, mesh);
+    for mesh in entity_meshes {
+        acc.push_entity(mesh);
     }
     acc.into_prepared_scene()
 }

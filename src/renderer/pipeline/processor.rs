@@ -9,13 +9,20 @@
 //! colors) clear the entire cache.
 
 use std::sync::mpsc;
+use std::sync::Arc;
 
+use molex::entity::molecule::id::EntityId;
+use molex::SSType;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::mesh_gen::{AnimationFrameCache, EntityMetaSnapshot};
 use super::prepared::{
-    CachedEntityMesh, PreparedAnimationFrame, PreparedScene, SceneRequest,
+    AnimationFrameBody, CachedEntityMesh, FullRebuildBody, FullRebuildEntity,
+    PreparedAnimationFrame, PreparedScene, SceneRequest,
 };
-use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
+use crate::options::{
+    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
+};
 
 // ---------------------------------------------------------------------------
 // Platform-abstracted background thread spawn
@@ -192,7 +199,7 @@ impl SceneProcessor {
         join_background(&mut self.worker);
     }
 
-    /// Background thread main loop with per-group mesh caching.
+    /// Background thread main loop with per-entity mesh caching.
     #[allow(clippy::needless_pass_by_value)]
     fn thread_loop(
         request_rx: mpsc::Receiver<SceneRequest>,
@@ -208,14 +215,16 @@ impl SceneProcessor {
 
             match latest {
                 SceneRequest::Shutdown => break,
-                SceneRequest::FullRebuild {
-                    entities,
-                    display,
-                    colors,
-                    geometry,
-                    entity_options,
-                    generation,
-                } => {
+                SceneRequest::FullRebuild(body) => {
+                    let FullRebuildBody {
+                        entities,
+                        scene_state: _scene_state,
+                        display,
+                        colors,
+                        geometry,
+                        entity_options,
+                        generation,
+                    } = *body;
                     last_rebuild_generation = generation;
                     cache.cache_stable_data(&entities, &display);
                     let entity_meshes = cache.update(
@@ -230,43 +239,24 @@ impl SceneProcessor {
                     prepared.generation = generation;
                     scene_input.write(Some(prepared));
                 }
-                SceneRequest::AnimationFrame {
-                    backbone_chains,
-                    na_chains,
-                    sidechains,
-                    ss_types,
-                    per_residue_colors,
-                    geometry,
-                    per_chain_lod,
-                    generation,
-                } => {
-                    // Skip animation frames from a scene that has already
-                    // been superseded by a newer FullRebuild.
+                SceneRequest::AnimationFrame(body) => {
+                    let AnimationFrameBody {
+                        positions,
+                        geometry,
+                        per_chain_lod,
+                        include_sidechains,
+                        generation,
+                    } = *body;
                     if generation < last_rebuild_generation {
                         continue;
                     }
-
-                    let na =
-                        na_chains.as_deref().unwrap_or(&cache.cached_na_chains);
-                    let ss = ss_types
-                        .as_deref()
-                        .or(cache.cached_ss_types.as_deref());
-                    let colors = per_residue_colors
-                        .as_deref()
-                        .or(cache.cached_per_residue_colors.as_deref());
                     let prepared = super::mesh_gen::process_animation_frame(
                         &super::mesh_gen::AnimationFrameInput {
-                            backbone_chains: &backbone_chains,
-                            na_chains: na,
-                            sidechains: sidechains.as_ref(),
-                            ss_types: ss,
-                            per_residue_colors: colors,
-                            sheet_plane_normals: None,
-                            na_base_colors: cache
-                                .cached_na_base_colors
-                                .as_deref(),
+                            positions: &positions,
+                            cache: &cache.anim_cache,
                             geometry: &geometry,
                             per_chain_lod: per_chain_lod.as_deref(),
+                            include_sidechains,
                         },
                         generation,
                     );
@@ -285,22 +275,15 @@ impl Drop for SceneProcessor {
 
 /// Per-entity mesh cache with settings-based invalidation.
 ///
-/// Also caches stable per-scene data (NA chains, SS types, per-residue
-/// colors) so that `AnimationFrame` requests can send `None` and avoid
-/// cloning this data every frame.
+/// Caches per-entity geometry keyed on [`EntityId`], plus an
+/// [`AnimationFrameCache`] snapshot so `AnimationFrame` requests can be
+/// regenerated using only derived state and interpolated positions.
 struct MeshCache {
-    meshes: FxHashMap<u32, (u64, CachedEntityMesh)>,
+    meshes: FxHashMap<EntityId, (u64, CachedEntityMesh)>,
     last_display: Option<DisplayOptions>,
     last_colors: Option<ColorOptions>,
     last_geometry: Option<GeometryOptions>,
-    /// Cached NA chains from the last `FullRebuild`.
-    cached_na_chains: Vec<Vec<glam::Vec3>>,
-    /// Cached SS types from the last `FullRebuild`.
-    cached_ss_types: Option<Vec<molex::SSType>>,
-    /// Cached per-residue colors from the last `FullRebuild`.
-    cached_per_residue_colors: Option<Vec<[f32; 3]>>,
-    /// Cached NA base colors from the last `FullRebuild`.
-    cached_na_base_colors: Option<Vec<[f32; 3]>>,
+    anim_cache: AnimationFrameCache,
 }
 
 impl MeshCache {
@@ -310,63 +293,86 @@ impl MeshCache {
             last_display: None,
             last_colors: None,
             last_geometry: None,
-            cached_na_chains: Vec::new(),
-            cached_ss_types: None,
-            cached_per_residue_colors: None,
-            cached_na_base_colors: None,
+            anim_cache: AnimationFrameCache {
+                topologies: FxHashMap::default(),
+                entity_meta: FxHashMap::default(),
+                cartoon_ss_types: None,
+                cartoon_per_residue_colors: None,
+                cartoon_na_base_colors: None,
+                entity_order: Vec::new(),
+            },
         }
     }
 
-    /// Cache stable per-scene data from entities so animation frames can
-    /// reference it without cloning every frame.
+    /// Cache stable per-scene data so animation frames can regenerate
+    /// backbone / sidechain meshes without re-sending topology.
     fn cache_stable_data(
         &mut self,
-        entities: &[crate::engine::scene_data::PerEntityData],
+        entities: &[FullRebuildEntity],
         display: &DisplayOptions,
     ) {
-        self.cached_na_chains = entities
-            .iter()
-            .flat_map(|e| e.nucleic_acid_chains.iter().cloned())
-            .collect();
-        // Only cache SS types and colors for Cartoon-mode entities —
-        // these must align with `cached_chains` (also Cartoon-only) so
-        // animation frames and LOD remeshes index correctly.
-        let cartoon: Vec<_> = entities
-            .iter()
-            .filter(|e| e.drawing_mode == crate::options::DrawingMode::Cartoon)
-            .cloned()
-            .collect::<Vec<_>>();
-        let cartoon_ranges =
-            crate::engine::scene_data::compute_entity_residue_ranges(&cartoon);
-        let ss: Vec<molex::SSType> =
-            crate::engine::scene_data::concatenate_ss_types(
-                &cartoon,
-                &cartoon_ranges,
+        self.anim_cache.topologies.clear();
+        self.anim_cache.entity_meta.clear();
+        self.anim_cache.entity_order.clear();
+        for e in entities {
+            let _ = self
+                .anim_cache
+                .topologies
+                .insert(e.id, Arc::clone(&e.topology));
+            let _ = self.anim_cache.entity_meta.insert(
+                e.id,
+                EntityMetaSnapshot {
+                    drawing_mode: e.drawing_mode,
+                },
             );
-        self.cached_ss_types = if ss.is_empty() { None } else { Some(ss) };
-        let colors: Vec<[f32; 3]> = cartoon
-            .iter()
-            .flat_map(|e| {
-                e.per_residue_colors.iter().flat_map(|c| c.iter().copied())
-            })
-            .collect();
-        self.cached_per_residue_colors = if colors.is_empty() {
-            None
-        } else {
-            Some(colors)
-        };
-        // Cache NA base colors for animation frames
-        let na_colors: Vec<[f32; 3]> = if display.na_color_mode
-            == crate::options::NaColorMode::BaseColor
-        {
-            entities
-                .iter()
-                .flat_map(|e| e.nucleic_acid_rings.iter().map(|r| r.color))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        self.cached_na_base_colors = if na_colors.is_empty() {
+            self.anim_cache.entity_order.push(e.id);
+        }
+
+        // SS types: only Cartoon-mode entities contribute, in entity
+        // order. Uses ss_override when present, falls back to
+        // topology.ss_types.
+        let mut ss: Vec<SSType> = Vec::new();
+        for e in entities {
+            if e.drawing_mode != DrawingMode::Cartoon {
+                continue;
+            }
+            if let Some(ovr) = e.ss_override.as_deref() {
+                ss.extend_from_slice(ovr);
+            } else {
+                ss.extend_from_slice(&e.topology.ss_types);
+            }
+        }
+        self.anim_cache.cartoon_ss_types =
+            if ss.is_empty() { None } else { Some(ss) };
+
+        // Per-residue colors: only Cartoon-mode entities contribute.
+        let mut colors: Vec<[f32; 3]> = Vec::new();
+        for e in entities {
+            if e.drawing_mode != DrawingMode::Cartoon {
+                continue;
+            }
+            if let Some(c) = e.topology.per_residue_colors.as_deref() {
+                colors.extend_from_slice(c);
+            }
+        }
+        self.anim_cache.cartoon_per_residue_colors =
+            if colors.is_empty() { None } else { Some(colors) };
+
+        // NA base colors: only Cartoon-mode NA entities contribute when
+        // BaseColor mode is active.
+        let mut na_colors: Vec<[f32; 3]> = Vec::new();
+        if display.na_color_mode == NaColorMode::BaseColor {
+            for e in entities {
+                if e.drawing_mode != DrawingMode::Cartoon
+                    || !e.topology.is_nucleic_acid()
+                {
+                    continue;
+                }
+                na_colors
+                    .extend(e.topology.ring_topology.iter().map(|r| r.color));
+            }
+        }
+        self.anim_cache.cartoon_na_base_colors = if na_colors.is_empty() {
             None
         } else {
             Some(na_colors)
@@ -377,19 +383,28 @@ impl MeshCache {
     /// concatenation.
     fn update(
         &mut self,
-        entities: &[crate::engine::scene_data::PerEntityData],
+        entities: &[FullRebuildEntity],
         display: &DisplayOptions,
         colors: &ColorOptions,
         geometry: &GeometryOptions,
         entity_options: &FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
-    ) -> Vec<(u32, &CachedEntityMesh)> {
-        // Clamp geometry detail so the concatenated vertex
-        // buffer stays under the wgpu 256 MB max.
+    ) -> Vec<&CachedEntityMesh> {
+        // Clamp geometry detail so the concatenated vertex buffer stays
+        // under the wgpu 256 MB max.
         let total_residues: usize = entities
             .iter()
             .map(|e| {
-                e.backbone_chains.iter().map(|c| c.len() / 3).sum::<usize>()
-                    + e.nucleic_acid_chains.iter().map(Vec::len).sum::<usize>()
+                e.topology
+                    .backbone_chain_layout
+                    .iter()
+                    .map(|c| {
+                        if e.topology.is_nucleic_acid() {
+                            c.len()
+                        } else {
+                            c.len() / 3
+                        }
+                    })
+                    .sum::<usize>()
             })
             .sum();
         let geometry = geometry.clamped_for_residues(total_residues);
@@ -407,15 +422,16 @@ impl MeshCache {
         self.last_colors = Some(colors.clone());
         self.last_geometry = Some(geometry.clone());
 
-        // Generate or reuse per-entity meshes
+        // Generate or reuse per-entity meshes.
         for e in entities {
+            let entity_u32 = *e.id;
             let needs_regen = self
                 .meshes
                 .get(&e.id)
                 .is_none_or(|(v, _)| *v != e.mesh_version);
             if needs_regen {
                 let (e_display, e_geometry) =
-                    if let Some((d, g)) = entity_options.get(&e.id) {
+                    if let Some((d, g)) = entity_options.get(&entity_u32) {
                         (d, g.clamped_for_residues(total_residues))
                     } else {
                         (display, geometry.clone())
@@ -430,17 +446,15 @@ impl MeshCache {
             }
         }
 
-        // Evict removed entities
-        let active_ids: FxHashSet<u32> =
+        // Evict removed entities.
+        let active_ids: FxHashSet<EntityId> =
             entities.iter().map(|e| e.id).collect();
         self.meshes.retain(|id, _| active_ids.contains(id));
 
-        // Collect references in entity order
+        // Collect references in entity order.
         entities
             .iter()
-            .filter_map(|e| {
-                self.meshes.get(&e.id).map(|(_, mesh)| (e.id, mesh))
-            })
+            .filter_map(|e| self.meshes.get(&e.id).map(|(_, mesh)| mesh))
             .collect()
     }
 }
@@ -458,8 +472,8 @@ fn drain_latest(
     while let Ok(newer) = rx.try_recv() {
         match (&latest, &newer) {
             (
-                SceneRequest::FullRebuild { .. },
-                SceneRequest::AnimationFrame { .. },
+                SceneRequest::FullRebuild(_),
+                SceneRequest::AnimationFrame(_),
             ) => {}
             _ => {
                 latest = newer;

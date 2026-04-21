@@ -1,16 +1,20 @@
 //! Scene loading, GPU pipeline initialization, and engine assembly.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use glam::Vec3;
 #[cfg(not(target_arch = "wasm32"))]
 use molex::adapters::pdb::structure_file_to_entities;
 use molex::entity::molecule::protein::ProteinEntity;
+use molex::{Assembly, MoleculeEntity};
 use web_time::Instant;
 
+use super::assembly_consumer::AssemblyConsumer;
 use super::density_store::DensityStore;
 use super::entity_store::EntityStore;
 use super::scene::{SceneTopology, VisualState};
+use super::viso_state::{EntityPositions, SceneRenderState};
 use super::{ConstraintSpecs, VisoEngine};
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
@@ -23,6 +27,49 @@ use crate::renderer::picking::{PickingSystem, SelectionBuffer};
 use crate::renderer::pipeline::SceneProcessor;
 use crate::renderer::postprocess::PostProcessStack;
 use crate::renderer::{GpuPipeline, PipelineLayouts, Renderers};
+
+// ---------------------------------------------------------------------------
+// Host-owned Assembly channel
+// ---------------------------------------------------------------------------
+//
+// Viso's engine is a read-only consumer of structural state. In library
+// deployments a host application owns the `Assembly` and publishes
+// snapshots to the engine through a triple buffer. When viso runs
+// standalone, construction plays that role transiently: wrap the loaded
+// entities in an `Assembly`, commit the initial snapshot, drop the
+// publisher. The engine keeps the consumer handle and polls it each
+// frame. Once mutation methods move off the engine, the publisher will
+// gain a persistent home here.
+
+/// Writer side of the host → viso assembly channel.
+struct AssemblyPublisher {
+    tx: triple_buffer::Input<Option<Arc<Assembly>>>,
+}
+
+impl AssemblyPublisher {
+    fn commit(&mut self, assembly: Arc<Assembly>) {
+        self.tx.write(Some(assembly));
+    }
+}
+
+fn assembly_channel() -> (AssemblyPublisher, AssemblyConsumer) {
+    let (tx, rx) = triple_buffer::triple_buffer(&None);
+    (AssemblyPublisher { tx }, AssemblyConsumer { rx })
+}
+
+/// Build an `Assembly` from the store's current entities and publish the
+/// initial snapshot. Returns the consumer handle for the engine.
+fn publish_initial_assembly(store: &EntityStore) -> AssemblyConsumer {
+    let entities: Vec<MoleculeEntity> = store
+        .entities()
+        .iter()
+        .map(|se| se.entity.clone())
+        .collect();
+    let assembly = Arc::new(Assembly::new(entities));
+    let (mut publisher, consumer) = assembly_channel();
+    publisher.commit(assembly);
+    consumer
+}
 
 /// Target FPS limit.
 const TARGET_FPS: u32 = 300;
@@ -148,7 +195,6 @@ fn init_gpu_pipeline(
     let renderers = Renderers::new(
         context,
         &layouts,
-        &entities,
         &mut shader_composer,
         &post_process.backface_depth_view,
     )?;
@@ -375,11 +421,6 @@ impl VisoEngine {
 
         let backbone_chains = extract_backbone_chains_from_store(&entities);
         let mut bootstrap = init_gpu_pipeline(&context, entities)?;
-        bootstrap.renderers.init_ball_and_stick_entities(
-            &context,
-            &bootstrap.entities,
-            &options,
-        );
         let colors = initial_chain_colors(
             &backbone_chains,
             backbone_chains.iter().map(|c| c.len() / 3).sum(),
@@ -429,11 +470,6 @@ impl VisoEngine {
 
         let backbone_chains = extract_backbone_chains_from_store(&entities);
         let mut bootstrap = init_gpu_pipeline(&context, entities)?;
-        bootstrap.renderers.init_ball_and_stick_entities(
-            &context,
-            &bootstrap.entities,
-            &options,
-        );
         let colors = initial_chain_colors(
             &backbone_chains,
             backbone_chains.iter().map(|c| c.len() / 3).sum(),
@@ -457,6 +493,7 @@ impl VisoEngine {
         bootstrap: GpuBootstrap,
     ) -> Result<Self, VisoError> {
         let (density_tx, density_rx) = std::sync::mpsc::channel();
+        let assembly_consumer = publish_initial_assembly(&bootstrap.entities);
         Ok(Self {
             gpu: GpuPipeline {
                 context,
@@ -486,6 +523,11 @@ impl VisoEngine {
             frame_timing: FrameTiming::new(TARGET_FPS),
             density: DensityStore::new(),
             entity_surfaces: rustc_hash::FxHashMap::default(),
+            assembly_consumer,
+            scene_state: Arc::new(SceneRenderState::new()),
+            entity_state: rustc_hash::FxHashMap::default(),
+            positions: EntityPositions::new(),
+            last_seen_generation: u64::MAX,
         })
     }
 }

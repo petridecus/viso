@@ -22,11 +22,6 @@ pub(crate) mod pipeline_util;
 /// Post-processing effects (SSAO, bloom, FXAA).
 pub mod postprocess;
 
-use glam::Vec3;
-use molex::entity::molecule::nucleic_acid::NAEntity;
-use molex::entity::molecule::protein::ProteinEntity;
-use molex::MoleculeEntity;
-
 use self::draw_context::DrawBindGroups;
 use self::geometry::isosurface::IsosurfaceRenderer;
 use self::geometry::{
@@ -35,9 +30,7 @@ use self::geometry::{
     SidechainView,
 };
 use crate::camera::frustum::Frustum;
-use crate::engine::entity_store::EntityStore;
 use crate::gpu::{RenderContext, ShaderComposer};
-use crate::options::VisoOptions;
 
 /// Bind group layouts shared by all molecular geometry pipelines.
 ///
@@ -83,37 +76,25 @@ pub(crate) struct Renderers {
 }
 
 impl Renderers {
-    /// Create all geometry renderers from the loaded entity data.
+    /// Create all geometry renderers with empty initial GPU buffers.
+    ///
+    /// First-frame geometry arrives via the background scene processor's
+    /// `PreparedScene`, not from renderer construction.
     pub fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
-        store: &EntityStore,
         shader_composer: &mut ShaderComposer,
         backface_depth_view: &wgpu::TextureView,
     ) -> Result<Self, crate::error::VisoError> {
-        let na_chains: Vec<Vec<Vec3>> = store
-            .nucleic_acid_entities()
-            .filter_map(|se| se.entity.as_nucleic_acid())
-            .flat_map(NAEntity::extract_p_atom_segments)
-            .collect();
-        // Extract protein backbone chains from all protein entities.
-        let protein_chains: Vec<Vec<Vec3>> = store
-            .entities()
-            .iter()
-            .filter_map(|se| se.entity.as_protein())
-            .flat_map(ProteinEntity::to_interleaved_segments)
-            .collect();
         let backbone = BackboneRenderer::new(
             context,
             layouts,
             &ChainPair {
-                protein: &protein_chains,
-                na: &na_chains,
+                protein: &[],
+                na: &[],
             },
             shader_composer,
         )?;
-        // Start with empty sidechain data — it will be populated on first
-        // scene sync when per-entity data is computed.
         let sidechain = SidechainRenderer::new(
             context,
             layouts,
@@ -131,16 +112,11 @@ impl Renderers {
         let pull = PullRenderer::new(context, layouts, shader_composer)?;
         let ball_and_stick =
             BallAndStickRenderer::new(context, layouts, shader_composer)?;
-        let na_rings: Vec<molex::NucleotideRing> = store
-            .nucleic_acid_entities()
-            .filter_map(|se| se.entity.as_nucleic_acid())
-            .flat_map(NAEntity::extract_base_rings)
-            .collect();
         let nucleic_acid = NucleicAcidRenderer::new(
             context,
             layouts,
-            &na_chains,
-            &na_rings,
+            &[],
+            &[],
             shader_composer,
         )?;
         let isosurface = IsosurfaceRenderer::new(
@@ -159,27 +135,6 @@ impl Renderers {
             nucleic_acid,
             isosurface,
         })
-    }
-
-    /// Populate ball-and-stick renderer with non-protein entities.
-    pub fn init_ball_and_stick_entities(
-        &mut self,
-        context: &RenderContext,
-        store: &EntityStore,
-        options: &VisoOptions,
-    ) {
-        let non_protein_refs: Vec<MoleculeEntity> = store
-            .entities()
-            .iter()
-            .filter(|se| !se.is_protein())
-            .map(|se| se.entity.clone())
-            .collect();
-        self.ball_and_stick.update_from_entities(
-            context,
-            &non_protein_refs,
-            &options.display,
-            Some(&options.colors),
-        );
     }
 
     /// Encode the isosurface back-face depth pre-pass.

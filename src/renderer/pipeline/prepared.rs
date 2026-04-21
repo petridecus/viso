@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use glam::Vec3;
-use molex::{MoleculeEntity, SSType};
+use molex::entity::molecule::id::EntityId;
+use molex::SSType;
 use rustc_hash::FxHashMap;
 
-use crate::engine::scene_data::{PerEntityData, SidechainAtoms};
-use crate::options::{ColorOptions, DisplayOptions, GeometryOptions};
+use crate::engine::viso_state::{
+    EntityPositions, EntityTopology, SceneRenderState,
+};
+use crate::options::{ColorOptions, DisplayOptions, DrawingMode, GeometryOptions};
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
 
@@ -70,48 +75,79 @@ pub(super) struct CachedBackbone {
     pub chain_ranges: Vec<ChainRange>,
 }
 
+// ---------------------------------------------------------------------------
+// Per-entity input carried on a SceneRequest::FullRebuild
+// ---------------------------------------------------------------------------
+
+/// Per-entity snapshot used by the background mesh worker.
+///
+/// Topology is Arc-shared across requests (stable between `Assembly`
+/// syncs); positions are cloned per request because the animator writes
+/// them every frame on the main thread.
+#[derive(Clone)]
+pub struct FullRebuildEntity {
+    /// Molex entity id.
+    pub id: EntityId,
+    /// Monotonic cache key. Bumped when this entity's topology was
+    /// rederived or the engine otherwise wants a remesh.
+    pub mesh_version: u64,
+    /// Resolved drawing mode.
+    pub drawing_mode: DrawingMode,
+    /// Render-ready view (atom elements, bond list, backbone/sidechain
+    /// layout, ring topology, per-residue colors, ...).
+    pub topology: Arc<EntityTopology>,
+    /// Interpolated atom positions at request-build time (entity-local,
+    /// parallel to `topology.atom_elements`).
+    pub positions: Vec<Vec3>,
+    /// Optional SS override, taking priority over `topology.ss_types`.
+    pub ss_override: Option<Vec<SSType>>,
+}
+
+/// Body of a full scene rebuild request, boxed on the enum variant to
+/// keep [`SceneRequest`] compact.
+pub struct FullRebuildBody {
+    /// Per-entity snapshots for mesh generation.
+    pub entities: Vec<FullRebuildEntity>,
+    /// Cross-entity derived state (disulfide + H-bond endpoints).
+    pub scene_state: Arc<SceneRenderState>,
+    /// Current display options for mesh generation.
+    pub display: DisplayOptions,
+    /// Current color options for mesh generation.
+    pub colors: ColorOptions,
+    /// Current geometry options for mesh generation.
+    pub geometry: GeometryOptions,
+    /// Per-entity resolved display+geometry overrides.
+    pub entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
+    /// Scene generation counter (monotonically increasing).
+    pub generation: u64,
+}
+
+/// Body of an animation-frame request, boxed for variant-size balance.
+pub struct AnimationFrameBody {
+    /// Interpolated positions keyed on entity id. The animator
+    /// writes these on the main thread; the worker reads.
+    pub positions: EntityPositions,
+    /// Geometry options for mesh generation.
+    pub geometry: GeometryOptions,
+    /// Per-chain (spr, csv) overrides for LOD. When `Some`, each chain
+    /// uses its own detail level instead of the global geo settings.
+    pub per_chain_lod: Option<Vec<(usize, usize)>>,
+    /// Whether to regenerate sidechain capsules this frame.
+    pub include_sidechains: bool,
+    /// Scene generation this frame belongs to.
+    pub generation: u64,
+}
+
 /// Request sent from main thread to scene processor.
 pub enum SceneRequest {
-    /// Full scene rebuild with per-entity data.
-    FullRebuild {
-        /// Per-entity data for mesh generation.
-        entities: Vec<PerEntityData>,
-        /// Current display options for mesh generation.
-        display: DisplayOptions,
-        /// Current color options for mesh generation.
-        colors: ColorOptions,
-        /// Current geometry options for mesh generation.
-        geometry: GeometryOptions,
-        /// Per-entity resolved display+geometry overrides.
-        entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
-        /// Scene generation counter (monotonically increasing).
-        generation: u64,
-    },
+    /// Full scene rebuild with per-entity derived state.
+    FullRebuild(Box<FullRebuildBody>),
     /// Per-frame animation mesh generation (backbone + optional sidechains).
     ///
-    /// `na_chains`, `ss_types`, and `per_residue_colors` are optional; when
-    /// `None` the background thread uses values cached from the last
-    /// `FullRebuild`, avoiding per-frame clones of stable data.
-    AnimationFrame {
-        /// Interpolated backbone atom chains.
-        backbone_chains: Vec<Vec<Vec3>>,
-        /// Nucleic acid P-atom chains. `None` = use cached from last rebuild.
-        na_chains: Option<Vec<Vec<Vec3>>>,
-        /// Optional interpolated sidechain data.
-        sidechains: Option<SidechainAtoms>,
-        /// Secondary structure types. `None` = use cached from last rebuild.
-        ss_types: Option<Vec<SSType>>,
-        /// Per-residue colors. `None` = use cached from last rebuild.
-        per_residue_colors: Option<Vec<[f32; 3]>>,
-        /// Geometry options for mesh generation.
-        geometry: GeometryOptions,
-        /// Per-chain (spr, csv) overrides for LOD. When `Some`, each
-        /// chain uses its own detail level instead of the global geo
-        /// settings.
-        per_chain_lod: Option<Vec<(usize, usize)>>,
-        /// Scene generation this frame belongs to.
-        generation: u64,
-    },
+    /// Carries interpolated positions directly. The background thread
+    /// regenerates backbone / sidechain meshes only, reusing topology
+    /// + scene-state snapshots from the last `FullRebuild`.
+    AnimationFrame(Box<AnimationFrameBody>),
     /// Shut down the background thread.
     Shutdown,
 }
@@ -165,8 +201,11 @@ pub(super) struct CachedEntityMesh {
     pub bns: BallAndStickInstances,
     /// Nucleic acid instance data.
     pub na: NucleicAcidInstances,
-    /// Number of residues in this entity.
+    /// Number of protein backbone residues contributed by this entity.
     pub residue_count: u32,
-    /// Non-protein entities (for BnS pick ID offset calculation).
-    pub non_protein_entities: Vec<MoleculeEntity>,
+    /// Atom count contributed to the BnS pick map (0 when this entity
+    /// did not produce any ball-and-stick instances).
+    pub bns_atom_count: u32,
+    /// Entity id, recorded per cached mesh for pick map reconstruction.
+    pub entity_id: u32,
 }

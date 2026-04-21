@@ -1,16 +1,21 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use glam::Vec3;
+use molex::entity::molecule::id::EntityId;
 use molex::SSType;
+use rustc_hash::FxHashMap;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
-    NucleicAcidInstances, PreparedAnimationFrame,
+    FullRebuildEntity, NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::engine::scene_data::{PerEntityData, SidechainAtoms};
+use crate::engine::viso_state::{EntityPositions, EntityTopology};
 use crate::options::{
-    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
+    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
+    SidechainColorMode,
 };
+use crate::renderer::geometry::backbone::sheet_fit;
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
@@ -19,45 +24,70 @@ use crate::renderer::geometry::{
     SidechainRenderer, SidechainView,
 };
 
-/// Generate sidechain capsule instances with sheet-surface adjustment.
+// ---------------------------------------------------------------------------
+// Sidechain capsule instance helper
+// ---------------------------------------------------------------------------
+
+/// Derive the renderer-facing sidechain view from a topology slice and
+/// interpolated atom positions, then apply sheet-surface adjustment
+/// against the fitted sheet-plane offsets.
+#[allow(clippy::too_many_arguments)]
 fn generate_sidechain_bytes(
-    g: &PerEntityData,
+    topology: &EntityTopology,
+    positions: &[Vec3],
+    per_residue_colors: Option<&[[f32; 3]]>,
     sheet_offsets: &[(u32, Vec3)],
     colors: &ColorOptions,
     display: &DisplayOptions,
 ) -> (Vec<u8>, u32) {
-    let sidechain_positions = g.sidechains.positions();
-    let sidechain_hydrophobicity = g.sidechains.hydrophobicity();
-    let sidechain_residue_indices = g.sidechains.residue_indices();
+    let layout = &topology.sidechain_layout;
+    if layout.atom_indices.is_empty() {
+        return (Vec::new(), 0);
+    }
+    let sidechain_positions: Vec<Vec3> = layout
+        .atom_indices
+        .iter()
+        .map(|&idx| positions.get(idx as usize).copied().unwrap_or(Vec3::ZERO))
+        .collect();
+    // Backbone→sidechain bonds use CA position (resolved from positions)
+    // + an index into the sidechain layout.
+    let backbone_bonds: Vec<(Vec3, u32)> = layout
+        .backbone_bonds
+        .iter()
+        .map(|&(ca_atom_idx, layout_idx)| {
+            let ca = positions
+                .get(ca_atom_idx as usize)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+            (ca, layout_idx)
+        })
+        .collect();
 
     let offset_map: HashMap<u32, Vec3> =
         sheet_offsets.iter().copied().collect();
     let adjusted_positions = adjust_sidechains_for_sheet(
         &sidechain_positions,
-        &sidechain_residue_indices,
+        &layout.residue_indices,
         &offset_map,
     );
     let adjusted_bonds = adjust_bonds_for_sheet(
-        &g.sidechains.backbone_bonds,
-        &sidechain_residue_indices,
+        &backbone_bonds,
+        &layout.residue_indices,
         &offset_map,
     );
-    let sd = SidechainView {
+    let view = SidechainView {
         positions: &adjusted_positions,
-        bonds: &g.sidechains.bonds,
+        bonds: &layout.bonds,
         backbone_bonds: &adjusted_bonds,
-        hydrophobicity: &sidechain_hydrophobicity,
-        residue_indices: &sidechain_residue_indices,
+        hydrophobicity: &layout.hydrophobicity,
+        residue_indices: &layout.residue_indices,
     };
-    let backbone_colors = if display.sidechain_color_mode
-        == crate::options::SidechainColorMode::Backbone
-    {
-        g.per_residue_colors.as_deref()
-    } else {
-        None
-    };
+    let backbone_colors = (display.sidechain_color_mode
+        == SidechainColorMode::Backbone)
+        .then_some(per_residue_colors)
+        .flatten();
     let insts = SidechainRenderer::generate_instances(
-        &sd,
+        &view,
         None,
         Some((colors.hydrophobic_sidechain, colors.hydrophilic_sidechain)),
         backbone_colors,
@@ -66,26 +96,48 @@ fn generate_sidechain_bytes(
     (bytemuck::cast_slice(&insts).to_vec(), count)
 }
 
-/// Generate ball-and-stick + nucleic acid instance bytes.
+// ---------------------------------------------------------------------------
+// Ball-and-stick / nucleic acid helper
+// ---------------------------------------------------------------------------
+
+/// Generate ball-and-stick + nucleic acid instance bytes for a single
+/// entity.
+///
+/// BnS pick IDs are emitted with a 0 base offset; `mesh_concat` applies
+/// the global offset during concatenation.
 fn generate_non_backbone_bytes(
-    g: &PerEntityData,
+    entity: &FullRebuildEntity,
     display: &DisplayOptions,
     colors: &ColorOptions,
-) -> (BallAndStickInstances, NucleicAcidInstances) {
+) -> (BallAndStickInstances, NucleicAcidInstances, u32) {
     let (bns_spheres, bns_capsules) =
-        BallAndStickRenderer::generate_all_instances(
-            &g.non_protein_entities,
+        BallAndStickRenderer::generate_entity_instances(
+            &entity.topology,
+            &entity.positions,
             display,
             Some(colors),
             0,
-            g.drawing_mode,
-            g.per_residue_colors.as_deref(),
+            entity.drawing_mode,
+            entity.topology.per_residue_colors.as_deref(),
         );
+    let na_chains = entity.topology.backbone_chain_positions(&entity.positions);
+    let na_chain_slice: &[Vec<Vec3>] =
+        if entity.topology.is_nucleic_acid() {
+            &na_chains
+        } else {
+            &[]
+        };
+    let rings = entity.topology.resolve_rings(&entity.positions);
     let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
-        &g.nucleic_acid_chains,
-        &g.nucleic_acid_rings,
+        na_chain_slice,
+        &rings,
         Some(colors.nucleic_acid),
     );
+    let bns_atoms = if bns_spheres.is_empty() && bns_capsules.is_empty() {
+        0
+    } else {
+        entity.topology.atom_elements.len() as u32
+    };
     (
         BallAndStickInstances {
             sphere_instances: bytemuck::cast_slice(&bns_spheres).to_vec(),
@@ -99,20 +151,24 @@ fn generate_non_backbone_bytes(
             ring_instances: bytemuck::cast_slice(&na_rings).to_vec(),
             ring_count: na_rings.len() as u32,
         },
+        bns_atoms,
     )
 }
 
+// ---------------------------------------------------------------------------
+// Entity mesh generation
+// ---------------------------------------------------------------------------
+
 /// Generate mesh for a single entity.
-pub fn generate_entity_mesh(
-    g: &PerEntityData,
+pub(super) fn generate_entity_mesh(
+    entity: &FullRebuildEntity,
     display: &DisplayOptions,
     colors: &ColorOptions,
     geometry: &GeometryOptions,
 ) -> CachedEntityMesh {
-    let skip_backbone = g.drawing_mode != DrawingMode::Cartoon;
+    let skip_backbone = entity.drawing_mode != DrawingMode::Cartoon;
+    let topology = &entity.topology;
 
-    // Backbone mesh (skipped for Stick/BnS — backbone_chains are only
-    // kept for per-residue color computation in those modes).
     let backbone_mesh = if skip_backbone {
         BackboneRenderer::generate_mesh_colored(
             &ChainPair {
@@ -127,10 +183,15 @@ pub fn generate_entity_mesh(
             None,
         )
     } else {
-        let na_base_colors: Vec<[f32; 3]> = if display.na_color_mode
-            == crate::options::NaColorMode::BaseColor
+        let chain_positions = topology.backbone_chain_positions(&entity.positions);
+        let is_na = topology.is_nucleic_acid();
+        let protein_chains: &[Vec<Vec3>] = if is_na { &[] } else { &chain_positions };
+        let na_chains: &[Vec<Vec3>] = if is_na { &chain_positions } else { &[] };
+
+        let na_base_colors: Vec<[f32; 3]> = if is_na
+            && display.na_color_mode == NaColorMode::BaseColor
         {
-            g.nucleic_acid_rings.iter().map(|r| r.color).collect()
+            topology.ring_topology.iter().map(|r| r.color).collect()
         } else {
             Vec::new()
         };
@@ -139,14 +200,21 @@ pub fn generate_entity_mesh(
         } else {
             Some(na_base_colors.as_slice())
         };
+
+        let ss_slice = entity
+            .ss_override
+            .as_deref()
+            .or_else(|| Some(topology.ss_types.as_slice()))
+            .filter(|s| !s.is_empty());
+
         BackboneRenderer::generate_mesh_colored(
             &ChainPair {
-                protein: &g.backbone_chains,
-                na: &g.nucleic_acid_chains,
+                protein: protein_chains,
+                na: na_chains,
             },
-            g.ss_override.as_deref(),
-            g.per_residue_colors.as_deref(),
-            &g.sheet_plane_normals,
+            ss_slice,
+            topology.per_residue_colors.as_deref(),
+            &topology.sheet_plane_normals,
             geometry,
             None,
             na_colors_ref,
@@ -157,13 +225,26 @@ pub fn generate_entity_mesh(
         (Vec::new(), 0)
     } else {
         generate_sidechain_bytes(
-            g,
+            topology,
+            &entity.positions,
+            topology.per_residue_colors.as_deref(),
             &backbone_mesh.sheet_offsets,
             colors,
             display,
         )
     };
-    let (bns, na) = generate_non_backbone_bytes(g, display, colors);
+    let (bns, na, bns_atom_count) =
+        generate_non_backbone_bytes(entity, display, colors);
+
+    let residue_count = if topology.is_protein() {
+        topology
+            .backbone_chain_layout
+            .iter()
+            .map(|c| (c.len() / 3) as u32)
+            .sum()
+    } else {
+        0
+    };
 
     CachedEntityMesh {
         backbone: CachedBackbone {
@@ -178,81 +259,74 @@ pub fn generate_entity_mesh(
         sidechain_instance_count,
         bns,
         na,
-        residue_count: g.residue_count,
-        non_protein_entities: g.non_protein_entities.clone(),
+        residue_count,
+        bns_atom_count,
+        entity_id: *entity.id,
     }
 }
 
-/// Generate sidechain instances for an animation frame.
-fn generate_animation_sidechains(
-    sc: &SidechainAtoms,
-    sheet_offsets: &[(u32, Vec3)],
-) -> (Option<Vec<u8>>, u32) {
-    let positions = sc.positions();
-    let hydrophobicity = sc.hydrophobicity();
-    let residue_indices = sc.residue_indices();
-    let offset_map: HashMap<u32, Vec3> =
-        sheet_offsets.iter().copied().collect();
-    let adjusted_positions =
-        adjust_sidechains_for_sheet(&positions, &residue_indices, &offset_map);
-    let adjusted_bonds = adjust_bonds_for_sheet(
-        &sc.backbone_bonds,
-        &residue_indices,
-        &offset_map,
-    );
-    let sd = SidechainView {
-        positions: &adjusted_positions,
-        bonds: &sc.bonds,
-        backbone_bonds: &adjusted_bonds,
-        hydrophobicity: &hydrophobicity,
-        residue_indices: &residue_indices,
-    };
-    let insts = SidechainRenderer::generate_instances(&sd, None, None, None);
-    let count = insts.len() as u32;
-    (Some(bytemuck::cast_slice(&insts).to_vec()), count)
+// ---------------------------------------------------------------------------
+// Animation-frame regeneration (backbone + optional sidechains)
+// ---------------------------------------------------------------------------
+
+/// Cached per-scene inputs threaded into each animation frame.
+pub(super) struct AnimationFrameCache {
+    /// Per-entity topology snapshots (same Arcs the main thread holds).
+    pub topologies: FxHashMap<EntityId, Arc<EntityTopology>>,
+    /// Per-entity drawing-mode + SS-override lookup.
+    pub entity_meta: FxHashMap<EntityId, EntityMetaSnapshot>,
+    /// Concatenated SS types for Cartoon-mode entities only (feeds the
+    /// backbone mesh).
+    pub cartoon_ss_types: Option<Vec<SSType>>,
+    /// Concatenated per-residue colors for Cartoon-mode entities only.
+    pub cartoon_per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// Concatenated NA base colors for Cartoon-mode NA entities.
+    pub cartoon_na_base_colors: Option<Vec<[f32; 3]>>,
+    /// Rendering order of entities, captured at the last `FullRebuild`.
+    pub entity_order: Vec<EntityId>,
+}
+
+/// Per-entity metadata the animator needs when regenerating a frame.
+#[derive(Clone)]
+pub(super) struct EntityMetaSnapshot {
+    pub drawing_mode: DrawingMode,
 }
 
 /// Input data for [`process_animation_frame`].
-pub struct AnimationFrameInput<'a> {
-    pub backbone_chains: &'a [Vec<Vec3>],
-    pub na_chains: &'a [Vec<Vec3>],
-    pub sidechains: Option<&'a SidechainAtoms>,
-    pub ss_types: Option<&'a [SSType]>,
-    pub per_residue_colors: Option<&'a [[f32; 3]]>,
-    /// Snapshot of fitted sheet plane normals from the static frame.
-    /// `None` during animation means "fall back to local peptide
-    /// plane" — acceptable for transient frames where strand face
-    /// directions may briefly regress to the pre-fit behavior.
-    pub sheet_plane_normals: Option<&'a [(u32, Vec3)]>,
-    pub na_base_colors: Option<&'a [[f32; 3]]>,
+pub(super) struct AnimationFrameInput<'a> {
+    pub positions: &'a EntityPositions,
+    pub cache: &'a AnimationFrameCache,
     pub geometry: &'a GeometryOptions,
     pub per_chain_lod: Option<&'a [(usize, usize)]>,
+    pub include_sidechains: bool,
 }
 
-/// Generate backbone + optional sidechain mesh for an animation frame.
-pub fn process_animation_frame(
+/// Generate backbone + optional sidechain mesh for an animation frame
+/// using only derived state + interpolated positions.
+pub(super) fn process_animation_frame(
     input: &AnimationFrameInput,
     generation: u64,
 ) -> PreparedAnimationFrame {
-    // --- Backbone mesh (protein + nucleic acid, unified) ---
-    let total_residues: usize = input
-        .backbone_chains
+    let (protein_chains, na_chains) = collect_cartoon_chains(input);
+
+    let total_residues: usize = protein_chains
         .iter()
         .map(|c| c.len() / 3)
         .sum::<usize>()
-        + input.na_chains.iter().map(Vec::len).sum::<usize>();
+        + na_chains.iter().map(Vec::len).sum::<usize>();
     let safe_geo = input.geometry.clamped_for_residues(total_residues);
+
     let backbone_mesh = BackboneRenderer::generate_mesh_colored(
         &ChainPair {
-            protein: input.backbone_chains,
-            na: input.na_chains,
+            protein: &protein_chains,
+            na: &na_chains,
         },
-        input.ss_types,
-        input.per_residue_colors,
-        input.sheet_plane_normals.unwrap_or(&[]),
+        input.cache.cartoon_ss_types.as_deref(),
+        input.cache.cartoon_per_residue_colors.as_deref(),
+        &[],
         &safe_geo,
         input.per_chain_lod,
-        input.na_base_colors,
+        input.cache.cartoon_na_base_colors.as_deref(),
     );
     let backbone_tube_index_count = backbone_mesh.tube_indices.len() as u32;
     let backbone_ribbon_index_count = backbone_mesh.ribbon_indices.len() as u32;
@@ -263,11 +337,12 @@ pub fn process_animation_frame(
     let backbone_ribbon_indices =
         bytemuck::cast_slice(&backbone_mesh.ribbon_indices).to_vec();
 
-    // --- Optional sidechain capsules ---
     let (sidechain_instances, sidechain_instance_count) =
-        input.sidechains.map_or((None, 0), |sc| {
-            generate_animation_sidechains(sc, &backbone_mesh.sheet_offsets)
-        });
+        if input.include_sidechains {
+            generate_animation_sidechains(input, &backbone_mesh.sheet_offsets)
+        } else {
+            (None, 0)
+        };
 
     PreparedAnimationFrame {
         backbone: BackboneMeshData {
@@ -283,4 +358,112 @@ pub fn process_animation_frame(
         sidechain_instance_count,
         generation,
     }
+}
+
+/// Walk cached Cartoon-mode entities in their last rebuild order and
+/// resolve each entity's backbone positions from the current animator
+/// frame.
+fn collect_cartoon_chains(
+    input: &AnimationFrameInput,
+) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
+    let mut protein_chains: Vec<Vec<Vec3>> = Vec::new();
+    let mut na_chains: Vec<Vec<Vec3>> = Vec::new();
+    for id in &input.cache.entity_order {
+        let Some(meta) = input.cache.entity_meta.get(id) else {
+            continue;
+        };
+        if meta.drawing_mode != DrawingMode::Cartoon {
+            continue;
+        }
+        let Some(topology) = input.cache.topologies.get(id) else {
+            continue;
+        };
+        let Some(positions) = input.positions.get(*id) else {
+            continue;
+        };
+        let chain_positions = topology.backbone_chain_positions(positions);
+        if topology.is_nucleic_acid() {
+            na_chains.extend(chain_positions);
+        } else {
+            protein_chains.extend(chain_positions);
+        }
+    }
+    (protein_chains, na_chains)
+}
+
+/// Concatenate per-entity sidechain capsule bytes for the animation
+/// frame.
+fn generate_animation_sidechains(
+    input: &AnimationFrameInput,
+    sheet_offsets: &[(u32, Vec3)],
+) -> (Option<Vec<u8>>, u32) {
+    let mut combined: Vec<u8> = Vec::new();
+    let mut total_count: u32 = 0;
+    let offset_map: HashMap<u32, Vec3> =
+        sheet_offsets.iter().copied().collect();
+
+    for id in &input.cache.entity_order {
+        let Some(meta) = input.cache.entity_meta.get(id) else {
+            continue;
+        };
+        if meta.drawing_mode != DrawingMode::Cartoon {
+            continue;
+        }
+        let Some(topology) = input.cache.topologies.get(id) else {
+            continue;
+        };
+        if topology.sidechain_layout.atom_indices.is_empty() {
+            continue;
+        }
+        let Some(positions) = input.positions.get(*id) else {
+            continue;
+        };
+        let layout = &topology.sidechain_layout;
+        let sidechain_positions: Vec<Vec3> = layout
+            .atom_indices
+            .iter()
+            .map(|&idx| positions.get(idx as usize).copied().unwrap_or(Vec3::ZERO))
+            .collect();
+        let backbone_bonds: Vec<(Vec3, u32)> = layout
+            .backbone_bonds
+            .iter()
+            .map(|&(ca_atom_idx, layout_idx)| {
+                let ca = positions
+                    .get(ca_atom_idx as usize)
+                    .copied()
+                    .unwrap_or(Vec3::ZERO);
+                (ca, layout_idx)
+            })
+            .collect();
+        let adjusted_positions = adjust_sidechains_for_sheet(
+            &sidechain_positions,
+            &layout.residue_indices,
+            &offset_map,
+        );
+        let adjusted_bonds = adjust_bonds_for_sheet(
+            &backbone_bonds,
+            &layout.residue_indices,
+            &offset_map,
+        );
+        let view = SidechainView {
+            positions: &adjusted_positions,
+            bonds: &layout.bonds,
+            backbone_bonds: &adjusted_bonds,
+            hydrophobicity: &layout.hydrophobicity,
+            residue_indices: &layout.residue_indices,
+        };
+        let insts =
+            SidechainRenderer::generate_instances(&view, None, None, None);
+        total_count += insts.len() as u32;
+        combined.extend_from_slice(bytemuck::cast_slice(&insts));
+    }
+
+    (Some(combined), total_count)
+}
+
+// Silence the unused import warning in sheet_fit when AnimationFrameCache
+// doesn't reach for sheet-plane-normals (kept for future hook).
+#[allow(dead_code)]
+fn _silence_sheet_fit() {
+    let _ = sheet_fit::compute_sheet_plane_normals as *const ();
 }

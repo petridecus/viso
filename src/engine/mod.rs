@@ -21,12 +21,15 @@ use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
+use assembly_consumer::AssemblyConsumer;
 pub(crate) use bootstrap::FrameTiming;
 use density_store::DensityStore;
 use entity_store::EntityStore;
+use molex::entity::molecule::id::EntityId;
 use rustc_hash::FxHashMap;
 use scene::{Focus, SceneTopology, VisualState};
 use surface::EntitySurface;
+use viso_state::{EntityPositions, SceneRenderState, VisoEntityState};
 use web_time::Instant;
 
 use crate::animation::AnimationState;
@@ -99,6 +102,26 @@ pub struct VisoEngine {
     pub(crate) density: DensityStore,
     /// Per-entity molecular surfaces (internal mesh generation params).
     pub(crate) entity_surfaces: FxHashMap<u32, EntitySurface>,
+
+    /// Triple-buffer reader for the host-owned `Assembly`. Polled once per
+    /// frame; a newer snapshot triggers
+    /// [`sync_from_assembly`](Self::sync_from_assembly).
+    pub(crate) assembly_consumer: AssemblyConsumer,
+    /// Cross-entity rendering data (disulfide + H-bond endpoints) rederived
+    /// on every assembly sync. `Arc` so the background mesh worker can
+    /// snapshot it per request without cloning.
+    pub(crate) scene_state: std::sync::Arc<SceneRenderState>,
+    /// Per-entity rendering state (topology + drawing mode + SS override +
+    /// mesh version) rederived on every assembly sync.
+    pub(crate) entity_state: FxHashMap<EntityId, VisoEntityState>,
+    /// Per-entity animator write surface; renderer reads back each frame.
+    /// Seeded from the assembly's reference positions when new entities
+    /// appear, animated locally thereafter.
+    pub(crate) positions: EntityPositions,
+    /// Generation of the most recently consumed `Assembly` snapshot.
+    /// Initialized to `u64::MAX` so the first snapshot (generation 0)
+    /// always triggers a sync.
+    pub(crate) last_seen_generation: u64,
 }
 
 // ── Frame loop ──
@@ -379,8 +402,22 @@ impl VisoEngine {
     /// engine.render()?;
     /// ```
     pub fn update(&mut self, dt: f32) {
+        self.poll_assembly();
         let _ = self.camera_controller.update_animation(dt);
         self.apply_pending_scene();
+    }
+
+    /// Poll the `AssemblyConsumer` for a new snapshot; on a generation
+    /// change, rederive viso-side state.
+    fn poll_assembly(&mut self) {
+        let Some(assembly) = self.assembly_consumer.latest() else {
+            return;
+        };
+        if assembly.generation() == self.last_seen_generation {
+            return;
+        }
+        self.sync_from_assembly(&assembly);
+        self.last_seen_generation = assembly.generation();
     }
 
     /// Stop the background scene processor thread.

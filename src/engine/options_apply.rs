@@ -64,14 +64,18 @@ impl VisoEngine {
         self.topology.per_residue_colors = Some(new_colors);
     }
 
-    /// Refresh ball-and-stick renderer with current visibility flags.
+    /// Trigger a full background remesh so ball-and-stick geometry
+    /// reflects current visibility / drawing-mode flags.
+    ///
+    /// Bumps every entity's `mesh_version` so the background mesh cache
+    /// regenerates from scratch, then dispatches a `FullRebuild`. The
+    /// previous synchronous-upload path relied on the legacy
+    /// `EntityStore` which the render path no longer reads.
     pub(crate) fn refresh_ball_and_stick(&mut self) {
-        let entities =
-            self.entities.ligand_entities().map(|se| se.entity.clone());
-        self.gpu.refresh_ball_and_stick(
-            entities,
-            &self.options.display,
-            Some(&self.options.colors),
-        );
+        for state in self.entity_state.values_mut() {
+            state.mesh_version = state.mesh_version.wrapping_add(1);
+        }
+        self.entities.force_dirty();
+        self.sync_scene_to_renderers(std::collections::HashMap::new());
     }
 }

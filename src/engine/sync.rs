@@ -2,16 +2,64 @@
 //! setup, frustum culling, LOD management.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use glam::Vec3;
+use molex::Assembly;
 use rustc_hash::FxHashMap;
 
+use super::viso_state::{EntityTopology, SceneRenderState, VisoEntityState};
 use super::{scene_data, VisoEngine};
 use crate::animation::transition::Transition;
 use crate::animation::AnimationFrame;
-use crate::options::{DisplayOptions, GeometryOptions};
+use crate::options::{DisplayOptions, DrawingMode, GeometryOptions};
 use crate::renderer::gpu_pipeline::SceneChainData;
+use crate::renderer::pipeline::prepared::FullRebuildBody;
 use crate::renderer::pipeline::{PreparedScene, SceneRequest};
+
+// ── Assembly sync ──
+
+impl VisoEngine {
+    /// Rederive viso-side state from an `Assembly` snapshot.
+    ///
+    /// Called when the triple buffer yields a snapshot whose generation
+    /// differs from [`VisoEngine::last_seen_generation`]. Populates
+    /// `scene_state`, `entity_state` and `positions` from the snapshot;
+    /// entries for entities no longer present in the snapshot are
+    /// dropped, and entries for entities new to the snapshot are
+    /// inserted with their reference positions.
+    pub(crate) fn sync_from_assembly(&mut self, assembly: &Assembly) {
+        self.scene_state = Arc::new(SceneRenderState::from_assembly(assembly));
+
+        let mut seen = std::collections::HashSet::new();
+        for entity in assembly.entities() {
+            let id = entity.id();
+            let _ = seen.insert(id);
+            let ss = assembly.ss_types(id);
+            let topology = Arc::new(EntityTopology::from_entity(entity, ss));
+            match self.entity_state.entry(id) {
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    let state = slot.get_mut();
+                    state.topology = topology;
+                    state.mesh_version = state.mesh_version.wrapping_add(1);
+                }
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    let _ = slot.insert(VisoEntityState {
+                        drawing_mode: DrawingMode::Cartoon,
+                        ss_override: None,
+                        topology,
+                        mesh_version: 0,
+                    });
+                }
+            }
+            self.positions
+                .insert_from_reference(id, &entity.positions());
+        }
+
+        self.entity_state.retain(|id, _| seen.contains(id));
+        self.positions.retain(|id| seen.contains(&id));
+    }
+}
 
 // ── Scene sync ──
 
@@ -78,7 +126,7 @@ impl VisoEngine {
         // but must NOT feed into the LOD/animation backbone mesh path.
         let cartoon_backbone_chains: Vec<Vec<Vec3>> = entities
             .iter()
-            .filter(|e| e.drawing_mode == crate::options::DrawingMode::Cartoon)
+            .filter(|e| e.drawing_mode == DrawingMode::Cartoon)
             .flat_map(|e| e.backbone_chains.iter().cloned())
             .collect();
         self.visual
@@ -149,7 +197,7 @@ impl VisoEngine {
             .iter()
             .zip(&self.topology.entity_residue_ranges)
             .filter(|(e, _)| {
-                e.drawing_mode == crate::options::DrawingMode::Cartoon
+                e.drawing_mode == DrawingMode::Cartoon
             })
             .flat_map(|(_, range)| {
                 let start = range.start as usize;
@@ -208,6 +256,7 @@ impl VisoEngine {
             self.prepare_scene_metadata(entity_transitions);
         self.animation.pending_transitions = transitions;
         self.entities.mark_rendered();
+        self.mirror_per_entity_colors_to_topology(&entities);
 
         let generation = self.gpu.scene_processor.next_generation();
         log::debug!(
@@ -216,46 +265,100 @@ impl VisoEngine {
             entities.len(),
             self.visual.backbone_chains.len(),
         );
-        // Resolve detected structural bonds to renderable positions and
-        // upload to the bond renderer.
-        {
-            let atoms: Vec<molex::Atom> = self
-                .entities
-                .entities()
-                .iter()
-                .filter(|se| se.visible)
-                .flat_map(|se| se.entity.atom_set())
-                .cloned()
-                .collect();
-            let backbone_chains: Vec<Vec<Vec3>> = entities
-                .iter()
-                .filter(|e| !e.backbone_chains.is_empty())
-                .flat_map(|e| e.backbone_chains.clone())
-                .collect();
-            let bonds =
-                crate::renderer::geometry::bond::resolve_structural_bonds(
-                    &self.topology.hbonds,
-                    &self.topology.disulfides,
-                    &backbone_chains,
-                    &atoms,
-                    &self.options.display.bonds,
-                    &self.options.colors,
-                );
-            let _ = self.gpu.renderers.bond.update(
-                &self.gpu.context.device,
-                &self.gpu.context.queue,
-                &bonds,
-            );
-        }
 
-        self.gpu.scene_processor.submit(SceneRequest::FullRebuild {
-            entities,
-            display: self.options.display.clone(),
-            colors: self.options.colors.clone(),
-            geometry: self.resolved_geometry(),
-            entity_options,
-            generation,
-        });
+        // Resolve detected structural bonds (H-bonds + disulfides) from
+        // scene state + current positions and upload to the bond
+        // renderer.
+        let bonds = crate::renderer::geometry::bond::resolve_structural_bonds(
+            &self.scene_state,
+            &self.positions,
+            &self.options.display.bonds,
+            &self.options.colors,
+        );
+        let _ = self.gpu.renderers.bond.update(
+            &self.gpu.context.device,
+            &self.gpu.context.queue,
+            &bonds,
+        );
+
+        let request_entities = self.build_full_rebuild_entities(&entities);
+        let scene_state = Arc::clone(&self.scene_state);
+
+        self.gpu.scene_processor.submit(SceneRequest::FullRebuild(
+            Box::new(FullRebuildBody {
+                entities: request_entities,
+                scene_state,
+                display: self.options.display.clone(),
+                colors: self.options.colors.clone(),
+                geometry: self.resolved_geometry(),
+                entity_options,
+                generation,
+            }),
+        ));
+    }
+
+    /// Mirror per-entity colors computed during
+    /// [`prepare_scene_metadata`] into the matching `entity_state`
+    /// topology, so the background mesh worker sees them.
+    fn mirror_per_entity_colors_to_topology(
+        &mut self,
+        entities: &[scene_data::PerEntityData],
+    ) {
+        let id_lookup = self.entity_id_lookup();
+        for pe in entities {
+            let Some(&id) = id_lookup.get(&pe.id) else {
+                continue;
+            };
+            let Some(state) = self.entity_state.get_mut(&id) else {
+                continue;
+            };
+            let topology = Arc::make_mut(&mut state.topology);
+            topology
+                .per_residue_colors
+                .clone_from(&pe.per_residue_colors);
+            topology
+                .sheet_plane_normals
+                .clone_from(&pe.sheet_plane_normals);
+        }
+    }
+
+    /// Build the per-entity snapshot list the background worker
+    /// consumes, in the same ordering `prepare_scene_metadata` produced.
+    fn build_full_rebuild_entities(
+        &self,
+        entities: &[scene_data::PerEntityData],
+    ) -> Vec<crate::renderer::pipeline::prepared::FullRebuildEntity> {
+        use crate::renderer::pipeline::prepared::FullRebuildEntity;
+        let id_lookup = self.entity_id_lookup();
+        entities
+            .iter()
+            .filter_map(|pe| {
+                let id = *id_lookup.get(&pe.id)?;
+                let state = self.entity_state.get(&id)?;
+                let positions = self
+                    .positions
+                    .get(id)
+                    .map(<[Vec3]>::to_vec)
+                    .unwrap_or_default();
+                Some(FullRebuildEntity {
+                    id,
+                    mesh_version: state.mesh_version.max(pe.mesh_version),
+                    drawing_mode: pe.drawing_mode,
+                    topology: Arc::clone(&state.topology),
+                    positions,
+                    ss_override: pe.ss_override.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// `raw u32` → opaque `EntityId` lookup built by scanning
+    /// `entity_state`'s keys. Needed because `EntityId` is
+    /// allocator-constructed and can't be synthesized from a raw value.
+    fn entity_id_lookup(
+        &self,
+    ) -> FxHashMap<u32, molex::entity::molecule::id::EntityId> {
+        self.entity_state.keys().map(|id| (**id, *id)).collect()
     }
 
     /// Upload prepared scene geometry to GPU renderers.
@@ -377,13 +480,16 @@ impl VisoEngine {
         }
     }
 
-    /// Submit an animation frame to the background thread for mesh
-    /// generation, using a unified [`AnimationFrame`] from the animator.
+    /// Submit an animation frame to the background thread using the
+    /// engine's current [`EntityPositions`] snapshot. The unified
+    /// [`AnimationFrame`] produced by the legacy animator still drives
+    /// this path (its `sidechains_visible` flag selects whether
+    /// sidechain capsules regenerate this frame).
     pub(crate) fn submit_animation_frame_from(&self, frame: &AnimationFrame) {
         self.gpu.submit_animation_frame(
-            frame,
-            &self.topology.sidechain_topology,
+            &self.positions,
             &self.options.geometry,
+            frame.sidechains_visible,
         );
     }
 }
@@ -394,6 +500,12 @@ impl VisoEngine {
     /// Update sidechain instances with frustum culling when camera moves
     /// significantly. This filters out sidechains behind the camera to
     /// reduce draw calls.
+    ///
+    /// Builds the flat sidechain view from legacy engine state
+    /// (`visual` + `topology.sidechain_topology`) then asks the GPU
+    /// pipeline to apply sheet-plane adjustment, frustum cull, and
+    /// upload. Session C replaces the source state with
+    /// `entity_state` + `positions` once legacy types are deleted.
     pub(crate) fn update_frustum_culling(&mut self) {
         if self.topology.sidechain_topology.target_positions.is_empty() {
             return;
@@ -408,10 +520,42 @@ impl VisoEngine {
         } else {
             None
         };
-        self.gpu.update_frustum_culling(
-            &self.camera_controller,
-            &self.visual,
-            &self.topology,
+
+        self.gpu
+            .set_last_cull_camera_eye(self.camera_controller.camera.eye);
+        let frustum = self.camera_controller.frustum();
+        let positions: &[Vec3] = if self.visual.sidechain_positions.is_empty() {
+            &self.topology.sidechain_topology.target_positions
+        } else {
+            &self.visual.sidechain_positions
+        };
+        let bs_bonds: Vec<(Vec3, u32)> =
+            if self.visual.backbone_sidechain_bonds.is_empty() {
+                self.topology.sidechain_topology.target_backbone_bonds.clone()
+            } else {
+                self.visual.backbone_sidechain_bonds.clone()
+            };
+        let offset_map: HashMap<u32, Vec3> = self
+            .gpu
+            .backbone_sheet_offsets()
+            .iter()
+            .copied()
+            .collect();
+        let raw_view = crate::renderer::geometry::SidechainView {
+            positions,
+            bonds: &self.topology.sidechain_topology.bonds,
+            backbone_bonds: &bs_bonds,
+            hydrophobicity: &self.topology.sidechain_topology.hydrophobicity,
+            residue_indices: &self.topology.sidechain_topology.residue_indices,
+        };
+        let adjusted =
+            crate::renderer::geometry::sheet_adjust::sheet_adjusted_view(
+                &raw_view,
+                &offset_map,
+            );
+        self.gpu.upload_frustum_culled_sidechains(
+            &adjusted.as_view(),
+            &frustum,
             sc_colors,
         );
     }
@@ -441,14 +585,15 @@ impl VisoEngine {
     pub(crate) fn check_and_submit_lod(&mut self) {
         let camera_eye = self.camera_controller.camera.eye;
         let geo = self.resolved_geometry();
-        self.gpu.check_and_submit_lod(camera_eye, &geo);
+        self.gpu.check_and_submit_lod(camera_eye, &geo, &self.positions);
     }
 
     /// Submit a backbone-only remesh with per-chain LOD to the background
     /// thread.
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
         let geo = self.resolved_geometry();
-        self.gpu.submit_lod_remesh(camera_eye, &geo);
+        self.gpu
+            .submit_lod_remesh(camera_eye, &geo, &self.positions);
     }
 
     /// Geometry options with display helix/sheet style folded in.
