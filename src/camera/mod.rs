@@ -7,5 +7,7 @@
 pub mod controller;
 /// Core camera struct and GPU uniform types.
 pub mod core;
+/// Fit-to-molecule-data helpers.
+pub mod fit;
 /// View frustum extraction and intersection tests.
 pub mod frustum;

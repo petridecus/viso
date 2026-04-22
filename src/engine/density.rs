@@ -3,6 +3,7 @@
 use molex::entity::surface::Density;
 
 use super::VisoEngine;
+use crate::camera::fit::combined_bounding_sphere;
 
 impl VisoEngine {
     /// Load a density map into the engine. Returns the assigned map ID.
@@ -14,7 +15,13 @@ impl VisoEngine {
     pub fn load_density_map(&mut self, map: Density) -> u32 {
         let id = self.density.add(map);
         log::info!("loaded density map id={id}");
-        if let Some((centroid, radius)) = self.session_bounds() {
+        let visible = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| self.is_entity_visible(e.id().raw()));
+        if let Some((centroid, radius)) = combined_bounding_sphere(visible) {
             log::info!(
                 "protein bounding sphere: center=[{:.1},{:.1},{:.1}], \
                  radius={:.1}, range=[{:.1},{:.1},{:.1}]→[{:.1},{:.1},{:.1}]",

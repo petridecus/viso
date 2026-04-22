@@ -32,6 +32,7 @@ use web_time::Instant;
 
 use crate::animation::transition::Transition;
 use crate::animation::AnimationState;
+use crate::camera;
 use crate::camera::controller::CameraController;
 use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
 use crate::renderer::GpuPipeline;
@@ -363,33 +364,46 @@ impl VisoEngine {
     }
 }
 
-// ── Camera + focus ──
+// ── Camera + focus (thin dispatchers; logic lives in camera::fit + overlays) ──
 
 impl VisoEngine {
-    /// Fit camera to the currently focused element.
+    /// Fit the camera to the currently focused element (session-wide
+    /// bounding sphere, or the focused entity's bounding sphere).
     pub fn fit_camera_to_focus(&mut self) {
         match self.overlays.focus {
-            Focus::Session => {
-                self.fit_session_camera();
-            }
+            Focus::Session => self.fit_session_camera(),
             Focus::Entity(eid) => {
-                if let Some((centroid, radius)) = self.entity_bounds(eid) {
-                    self.camera_controller
-                        .fit_to_sphere_animated(centroid, radius);
+                if let Some(entity) = self
+                    .scene
+                    .current
+                    .entities()
+                    .iter()
+                    .find(|e| e.id() == eid)
+                {
+                    camera::fit::fit_to_entity(
+                        &mut self.camera_controller,
+                        entity,
+                    );
                 }
             }
         }
     }
 
-    /// Fit the camera to the combined session bounding sphere.
+    /// Fit the camera to the combined bounding sphere of every visible
+    /// entity.
     pub(crate) fn fit_session_camera(&mut self) {
-        if let Some((centroid, radius)) = self.session_bounds() {
-            self.camera_controller
-                .fit_to_sphere_animated(centroid, radius);
-        }
+        let visible: Vec<&MoleculeEntity> = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| self.is_entity_visible(e.id().raw()))
+            .collect();
+        camera::fit::fit_to_entities(&mut self.camera_controller, visible);
     }
 
-    /// Cycle focus: Session → first focusable entity → … → Session.
+    /// Advance focus to the next visible, focusable entity. Wraps to
+    /// session after the last. Returns the new focus.
     fn cycle_focus(&mut self) -> Focus {
         let focusable: Vec<EntityId> = self
             .scene
@@ -399,90 +413,8 @@ impl VisoEngine {
             .filter(|e| self.is_entity_visible(e.id().raw()) && e.is_focusable())
             .map(MoleculeEntity::id)
             .collect();
-
-        self.overlays.focus = match self.overlays.focus {
-            Focus::Session => focusable
-                .first()
-                .map_or(Focus::Session, |&id| Focus::Entity(id)),
-            Focus::Entity(current_id) => {
-                let idx = focusable.iter().position(|&id| id == current_id);
-                match idx {
-                    Some(i) if i + 1 < focusable.len() => {
-                        Focus::Entity(focusable[i + 1])
-                    }
-                    _ => Focus::Session,
-                }
-            }
-        };
-        self.overlays.focus
+        self.overlays.cycle_focus(&focusable)
     }
-
-    /// Bounding sphere of a single entity from its Assembly positions.
-    fn entity_bounds(&self, id: EntityId) -> Option<(glam::Vec3, f32)> {
-        let entity = self
-            .scene
-            .current
-            .entities()
-            .iter()
-            .find(|e| e.id() == id)?;
-        bounding_sphere_of(entity)
-    }
-
-    /// Combined bounding sphere across all visible entities.
-    pub(crate) fn session_bounds(&self) -> Option<(glam::Vec3, f32)> {
-        let visible: Vec<&MoleculeEntity> = self
-            .scene
-            .current
-            .entities()
-            .iter()
-            .filter(|e| self.is_entity_visible(e.id().raw()))
-            .collect();
-        if visible.is_empty() {
-            return None;
-        }
-
-        let mut total_weight = 0.0f32;
-        let mut weighted_sum = glam::Vec3::ZERO;
-        let mut radii: Vec<(glam::Vec3, f32)> = Vec::with_capacity(visible.len());
-        for entity in &visible {
-            let Some((centroid, radius)) = bounding_sphere_of(entity) else {
-                continue;
-            };
-            let w = entity.atom_count() as f32;
-            if w > 0.0 {
-                weighted_sum += centroid * w;
-                total_weight += w;
-                radii.push((centroid, radius));
-            }
-        }
-        if total_weight == 0.0 {
-            return None;
-        }
-        let centroid = weighted_sum / total_weight;
-        let radius = radii
-            .iter()
-            .map(|(c, r)| (*c - centroid).length() + r)
-            .fold(0.0f32, f32::max);
-        Some((centroid, radius))
-    }
-}
-
-/// Compute (centroid, radius) for a molecule entity's atoms.
-pub(crate) fn bounding_sphere_of(
-    entity: &MoleculeEntity,
-) -> Option<(glam::Vec3, f32)> {
-    let atoms = entity.atom_set();
-    if atoms.is_empty() {
-        return None;
-    }
-    let n = atoms.len() as f32;
-    let centroid =
-        atoms.iter().fold(glam::Vec3::ZERO, |acc, a| acc + a.position) / n;
-    let radius = atoms
-        .iter()
-        .map(|a| (a.position - centroid).length())
-        .fold(0.0f32, f32::max);
-    Some((centroid, radius))
 }
 
 // ── Viso-side overlays (pub(crate) helpers for VisoApp) ──

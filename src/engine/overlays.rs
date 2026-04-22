@@ -65,6 +65,31 @@ impl EntityOverlays {
         self.surfaces.retain(|&id, _| keep(id));
     }
 
+    /// Advance `focus` to the next entity in `focusable`, wrapping
+    /// back to `Session` after the last. Returns the new focus.
+    ///
+    /// `focusable` is the engine-filtered list of entities eligible
+    /// for focus (typically: visible, focusable molecule type). The
+    /// overlay owns focus state but not the filter, so callers build
+    /// the list themselves.
+    pub fn cycle_focus(&mut self, focusable: &[EntityId]) -> Focus {
+        self.focus = match self.focus {
+            Focus::Session => focusable
+                .first()
+                .map_or(Focus::Session, |&id| Focus::Entity(id)),
+            Focus::Entity(current) => {
+                let idx = focusable.iter().position(|&id| id == current);
+                match idx {
+                    Some(i) if i + 1 < focusable.len() => {
+                        Focus::Entity(focusable[i + 1])
+                    }
+                    _ => Focus::Session,
+                }
+            }
+        };
+        self.focus
+    }
+
     /// Clear every overlay back to the default state (focus back to
     /// session-wide, every map emptied).
     pub fn reset(&mut self) {
