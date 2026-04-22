@@ -303,7 +303,8 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
             let chain_ids: Vec<String> = entity
                 .pdb_chain_id()
                 .map_or_else(Vec::new, |cid| vec![String::from(cid as char)]);
-            let focused = matches!(focus, Focus::Entity(id) if id == raw_id);
+            let focused =
+                matches!(focus, Focus::Entity(eid) if eid.raw() == raw_id);
             let ovr = engine.entity_appearance(raw_id);
             let resolved_display = ovr.map_or_else(
                 || engine.options().display.clone(),
@@ -353,18 +354,20 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
 
 /// Effective surface kind string for an entity, accounting for per-entity
 /// overrides (including invisible opt-outs) and global fallback.
-fn effective_surface_kind(engine: &VisoEngine, eid: u32) -> &'static str {
+fn effective_surface_kind(engine: &VisoEngine, raw: u32) -> &'static str {
     use crate::engine::surface::SurfaceKind;
     use crate::options::SurfaceKindOption;
 
-    if let Some(s) = engine.entity_surfaces.get(&eid) {
-        if !s.visible {
-            return "none";
+    if let Some(eid) = engine.entity_id(raw) {
+        if let Some(s) = engine.overlays.surfaces.get(&eid) {
+            if !s.visible {
+                return "none";
+            }
+            return match s.kind {
+                SurfaceKind::Gaussian => "gaussian",
+                SurfaceKind::Ses => "ses",
+            };
         }
-        return match s.kind {
-            SurfaceKind::Gaussian => "gaussian",
-            SurfaceKind::Ses => "ses",
-        };
     }
     // No per-entity entry — fall back to global
     match engine.options.display.surface_kind {
@@ -375,12 +378,14 @@ fn effective_surface_kind(engine: &VisoEngine, eid: u32) -> &'static str {
 }
 
 /// Effective surface color for an entity (per-entity or global default).
-fn effective_surface_color(engine: &VisoEngine, eid: u32) -> serde_json::Value {
-    if let Some(s) = engine.entity_surfaces.get(&eid) {
-        if s.visible {
-            return serde_json::json!([
-                s.color[0], s.color[1], s.color[2], s.color[3]
-            ]);
+fn effective_surface_color(engine: &VisoEngine, raw: u32) -> serde_json::Value {
+    if let Some(eid) = engine.entity_id(raw) {
+        if let Some(s) = engine.overlays.surfaces.get(&eid) {
+            if s.visible {
+                return serde_json::json!([
+                    s.color[0], s.color[1], s.color[2], s.color[3]
+                ]);
+            }
         }
     }
     serde_json::json!(null)

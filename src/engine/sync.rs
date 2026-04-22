@@ -34,7 +34,7 @@ impl VisoEngine {
     /// Called when the triple buffer yields a snapshot whose
     /// generation differs from [`Self::last_seen_generation`].
     pub(crate) fn sync_from_assembly(&mut self, assembly: &Assembly) {
-        self.scene_state =
+        self.scene.render_state =
             Arc::new(SceneRenderState::from_assembly(assembly));
 
         let mut seen: std::collections::HashSet<EntityId> =
@@ -43,13 +43,13 @@ impl VisoEngine {
             let id = entity.id();
             let _ = seen.insert(id);
             let ss = assembly.ss_types(id);
-            let ss_override = self.entity_ss_overrides.get(&id.raw()).cloned();
+            let ss_override = self.overlays.ss_overrides.get(&id).cloned();
             let topology =
                 Arc::new(crate::engine::entity_view::derive_topology(entity, ss));
-            let drawing_mode = self
-                .resolved_drawing_mode(id.raw(), topology.molecule_type);
-            let fresh_version = self.bump_mesh_version();
-            match self.entity_state.entry(id) {
+            let drawing_mode =
+                self.resolved_drawing_mode(id, topology.molecule_type);
+            let fresh_version = self.scene.bump_mesh_version();
+            match self.scene.entity_state.entry(id) {
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
                     let state = slot.get_mut();
                     state.topology = topology;
@@ -66,30 +66,24 @@ impl VisoEngine {
                     });
                 }
             }
-            self.positions
+            self.scene.positions
                 .insert_from_reference(id, &entity.positions());
 
             // New entity? Seed visibility from ambient-type defaults.
-            if !self.entity_visibility.contains_key(&id.raw()) {
+            if !self.overlays.visibility.contains_key(&id) {
                 let visible = match entity.molecule_type() {
                     MoleculeType::Water => self.options.display.show_waters,
                     MoleculeType::Ion => self.options.display.show_ions,
                     MoleculeType::Solvent => self.options.display.show_solvent,
                     _ => true,
                 };
-                let _ = self.entity_visibility.insert(id.raw(), visible);
+                let _ = self.overlays.visibility.insert(id, visible);
             }
         }
 
-        self.entity_state.retain(|id, _| seen.contains(id));
-        self.positions.retain(|id| seen.contains(&id));
-        let raw_seen: std::collections::HashSet<u32> =
-            seen.iter().map(|id| id.raw()).collect();
-        self.entity_visibility.retain(|id, _| raw_seen.contains(id));
-        self.entity_behaviors.retain(|id, _| raw_seen.contains(id));
-        self.appearance_overrides.retain(|id, _| raw_seen.contains(id));
-        self.entity_scores.retain(|id, _| raw_seen.contains(id));
-        self.entity_ss_overrides.retain(|id, _| raw_seen.contains(id));
+        self.scene.entity_state.retain(|id, _| seen.contains(id));
+        self.scene.positions.retain(|id| seen.contains(&id));
+        self.overlays.retain_entities(|id| seen.contains(&id));
     }
 }
 
@@ -109,15 +103,15 @@ impl VisoEngine {
     /// by [`Self::sync_now`] when a mutation has just published a new
     /// snapshot that must be reflected before the next render.
     fn poll_assembly_force(&mut self) {
-        let Some(assembly) = self.assembly_consumer.latest() else {
+        let Some(assembly) = self.scene.consumer.latest() else {
             return;
         };
-        if assembly.generation() == self.last_seen_generation {
+        if assembly.generation() == self.scene.last_seen_generation {
             return;
         }
         self.sync_from_assembly(&assembly);
-        self.current_assembly = assembly;
-        self.last_seen_generation = self.current_assembly.generation();
+        self.scene.current = assembly;
+        self.scene.last_seen_generation = self.scene.current.generation();
     }
 
     /// Sync scene data to renderers with per-entity transitions.
@@ -133,14 +127,14 @@ impl VisoEngine {
         let _ = self.gpu.renderers.bond.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
-            self.scene_state.structural_bonds(),
+            self.scene.render_state.structural_bonds(),
         );
 
         let entity_options = self.resolve_entity_options();
         let request_entities = self.build_full_rebuild_entities();
         self.animation.pending_transitions = entity_transitions;
 
-        let scene_state = Arc::clone(&self.scene_state);
+        let scene_state = Arc::clone(&self.scene.render_state);
         let generation = self.gpu.scene_processor.next_generation();
         log::debug!(
             "sync_scene_to_renderers: submitting FullRebuild gen={generation}, \
@@ -168,6 +162,7 @@ impl VisoEngine {
     /// is the spline projection.
     fn resolve_structural_bonds_into_scene_state(&mut self) {
         let ribbons: FxHashMap<EntityId, RibbonBackbone> = self
+            .scene
             .entity_state
             .iter()
             .filter(|(_, state)| {
@@ -175,20 +170,20 @@ impl VisoEngine {
                     && state.topology.is_protein()
             })
             .filter_map(|(&id, state)| {
-                let positions = self.positions.get(id)?;
+                let positions = self.scene.positions.get(id)?;
                 let ribbon = RibbonBackbone::project(&state.topology, positions)?;
                 Some((id, ribbon))
             })
             .collect();
         let input = BondResolveInput {
-            positions: &self.positions,
-            entity_views: &self.entity_state,
-            entity_visibility: &self.entity_visibility,
+            positions: &self.scene.positions,
+            entity_views: &self.scene.entity_state,
+            entity_visibility: &self.overlays.visibility,
             ribbons: &ribbons,
             options: &self.options.display.bonds,
             colors: &self.options.colors,
         };
-        Arc::make_mut(&mut self.scene_state).update_structural_bonds(&input);
+        Arc::make_mut(&mut self.scene.render_state).update_structural_bonds(&input);
     }
 
     /// Walk protein entities, compute per-residue colors + sheet-plane
@@ -197,25 +192,22 @@ impl VisoEngine {
     fn install_per_entity_render_data(&mut self) {
         // Take an Arc handle so the entity walk is decoupled from
         // `&mut self` borrows used for per-entity mutation below.
-        let assembly = Arc::clone(&self.current_assembly);
+        let assembly = Arc::clone(&self.scene.current);
         let hbond_ranges = protein_hbond_ranges(assembly.as_ref());
 
         for (entity_index, entity) in assembly.entities().iter().enumerate() {
             let eid = entity.id();
-            let Some(positions) = self.positions.get(eid) else {
+            let Some(positions) = self.scene.positions.get(eid) else {
                 continue;
             };
             let positions = positions.to_vec();
-            let Some(state) = self.entity_state.get_mut(&eid) else {
+            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
                 continue;
             };
-            let display = self
-                .appearance_overrides
-                .get(&eid.raw())
-                .map_or_else(
-                    || self.options.display.clone(),
-                    |ovr| ovr.to_display_options(&self.options.display),
-                );
+            let display = self.overlays.appearance.get(&eid).map_or_else(
+                || self.options.display.clone(),
+                |ovr| ovr.to_display_options(&self.options.display),
+            );
             let ss_types: Vec<SSType> = state
                 .ss_override
                 .clone()
@@ -227,7 +219,7 @@ impl VisoEngine {
                     entity_index,
                     &backbone_chains,
                     &ss_types,
-                    self.entity_scores.get(&eid.raw()).map(Vec::as_slice),
+                    self.overlays.scores.get(&eid).map(Vec::as_slice),
                     &display,
                 )
             } else {
@@ -238,7 +230,7 @@ impl VisoEngine {
                 && state.drawing_mode == DrawingMode::Cartoon
             {
                 entity_sheet_plane_normals(
-                    &self.current_assembly,
+                    &self.scene.current,
                     eid,
                     &ss_types,
                     &positions,
@@ -259,11 +251,12 @@ impl VisoEngine {
         &self,
     ) -> FxHashMap<u32, (DisplayOptions, GeometryOptions)> {
         let resolved_geometry = self.resolved_geometry();
-        self.appearance_overrides
+        self.overlays
+            .appearance
             .iter()
             .map(|(&id, ovr)| {
                 (
-                    id,
+                    id.raw(),
                     (
                         ovr.to_display_options(&self.options.display),
                         ovr.to_geometry_options(&resolved_geometry),
@@ -276,16 +269,16 @@ impl VisoEngine {
     /// Iterate every visible entity that has an `entity_state` slot,
     /// yielding `(entity, entity_id, view)`. Skips invisible entities
     /// and entities not yet reconciled into `entity_state`. Callers
-    /// that also need positions look them up via `self.positions.get`.
+    /// that also need positions look them up via `self.scene.positions.get`.
     fn visible_entities(
         &self,
     ) -> impl Iterator<Item = (&MoleculeEntity, EntityId, &EntityView)> {
-        self.current_assembly.entities().iter().filter_map(|entity| {
+        self.scene.current.entities().iter().filter_map(|entity| {
             let eid = entity.id();
             if !self.is_entity_visible(eid.raw()) {
                 return None;
             }
-            let state = self.entity_state.get(&eid)?;
+            let state = self.scene.entity_state.get(&eid)?;
             Some((entity, eid, state))
         })
     }
@@ -294,6 +287,7 @@ impl VisoEngine {
         self.visible_entities()
             .map(|(_, eid, state)| {
                 let positions = self
+                    .scene
                     .positions
                     .get(eid)
                     .map(<[Vec3]>::to_vec)
@@ -340,7 +334,7 @@ impl VisoEngine {
         let mut backbone = Vec::new();
         let mut na = Vec::new();
         for (_, eid, state) in self.visible_entities() {
-            let Some(positions) = self.positions.get(eid) else {
+            let Some(positions) = self.scene.positions.get(eid) else {
                 continue;
             };
             if state.topology.is_protein()
@@ -387,7 +381,8 @@ impl VisoEngine {
         entity_transitions: &HashMap<u32, Transition>,
     ) {
         let targets: Vec<(EntityId, Vec<Vec3>)> = self
-            .current_assembly
+            .scene
+            .current
             .entities()
             .iter()
             .map(|entity| (entity.id(), entity.positions()))
@@ -398,6 +393,7 @@ impl VisoEngine {
                 continue;
             };
             let current = self
+                .scene
                 .positions
                 .get(eid)
                 .map(<[Vec3]>::to_vec)
@@ -460,7 +456,7 @@ impl VisoEngine {
         let include_sidechains =
             self.animation.animator.should_include_sidechains();
         self.gpu.submit_animation_frame(
-            &self.positions,
+            &self.scene.positions,
             &self.options.geometry,
             include_sidechains,
         );
@@ -472,7 +468,7 @@ impl VisoEngine {
         &mut self,
         frame: &super::trajectory::TrajectoryFrame,
     ) {
-        let Some(slot) = self.positions.get_mut(frame.entity) else {
+        let Some(slot) = self.scene.positions.get_mut(frame.entity) else {
             return;
         };
         for (i, &idx) in frame.atom_indices.iter().enumerate() {
@@ -544,7 +540,7 @@ impl VisoEngine {
     }
 
     fn has_any_sidechain_atoms(&self) -> bool {
-        self.entity_state
+        self.scene.entity_state
             .values()
             .any(|s| !s.topology.sidechain_layout.atom_indices.is_empty())
     }
@@ -576,7 +572,7 @@ impl VisoEngine {
                     state.topology.residue_atom_ranges.len() as u32;
                 continue;
             }
-            let Some(entity_positions) = self.positions.get(eid) else {
+            let Some(entity_positions) = self.scene.positions.get(eid) else {
                 continue;
             };
             let layout_offset = positions.len() as u32;
@@ -623,13 +619,13 @@ impl VisoEngine {
         let camera_eye = self.camera_controller.camera.eye;
         let geo = self.resolved_geometry();
         self.gpu
-            .check_and_submit_lod(camera_eye, &geo, &self.positions);
+            .check_and_submit_lod(camera_eye, &geo, &self.scene.positions);
     }
 
     /// Submit a backbone-only remesh with per-chain LOD.
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
         let geo = self.resolved_geometry();
-        self.gpu.submit_lod_remesh(camera_eye, &geo, &self.positions);
+        self.gpu.submit_lod_remesh(camera_eye, &geo, &self.scene.positions);
     }
 
     /// Geometry options with display helix/sheet style folded in.

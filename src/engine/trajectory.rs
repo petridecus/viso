@@ -181,7 +181,7 @@ impl super::VisoEngine {
 
     /// Pick the first visible protein entity as the trajectory target.
     fn pick_trajectory_target(&self) -> Option<(EntityId, usize, Vec<usize>)> {
-        let entity = self.current_assembly.entities().iter().find(|e| {
+        let entity = self.scene.current.entities().iter().find(|e| {
             self.is_entity_visible(e.id().raw())
                 && e.molecule_type() == MoleculeType::Protein
         })?;

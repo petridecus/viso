@@ -7,18 +7,15 @@
 //! takes an [`AssemblyConsumer`] built by whichever side owns the
 //! [`Assembly`].
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use glam::Vec3;
-use molex::Assembly;
 use web_time::Instant;
 
 use super::assembly_consumer::AssemblyConsumer;
 use super::density_store::DensityStore;
-use super::focus::Focus;
-use super::positions::EntityPositions;
-use super::scene_state::SceneRenderState;
+use super::overlays::EntityOverlays;
+use super::scene::Scene;
 use super::{ConstraintSpecs, VisoEngine};
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
@@ -201,20 +198,8 @@ impl VisoEngine {
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
             density: DensityStore::new(),
-            entity_surfaces: rustc_hash::FxHashMap::default(),
-            assembly_consumer: consumer,
-            current_assembly: Arc::new(Assembly::new(Vec::new())),
-            scene_state: Arc::new(SceneRenderState::new()),
-            entity_state: rustc_hash::FxHashMap::default(),
-            positions: EntityPositions::new(),
-            last_seen_generation: u64::MAX,
-            next_mesh_version: 1,
-            focus: Focus::Session,
-            entity_visibility: rustc_hash::FxHashMap::default(),
-            entity_behaviors: rustc_hash::FxHashMap::default(),
-            appearance_overrides: rustc_hash::FxHashMap::default(),
-            entity_scores: rustc_hash::FxHashMap::default(),
-            entity_ss_overrides: rustc_hash::FxHashMap::default(),
+            scene: Scene::new(consumer),
+            overlays: EntityOverlays::default(),
         })
     }
 }

@@ -74,7 +74,10 @@ impl VisoEngine {
         channel: usize,
         value: f32,
     ) {
-        if let Some(surface) = self.entity_surfaces.get_mut(&entity_id) {
+        let Some(eid) = self.entity_id(entity_id) else {
+            return;
+        };
+        if let Some(surface) = self.overlays.surfaces.get_mut(&eid) {
             surface.color[channel] = value.clamp(0.0, 1.0);
             self.regenerate_entity_surfaces();
         }
@@ -87,12 +90,15 @@ impl VisoEngine {
     /// global default.
     pub fn remove_entity_surface(&mut self, entity_id: u32) {
         use crate::options::SurfaceKindOption;
-        let had = self.entity_surfaces.remove(&entity_id).is_some();
+        let Some(eid) = self.entity_id(entity_id) else {
+            return;
+        };
+        let had = self.overlays.surfaces.remove(&eid).is_some();
         // If there's a global surface, store an invisible sentinel so
         // this entity doesn't inherit the global.
         if self.options.display.surface_kind != SurfaceKindOption::None {
-            let _ = self.entity_surfaces.insert(
-                entity_id,
+            let _ = self.overlays.surfaces.insert(
+                eid,
                 EntitySurface {
                     visible: false,
                     ..Default::default()
@@ -107,8 +113,11 @@ impl VisoEngine {
 
     /// Set surface parameters for an entity and regenerate.
     fn set_entity_surface(&mut self, entity_id: u32, surface: EntitySurface) {
+        let Some(eid) = self.entity_id(entity_id) else {
+            return;
+        };
         log::info!("set {:?} surface for entity {entity_id}", surface.kind);
-        let _ = self.entity_surfaces.insert(entity_id, surface);
+        let _ = self.overlays.surfaces.insert(eid, surface);
         self.regenerate_entity_surfaces();
     }
 
@@ -125,7 +134,7 @@ impl VisoEngine {
             cavity, gaussian_surface, ses,
         };
 
-        let all_entities = self.current_assembly.entities();
+        let all_entities = self.scene.current.entities();
         let palette = self.options.display.backbone_palette();
         let global_kind = self.options.display.surface_kind;
         let global_opacity = self.options.display.surface_opacity;
@@ -139,13 +148,13 @@ impl VisoEngine {
         let mut cavity_jobs: Vec<(Vec<glam::Vec3>, Vec<f32>)> = Vec::new();
 
         for (entity_idx, se) in all_entities.iter().enumerate() {
-            let eid = se.id().raw();
-            if !self.is_entity_visible(eid) {
+            let eid = se.id();
+            if !self.overlays.is_visible(eid) {
                 continue;
             }
 
             // Per-entity surface takes priority; fall back to global
-            let base_surface = self.entity_surfaces.get(&eid).map_or_else(
+            let base_surface = self.overlays.surfaces.get(&eid).map_or_else(
                 || match global_kind {
                     SurfaceKindOption::Gaussian => Some(EntitySurface {
                         kind: SurfaceKind::Gaussian,

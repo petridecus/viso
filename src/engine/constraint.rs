@@ -76,12 +76,12 @@ pub(super) fn resolve_atom_ref_pub(
 /// search the entity's sidechain layout by name.
 fn resolve_atom_ref(engine: &VisoEngine, atom: &AtomRef) -> Option<Vec3> {
     let mut residues_seen: u32 = 0;
-    for entity in engine.current_assembly.entities() {
+    for entity in engine.scene.current.entities() {
         let eid = entity.id();
         if !engine.is_entity_visible(eid.raw()) {
             continue;
         }
-        let state = engine.entity_state.get(&eid)?;
+        let state = engine.scene.entity_state.get(&eid)?;
         if !state.topology.is_protein() {
             continue;
         }
@@ -91,7 +91,7 @@ fn resolve_atom_ref(engine: &VisoEngine, atom: &AtomRef) -> Option<Vec3> {
             continue;
         }
         let local_residue = atom.residue - residues_seen;
-        let positions = engine.positions.get(eid)?;
+        let positions = engine.scene.positions.get(eid)?;
         return resolve_atom_in_entity(
             state,
             positions,

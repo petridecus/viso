@@ -1,11 +1,13 @@
 //! Focus state for tab cycling between entities.
 
+use molex::entity::molecule::id::EntityId;
+
 /// Focus state for tab cycling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Focus {
     /// All entities.
     #[default]
     Session,
-    /// A specific entity by ID.
-    Entity(u32),
+    /// A specific entity.
+    Entity(EntityId),
 }

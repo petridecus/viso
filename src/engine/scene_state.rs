@@ -113,8 +113,8 @@ pub(crate) struct BondResolveInput<'a> {
     pub positions: &'a EntityPositions,
     /// Engine per-entity state (for `drawing_mode` + topology lookups).
     pub entity_views: &'a FxHashMap<EntityId, EntityView>,
-    /// Engine visibility overlay keyed by raw id. Missing → visible.
-    pub entity_visibility: &'a FxHashMap<u32, bool>,
+    /// Engine visibility overlay. Missing → visible.
+    pub entity_visibility: &'a FxHashMap<EntityId, bool>,
     /// Precomputed ribbon projections for Cartoon-mode protein entities
     /// that had enough residues to project. Missing → raw atom
     /// positions are used instead.
@@ -239,7 +239,7 @@ fn push_disulfides(
 fn endpoint_visible(atom: AtomId, input: &BondResolveInput<'_>) -> bool {
     input
         .entity_visibility
-        .get(&atom.entity.raw())
+        .get(&atom.entity)
         .copied()
         .unwrap_or(true)
 }
