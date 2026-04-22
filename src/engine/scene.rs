@@ -25,10 +25,12 @@ use molex::entity::molecule::id::EntityId;
 use molex::{Assembly, MoleculeEntity};
 use rustc_hash::FxHashMap;
 
+use super::annotations::EntityAnnotations;
 use super::assembly_consumer::AssemblyConsumer;
 use super::entity_view::EntityView;
 use super::positions::EntityPositions;
 use super::scene_state::SceneRenderState;
+use crate::options::DrawingMode;
 
 /// Assembly consumption + derived per-entity state.
 pub(crate) struct Scene {
@@ -102,6 +104,53 @@ impl Scene {
             .iter()
             .map(MoleculeEntity::id)
             .find(|eid| eid.raw() == raw)
+    }
+
+    /// Iterate every visible entity that has an `entity_state` slot,
+    /// yielding `(entity, entity_id, view)`. Skips entities toggled off
+    /// in `annotations` and entities not yet reconciled into
+    /// `entity_state`. Callers that also need positions look them up via
+    /// `self.positions.get`.
+    pub(crate) fn visible_entities<'a>(
+        &'a self,
+        annotations: &'a EntityAnnotations,
+    ) -> impl Iterator<Item = (&'a MoleculeEntity, EntityId, &'a EntityView)> + 'a
+    {
+        self.current.entities().iter().filter_map(|entity| {
+            let eid = entity.id();
+            if !annotations.is_visible(eid) {
+                return None;
+            }
+            let state = self.entity_state.get(&eid)?;
+            Some((entity, eid, state))
+        })
+    }
+
+    /// Concatenated per-residue colors across every visible Cartoon-mode
+    /// protein entity, in assembly order. Entities without cached colors
+    /// contribute a default gray block sized to their residue count.
+    pub(crate) fn flat_cartoon_colors(
+        &self,
+        annotations: &EntityAnnotations,
+    ) -> Vec<[f32; 3]> {
+        let mut out = Vec::new();
+        for (_, _, state) in self.visible_entities(annotations) {
+            if !state.topology.is_protein()
+                || state.drawing_mode != DrawingMode::Cartoon
+            {
+                continue;
+            }
+            if let Some(colors) = &state.per_residue_colors {
+                out.extend_from_slice(colors);
+            } else {
+                let residue_count = state.topology.residue_atom_ranges.len();
+                out.extend(std::iter::repeat_n(
+                    [0.5_f32, 0.5, 0.5],
+                    residue_count,
+                ));
+            }
+        }
+        out
     }
 
     /// Reset all scene-local derived state (positions, entity_state).

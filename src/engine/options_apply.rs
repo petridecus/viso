@@ -75,19 +75,19 @@ impl VisoEngine {
         self.options = new;
 
         if waters_changed {
-            self.set_type_visibility_internal(
+            self.set_type_visibility(
                 MoleculeType::Water,
                 self.options.display.show_waters,
             );
         }
         if ions_changed {
-            self.set_type_visibility_internal(
+            self.set_type_visibility(
                 MoleculeType::Ion,
                 self.options.display.show_ions,
             );
         }
         if solvent_changed {
-            self.set_type_visibility_internal(
+            self.set_type_visibility(
                 MoleculeType::Solvent,
                 self.options.display.show_solvent,
             );

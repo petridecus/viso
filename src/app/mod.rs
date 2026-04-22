@@ -344,7 +344,9 @@ impl VisoApp {
 
         for &raw_id in &current_raw_ids {
             if !incoming_ids.contains(&raw_id) {
-                engine.clear_entity_behavior_internal(raw_id);
+                if let Some(eid) = engine.entity_id(raw_id) {
+                    engine.clear_entity_behavior(eid);
+                }
             }
         }
 
@@ -382,7 +384,7 @@ impl VisoApp {
         else {
             return;
         };
-        engine.clear_entity_behavior_internal(id);
+        engine.clear_entity_behavior(eid);
         self.assembly.remove_entity(eid);
         self.publish();
         engine.sync_now();
@@ -422,7 +424,7 @@ impl VisoApp {
             }
             _ => {}
         }
-        engine.set_entity_visible_internal(id, visible);
+        engine.set_entity_visible(id, visible);
         engine.sync_scene_to_renderers(HashMap::new());
     }
 
@@ -434,7 +436,7 @@ impl VisoApp {
         id: u32,
         scores: Option<Vec<f64>>,
     ) {
-        engine.set_per_residue_scores_internal(id, scores);
+        engine.set_per_residue_scores(id, scores);
         engine.sync_scene_to_renderers(HashMap::new());
     }
 
@@ -445,7 +447,7 @@ impl VisoApp {
         id: u32,
         ss: Vec<SSType>,
     ) {
-        engine.set_ss_override_internal(id, ss);
+        engine.set_ss_override(id, ss);
         engine.sync_scene_to_renderers(HashMap::new());
     }
 }
@@ -462,7 +464,7 @@ fn apply_type_visibility(app: &VisoApp, engine: &mut VisoEngine) {
             MoleculeType::Solvent => engine.options.display.show_solvent,
             _ => true,
         };
-        engine.set_entity_visible_internal(raw_id, visible);
+        engine.set_entity_visible(raw_id, visible);
     }
 }
 

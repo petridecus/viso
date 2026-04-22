@@ -1,41 +1,55 @@
-//! Assembly sync + scene → renderer pipeline.
+//! [`SyncPipeline`] ZST — associated functions implementing the
+//! main-thread sync pipeline. Each method takes disjoint borrows of the
+//! engine's sub-structs (`Scene`, `EntityAnnotations`, `VisoOptions`,
+//! `GpuPipeline`, `AnimationState`) so the pipeline is expressible
+//! without routing through `&mut self` on [`VisoEngine`].
 //!
-//! All functions read [`VisoEngine`] state derived from the last
-//! [`Assembly`] snapshot and the animator's
-//! [`EntityPositions`](super::positions::EntityPositions). Neither
-//! `&Assembly` nor `&MoleculeEntity` appear in render-path signatures
-//! — the sync layer is the only place they're read, and it produces
-//! render-ready derived state downstream consumers use.
+//! [`VisoEngine`]: super::super::VisoEngine
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec3;
 use molex::entity::molecule::id::EntityId;
-use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
+use molex::{Assembly, MoleculeType, SSType};
 use rustc_hash::FxHashMap;
 
-use super::entity_view::{EntityView, RibbonBackbone};
-use super::scene_state::{BondResolveInput, SceneRenderState};
-use super::VisoEngine;
+use super::super::annotations::EntityAnnotations;
+use super::super::entity_view::{EntityView, RibbonBackbone};
+use super::super::scene::Scene;
+use super::super::scene_state::{BondResolveInput, SceneRenderState};
+use super::super::trajectory::TrajectoryFrame;
 use crate::animation::transition::Transition;
-use crate::options::{DisplayOptions, DrawingMode, GeometryOptions};
+use crate::animation::AnimationState;
+use crate::options::{DisplayOptions, DrawingMode, GeometryOptions, VisoOptions};
 use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::gpu_pipeline::SceneChainData;
 use crate::renderer::pipeline::prepared::{
     FullRebuildBody, FullRebuildEntity, PreparedRebuild,
 };
 use crate::renderer::pipeline::SceneRequest;
+use crate::renderer::GpuPipeline;
 
-// ── Assembly sync ──
+/// Main-thread sync pipeline.
+///
+/// ZST — all methods are associated functions taking disjoint borrows of
+/// the engine's sub-structs. Per-sync working state (ribbon cache, flat
+/// color buffers, etc.) is rebuilt inside each call rather than cached
+/// on the pipeline.
+pub(crate) struct SyncPipeline;
 
-impl VisoEngine {
+impl SyncPipeline {
     /// Rederive viso-side state from an `Assembly` snapshot.
     ///
     /// Called when the triple buffer yields a snapshot whose
     /// generation differs from `scene.last_seen_generation`.
-    pub(crate) fn sync_from_assembly(&mut self, assembly: &Assembly) {
-        self.scene.render_state = SceneRenderState::from_assembly(assembly);
+    pub(crate) fn sync_from_assembly(
+        scene: &mut Scene,
+        annotations: &mut EntityAnnotations,
+        options: &VisoOptions,
+        assembly: &Assembly,
+    ) {
+        scene.render_state = SceneRenderState::from_assembly(assembly);
 
         let mut seen: std::collections::HashSet<EntityId> =
             std::collections::HashSet::default();
@@ -43,14 +57,17 @@ impl VisoEngine {
             let id = entity.id();
             let _ = seen.insert(id);
             let ss = assembly.ss_types(id);
-            let ss_override = self.annotations.ss_overrides.get(&id).cloned();
+            let ss_override = annotations.ss_overrides.get(&id).cloned();
             let topology = Arc::new(
                 crate::engine::entity_view::derive_topology(entity, ss),
             );
-            let drawing_mode =
-                self.resolved_drawing_mode(id, topology.molecule_type);
-            let fresh_version = self.scene.bump_mesh_version();
-            match self.scene.entity_state.entry(id) {
+            let drawing_mode = annotations.resolved_drawing_mode(
+                options,
+                id,
+                topology.molecule_type,
+            );
+            let fresh_version = scene.bump_mesh_version();
+            match scene.entity_state.entry(id) {
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
                     let state = slot.get_mut();
                     state.topology = topology;
@@ -69,87 +86,110 @@ impl VisoEngine {
                     });
                 }
             }
-            self.scene
+            scene
                 .positions
                 .insert_from_reference(id, &entity.positions());
 
             // New entity? Seed visibility from ambient-type defaults.
-            if !self.annotations.visibility.contains_key(&id) {
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                annotations.visibility.entry(id)
+            {
                 let visible = match entity.molecule_type() {
-                    MoleculeType::Water => self.options.display.show_waters,
-                    MoleculeType::Ion => self.options.display.show_ions,
-                    MoleculeType::Solvent => self.options.display.show_solvent,
+                    MoleculeType::Water => options.display.show_waters,
+                    MoleculeType::Ion => options.display.show_ions,
+                    MoleculeType::Solvent => options.display.show_solvent,
                     _ => true,
                 };
-                let _ = self.annotations.visibility.insert(id, visible);
+                let _ = slot.insert(visible);
             }
         }
 
-        self.scene.entity_state.retain(|id, _| seen.contains(id));
-        self.scene.positions.retain(|id| seen.contains(&id));
-        self.annotations.retain_entities(|id| seen.contains(&id));
+        scene.entity_state.retain(|id, _| seen.contains(id));
+        scene.positions.retain(|id| seen.contains(&id));
+        annotations.retain_entities(|id| seen.contains(&id));
     }
-}
 
-// ── Scene sync ──
-
-impl VisoEngine {
     /// Poll the consumer, then submit a full-rebuild request to the
     /// background mesh processor using the current pending transitions.
-    pub(crate) fn sync_now(&mut self) {
-        self.poll_assembly_force();
-        let transitions =
-            std::mem::take(&mut self.animation.pending_transitions);
-        self.sync_scene_to_renderers(transitions);
+    pub(crate) fn sync_now(
+        scene: &mut Scene,
+        annotations: &mut EntityAnnotations,
+        options: &VisoOptions,
+        gpu: &mut GpuPipeline,
+        animation: &mut AnimationState,
+    ) {
+        Self::poll_assembly_force(scene, annotations, options);
+        let transitions = std::mem::take(&mut animation.pending_transitions);
+        Self::submit_full_rebuild(
+            scene,
+            annotations,
+            options,
+            gpu,
+            animation,
+            transitions,
+        );
     }
 
     /// Poll the consumer and immediately apply any new snapshot. Used
     /// by [`Self::sync_now`] when a mutation has just published a new
     /// snapshot that must be reflected before the next render.
-    fn poll_assembly_force(&mut self) {
-        let Some(assembly) = self.scene.consumer.latest() else {
+    fn poll_assembly_force(
+        scene: &mut Scene,
+        annotations: &mut EntityAnnotations,
+        options: &VisoOptions,
+    ) {
+        let Some(assembly) = scene.consumer.latest() else {
             return;
         };
-        if assembly.generation() == self.scene.last_seen_generation {
+        if assembly.generation() == scene.last_seen_generation {
             return;
         }
-        self.sync_from_assembly(&assembly);
-        self.scene.current = assembly;
-        self.scene.last_seen_generation = self.scene.current.generation();
+        Self::sync_from_assembly(scene, annotations, options, &assembly);
+        scene.current = assembly;
+        scene.last_seen_generation = scene.current.generation();
     }
 
-    /// Sync scene data to renderers with per-entity transitions.
+    /// Submit a `FullRebuild` request to the background mesh processor
+    /// with per-entity transitions.
     ///
     /// Entities in the map animate with their transition; entities
     /// not in the map snap. Pass an empty map for a non-animated sync.
-    pub fn sync_scene_to_renderers(
-        &mut self,
+    pub(crate) fn submit_full_rebuild(
+        scene: &mut Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+        gpu: &mut GpuPipeline,
+        animation: &mut AnimationState,
         entity_transitions: HashMap<u32, Transition>,
     ) {
-        let request_entities = self.build_full_rebuild_entities();
-        self.resolve_structural_bonds_into_render_state();
-        let _ = self.gpu.renderers.bond.update(
-            &self.gpu.context.device,
-            &self.gpu.context.queue,
-            self.scene.render_state.structural_bonds(),
+        let request_entities =
+            Self::build_full_rebuild_entities(scene, annotations, options);
+        Self::resolve_structural_bonds_into_render_state(
+            scene,
+            annotations,
+            options,
+        );
+        let _ = gpu.renderers.bond.update(
+            &gpu.context.device,
+            &gpu.context.queue,
+            scene.render_state.structural_bonds(),
         );
 
-        let entity_options = self.resolve_entity_options();
-        self.animation.pending_transitions = entity_transitions;
+        let entity_options = Self::resolve_entity_options(annotations, options);
+        animation.pending_transitions = entity_transitions;
 
-        let generation = self.gpu.scene_processor.next_generation();
+        let generation = gpu.scene_processor.next_generation();
         log::debug!(
-            "sync_scene_to_renderers: submitting FullRebuild \
+            "submit_full_rebuild: submitting FullRebuild \
              gen={generation}, entity_count={}",
             request_entities.len(),
         );
-        self.gpu
-            .scene_processor
+        gpu.scene_processor
             .submit(SceneRequest::FullRebuild(Box::new(FullRebuildBody {
                 entities: request_entities,
-                display: self.options.display.clone(),
-                colors: self.options.colors.clone(),
-                geometry: self.resolved_geometry(),
+                display: options.display.clone(),
+                colors: options.colors.clone(),
+                geometry: options.resolved_geometry(),
                 entity_options,
                 generation,
             })));
@@ -161,9 +201,12 @@ impl VisoEngine {
     /// `scene.render_state`. The resolver reads visibility, drawing
     /// mode, and topology straight off the engine's existing maps —
     /// the only thing worth caching is the spline projection.
-    fn resolve_structural_bonds_into_render_state(&mut self) {
-        let ribbons: FxHashMap<EntityId, RibbonBackbone> = self
-            .scene
+    fn resolve_structural_bonds_into_render_state(
+        scene: &mut Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+    ) {
+        let ribbons: FxHashMap<EntityId, RibbonBackbone> = scene
             .entity_state
             .iter()
             .filter(|(_, state)| {
@@ -171,57 +214,41 @@ impl VisoEngine {
                     && state.topology.is_protein()
             })
             .filter_map(|(&id, state)| {
-                let positions = self.scene.positions.get(id)?;
+                let positions = scene.positions.get(id)?;
                 let ribbon =
                     RibbonBackbone::project(&state.topology, positions)?;
                 Some((id, ribbon))
             })
             .collect();
         let input = BondResolveInput {
-            positions: &self.scene.positions,
-            entity_views: &self.scene.entity_state,
-            entity_visibility: &self.annotations.visibility,
+            positions: &scene.positions,
+            entity_views: &scene.entity_state,
+            entity_visibility: &annotations.visibility,
             ribbons: &ribbons,
-            options: &self.options.display.bonds,
-            colors: &self.options.colors,
+            options: &options.display.bonds,
+            colors: &options.colors,
         };
-        self.scene.render_state.update_structural_bonds(&input);
+        scene.render_state.update_structural_bonds(&input);
     }
 
     fn resolve_entity_options(
-        &self,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
     ) -> FxHashMap<u32, (DisplayOptions, GeometryOptions)> {
-        let resolved_geometry = self.resolved_geometry();
-        self.annotations
+        let resolved_geometry = options.resolved_geometry();
+        annotations
             .appearance
             .iter()
             .map(|(&id, ovr)| {
                 (
                     id.raw(),
                     (
-                        ovr.to_display_options(&self.options.display),
+                        ovr.to_display_options(&options.display),
                         ovr.to_geometry_options(&resolved_geometry),
                     ),
                 )
             })
             .collect()
-    }
-
-    /// Iterate every visible entity that has an `entity_state` slot,
-    /// yielding `(entity, entity_id, view)`. Skips invisible entities
-    /// and entities not yet reconciled into `entity_state`. Callers
-    /// that also need positions look them up via `self.scene.positions.get`.
-    pub(super) fn visible_entities(
-        &self,
-    ) -> impl Iterator<Item = (&MoleculeEntity, EntityId, &EntityView)> {
-        self.scene.current.entities().iter().filter_map(|entity| {
-            let eid = entity.id();
-            if !self.is_entity_visible(eid.raw()) {
-                return None;
-            }
-            let state = self.scene.entity_state.get(&eid)?;
-            Some((entity, eid, state))
-        })
     }
 
     /// Build the per-sync FullRebuild payload: for each visible entity,
@@ -230,26 +257,30 @@ impl VisoEngine {
     /// `EntityView` so main-thread color uploads can concatenate
     /// without recomputing. Sheet normals have no main-thread reader and
     /// live only on the request.
-    fn build_full_rebuild_entities(&mut self) -> Vec<FullRebuildEntity> {
-        let assembly = Arc::clone(&self.scene.current);
+    fn build_full_rebuild_entities(
+        scene: &mut Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+    ) -> Vec<FullRebuildEntity> {
+        let assembly = Arc::clone(&scene.current);
         let hbond_ranges = protein_hbond_ranges(assembly.as_ref());
         let mut result = Vec::new();
 
         for (entity_index, entity) in assembly.entities().iter().enumerate() {
             let eid = entity.id();
-            if !self.annotations.is_visible(eid) {
+            if !annotations.is_visible(eid) {
                 continue;
             }
-            let Some(positions) = self.scene.positions.get(eid) else {
+            let Some(positions) = scene.positions.get(eid) else {
                 continue;
             };
             let positions = positions.to_vec();
-            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
+            let Some(state) = scene.entity_state.get_mut(&eid) else {
                 continue;
             };
-            let display = self.annotations.appearance.get(&eid).map_or_else(
-                || self.options.display.clone(),
-                |ovr| ovr.to_display_options(&self.options.display),
+            let display = annotations.appearance.get(&eid).map_or_else(
+                || options.display.clone(),
+                |ovr| ovr.to_display_options(&options.display),
             );
             let ss_types: Vec<SSType> = state
                 .ss_override
@@ -262,7 +293,7 @@ impl VisoEngine {
                     entity_index,
                     &backbone_chains,
                     &ss_types,
-                    self.annotations.scores.get(&eid).map(Vec::as_slice),
+                    annotations.scores.get(&eid).map(Vec::as_slice),
                     &display,
                 )
             } else {
@@ -304,32 +335,33 @@ impl VisoEngine {
     /// renderers that still consume it internally (backbone metadata
     /// cache used by frustum culling + LOD tier comparison).
     fn upload_prepared_to_gpu(
-        &mut self,
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+        gpu: &mut GpuPipeline,
         prepared: &PreparedRebuild,
         animating: bool,
         suppress_sidechains: bool,
     ) {
-        let (backbone_chains, na_chains) = self.flat_scene_chains();
-        let scene = SceneChainData {
+        let (backbone_chains, na_chains) =
+            Self::flat_scene_chains(scene, annotations);
+        let chains = SceneChainData {
             backbone_chains: &backbone_chains,
             na_chains: &na_chains,
         };
-        self.gpu.upload_prepared(
-            prepared,
-            animating,
-            suppress_sidechains,
-            &scene,
-        );
+        gpu.upload_prepared(prepared, animating, suppress_sidechains, &chains);
     }
 
     /// Flatten per-entity backbone / NA chains in assembly order. Only
     /// Cartoon-mode protein entities contribute to the flat backbone
     /// (matching pre-migration behaviour).
-    fn flat_scene_chains(&self) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
+    fn flat_scene_chains(
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+    ) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
         let mut backbone = Vec::new();
         let mut na = Vec::new();
-        for (_, eid, state) in self.visible_entities() {
-            let Some(positions) = self.scene.positions.get(eid) else {
+        for (_, eid, state) in scene.visible_entities(annotations) {
+            let Some(positions) = scene.positions.get(eid) else {
                 continue;
             };
             if state.topology.is_protein()
@@ -345,38 +377,55 @@ impl VisoEngine {
     }
 
     /// Apply any pending scene data from the background `SceneProcessor`.
-    pub fn apply_pending_scene(&mut self) {
-        let Some(prepared) = self.gpu.scene_processor.try_recv_rebuild() else {
+    pub(crate) fn apply_pending_scene(
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+        gpu: &mut GpuPipeline,
+        animation: &mut AnimationState,
+    ) {
+        let Some(prepared) = gpu.scene_processor.try_recv_rebuild() else {
             return;
         };
 
         let entity_transitions =
-            std::mem::take(&mut self.animation.pending_transitions);
+            std::mem::take(&mut animation.pending_transitions);
         let animating = !entity_transitions.is_empty();
 
         if animating {
-            self.start_per_entity_animations(&entity_transitions);
-            self.ensure_gpu_capacity_and_colors();
-            self.submit_animation_frame();
+            Self::start_per_entity_animations(
+                scene,
+                animation,
+                &entity_transitions,
+            );
+            Self::ensure_gpu_capacity_and_colors(scene, annotations, gpu);
+            Self::submit_animation_frame(scene, options, gpu, animation);
         } else {
-            self.snap_from_prepared();
+            Self::snap_from_prepared(scene, annotations, gpu);
         }
 
         let suppress_sidechains = entity_transitions
             .values()
             .any(|t| t.suppress_initial_sidechains);
-        self.upload_prepared_to_gpu(&prepared, animating, suppress_sidechains);
+        Self::upload_prepared_to_gpu(
+            scene,
+            annotations,
+            gpu,
+            &prepared,
+            animating,
+            suppress_sidechains,
+        );
     }
 
     /// Kick off per-entity animation runners using the current
     /// positions as `start` and each entity's reference positions as
     /// `target`.
     fn start_per_entity_animations(
-        &mut self,
+        scene: &Scene,
+        animation: &mut AnimationState,
         entity_transitions: &HashMap<u32, Transition>,
     ) {
-        let targets: Vec<(EntityId, Vec<Vec3>)> = self
-            .scene
+        let targets: Vec<(EntityId, Vec<Vec3>)> = scene
             .current
             .entities()
             .iter()
@@ -387,83 +436,69 @@ impl VisoEngine {
             let Some(transition) = entity_transitions.get(&raw) else {
                 continue;
             };
-            let current = self
-                .scene
+            let current = scene
                 .positions
                 .get(eid)
                 .map(<[Vec3]>::to_vec)
                 .unwrap_or_default();
-            self.animation
+            animation
                 .animator
                 .animate_entity(eid, current, target, transition);
         }
     }
 
-    fn snap_from_prepared(&mut self) {
-        self.ensure_gpu_capacity_and_colors();
-        let flat_colors = self.flat_cartoon_colors();
+    fn snap_from_prepared(
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+        gpu: &mut GpuPipeline,
+    ) {
+        Self::ensure_gpu_capacity_and_colors(scene, annotations, gpu);
+        let flat_colors = scene.flat_cartoon_colors(annotations);
         if !flat_colors.is_empty() {
-            self.gpu.set_colors_immediate(&flat_colors);
+            gpu.set_colors_immediate(&flat_colors);
         }
     }
 
-    pub(crate) fn apply_pending_animation(&mut self) {
-        let _ = self.gpu.apply_pending_animation();
-    }
-
-    fn ensure_gpu_capacity_and_colors(&mut self) {
-        let (backbone_chains, _na) = self.flat_scene_chains();
+    fn ensure_gpu_capacity_and_colors(
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+        gpu: &mut GpuPipeline,
+    ) {
+        let (backbone_chains, _na) = Self::flat_scene_chains(scene, annotations);
         let total_residues =
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
                 &backbone_chains,
             );
-        self.gpu.ensure_residue_capacity(total_residues);
-        let flat_colors = self.flat_cartoon_colors();
+        gpu.ensure_residue_capacity(total_residues);
+        let flat_colors = scene.flat_cartoon_colors(annotations);
         if !flat_colors.is_empty() {
-            self.gpu.set_target_colors(&flat_colors);
+            gpu.set_target_colors(&flat_colors);
         }
-    }
-
-    pub(super) fn flat_cartoon_colors(&self) -> Vec<[f32; 3]> {
-        let mut out = Vec::new();
-        for (_, _, state) in self.visible_entities() {
-            if !state.topology.is_protein()
-                || state.drawing_mode != DrawingMode::Cartoon
-            {
-                continue;
-            }
-            if let Some(colors) = &state.per_residue_colors {
-                out.extend_from_slice(colors);
-            } else {
-                let residue_count = state.topology.residue_atom_ranges.len();
-                out.extend(std::iter::repeat_n(
-                    [0.5_f32, 0.5, 0.5],
-                    residue_count,
-                ));
-            }
-        }
-        out
     }
 
     /// Submit an animation frame to the background thread using the
-    /// engine's current [`super::positions::EntityPositions`].
-    pub(crate) fn submit_animation_frame(&self) {
-        let include_sidechains =
-            self.animation.animator.should_include_sidechains();
-        self.gpu.submit_animation_frame(
-            &self.scene.positions,
-            &self.options.geometry,
+    /// engine's current [`super::super::positions::EntityPositions`].
+    pub(crate) fn submit_animation_frame(
+        scene: &Scene,
+        options: &VisoOptions,
+        gpu: &GpuPipeline,
+        animation: &AnimationState,
+    ) {
+        let include_sidechains = animation.animator.should_include_sidechains();
+        gpu.submit_animation_frame(
+            &scene.positions,
+            &options.geometry,
             include_sidechains,
         );
     }
 
     /// Apply a trajectory frame's atom-index updates to
-    /// [`super::positions::EntityPositions`].
+    /// [`super::super::positions::EntityPositions`].
     pub(crate) fn apply_trajectory_frame(
-        &mut self,
-        frame: &super::trajectory::TrajectoryFrame,
+        scene: &mut Scene,
+        frame: &TrajectoryFrame,
     ) {
-        let Some(slot) = self.scene.positions.get_mut(frame.entity) else {
+        let Some(slot) = scene.positions.get_mut(frame.entity) else {
             return;
         };
         for (i, &idx) in frame.atom_indices.iter().enumerate() {
@@ -475,25 +510,15 @@ impl VisoEngine {
             }
         }
     }
-}
-
-// ── Misc engine-side helpers ──
-
-impl VisoEngine {
-    /// Geometry options with display helix/sheet style folded in.
-    pub(crate) fn resolved_geometry(&self) -> GeometryOptions {
-        self.options
-            .geometry
-            .resolve_cartoon_style()
-            .with_helix_style(self.options.display.helix_style)
-            .with_sheet_style(self.options.display.sheet_style)
-    }
 
     /// Concatenated SS across all Cartoon protein entities, in
     /// assembly order. Used by the `SelectSegment` command path.
-    pub(crate) fn concatenated_cartoon_ss(&self) -> Vec<SSType> {
+    pub(crate) fn concatenated_cartoon_ss(
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+    ) -> Vec<SSType> {
         let mut ss = Vec::new();
-        for (_, _, state) in self.visible_entities() {
+        for (_, _, state) in scene.visible_entities(annotations) {
             if state.topology.is_protein()
                 && state.drawing_mode == DrawingMode::Cartoon
             {
@@ -507,32 +532,31 @@ impl VisoEngine {
         ss
     }
 
-    /// Re-run the full-rebuild path after a display/color option
-    /// change that affects ball-and-stick rendering.
-    pub(crate) fn refresh_ball_and_stick(&mut self) {
-        self.sync_scene_to_renderers(HashMap::new());
-    }
-
     /// Recompute per-chain backbone colors and upload them immediately.
     /// Used by display-option changes that affect backbone tint but
     /// don't invalidate mesh geometry.
-    pub(crate) fn recompute_backbone_colors(&mut self) {
-        let assembly = Arc::clone(&self.scene.current);
+    pub(crate) fn recompute_backbone_colors(
+        scene: &mut Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+        gpu: &mut GpuPipeline,
+    ) {
+        let assembly = Arc::clone(&scene.current);
         for (entity_index, entity) in assembly.entities().iter().enumerate() {
             let eid = entity.id();
-            let Some(positions) = self.scene.positions.get(eid) else {
+            let Some(positions) = scene.positions.get(eid) else {
                 continue;
             };
             let positions = positions.to_vec();
-            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
+            let Some(state) = scene.entity_state.get_mut(&eid) else {
                 continue;
             };
             if !state.topology.is_protein() {
                 continue;
             }
-            let display = self.annotations.appearance.get(&eid).map_or_else(
-                || self.options.display.clone(),
-                |ovr| ovr.to_display_options(&self.options.display),
+            let display = annotations.appearance.get(&eid).map_or_else(
+                || options.display.clone(),
+                |ovr| ovr.to_display_options(&options.display),
             );
             let ss_types: Vec<SSType> = state
                 .ss_override
@@ -544,13 +568,13 @@ impl VisoEngine {
                 entity_index,
                 &backbone_chains,
                 &ss_types,
-                self.annotations.scores.get(&eid).map(Vec::as_slice),
+                annotations.scores.get(&eid).map(Vec::as_slice),
                 &display,
             );
         }
-        let flat = self.flat_cartoon_colors();
+        let flat = scene.flat_cartoon_colors(annotations);
         if !flat.is_empty() {
-            self.gpu.set_colors_immediate(&flat);
+            gpu.set_colors_immediate(&flat);
         }
     }
 }

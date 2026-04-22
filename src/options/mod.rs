@@ -109,6 +109,15 @@ impl VisoOptions {
         std::fs::write(path, content).map_err(VisoError::Io)
     }
 
+    /// Geometry options with display helix/sheet style folded in.
+    #[must_use]
+    pub fn resolved_geometry(&self) -> GeometryOptions {
+        self.geometry
+            .resolve_cartoon_style()
+            .with_helix_style(self.display.helix_style)
+            .with_sheet_style(self.display.sheet_style)
+    }
+
     /// List available preset names (TOML file stems) in a directory.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]

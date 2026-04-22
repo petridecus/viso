@@ -56,7 +56,7 @@ impl super::VisoEngine {
         let sc_colors = if self.options.display.sidechain_color_mode
             == crate::options::SidechainColorMode::Backbone
         {
-            let flat = self.flat_cartoon_colors();
+            let flat = self.scene.flat_cartoon_colors(&self.annotations);
             if flat.is_empty() {
                 None
             } else {
@@ -86,7 +86,7 @@ impl super::VisoEngine {
         let mut out = FlatSidechainState::default();
         let mut residue_offset: u32 = 0;
 
-        for (_, eid, state) in self.visible_entities() {
+        for (_, eid, state) in self.scene.visible_entities(&self.annotations) {
             let layout = &state.topology.sidechain_layout;
             if layout.atom_indices.is_empty() {
                 residue_offset +=
@@ -138,14 +138,14 @@ impl super::VisoEngine {
     /// chain's tier has changed.
     pub(crate) fn check_and_submit_lod(&mut self) {
         let camera_eye = self.camera_controller.camera.eye;
-        let geo = self.resolved_geometry();
+        let geo = self.options.resolved_geometry();
         self.gpu
             .check_and_submit_lod(camera_eye, &geo, &self.scene.positions);
     }
 
     /// Submit a backbone-only remesh with per-chain LOD.
     pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
-        let geo = self.resolved_geometry();
+        let geo = self.options.resolved_geometry();
         self.gpu
             .submit_lod_remesh(camera_eye, &geo, &self.scene.positions);
     }

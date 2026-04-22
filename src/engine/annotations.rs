@@ -21,6 +21,13 @@
 //! The `Focus` arm holds an [`EntityId`] for the same reason the maps
 //! do; the UI-side `u32` is recovered via `EntityId::raw()` when
 //! needed by external consumers (the bridge, the webview).
+//!
+//! [`AnnotationsScene`] is the disjoint-borrow write view: most
+//! annotation mutations also bump per-entity `mesh_version`, so the
+//! write path owns coordinated access to `annotations` plus the two
+//! scene fields it stamps (`entity_state`, `next_mesh_version`).
+//! `VisoEngine` exposes it through `annotations_mut()`; all annotation
+//! mutators on `VisoEngine` become one-line dispatchers.
 
 use std::collections::HashMap;
 
@@ -28,11 +35,12 @@ use molex::entity::molecule::id::EntityId;
 use molex::{MoleculeType, SSType};
 use rustc_hash::FxHashMap;
 
+use super::entity_view::EntityView;
 use super::focus::Focus;
 use super::surface::EntitySurface;
 use super::VisoEngine;
 use crate::animation::transition::Transition;
-use crate::options::{DrawingMode, EntityAppearance};
+use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
 
 /// Per-entity user-authored state that isn't derived from the
 /// [`Assembly`](molex::Assembly).
@@ -60,6 +68,28 @@ impl EntityAnnotations {
     #[must_use]
     pub fn is_visible(&self, id: EntityId) -> bool {
         self.visibility.get(&id).copied().unwrap_or(true)
+    }
+
+    /// Per-entity animation behavior override, if set.
+    #[must_use]
+    pub fn behavior(&self, id: EntityId) -> Option<&Transition> {
+        self.behaviors.get(&id)
+    }
+
+    /// Record a per-entity animation behavior override.
+    pub fn set_behavior(&mut self, id: EntityId, transition: Transition) {
+        let _ = self.behaviors.insert(id, transition);
+    }
+
+    /// Drop a per-entity animation behavior override.
+    pub fn clear_behavior(&mut self, id: EntityId) {
+        let _ = self.behaviors.remove(&id);
+    }
+
+    /// Per-entity appearance override, if set.
+    #[must_use]
+    pub fn appearance(&self, id: EntityId) -> Option<&EntityAppearance> {
+        self.appearance.get(&id)
     }
 
     /// Drop entries for entities no longer present in the assembly.
@@ -97,6 +127,26 @@ impl EntityAnnotations {
         self.focus
     }
 
+    /// Resolve the drawing mode for an entity: per-entity override wins,
+    /// else global (with Cartoon falling back to type-default).
+    #[must_use]
+    pub fn resolved_drawing_mode(
+        &self,
+        options: &VisoOptions,
+        eid: EntityId,
+        mol_type: MoleculeType,
+    ) -> DrawingMode {
+        self.appearance(eid)
+            .and_then(|ovr| ovr.drawing_mode)
+            .unwrap_or_else(|| {
+                if options.display.drawing_mode == DrawingMode::Cartoon {
+                    DrawingMode::default_for(mol_type)
+                } else {
+                    options.display.drawing_mode
+                }
+            })
+    }
+
     /// Clear every annotation back to the default state (focus back
     /// to session-wide, every map emptied).
     pub fn reset(&mut self) {
@@ -110,64 +160,62 @@ impl EntityAnnotations {
     }
 }
 
-// ── Engine-side annotation mutations (u32 API for VisoApp / bridge) ──
-//
-// Each entry point translates raw `u32` -> `EntityId` once, then
-// operates on the annotation maps by opaque id. Mutations that
-// invalidate rendered geometry also bump `scene.mesh_version`.
+/// Disjoint-borrow write view over the annotation maps plus the scene
+/// fields every mutation has to stamp.
+///
+/// Annotation writes almost always bump an entity's `mesh_version`, so
+/// this struct bundles `annotations` together with `entity_state` and
+/// the `next_mesh_version` dispenser — three disjoint `&mut`s — so the
+/// write path is expressible without `&mut self` methods fighting
+/// over `VisoEngine`. `VisoEngine::annotations_mut` is the constructor.
+pub(crate) struct AnnotationsScene<'a> {
+    annotations: &'a mut EntityAnnotations,
+    entity_state: &'a mut FxHashMap<EntityId, EntityView>,
+    next_mesh_version: &'a mut u64,
+}
 
-impl VisoEngine {
-    /// Whether an entity is currently visible. Absent entries default
-    /// to visible.
-    pub(crate) fn is_entity_visible(&self, id: u32) -> bool {
-        self.entity_id(id)
-            .is_none_or(|eid| self.annotations.is_visible(eid))
+impl<'a> AnnotationsScene<'a> {
+    /// Construct the view from the three disjoint fields it owns.
+    pub(crate) fn new(
+        annotations: &'a mut EntityAnnotations,
+        entity_state: &'a mut FxHashMap<EntityId, EntityView>,
+        next_mesh_version: &'a mut u64,
+    ) -> Self {
+        Self {
+            annotations,
+            entity_state,
+            next_mesh_version,
+        }
     }
 
-    /// Record the visibility of a single entity.
-    pub(crate) fn set_entity_visible_internal(
-        &mut self,
-        id: u32,
-        visible: bool,
-    ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
-        let _ = self.annotations.visibility.insert(eid, visible);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
+    /// Pull a fresh `mesh_version` from the dispenser.
+    fn bump(&mut self) -> u64 {
+        let v = *self.next_mesh_version;
+        *self.next_mesh_version = self.next_mesh_version.wrapping_add(1);
+        v
+    }
+
+    /// Bump the dispenser and stamp the new version onto `eid`'s
+    /// `EntityView` if one exists.
+    fn bump_for(&mut self, eid: EntityId) {
+        let v = self.bump();
+        if let Some(state) = self.entity_state.get_mut(&eid) {
             state.mesh_version = v;
         }
     }
 
-    /// Set visibility for every entity of a given molecule type.
-    pub(crate) fn set_type_visibility_internal(
-        &mut self,
-        mol_type: MoleculeType,
-        visible: bool,
-    ) {
-        let ids: Vec<u32> = self
-            .scene
-            .current
-            .entities()
-            .iter()
-            .filter(|e| e.molecule_type() == mol_type)
-            .map(|e| e.id().raw())
-            .collect();
-        for id in ids {
-            self.set_entity_visible_internal(id, visible);
-        }
+    /// Record visibility for `eid` and invalidate its mesh.
+    pub(crate) fn set_visible(&mut self, eid: EntityId, visible: bool) {
+        let _ = self.annotations.visibility.insert(eid, visible);
+        self.bump_for(eid);
     }
 
-    /// Set per-entity scores (`None` clears).
-    pub(crate) fn set_per_residue_scores_internal(
+    /// Record (or clear, with `None`) per-residue scores for `eid`.
+    pub(crate) fn set_per_residue_scores(
         &mut self,
-        id: u32,
+        eid: EntityId,
         scores: Option<Vec<f64>>,
     ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
         match scores {
             Some(s) => {
                 let _ = self.annotations.scores.insert(eid, s);
@@ -176,39 +224,127 @@ impl VisoEngine {
                 let _ = self.annotations.scores.remove(&eid);
             }
         }
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
+        self.bump_for(eid);
+    }
+
+    /// Record an SS override for `eid`.
+    pub(crate) fn set_ss_override(&mut self, eid: EntityId, ss: Vec<SSType>) {
+        let _ = self.annotations.ss_overrides.insert(eid, ss);
+        self.bump_for(eid);
+    }
+
+    /// Record an appearance override for `eid` and restamp both
+    /// `mesh_version` and the resolved `drawing_mode`.
+    ///
+    /// The resolved drawing mode is passed in because resolution reads
+    /// `VisoOptions`, which lives outside the three fields this view
+    /// owns; the caller resolves it before taking the view.
+    pub(crate) fn set_appearance(
+        &mut self,
+        eid: EntityId,
+        overrides: EntityAppearance,
+        drawing_mode: DrawingMode,
+    ) {
+        let _ = self.annotations.appearance.insert(eid, overrides);
+        let v = self.bump();
+        if let Some(state) = self.entity_state.get_mut(&eid) {
             state.mesh_version = v;
+            state.drawing_mode = drawing_mode;
+        }
+    }
+
+    /// Drop an appearance override for `eid` and restamp `mesh_version`
+    /// plus the resolved `drawing_mode` (see [`Self::set_appearance`]
+    /// for why the caller resolves it).
+    pub(crate) fn clear_appearance(
+        &mut self,
+        eid: EntityId,
+        drawing_mode: DrawingMode,
+    ) {
+        let _ = self.annotations.appearance.remove(&eid);
+        let v = self.bump();
+        if let Some(state) = self.entity_state.get_mut(&eid) {
+            state.mesh_version = v;
+            state.drawing_mode = drawing_mode;
+        }
+    }
+}
+
+// ── Engine-side annotation dispatchers ─────────────────────────────
+//
+// Each entry point either (a) takes a raw `u32`, translates to
+// `EntityId` once, and forwards to [`AnnotationsScene`] /
+// [`EntityAnnotations`], or (b) takes an `EntityId` and forwards
+// directly. Any follow-up work that needs more than the three
+// annotation-scene fields (e.g. `sync_scene_to_renderers`, reading
+// `VisoOptions`) stays in the dispatcher.
+
+impl VisoEngine {
+    /// Disjoint-borrow write view over the annotations + the scene
+    /// fields every annotation mutation stamps.
+    pub(crate) fn annotations_mut(&mut self) -> AnnotationsScene<'_> {
+        AnnotationsScene::new(
+            &mut self.annotations,
+            &mut self.scene.entity_state,
+            &mut self.scene.next_mesh_version,
+        )
+    }
+
+    /// Whether an entity is currently visible. Absent entries default
+    /// to visible.
+    pub(crate) fn is_entity_visible(&self, id: u32) -> bool {
+        self.entity_id(id)
+            .is_none_or(|eid| self.annotations.is_visible(eid))
+    }
+
+    /// Record the visibility of a single entity.
+    pub(crate) fn set_entity_visible(&mut self, id: u32, visible: bool) {
+        if let Some(eid) = self.entity_id(id) {
+            self.annotations_mut().set_visible(eid, visible);
+        }
+    }
+
+    /// Set visibility for every entity of a given molecule type.
+    pub(crate) fn set_type_visibility(
+        &mut self,
+        mol_type: MoleculeType,
+        visible: bool,
+    ) {
+        let ids: Vec<EntityId> = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| e.molecule_type() == mol_type)
+            .map(molex::MoleculeEntity::id)
+            .collect();
+        let mut view = self.annotations_mut();
+        for eid in ids {
+            view.set_visible(eid, visible);
+        }
+    }
+
+    /// Set per-entity scores (`None` clears).
+    pub(crate) fn set_per_residue_scores(
+        &mut self,
+        id: u32,
+        scores: Option<Vec<f64>>,
+    ) {
+        if let Some(eid) = self.entity_id(id) {
+            self.annotations_mut().set_per_residue_scores(eid, scores);
         }
     }
 
     /// Set an SS override for an entity.
-    pub(crate) fn set_ss_override_internal(
-        &mut self,
-        id: u32,
-        ss: Vec<SSType>,
-    ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
-        let _ = self.annotations.ss_overrides.insert(eid, ss);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-        }
-    }
-
-    /// Clear an entity's per-entity animation behavior override.
-    pub(crate) fn clear_entity_behavior_internal(&mut self, id: u32) {
+    pub(crate) fn set_ss_override(&mut self, id: u32, ss: Vec<SSType>) {
         if let Some(eid) = self.entity_id(id) {
-            let _ = self.annotations.behaviors.remove(&eid);
+            self.annotations_mut().set_ss_override(eid, ss);
         }
     }
 
     /// Read access to the per-entity behavior override for `id`.
     pub(crate) fn entity_behavior(&self, id: u32) -> Option<&Transition> {
-        let eid = self.entity_id(id)?;
-        self.annotations.behaviors.get(&eid)
+        self.annotations.behavior(self.entity_id(id)?)
     }
 
     /// Set the animation behavior for a specific entity.
@@ -217,12 +353,12 @@ impl VisoEngine {
         entity_id: EntityId,
         transition: Transition,
     ) {
-        let _ = self.annotations.behaviors.insert(entity_id, transition);
+        self.annotations.set_behavior(entity_id, transition);
     }
 
     /// Clear a per-entity behavior override.
     pub fn clear_entity_behavior(&mut self, entity_id: EntityId) {
-        let _ = self.annotations.behaviors.remove(&entity_id);
+        self.annotations.clear_behavior(entity_id);
     }
 
     /// Set per-entity appearance overrides.
@@ -231,15 +367,35 @@ impl VisoEngine {
         entity_id: EntityId,
         overrides: EntityAppearance,
     ) {
-        let _ = self.annotations.appearance.insert(entity_id, overrides);
-        self.apply_appearance_change(entity_id);
+        let mol_type = self
+            .scene
+            .entity_state
+            .get(&entity_id)
+            .map(|s| s.topology.molecule_type);
+        if let Some(mol_type) = mol_type {
+            let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
+            self.annotations_mut()
+                .set_appearance(entity_id, overrides, drawing_mode);
+        } else {
+            let _ = self.annotations.appearance.insert(entity_id, overrides);
+        }
         self.sync_scene_to_renderers(HashMap::new());
     }
 
     /// Clear a per-entity appearance override.
     pub fn clear_entity_appearance(&mut self, entity_id: EntityId) {
-        let _ = self.annotations.appearance.remove(&entity_id);
-        self.apply_appearance_change(entity_id);
+        let mol_type = self
+            .scene
+            .entity_state
+            .get(&entity_id)
+            .map(|s| s.topology.molecule_type);
+        if let Some(mol_type) = mol_type {
+            let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
+            self.annotations_mut()
+                .clear_appearance(entity_id, drawing_mode);
+        } else {
+            let _ = self.annotations.appearance.remove(&entity_id);
+        }
         self.sync_scene_to_renderers(HashMap::new());
     }
 
@@ -249,7 +405,7 @@ impl VisoEngine {
         &self,
         entity_id: EntityId,
     ) -> Option<&EntityAppearance> {
-        self.annotations.appearance.get(&entity_id)
+        self.annotations.appearance(entity_id)
     }
 
     /// Resolve the drawing mode for an entity: per-entity override wins,
@@ -260,36 +416,6 @@ impl VisoEngine {
         mol_type: MoleculeType,
     ) -> DrawingMode {
         self.annotations
-            .appearance
-            .get(&eid)
-            .and_then(|ovr| ovr.drawing_mode)
-            .unwrap_or_else(|| {
-                if self.options.display.drawing_mode == DrawingMode::Cartoon {
-                    DrawingMode::default_for(mol_type)
-                } else {
-                    self.options.display.drawing_mode
-                }
-            })
-    }
-
-    /// Bump mesh version and re-resolve drawing mode for an entity
-    /// whose appearance override just changed. Internal helper that
-    /// sidesteps the borrow-check pitfall of reading `self` while
-    /// holding a `&mut` into `entity_state`.
-    fn apply_appearance_change(&mut self, eid: EntityId) {
-        let mol_type = self
-            .scene
-            .entity_state
-            .get(&eid)
-            .map(|s| s.topology.molecule_type);
-        let Some(mol_type) = mol_type else {
-            return;
-        };
-        let drawing_mode = self.resolved_drawing_mode(eid, mol_type);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-            state.drawing_mode = drawing_mode;
-        }
+            .resolved_drawing_mode(&self.options, eid, mol_type)
     }
 }

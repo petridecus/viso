@@ -271,7 +271,7 @@ impl VisoEngine {
             }),
             VisoCommand::ToggleEntityVisibility { id } => {
                 let currently_visible = self.is_entity_visible(id);
-                self.set_entity_visible_internal(id, !currently_visible);
+                self.set_entity_visible(id, !currently_visible);
                 self.sync_scene_to_renderers(HashMap::new());
                 false
             }
@@ -285,7 +285,7 @@ impl VisoEngine {
             VisoCommand::ToggleIons => {
                 self.options.display.show_ions =
                     !self.options.display.show_ions;
-                self.set_type_visibility_internal(
+                self.set_type_visibility(
                     MoleculeType::Ion,
                     self.options.display.show_ions,
                 );
@@ -295,7 +295,7 @@ impl VisoEngine {
             VisoCommand::ToggleWaters => {
                 self.options.display.show_waters =
                     !self.options.display.show_waters;
-                self.set_type_visibility_internal(
+                self.set_type_visibility(
                     MoleculeType::Water,
                     self.options.display.show_waters,
                 );
@@ -305,7 +305,7 @@ impl VisoEngine {
             VisoCommand::ToggleSolvent => {
                 self.options.display.show_solvent =
                     !self.options.display.show_solvent;
-                self.set_type_visibility_internal(
+                self.set_type_visibility(
                     MoleculeType::Solvent,
                     self.options.display.show_solvent,
                 );
@@ -359,6 +359,13 @@ impl VisoEngine {
     /// Stop the background scene processor thread.
     pub fn shutdown(&mut self) {
         self.gpu.shutdown();
+    }
+
+    /// Load a DCD trajectory file and begin playback against the first
+    /// visible protein entity.
+    pub fn load_trajectory(&mut self, path: &std::path::Path) {
+        self.animation
+            .load_trajectory_from_path(path, &self.scene, &self.annotations);
     }
 }
 
@@ -513,7 +520,8 @@ impl VisoEngine {
         atom_name: &str,
     ) -> Option<glam::Vec3> {
         constraint::resolve_atom_ref_pub(
-            self,
+            &self.scene,
+            &self.annotations,
             &command::AtomRef {
                 residue,
                 atom_name: atom_name.to_owned(),

@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use glam::Vec3;
-use molex::adapters::dcd::{dcd_file_to_frames, DcdFrame};
+use molex::adapters::dcd::DcdFrame;
 use molex::entity::molecule::id::EntityId;
 use molex::entity::molecule::protein::ProteinEntity;
 use molex::MoleculeType;
@@ -137,55 +137,20 @@ impl TrajectoryPlayer {
 }
 
 // ---------------------------------------------------------------------------
-// Engine-level loader
+// Loader
 // ---------------------------------------------------------------------------
 
-impl super::VisoEngine {
-    /// Load a DCD trajectory file and begin playback against the first
-    /// visible protein entity.
-    pub fn load_trajectory(&mut self, path: &std::path::Path) {
-        let (header, frames) = match dcd_file_to_frames(path) {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("Failed to load DCD trajectory: {e}");
-                return;
-            }
-        };
-
-        let Some((entity_id, atom_count, atom_index_map)) =
-            self.pick_trajectory_target()
-        else {
-            log::error!("No protein structure loaded — cannot play trajectory");
-            return;
-        };
-
-        if (header.num_atoms as usize) < atom_count {
-            log::error!(
-                "DCD atom count ({}) is less than protein atom count ({})",
-                header.num_atoms,
-                atom_count,
-            );
-            return;
-        }
-
-        let num_atoms = header.num_atoms as usize;
-        let num_frames = frames.len();
-        let player =
-            TrajectoryPlayer::new(frames, num_atoms, entity_id, atom_index_map);
-        self.animation
-            .load_trajectory(player, num_frames, num_atoms);
-    }
-
-    /// Pick the first visible protein entity as the trajectory target.
-    fn pick_trajectory_target(&self) -> Option<(EntityId, usize, Vec<usize>)> {
-        let entity = self.scene.current.entities().iter().find(|e| {
-            self.is_entity_visible(e.id().raw())
-                && e.molecule_type() == MoleculeType::Protein
-        })?;
-        let protein = entity.as_protein()?;
-        let indices = build_backbone_atom_indices(protein);
-        Some((entity.id(), protein.atoms.len(), indices))
-    }
+/// Pick the first visible protein entity as the trajectory target.
+pub(crate) fn pick_trajectory_target(
+    scene: &super::scene::Scene,
+    annotations: &super::annotations::EntityAnnotations,
+) -> Option<(EntityId, usize, Vec<usize>)> {
+    let entity = scene.current.entities().iter().find(|e| {
+        annotations.is_visible(e.id()) && e.molecule_type() == MoleculeType::Protein
+    })?;
+    let protein = entity.as_protein()?;
+    let indices = build_backbone_atom_indices(protein);
+    Some((entity.id(), protein.atoms.len(), indices))
 }
 
 /// Build the backbone atom index mapping from a [`ProteinEntity`].

@@ -2,13 +2,19 @@
 //! and pending per-entity transitions.
 
 use std::collections::HashMap;
+use std::path::Path;
 
+use molex::adapters::dcd::dcd_file_to_frames;
 use web_time::Instant;
 
 use super::StructureAnimator;
 use crate::animation::transition::Transition;
+use crate::engine::annotations::EntityAnnotations;
 use crate::engine::positions::EntityPositions;
-use crate::engine::trajectory::{TrajectoryFrame, TrajectoryPlayer};
+use crate::engine::scene::Scene;
+use crate::engine::trajectory::{
+    pick_trajectory_target, TrajectoryFrame, TrajectoryPlayer,
+};
 
 /// Grouped animation fields.
 pub(crate) struct AnimationState {
@@ -65,6 +71,47 @@ impl AnimationState {
             "Trajectory loaded: {num_frames} frames, {num_atoms} atoms, \
              ~{duration_secs:.1}s at 30fps",
         );
+    }
+
+    /// Open a DCD trajectory file, bind it to the first visible protein
+    /// entity in `scene`, and begin playback. Logs and returns silently
+    /// on any failure (file open, no visible protein, atom-count
+    /// mismatch).
+    pub(crate) fn load_trajectory_from_path(
+        &mut self,
+        path: &Path,
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+    ) {
+        let (header, frames) = match dcd_file_to_frames(path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to load DCD trajectory: {e}");
+                return;
+            }
+        };
+
+        let Some((entity_id, atom_count, atom_index_map)) =
+            pick_trajectory_target(scene, annotations)
+        else {
+            log::error!("No protein structure loaded — cannot play trajectory");
+            return;
+        };
+
+        if (header.num_atoms as usize) < atom_count {
+            log::error!(
+                "DCD atom count ({}) is less than protein atom count ({})",
+                header.num_atoms,
+                atom_count,
+            );
+            return;
+        }
+
+        let num_atoms = header.num_atoms as usize;
+        let num_frames = frames.len();
+        let player =
+            TrajectoryPlayer::new(frames, num_atoms, entity_id, atom_index_map);
+        self.load_trajectory(player, num_frames, num_atoms);
     }
 
     /// Toggle trajectory playback (play/pause). No-op if no trajectory

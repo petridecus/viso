@@ -13,13 +13,16 @@
 use glam::{UVec2, Vec2, Vec3};
 use molex::entity::molecule::id::EntityId;
 
+use super::annotations::EntityAnnotations;
 use super::command::{
     AtomRef, BandInfo, BandTarget, PullInfo, ResolvedBand, ResolvedPull,
 };
 use super::entity_view::EntityView;
-use super::VisoEngine;
+use super::scene::Scene;
+use super::{ConstraintSpecs, VisoEngine};
 use crate::camera::controller::CameraController;
-use crate::options::DrawingMode;
+use crate::options::{DrawingMode, VisoOptions};
+use crate::renderer::GpuPipeline;
 
 /// Pre-computed per-frame cache for constraint resolution.
 ///
@@ -29,7 +32,7 @@ use crate::options::DrawingMode;
 /// over `engine.scene.current.entities()` — O(bands × entities × log
 /// residues) per frame.
 pub(super) struct ConstraintContext<'a> {
-    engine: &'a VisoEngine,
+    scene: &'a Scene,
     /// Cartoon-mode protein entities in assembly order, with their
     /// flat residue ranges. `AtomRef.residue` is a flat index across
     /// these entities (matching
@@ -50,10 +53,13 @@ struct CartoonRange {
 }
 
 impl<'a> ConstraintContext<'a> {
-    pub(super) fn new(engine: &'a VisoEngine) -> Self {
+    pub(super) fn new(
+        scene: &'a Scene,
+        annotations: &'a EntityAnnotations,
+    ) -> Self {
         let mut cartoon_ranges = Vec::new();
         let mut cursor: u32 = 0;
-        for (_, eid, state) in engine.visible_entities() {
+        for (_, eid, state) in scene.visible_entities(annotations) {
             if state.topology.is_protein()
                 && state.drawing_mode == DrawingMode::Cartoon
             {
@@ -67,7 +73,7 @@ impl<'a> ConstraintContext<'a> {
             }
         }
         Self {
-            engine,
+            scene,
             cartoon_ranges,
         }
     }
@@ -92,8 +98,8 @@ impl<'a> ConstraintContext<'a> {
             })
             .ok()
             .map(|i| &self.cartoon_ranges[i])?;
-        let state = self.engine.scene.entity_state.get(&range.entity)?;
-        let positions = self.engine.scene.positions.get(range.entity)?;
+        let state = self.scene.entity_state.get(&range.entity)?;
+        let positions = self.scene.positions.get(range.entity)?;
         let local_residue = atom.residue - range.start;
         resolve_atom_in_entity(state, positions, local_residue, &atom.atom_name)
     }
@@ -152,10 +158,11 @@ fn resolve_pull(
 /// frame should build a shared context via
 /// [`ConstraintContext::new`].
 pub(super) fn resolve_atom_ref_pub(
-    engine: &VisoEngine,
+    scene: &Scene,
+    annotations: &EntityAnnotations,
     atom: &AtomRef,
 ) -> Option<Vec3> {
-    ConstraintContext::new(engine).resolve_atom_ref(atom)
+    ConstraintContext::new(scene, annotations).resolve_atom_ref(atom)
 }
 
 fn resolve_atom_in_entity(
@@ -189,44 +196,62 @@ fn resolve_atom_in_entity(
     }
 }
 
-// ── Engine-side wiring ──
+// ── ConstraintSpecs: per-frame resolution ──
+
+impl ConstraintSpecs {
+    /// Resolve stored band/pull specs to world-space and update the
+    /// band + pull GPU renderers.
+    pub(crate) fn resolve_and_render(
+        &self,
+        scene: &Scene,
+        annotations: &EntityAnnotations,
+        options: &VisoOptions,
+        camera: &CameraController,
+        gpu: &mut GpuPipeline,
+    ) {
+        let viewport = (gpu.context.config.width, gpu.context.config.height);
+        // Resolve both bands and pull against one shared context, then
+        // drop it before taking `&mut gpu` for the upload.
+        let (resolved_bands, resolved_pull) = {
+            let ctx = ConstraintContext::new(scene, annotations);
+            let bands: Vec<_> = self
+                .band_specs
+                .iter()
+                .filter_map(|b| resolve_band(&ctx, b))
+                .collect();
+            let pull = self
+                .pull_spec
+                .as_ref()
+                .and_then(|p| resolve_pull(&ctx, camera, viewport, p));
+            (bands, pull)
+        };
+
+        gpu.renderers.band.update(
+            &gpu.context.device,
+            &gpu.context.queue,
+            &resolved_bands,
+            Some(&options.colors),
+        );
+        gpu.renderers.pull.update(
+            &gpu.context.device,
+            &gpu.context.queue,
+            resolved_pull.as_ref(),
+        );
+    }
+}
+
+// ── Engine-side dispatchers ──
 
 impl VisoEngine {
     /// Resolve stored band/pull specs to world-space and update
     /// renderers.
     pub(super) fn resolve_and_render_constraints(&mut self) {
-        let viewport = (
-            self.gpu.context.config.width,
-            self.gpu.context.config.height,
-        );
-        // Resolve both bands and pull against one shared context, then
-        // drop it before taking `&mut self.gpu` for the upload. Holding
-        // the context across the GPU update would conflict with the
-        // immutable `&self` borrow the context carries.
-        let (resolved_bands, resolved_pull) = {
-            let ctx = ConstraintContext::new(self);
-            let bands: Vec<_> = self
-                .constraints
-                .band_specs
-                .iter()
-                .filter_map(|b| resolve_band(&ctx, b))
-                .collect();
-            let pull = self.constraints.pull_spec.as_ref().and_then(|p| {
-                resolve_pull(&ctx, &self.camera_controller, viewport, p)
-            });
-            (bands, pull)
-        };
-
-        self.gpu.renderers.band.update(
-            &self.gpu.context.device,
-            &self.gpu.context.queue,
-            &resolved_bands,
-            Some(&self.options.colors),
-        );
-        self.gpu.renderers.pull.update(
-            &self.gpu.context.device,
-            &self.gpu.context.queue,
-            resolved_pull.as_ref(),
+        self.constraints.resolve_and_render(
+            &self.scene,
+            &self.annotations,
+            &self.options,
+            &self.camera_controller,
+            &mut self.gpu,
         );
     }
 
