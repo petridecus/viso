@@ -2,7 +2,7 @@
 //! the GPU, scene, and overlay sub-structs.
 //!
 //! Every method here takes `&mut self` on [`VisoEngine`] and touches
-//! multiple sibling sub-structs (`gpu`, `scene`, `overlays`,
+//! multiple sibling sub-structs (`gpu`, `scene`, `annotations`,
 //! `camera_controller`) — the code can't live in `options/` because
 //! that would invert the dependency direction (options is a leaf
 //! module, engine depends on it).
@@ -128,9 +128,7 @@ impl VisoEngine {
             self.refresh_ball_and_stick();
         }
         if display_changed || colors_changed {
-            log::debug!(
-                "set_options: display/colors changed, triggering sync"
-            );
+            log::debug!("set_options: display/colors changed, triggering sync");
             self.sync_scene_to_renderers(HashMap::new());
         }
         if surface_changed {
@@ -206,7 +204,8 @@ impl VisoEngine {
     /// Bump every entity's `mesh_version` so the next sync regenerates
     /// all meshes.
     fn invalidate_all_mesh_versions(&mut self) {
-        let ids: Vec<EntityId> = self.scene.entity_state.keys().copied().collect();
+        let ids: Vec<EntityId> =
+            self.scene.entity_state.keys().copied().collect();
         for id in ids {
             let v = self.scene.bump_mesh_version();
             if let Some(state) = self.scene.entity_state.get_mut(&id) {

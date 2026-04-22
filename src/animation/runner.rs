@@ -29,7 +29,10 @@ impl AnimationRunner {
 
     /// Create with explicit start time (for testing).
     #[cfg(test)]
-    pub fn with_start_time(start_time: Instant, transition: &Transition) -> Self {
+    pub fn with_start_time(
+        start_time: Instant,
+        transition: &Transition,
+    ) -> Self {
         Self {
             start_time,
             phases: transition.phases.clone(),

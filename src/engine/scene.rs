@@ -1,7 +1,7 @@
 //! Assembly consumption + derived per-entity state.
 //!
 //! [`Scene`] bundles the one coherent data flow that makes the engine
-//! a consumer of the host's [`Assembly`](molex::Assembly): the
+//! a consumer of the host's [`Assembly`]: the
 //! triple-buffer read end, the latest snapshot, the generation
 //! tracker, and the render-ready derived state
 //! ([`SceneRenderState`] + per-entity [`EntityView`] +

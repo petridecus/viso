@@ -6,12 +6,12 @@
 //! (`feature = "viewer"`, `"gui"`, `"web"`), viso plays that same host
 //! role: this module owns [`VisoApp`] (the authoritative `Assembly` +
 //! its publisher) and the executable layer that wraps it — the winit
-//! [`viewer`], the wry-webview [`gui`] panel, and the wasm [`web`]
+//! [`viewer`], the wry-webview [`gui`] panel, and the wasm `web`
 //! entry.
 //!
 //! Each [`VisoApp`] mutation method takes `&mut VisoEngine` so
 //! viso-side bookkeeping (animation transitions, camera fit,
-//! per-entity overlays) can be updated atomically alongside the
+//! per-entity annotations) can be updated atomically alongside the
 //! `Assembly` mutation and `publisher.commit`. `VisoEngine` has no
 //! mutation surface for structural state — all mutations route through
 //! [`VisoApp`].
@@ -30,6 +30,7 @@ pub mod web;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub(crate) use channel::{assembly_channel, AssemblyPublisher};
 use molex::ops::codec::{update_protein_entities, Coords};
 use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
 
@@ -37,8 +38,6 @@ use crate::animation::transition::Transition;
 use crate::engine::assembly_consumer::AssemblyConsumer;
 use crate::error::VisoError;
 use crate::VisoEngine;
-
-pub(crate) use channel::{assembly_channel, AssemblyPublisher};
 
 /// Owns the authoritative `Assembly` and its `AssemblyPublisher`.
 ///
@@ -103,7 +102,9 @@ impl VisoApp {
     /// Returns [`VisoError::StructureLoad`] if the file cannot be
     /// read or parsed.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_file(path: &str) -> Result<(Self, AssemblyConsumer), VisoError> {
+    pub fn from_file(
+        path: &str,
+    ) -> Result<(Self, AssemblyConsumer), VisoError> {
         let entities = molex::adapters::pdb::structure_file_to_entities(
             std::path::Path::new(path),
         )
@@ -143,8 +144,7 @@ impl VisoApp {
         let was_empty = self.assembly.entities().is_empty()
             && !engine.animation.animator.is_animating();
 
-        let ids: Vec<u32> =
-            entities.iter().map(|e| e.id().raw()).collect();
+        let ids: Vec<u32> = entities.iter().map(|e| e.id().raw()).collect();
         // Rebuild the assembly in one shot rather than calling
         // `add_entity` per entity: every `&mut Assembly` mutation
         // re-runs DSSP + H-bond detection over *all* entities, so
@@ -280,10 +280,12 @@ impl VisoApp {
         coords: &Coords,
         transition: Transition,
     ) {
-        let Some(eid) =
-            self.assembly.entities().iter().map(MoleculeEntity::id).find(
-                |e| e.raw() == id,
-            )
+        let Some(eid) = self
+            .assembly
+            .entities()
+            .iter()
+            .map(MoleculeEntity::id)
+            .find(|e| e.raw() == id)
         else {
             return;
         };
@@ -298,10 +300,8 @@ impl VisoApp {
             self.assembly.add_entity(updated);
         }
 
-        let effective = engine
-            .entity_behavior(id)
-            .cloned()
-            .unwrap_or(transition);
+        let effective =
+            engine.entity_behavior(id).cloned().unwrap_or(transition);
         let mut transitions = HashMap::new();
         let _ = transitions.insert(id, effective);
         engine.animation.pending_transitions = transitions;
@@ -352,8 +352,8 @@ impl VisoApp {
                 let _ = entity_transitions.insert(raw_id, transition);
             } else {
                 self.assembly.add_entity(entity);
-                let _ =
-                    entity_transitions.insert(raw_id, default_transition.clone());
+                let _ = entity_transitions
+                    .insert(raw_id, default_transition.clone());
             }
         }
 
@@ -364,10 +364,12 @@ impl VisoApp {
 
     /// Remove an entity by ID. No-op if the entity is not present.
     pub fn remove_entity(&mut self, engine: &mut VisoEngine, id: u32) {
-        let Some(eid) =
-            self.assembly.entities().iter().map(MoleculeEntity::id).find(
-                |e| e.raw() == id,
-            )
+        let Some(eid) = self
+            .assembly
+            .entities()
+            .iter()
+            .map(MoleculeEntity::id)
+            .find(|e| e.raw() == id)
         else {
             return;
         };

@@ -1,15 +1,16 @@
+pub(crate) mod annotations;
 pub(crate) mod assembly_consumer;
 mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub mod command;
 mod constraint;
+mod culling;
 mod density;
 pub(crate) mod density_store;
 pub(crate) mod entity_view;
 /// Focus state for tab cycling.
 pub mod focus;
 mod options_apply;
-pub(crate) mod overlays;
 pub(crate) mod positions;
 pub(crate) mod scene;
 pub(crate) mod scene_state;
@@ -19,20 +20,19 @@ pub(crate) mod trajectory;
 
 use std::collections::HashMap;
 
+use annotations::EntityAnnotations;
 pub(crate) use bootstrap::FrameTiming;
 use density_store::DensityStore;
 use focus::Focus;
 use molex::entity::molecule::id::EntityId;
-use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
-use overlays::EntityOverlays;
+use molex::{Assembly, MoleculeEntity, MoleculeType};
 use scene::Scene;
 use web_time::Instant;
 
-use crate::animation::transition::Transition;
 use crate::animation::AnimationState;
 use crate::camera;
 use crate::camera::controller::CameraController;
-use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
+use crate::options::VisoOptions;
 use crate::renderer::GpuPipeline;
 
 /// Stored constraint specifications (bands + pull), resolved to world-space
@@ -53,7 +53,7 @@ pub(crate) struct ConstraintSpecs {
 ///
 /// The engine is never mutated directly for structural changes —
 /// all such mutations route through [`crate::VisoApp`]. Viso-side
-/// overlays (appearance overrides, behavior overrides, camera state)
+/// annotations (appearance overrides, behavior overrides, camera state)
 /// are mutated through engine methods directly.
 pub struct VisoEngine {
     // ── GPU + camera ──────────────────────────────────────────────
@@ -85,12 +85,12 @@ pub struct VisoEngine {
     /// [`Scene`].
     pub(crate) scene: Scene,
 
-    // ── Viso-side per-entity overlays ─────────────────────────────
-    /// User-authored per-entity opinions: focus, visibility, behaviors,
-    /// appearance overrides, scores, SS overrides, surfaces. All maps
-    /// keyed on [`EntityId`] so lookups are O(1). See
-    /// [`EntityOverlays`].
-    pub(crate) overlays: EntityOverlays,
+    // ── User-authored per-entity annotations ──────────────────────
+    /// Per-entity opinions that ride alongside the Assembly: focus,
+    /// visibility, behaviors, appearance overrides, scores, SS
+    /// overrides, surfaces. All maps keyed on [`EntityId`] so lookups
+    /// are O(1). See [`EntityAnnotations`].
+    pub(crate) annotations: EntityAnnotations,
 }
 
 // ── Frame loop ──
@@ -242,7 +242,7 @@ impl VisoEngine {
                 e.fit_camera_to_focus();
             }),
             VisoCommand::ResetFocus => self.execute_no_selection(|e| {
-                e.overlays.focus = Focus::Session;
+                e.annotations.focus = Focus::Session;
                 e.fit_camera_to_focus();
             }),
             // Playback
@@ -265,7 +265,7 @@ impl VisoEngine {
             // Entity management
             VisoCommand::FocusEntity { id } => self.execute_no_selection(|e| {
                 if let Some(eid) = e.entity_id(id) {
-                    e.overlays.focus = Focus::Entity(eid);
+                    e.annotations.focus = Focus::Entity(eid);
                     e.fit_camera_to_focus();
                 }
             }),
@@ -362,21 +362,18 @@ impl VisoEngine {
     }
 }
 
-// ── Camera + focus (thin dispatchers; logic lives in camera::fit + overlays) ──
+// ── Camera + focus (thin dispatchers; logic lives in camera::fit +
+// annotations) ──
 
 impl VisoEngine {
     /// Fit the camera to the currently focused element (session-wide
     /// bounding sphere, or the focused entity's bounding sphere).
     pub fn fit_camera_to_focus(&mut self) {
-        match self.overlays.focus {
+        match self.annotations.focus {
             Focus::Session => self.fit_session_camera(),
             Focus::Entity(eid) => {
-                if let Some(entity) = self
-                    .scene
-                    .current
-                    .entities()
-                    .iter()
-                    .find(|e| e.id() == eid)
+                if let Some(entity) =
+                    self.scene.current.entities().iter().find(|e| e.id() == eid)
                 {
                     camera::fit::fit_to_entity(
                         &mut self.camera_controller,
@@ -408,238 +405,41 @@ impl VisoEngine {
             .current
             .entities()
             .iter()
-            .filter(|e| self.is_entity_visible(e.id().raw()) && e.is_focusable())
+            .filter(|e| {
+                self.is_entity_visible(e.id().raw()) && e.is_focusable()
+            })
             .map(MoleculeEntity::id)
             .collect();
-        self.overlays.cycle_focus(&focusable)
+        self.annotations.cycle_focus(&focusable)
     }
 }
 
-// ── Viso-side overlays (pub(crate) helpers for VisoApp) ──
+// ── Lifecycle + EntityId translation ──
 
 impl VisoEngine {
-    /// Whether an entity is currently visible. Absent entries in the
-    /// visibility overlay default to visible.
-    pub(crate) fn is_entity_visible(&self, id: u32) -> bool {
-        self.entity_id(id)
-            .is_none_or(|eid| self.overlays.is_visible(eid))
-    }
-
-    /// Record the visibility of a single entity.
-    pub(crate) fn set_entity_visible_internal(
-        &mut self,
-        id: u32,
-        visible: bool,
-    ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
-        let _ = self.overlays.visibility.insert(eid, visible);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-        }
-    }
-
-    /// Set visibility for every entity of a given molecule type.
-    pub(crate) fn set_type_visibility_internal(
-        &mut self,
-        mol_type: MoleculeType,
-        visible: bool,
-    ) {
-        let ids: Vec<u32> = self
-            .scene
-            .current
-            .entities()
-            .iter()
-            .filter(|e| e.molecule_type() == mol_type)
-            .map(|e| e.id().raw())
-            .collect();
-        for id in ids {
-            self.set_entity_visible_internal(id, visible);
-        }
-    }
-
-    /// Set per-entity scores (`None` clears).
-    pub(crate) fn set_per_residue_scores_internal(
-        &mut self,
-        id: u32,
-        scores: Option<Vec<f64>>,
-    ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
-        match scores {
-            Some(s) => {
-                let _ = self.overlays.scores.insert(eid, s);
-            }
-            None => {
-                let _ = self.overlays.scores.remove(&eid);
-            }
-        }
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-        }
-    }
-
-    /// Set an SS override for an entity.
-    pub(crate) fn set_ss_override_internal(
-        &mut self,
-        id: u32,
-        ss: Vec<SSType>,
-    ) {
-        let Some(eid) = self.entity_id(id) else {
-            return;
-        };
-        let _ = self.overlays.ss_overrides.insert(eid, ss);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-        }
-    }
-
-    /// Clear an entity's per-entity animation behavior override.
-    pub(crate) fn clear_entity_behavior_internal(&mut self, id: u32) {
-        if let Some(eid) = self.entity_id(id) {
-            let _ = self.overlays.behaviors.remove(&eid);
-        }
-    }
-
-    /// Reset all scene-local state (animation, positions, entity_state,
-    /// surfaces). Called when replacing or clearing the scene.
+    /// Reset all scene-local state (animation, scene ingest, derived
+    /// per-entity views, annotations). Called when replacing or
+    /// clearing the scene.
     ///
-    /// Also resets `last_seen_generation` to `u64::MAX` so that the next
-    /// Assembly snapshot triggers a sync unconditionally — the app-side
-    /// replace path rebuilds the assembly in one shot via
+    /// Also resets `last_seen_generation` to `u64::MAX` so that the
+    /// next Assembly snapshot triggers a sync unconditionally — the
+    /// app-side replace path rebuilds the assembly in one shot via
     /// `Assembly::new(...)`, which starts at generation 0 and would
-    /// otherwise collide with a previously-observed `last_seen_generation`
-    /// of 0.
+    /// otherwise collide with a previously-observed
+    /// `last_seen_generation` of 0.
     pub(crate) fn reset_scene_local_state(&mut self) {
         self.animation = AnimationState::new();
         self.scene.reset_local_state();
-        self.overlays.reset();
+        self.annotations.reset();
         self.regenerate_entity_surfaces();
     }
 
-    /// Look up the opaque `EntityId` for a raw ID. Returns `None` if
-    /// no entity with that raw ID exists. Thin delegator to
-    /// [`Scene::entity_id`].
+    /// Look up the opaque [`EntityId`] for a raw `u32` id. Returns
+    /// `None` if no entity with that raw id exists. Thin delegator to
+    /// [`Scene::entity_id`] used by every annotation mutation entry
+    /// point that takes a raw id at the API boundary.
     pub(crate) fn entity_id(&self, raw: u32) -> Option<EntityId> {
         self.scene.entity_id(raw)
-    }
-
-    /// Read access to the per-entity behavior override for `id`.
-    pub(crate) fn entity_behavior(&self, id: u32) -> Option<&Transition> {
-        let eid = self.entity_id(id)?;
-        self.overlays.behaviors.get(&eid)
-    }
-}
-
-// ── Public API: overlays (engine-side; not Assembly-related) ──
-
-impl VisoEngine {
-    /// Set the animation behavior for a specific entity.
-    pub fn set_entity_behavior(
-        &mut self,
-        entity_id: u32,
-        transition: Transition,
-    ) {
-        if let Some(eid) = self.entity_id(entity_id) {
-            let _ = self.overlays.behaviors.insert(eid, transition);
-        }
-    }
-
-    /// Clear a per-entity behavior override.
-    pub fn clear_entity_behavior(&mut self, entity_id: u32) {
-        self.clear_entity_behavior_internal(entity_id);
-    }
-
-    /// Set per-entity appearance overrides.
-    pub fn set_entity_appearance(
-        &mut self,
-        entity_id: u32,
-        overrides: EntityAppearance,
-    ) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        let _ = self.overlays.appearance.insert(eid, overrides);
-        self.apply_appearance_change(eid);
-        self.sync_scene_to_renderers(HashMap::new());
-    }
-
-    /// Clear a per-entity appearance override.
-    pub fn clear_entity_appearance(&mut self, entity_id: u32) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        let _ = self.overlays.appearance.remove(&eid);
-        self.apply_appearance_change(eid);
-        self.sync_scene_to_renderers(HashMap::new());
-    }
-
-    /// Bump mesh version and re-resolve drawing mode for an entity
-    /// whose appearance override just changed. Internal helper that
-    /// sidesteps the borrow-check pitfall of reading `self` while
-    /// holding a `&mut` into `entity_state`.
-    fn apply_appearance_change(&mut self, eid: EntityId) {
-        let mol_type = self
-            .scene
-            .entity_state
-            .get(&eid)
-            .map(|s| s.topology.molecule_type);
-        let Some(mol_type) = mol_type else {
-            return;
-        };
-        let drawing_mode = self.resolved_drawing_mode(eid, mol_type);
-        let v = self.scene.bump_mesh_version();
-        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
-            state.mesh_version = v;
-            state.drawing_mode = drawing_mode;
-        }
-    }
-
-    /// Look up a per-entity appearance override.
-    #[must_use]
-    pub fn entity_appearance(
-        &self,
-        entity_id: u32,
-    ) -> Option<&EntityAppearance> {
-        let eid = self.entity_id(entity_id)?;
-        self.overlays.appearance.get(&eid)
-    }
-
-    /// Resolve the drawing mode for an entity: per-entity override wins,
-    /// else global (with Cartoon falling back to type-default).
-    pub(crate) fn resolved_drawing_mode(
-        &self,
-        eid: EntityId,
-        mol_type: MoleculeType,
-    ) -> DrawingMode {
-        self.overlays
-            .appearance
-            .get(&eid)
-            .and_then(|ovr| ovr.drawing_mode)
-            .unwrap_or_else(|| {
-                if self.options.display.drawing_mode == DrawingMode::Cartoon {
-                    DrawingMode::default_for(mol_type)
-                } else {
-                    self.options.display.drawing_mode
-                }
-            })
-    }
-
-    /// Replace the current set of constraint bands.
-    pub fn update_bands(&mut self, bands: Vec<command::BandInfo>) {
-        self.constraints.band_specs = bands;
-        self.resolve_and_render_constraints();
-    }
-
-    /// Set or clear the active pull constraint.
-    pub fn update_pull(&mut self, pull: Option<command::PullInfo>) {
-        self.constraints.pull_spec = pull;
-        self.resolve_and_render_constraints();
     }
 }
 
@@ -655,7 +455,7 @@ impl VisoEngine {
     /// The currently focused entity ID, or `None` when focus is session-wide.
     #[must_use]
     pub fn focused_entity(&self) -> Option<u32> {
-        match self.overlays.focus {
+        match self.annotations.focus {
             Focus::Entity(id) => Some(id.raw()),
             Focus::Session => None,
         }
@@ -694,12 +494,12 @@ impl VisoEngine {
     /// Current focus state.
     #[must_use]
     pub fn focus(&self) -> Focus {
-        self.overlays.focus
+        self.annotations.focus
     }
 
     /// Set the focus state directly.
     pub fn set_focus(&mut self, focus: Focus) {
-        self.overlays.focus = focus;
+        self.annotations.focus = focus;
     }
 
     /// Resolve an atom position from structural references, using
@@ -746,4 +546,3 @@ impl VisoEngine {
         self.gpu.cursor_pos = (x, y);
     }
 }
-

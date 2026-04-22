@@ -2,7 +2,7 @@ use glam::Vec3;
 
 use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedEntityMesh,
-    NucleicAcidInstances, PreparedScene,
+    NucleicAcidInstances, PreparedRebuild,
 };
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
@@ -213,12 +213,12 @@ impl MeshAccumulator {
         PickMap::new(self.residue_offset, atom_entries)
     }
 
-    fn into_prepared_scene(mut self) -> PreparedScene {
+    fn into_prepared_rebuild(mut self) -> PreparedRebuild {
         self.finalize_bns_pick_ids();
         let pick_map = self.build_pick_map();
         let tube_index_count = self.backbone_tube_inds.len() as u32;
         let ribbon_index_count = self.backbone_ribbon_inds.len() as u32;
-        PreparedScene {
+        PreparedRebuild {
             generation: 0,
             backbone: BackboneMeshData {
                 vertices: self.backbone_verts,
@@ -269,13 +269,13 @@ fn patch_pick_id_buffer(
     }
 }
 
-/// Concatenate per-entity cached meshes into a single `PreparedScene`.
+/// Concatenate per-entity cached meshes into a single `PreparedRebuild`.
 pub fn concatenate_meshes(
     entity_meshes: &[&CachedEntityMesh],
-) -> PreparedScene {
+) -> PreparedRebuild {
     let mut acc = MeshAccumulator::default();
     for mesh in entity_meshes {
         acc.push_entity(mesh);
     }
-    acc.into_prepared_scene()
+    acc.into_prepared_rebuild()
 }

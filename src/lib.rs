@@ -43,6 +43,9 @@ pub mod options;
 
 // Animation (preset constructors only)
 pub use animation::transition::Transition;
+// Feature-gated
+#[cfg(feature = "viewer")]
+pub use app::viewer::{Viewer, ViewerBuilder};
 #[cfg(any(feature = "viewer", feature = "web"))]
 pub use app::VisoApp;
 #[cfg(feature = "gui")]
@@ -62,8 +65,5 @@ pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
 pub use options::{DrawingMode, EntityAppearance, HelixStyle, SheetStyle};
 // Picking output
 pub use renderer::picking::PickTarget;
-// Feature-gated
-#[cfg(feature = "viewer")]
-pub use app::viewer::{Viewer, ViewerBuilder};
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub use wasm_bindgen_rayon::init_thread_pool;

@@ -9,9 +9,7 @@ use crate::camera::core::Camera;
 use crate::engine::positions::EntityPositions;
 use crate::gpu::lighting::Lighting;
 use crate::gpu::{RenderContext, ShaderComposer};
-use crate::options::{
-    GeometryOptions, LightingOptions, VisoOptions,
-};
+use crate::options::{GeometryOptions, LightingOptions, VisoOptions};
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::isosurface::IsosurfaceVertex;
 use crate::renderer::geometry::{
@@ -19,7 +17,7 @@ use crate::renderer::geometry::{
 };
 use crate::renderer::picking::PickingSystem;
 use crate::renderer::pipeline::prepared::{
-    AnimationFrameBody, PreparedScene,
+    AnimationFrameBody, PreparedRebuild,
 };
 use crate::renderer::pipeline::{SceneProcessor, SceneRequest};
 use crate::renderer::postprocess::post_process::PostProcessCamera;
@@ -151,16 +149,15 @@ impl GpuPipeline {
     /// Upload prepared scene geometry to GPU renderers.
     pub(crate) fn upload_prepared(
         &mut self,
-        prepared: &PreparedScene,
+        prepared: &PreparedRebuild,
         animating: bool,
         suppress_sidechains: bool,
         scene: &SceneChainData<'_>,
     ) {
         if animating {
-            self.renderers.backbone.update_metadata(
-                scene.backbone_chains,
-                scene.na_chains,
-            );
+            self.renderers
+                .backbone
+                .update_metadata(scene.backbone_chains, scene.na_chains);
         } else {
             self.renderers.backbone.apply_prepared(
                 &self.context.device,
@@ -190,7 +187,7 @@ impl GpuPipeline {
     }
 
     /// Upload BnS, NA, and pick data (shared by animating and non-animating).
-    fn upload_non_backbone(&mut self, prepared: &PreparedScene) {
+    fn upload_non_backbone(&mut self, prepared: &PreparedRebuild) {
         self.renderers.ball_and_stick.apply_prepared(
             &self.context.device,
             &self.context.queue,
@@ -257,15 +254,16 @@ impl GpuPipeline {
         geometry: &GeometryOptions,
         include_sidechains: bool,
     ) {
-        self.scene_processor.submit(SceneRequest::AnimationFrame(Box::new(
-            AnimationFrameBody {
-                positions: positions.clone(),
-                geometry: geometry.clone(),
-                per_chain_lod: None,
-                include_sidechains,
-                generation: self.scene_processor.generation(),
-            },
-        )));
+        self.scene_processor
+            .submit(SceneRequest::AnimationFrame(Box::new(
+                AnimationFrameBody {
+                    positions: positions.clone(),
+                    geometry: geometry.clone(),
+                    per_chain_lod: None,
+                    include_sidechains,
+                    generation: self.scene_processor.generation(),
+                },
+            )));
     }
 
     /// Submit a backbone-only remesh with per-chain LOD to the background
@@ -286,8 +284,8 @@ impl GpuPipeline {
         // While a FullRebuild is in flight, the backbone renderer's
         // cached chains are stale. Submitting a LOD remesh now would
         // produce an AnimationFrame with old backbone geometry that
-        // could overwrite the correct PreparedScene upload.
-        if self.scene_processor.is_scene_pending() {
+        // could overwrite the correct PreparedRebuild upload.
+        if self.scene_processor.is_rebuild_pending() {
             return;
         }
         use crate::options::{lod_scaled, select_chain_lod_tier};
@@ -318,15 +316,16 @@ impl GpuPipeline {
             })
             .collect();
 
-        self.scene_processor.submit(SceneRequest::AnimationFrame(Box::new(
-            AnimationFrameBody {
-                positions: positions.clone(),
-                geometry: base_geo,
-                per_chain_lod: Some(per_chain_lod),
-                include_sidechains: false,
-                generation: self.scene_processor.generation(),
-            },
-        )));
+        self.scene_processor
+            .submit(SceneRequest::AnimationFrame(Box::new(
+                AnimationFrameBody {
+                    positions: positions.clone(),
+                    geometry: base_geo,
+                    per_chain_lod: Some(per_chain_lod),
+                    include_sidechains: false,
+                    generation: self.scene_processor.generation(),
+                },
+            )));
     }
 
     /// Check per-chain LOD tiers and submit a background remesh if any
@@ -338,7 +337,7 @@ impl GpuPipeline {
         geometry: &GeometryOptions,
         positions: &EntityPositions,
     ) {
-        if self.scene_processor.is_scene_pending() {
+        if self.scene_processor.is_rebuild_pending() {
             return;
         }
         let per_chain_tiers: Vec<u8> = self

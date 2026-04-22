@@ -10,12 +10,12 @@ use super::prepared::{
     BackboneMeshData, BallAndStickInstances, CachedBackbone, CachedEntityMesh,
     FullRebuildEntity, NucleicAcidInstances, PreparedAnimationFrame,
 };
-use crate::renderer::entity_topology::EntityTopology;
 use crate::engine::positions::EntityPositions;
 use crate::options::{
     ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
     SidechainColorMode,
 };
+use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
@@ -121,12 +121,11 @@ fn generate_non_backbone_bytes(
             entity.topology.per_residue_colors.as_deref(),
         );
     let na_chains = entity.topology.backbone_chain_positions(&entity.positions);
-    let na_chain_slice: &[Vec<Vec3>] =
-        if entity.topology.is_nucleic_acid() {
-            &na_chains
-        } else {
-            &[]
-        };
+    let na_chain_slice: &[Vec<Vec3>] = if entity.topology.is_nucleic_acid() {
+        &na_chains
+    } else {
+        &[]
+    };
     let rings = entity.topology.resolve_rings(&entity.positions);
     let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
         na_chain_slice,
@@ -183,18 +182,20 @@ pub(super) fn generate_entity_mesh(
             None,
         )
     } else {
-        let chain_positions = topology.backbone_chain_positions(&entity.positions);
+        let chain_positions =
+            topology.backbone_chain_positions(&entity.positions);
         let is_na = topology.is_nucleic_acid();
-        let protein_chains: &[Vec<Vec3>] = if is_na { &[] } else { &chain_positions };
-        let na_chains: &[Vec<Vec3>] = if is_na { &chain_positions } else { &[] };
+        let protein_chains: &[Vec<Vec3>] =
+            if is_na { &[] } else { &chain_positions };
+        let na_chains: &[Vec<Vec3>] =
+            if is_na { &chain_positions } else { &[] };
 
-        let na_base_colors: Vec<[f32; 3]> = if is_na
-            && display.na_color_mode == NaColorMode::BaseColor
-        {
-            topology.ring_topology.iter().map(|r| r.color).collect()
-        } else {
-            Vec::new()
-        };
+        let na_base_colors: Vec<[f32; 3]> =
+            if is_na && display.na_color_mode == NaColorMode::BaseColor {
+                topology.ring_topology.iter().map(|r| r.color).collect()
+            } else {
+                Vec::new()
+            };
         let na_colors_ref = if na_base_colors.is_empty() {
             None
         } else {
@@ -309,11 +310,9 @@ pub(super) fn process_animation_frame(
 ) -> PreparedAnimationFrame {
     let (protein_chains, na_chains) = collect_cartoon_chains(input);
 
-    let total_residues: usize = protein_chains
-        .iter()
-        .map(|c| c.len() / 3)
-        .sum::<usize>()
-        + na_chains.iter().map(Vec::len).sum::<usize>();
+    let total_residues: usize =
+        protein_chains.iter().map(|c| c.len() / 3).sum::<usize>()
+            + na_chains.iter().map(Vec::len).sum::<usize>();
     let safe_geo = input.geometry.clamped_for_residues(total_residues);
 
     let backbone_mesh = BackboneRenderer::generate_mesh_colored(
@@ -422,7 +421,9 @@ fn generate_animation_sidechains(
         let sidechain_positions: Vec<Vec3> = layout
             .atom_indices
             .iter()
-            .map(|&idx| positions.get(idx as usize).copied().unwrap_or(Vec3::ZERO))
+            .map(|&idx| {
+                positions.get(idx as usize).copied().unwrap_or(Vec3::ZERO)
+            })
             .collect();
         let backbone_bonds: Vec<(Vec3, u32)> = layout
             .backbone_bonds
@@ -460,4 +461,3 @@ fn generate_animation_sidechains(
 
     (Some(combined), total_count)
 }
-

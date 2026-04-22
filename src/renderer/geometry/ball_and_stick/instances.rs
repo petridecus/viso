@@ -13,8 +13,8 @@ use super::{
     BOND_RADIUS, DOUBLE_BOND_OFFSET, ION_RADIUS_SCALE, STICK_BOND_RADIUS,
     STICK_SPHERE_RADIUS, WATER_RADIUS,
 };
-use crate::renderer::entity_topology::EntityTopology;
 use crate::options::{ColorOptions, DrawingMode};
+use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::impostor::{CapsuleInstance, SphereInstance};
 
 /// Generate ball-and-stick or stick instances for a polymer
@@ -54,7 +54,8 @@ pub(super) fn generate_polymer_bns_instances(
     };
 
     // Generate atom spheres
-    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate() {
+    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate()
+    {
         if is_stick && elem == Element::H {
             continue;
         }
@@ -99,7 +100,8 @@ pub(super) fn generate_ligand_instances(
 ) {
     let elements = &topology.atom_elements;
     // Generate atom spheres
-    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate() {
+    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate()
+    {
         let color = atom_color(elem, carbon_tint);
         let radius = elem.vdw_radius() * BALL_RADIUS_SCALE;
         let pick_id = atom_offset + i as u32;
@@ -110,7 +112,8 @@ pub(super) fn generate_ligand_instances(
         });
     }
 
-    let color_fn = |_atom_idx: usize, elem: Element| atom_color(elem, carbon_tint);
+    let color_fn =
+        |_atom_idx: usize, elem: Element| atom_color(elem, carbon_tint);
     emit_topology_bonds(
         &topology.bonds,
         elements,
@@ -134,7 +137,8 @@ pub(super) fn generate_coarse_lipid_instances(
 ) {
     let elements = &topology.atom_elements;
     // Generate atom spheres (skip H entirely, CG radii for others)
-    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate() {
+    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate()
+    {
         let pick_id = atom_offset + i as u32;
 
         match elem {
@@ -195,9 +199,7 @@ pub(super) fn resolve_cofactor_tint(
     colors.map_or_else(
         || cofactor_carbon_tint(res_name),
         |c| {
-            c.cofactor_tint(
-                std::str::from_utf8(&res_name).unwrap_or("").trim(),
-            )
+            c.cofactor_tint(std::str::from_utf8(&res_name).unwrap_or("").trim())
         },
     )
 }
@@ -225,8 +227,11 @@ pub(super) fn generate_ion_instances(
     atom_offset: u32,
     out: &mut InstanceCollector,
 ) {
-    for (i, (&elem, &pos)) in
-        topology.atom_elements.iter().zip(positions.iter()).enumerate()
+    for (i, (&elem, &pos)) in topology
+        .atom_elements
+        .iter()
+        .zip(positions.iter())
+        .enumerate()
     {
         let color = elem.cpk_color();
         let radius = elem.vdw_radius() * ION_RADIUS_SCALE;
@@ -249,7 +254,8 @@ pub(super) fn generate_water_instances(
     let water_color: [f32; 3] = [0.5, 0.7, 1.0];
     let elements = &topology.atom_elements;
 
-    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate() {
+    for (i, (&elem, &pos)) in elements.iter().zip(positions.iter()).enumerate()
+    {
         if elem == Element::O || elem == Element::Unknown {
             let pick_id = atom_offset + i as u32;
             out.spheres.push(SphereInstance {
@@ -294,8 +300,11 @@ pub(super) fn generate_solvent_instances(
 ) {
     const SOLVENT_RADIUS: f32 = 0.15;
 
-    for (i, (&elem, &pos)) in
-        topology.atom_elements.iter().zip(positions.iter()).enumerate()
+    for (i, (&elem, &pos)) in topology
+        .atom_elements
+        .iter()
+        .zip(positions.iter())
+        .enumerate()
     {
         if elem == Element::H {
             continue;

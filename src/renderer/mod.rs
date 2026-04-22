@@ -5,8 +5,13 @@
 
 /// Bind groups shared across all molecular draw calls.
 pub mod draw_context;
-/// Render-ready per-entity contract — `EntityTopology` plus the
-/// sidechain / nucleotide-ring layouts consumed across the renderer.
+/// Render-ready per-entity contract — [`EntityTopology`] plus the
+/// [`SidechainLayout`] / [`NucleotideRingLayout`] consumed across the
+/// renderer.
+///
+/// [`EntityTopology`]: entity_topology::EntityTopology
+/// [`SidechainLayout`]: entity_topology::SidechainLayout
+/// [`NucleotideRingLayout`]: entity_topology::NucleotideRingLayout
 pub mod entity_topology;
 /// All GPU infrastructure grouped together (device, renderers, picking, etc.).
 pub(crate) mod gpu_pipeline;
@@ -82,7 +87,7 @@ impl Renderers {
     /// Create all geometry renderers with empty initial GPU buffers.
     ///
     /// First-frame geometry arrives via the background scene processor's
-    /// `PreparedScene`, not from renderer construction.
+    /// `PreparedRebuild`, not from renderer construction.
     pub fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,

@@ -17,9 +17,8 @@
 use std::ops::Range;
 
 use glam::Vec3;
-use molex::{
-    CovalentBond, Element, MoleculeType, NucleotideRing, SSType,
-};
+use molex::{CovalentBond, Element, MoleculeType, NucleotideRing, SSType};
+use rustc_hash::FxHashMap;
 
 // ---------------------------------------------------------------------------
 // EntityTopology
@@ -41,8 +40,8 @@ pub struct EntityTopology {
     ///
     /// - **Protein:** each inner `Vec` is `[N₀, CA₀, C₀, N₁, CA₁, C₁, …]`
     ///   (stride 3), as consumed by the protein backbone renderer.
-    /// - **Nucleic acid:** each inner `Vec` is `[P₀, P₁, …]` (stride 1),
-    ///   as consumed by the NA renderer.
+    /// - **Nucleic acid:** each inner `Vec` is `[P₀, P₁, …]` (stride 1), as
+    ///   consumed by the NA renderer.
     /// - **Other:** empty.
     pub backbone_chain_layout: Vec<Vec<usize>>,
 
@@ -96,14 +95,18 @@ impl EntityTopology {
     }
 
     /// Reconstruct the backbone chains the protein / NA renderers expect
-    /// by resolving atom indices in [`backbone_chain_layout`] against the
+    /// by resolving atom indices in
+    /// [`backbone_chain_layout`](Self::backbone_chain_layout) against the
     /// provided positions slice.
     ///
     /// Per [`backbone_chain_layout`](Self::backbone_chain_layout) semantics:
     /// protein chains come out as interleaved `[N, CA, C, …]` triplets;
     /// nucleic-acid chains come out as `[P₀, P₁, …]` P-atom sequences.
     #[must_use]
-    pub fn backbone_chain_positions(&self, positions: &[Vec3]) -> Vec<Vec<Vec3>> {
+    pub fn backbone_chain_positions(
+        &self,
+        positions: &[Vec3],
+    ) -> Vec<Vec<Vec3>> {
         self.backbone_chain_layout
             .iter()
             .map(|chain| {
@@ -142,10 +145,6 @@ pub struct SidechainLayout {
     /// Residue index (entity-local) of each sidechain atom. Parallel to
     /// [`atom_indices`](Self::atom_indices).
     pub residue_indices: Vec<u32>,
-    /// Packed atom name for each sidechain atom (`"CB"`, `"CG"`, …).
-    /// Trimmed of trailing padding; always valid UTF-8. Parallel to
-    /// [`atom_indices`](Self::atom_indices).
-    pub atom_names: Vec<String>,
     /// Hydrophobicity flag per sidechain atom. Parallel to
     /// [`atom_indices`](Self::atom_indices).
     pub hydrophobicity: Vec<bool>,
@@ -158,6 +157,11 @@ pub struct SidechainLayout {
     /// [`atom_indices`](Self::atom_indices) of the CB that CA connects
     /// to.
     pub backbone_bonds: Vec<(u32, u32)>,
+    /// `(residue_idx, atom_name) → entity-local atom index` for O(1)
+    /// constraint-resolution lookup. Built at topology-derivation time
+    /// from the parallel `atom_indices` + `residue_indices` vecs plus
+    /// the source atom names.
+    pub atom_lookup: FxHashMap<u32, FxHashMap<Box<str>, u32>>,
 }
 
 impl SidechainLayout {
@@ -167,11 +171,20 @@ impl SidechainLayout {
         Self {
             atom_indices: Vec::new(),
             residue_indices: Vec::new(),
-            atom_names: Vec::new(),
             hydrophobicity: Vec::new(),
             bonds: Vec::new(),
             backbone_bonds: Vec::new(),
+            atom_lookup: FxHashMap::default(),
         }
+    }
+
+    /// Look up an entity-local atom index by `(residue_idx, atom_name)`.
+    /// O(1).
+    #[must_use]
+    pub fn atom_index(&self, residue: u32, atom_name: &str) -> Option<u32> {
+        self.atom_lookup
+            .get(&residue)
+            .and_then(|m| m.get(atom_name).copied())
     }
 }
 

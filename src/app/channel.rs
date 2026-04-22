@@ -2,7 +2,7 @@
 //!
 //! The standalone-application layer ([`super::VisoApp`]) owns the
 //! writer side of a triple buffer; the engine holds the matching
-//! [`AssemblyConsumer`](crate::engine::assembly_consumer::AssemblyConsumer)
+//! [`AssemblyConsumer`]
 //! reader. Snapshots are published as `Arc<Assembly>` and consumed
 //! lock-free from the render loop.
 

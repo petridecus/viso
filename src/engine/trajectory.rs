@@ -170,13 +170,10 @@ impl super::VisoEngine {
 
         let num_atoms = header.num_atoms as usize;
         let num_frames = frames.len();
-        let player = TrajectoryPlayer::new(
-            frames,
-            num_atoms,
-            entity_id,
-            atom_index_map,
-        );
-        self.animation.load_trajectory(player, num_frames, num_atoms);
+        let player =
+            TrajectoryPlayer::new(frames, num_atoms, entity_id, atom_index_map);
+        self.animation
+            .load_trajectory(player, num_frames, num_atoms);
     }
 
     /// Pick the first visible protein entity as the trajectory target.

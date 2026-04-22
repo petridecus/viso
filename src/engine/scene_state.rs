@@ -5,7 +5,7 @@
 //! directly from assembly analyses; resolved [`StructuralBond`]
 //! instances are produced per-frame by
 //! [`update_structural_bonds`](SceneRenderState::update_structural_bonds)
-//! using per-entity viso overlays (visibility, drawing mode) the engine
+//! using per-entity annotations (visibility, drawing mode) the engine
 //! passes in via [`BondResolveInput`].
 
 use glam::Vec3;
@@ -25,13 +25,12 @@ use crate::renderer::geometry::bond::StructuralBond;
 /// Cross-entity rendering data derived from [`Assembly`].
 ///
 /// Populated in two phases per frame:
-/// 1. [`from_assembly`](Self::from_assembly) — rederives the endpoint
-///    lists from the latest Assembly snapshot.
-/// 2. [`update_structural_bonds`](Self::update_structural_bonds) —
-///    turns endpoints into render-ready [`StructuralBond`] capsules
-///    using per-entity viso overlays (visibility, Cartoon ribbon
-///    anchors). Runs each sync; needs engine state the pure Assembly
-///    derivation doesn't see.
+/// 1. [`from_assembly`](Self::from_assembly) — rederives the endpoint lists
+///    from the latest Assembly snapshot.
+/// 2. [`update_structural_bonds`](Self::update_structural_bonds) — turns
+///    endpoints into render-ready [`StructuralBond`] capsules using per-entity
+///    annotations (visibility, Cartoon ribbon anchors). Runs each sync; needs
+///    engine state the pure Assembly derivation doesn't see.
 #[derive(Clone, Default)]
 pub struct SceneRenderState {
     /// Disulfide endpoints (SG–SG pairs). Populated from
@@ -85,8 +84,9 @@ impl SceneRenderState {
     /// entities so dashed capsules land on the rendered curve rather
     /// than on raw N/C atom positions.
     pub fn update_structural_bonds(&mut self, input: &BondResolveInput<'_>) {
-        let mut bonds =
-            Vec::with_capacity(self.hbond_endpoints.len() + self.disulfide_endpoints.len());
+        let mut bonds = Vec::with_capacity(
+            self.hbond_endpoints.len() + self.disulfide_endpoints.len(),
+        );
 
         if input.options.hydrogen_bonds.visible {
             push_hbonds(&mut bonds, &self.hbond_endpoints, input);
@@ -148,10 +148,22 @@ fn hbond_endpoints(assembly: &Assembly) -> Vec<(AtomId, AtomId)> {
         for residue in &protein.residues {
             let start = residue.atom_range.start as u32;
             flat_to_atoms.push([
-                AtomId { entity: eid, index: start },
-                AtomId { entity: eid, index: start + 1 },
-                AtomId { entity: eid, index: start + 2 },
-                AtomId { entity: eid, index: start + 3 },
+                AtomId {
+                    entity: eid,
+                    index: start,
+                },
+                AtomId {
+                    entity: eid,
+                    index: start + 1,
+                },
+                AtomId {
+                    entity: eid,
+                    index: start + 2,
+                },
+                AtomId {
+                    entity: eid,
+                    index: start + 3,
+                },
             ]);
         }
     }
@@ -181,7 +193,8 @@ fn push_hbonds(
         {
             continue;
         }
-        let Some(pos_a) = hbond_endpoint_position(donor, HBondSide::Donor, input)
+        let Some(pos_a) =
+            hbond_endpoint_position(donor, HBondSide::Donor, input)
         else {
             continue;
         };

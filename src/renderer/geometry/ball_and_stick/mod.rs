@@ -1,18 +1,20 @@
 //! Ball-and-stick renderer for small molecules (ligands, ions, waters).
 //!
 //! Renders atoms as ray-cast sphere impostors and bonds as capsule impostors.
-//! Consumes entity-level [`EntityTopology`] + positions slice; the
-//! render path never sees `&MoleculeEntity` or `&Assembly`.
+//! Consumes entity-level
+//! [`EntityTopology`](crate::renderer::entity_topology::EntityTopology)
+//! + positions slice; the render path never sees `&MoleculeEntity` or
+//! `&Assembly`.
 
 mod instances;
 
 use glam::Vec3;
 use molex::MoleculeType;
 
-use crate::renderer::entity_topology::EntityTopology;
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::options::{ColorOptions, DisplayOptions, DrawingMode};
+use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::impostor::{
     CapsuleInstance, ImpostorPass, ShaderDef, SphereInstance,
 };

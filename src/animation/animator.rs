@@ -127,7 +127,6 @@ impl StructureAnimator {
         }
         true
     }
-
 }
 
 impl Default for StructureAnimator {

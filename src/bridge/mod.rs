@@ -310,8 +310,7 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 || engine.options().display.clone(),
                 |o| o.to_display_options(&engine.options().display),
             );
-            let has_overrides =
-                ovr.is_some_and(|o| !o.is_empty());
+            let has_overrides = ovr.is_some_and(|o| !o.is_empty());
 
             let effective_mode =
                 ovr.and_then(|o| o.drawing_mode).unwrap_or_else(|| {
@@ -359,7 +358,7 @@ fn effective_surface_kind(engine: &VisoEngine, raw: u32) -> &'static str {
     use crate::options::SurfaceKindOption;
 
     if let Some(eid) = engine.entity_id(raw) {
-        if let Some(s) = engine.overlays.surfaces.get(&eid) {
+        if let Some(s) = engine.annotations.surfaces.get(&eid) {
             if !s.visible {
                 return "none";
             }
@@ -380,7 +379,7 @@ fn effective_surface_kind(engine: &VisoEngine, raw: u32) -> &'static str {
 /// Effective surface color for an entity (per-entity or global default).
 fn effective_surface_color(engine: &VisoEngine, raw: u32) -> serde_json::Value {
     if let Some(eid) = engine.entity_id(raw) {
-        if let Some(s) = engine.overlays.surfaces.get(&eid) {
+        if let Some(s) = engine.annotations.surfaces.get(&eid) {
             if s.visible {
                 return serde_json::json!([
                     s.color[0], s.color[1], s.color[2], s.color[3]

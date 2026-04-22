@@ -77,7 +77,7 @@ impl VisoEngine {
         let Some(eid) = self.entity_id(entity_id) else {
             return;
         };
-        if let Some(surface) = self.overlays.surfaces.get_mut(&eid) {
+        if let Some(surface) = self.annotations.surfaces.get_mut(&eid) {
             surface.color[channel] = value.clamp(0.0, 1.0);
             self.regenerate_entity_surfaces();
         }
@@ -93,11 +93,11 @@ impl VisoEngine {
         let Some(eid) = self.entity_id(entity_id) else {
             return;
         };
-        let had = self.overlays.surfaces.remove(&eid).is_some();
+        let had = self.annotations.surfaces.remove(&eid).is_some();
         // If there's a global surface, store an invisible sentinel so
         // this entity doesn't inherit the global.
         if self.options.display.surface_kind != SurfaceKindOption::None {
-            let _ = self.overlays.surfaces.insert(
+            let _ = self.annotations.surfaces.insert(
                 eid,
                 EntitySurface {
                     visible: false,
@@ -117,7 +117,7 @@ impl VisoEngine {
             return;
         };
         log::info!("set {:?} surface for entity {entity_id}", surface.kind);
-        let _ = self.overlays.surfaces.insert(eid, surface);
+        let _ = self.annotations.surfaces.insert(eid, surface);
         self.regenerate_entity_surfaces();
     }
 
@@ -149,12 +149,12 @@ impl VisoEngine {
 
         for (entity_idx, se) in all_entities.iter().enumerate() {
             let eid = se.id();
-            if !self.overlays.is_visible(eid) {
+            if !self.annotations.is_visible(eid) {
                 continue;
             }
 
             // Per-entity surface takes priority; fall back to global
-            let base_surface = self.overlays.surfaces.get(&eid).map_or_else(
+            let base_surface = self.annotations.surfaces.get(&eid).map_or_else(
                 || match global_kind {
                     SurfaceKindOption::Gaussian => Some(EntitySurface {
                         kind: SurfaceKind::Gaussian,
@@ -220,11 +220,7 @@ impl VisoEngine {
         if jobs.is_empty() && density_jobs.is_empty() && cavity_jobs.is_empty()
         {
             // Nothing to generate — send empty mesh to clear renderer
-            let _ = self
-                .gpu
-                .density_channel
-                .tx
-                .send((Vec::new(), Vec::new()));
+            let _ = self.gpu.density_channel.tx.send((Vec::new(), Vec::new()));
             return;
         }
 

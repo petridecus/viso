@@ -2,23 +2,111 @@
 //! positions by walking
 //! [`crate::renderer::entity_topology::EntityTopology`] +
 //! [`super::positions::EntityPositions`].
+//!
+//! Each frame's resolution pass builds a [`ConstraintContext`] once
+//! (O(visible cartoon proteins)) and then resolves every band + the
+//! pull against it. Atom lookups inside the context are O(log n) to
+//! find the owning entity (binary search on the cartoon-residue range
+//! table) plus O(1) for the sidechain name-to-atom-index lookup
+//! ([`SidechainLayout::atom_index`](crate::renderer::entity_topology::SidechainLayout::atom_index)).
 
 use glam::{UVec2, Vec2, Vec3};
+use molex::entity::molecule::id::EntityId;
 
 use super::command::{
     AtomRef, BandInfo, BandTarget, PullInfo, ResolvedBand, ResolvedPull,
 };
+use super::entity_view::EntityView;
 use super::VisoEngine;
 use crate::camera::controller::CameraController;
+use crate::options::DrawingMode;
+
+/// Pre-computed per-frame cache for constraint resolution.
+///
+/// Built once at the top of [`VisoEngine::resolve_and_render_constraints`]
+/// and reused for every band + the pull resolution in that frame.
+/// Without this cache, each [`AtomRef`] resolution did a linear walk
+/// over `engine.scene.current.entities()` — O(bands × entities × log
+/// residues) per frame.
+pub(super) struct ConstraintContext<'a> {
+    engine: &'a VisoEngine,
+    /// Cartoon-mode protein entities in assembly order, with their
+    /// flat residue ranges. `AtomRef.residue` is a flat index across
+    /// these entities (matching
+    /// [`VisoEngine::concatenated_cartoon_ss`]); binary-search this
+    /// table to locate the owning entity.
+    cartoon_ranges: Vec<CartoonRange>,
+}
+
+/// One cartoon-mode protein entity's flat residue range in assembly
+/// order.
+struct CartoonRange {
+    /// Flat residue index where this entity's residues start.
+    start: u32,
+    /// Flat residue index where this entity's residues end (exclusive).
+    end: u32,
+    /// Owning entity id.
+    entity: EntityId,
+}
+
+impl<'a> ConstraintContext<'a> {
+    pub(super) fn new(engine: &'a VisoEngine) -> Self {
+        let mut cartoon_ranges = Vec::new();
+        let mut cursor: u32 = 0;
+        for (_, eid, state) in engine.visible_entities() {
+            if state.topology.is_protein()
+                && state.drawing_mode == DrawingMode::Cartoon
+            {
+                let count = state.topology.residue_atom_ranges.len() as u32;
+                cartoon_ranges.push(CartoonRange {
+                    start: cursor,
+                    end: cursor + count,
+                    entity: eid,
+                });
+                cursor += count;
+            }
+        }
+        Self {
+            engine,
+            cartoon_ranges,
+        }
+    }
+
+    /// Resolve an [`AtomRef`] to world-space. Binary-searches the
+    /// cartoon-residue range table for the owning entity, then looks
+    /// up the atom by name (O(1) via
+    /// [`SidechainLayout::atom_index`](crate::renderer::entity_topology::SidechainLayout::atom_index)
+    /// for sidechain atoms, O(1) range-indexed for backbone N/CA/C).
+    fn resolve_atom_ref(&self, atom: &AtomRef) -> Option<Vec3> {
+        let range = self
+            .cartoon_ranges
+            .binary_search_by(|r| {
+                use std::cmp::Ordering;
+                if atom.residue < r.start {
+                    Ordering::Greater
+                } else if atom.residue >= r.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()
+            .map(|i| &self.cartoon_ranges[i])?;
+        let state = self.engine.scene.entity_state.get(&range.entity)?;
+        let positions = self.engine.scene.positions.get(range.entity)?;
+        let local_residue = atom.residue - range.start;
+        resolve_atom_in_entity(state, positions, local_residue, &atom.atom_name)
+    }
+}
 
 /// Resolve a single band spec to world-space endpoint positions.
-pub(super) fn resolve_band(
-    engine: &VisoEngine,
+fn resolve_band(
+    ctx: &ConstraintContext<'_>,
     band: &BandInfo,
 ) -> Option<ResolvedBand> {
-    let endpoint_a = resolve_atom_ref(engine, &band.anchor_a)?;
+    let endpoint_a = ctx.resolve_atom_ref(&band.anchor_a)?;
     let endpoint_b = match &band.anchor_b {
-        BandTarget::Atom(atom) => resolve_atom_ref(engine, atom)?,
+        BandTarget::Atom(atom) => ctx.resolve_atom_ref(atom)?,
         BandTarget::Position(pos) => *pos,
     };
     let is_space_pull = matches!(band.anchor_b, BandTarget::Position(_));
@@ -37,13 +125,13 @@ pub(super) fn resolve_band(
 }
 
 /// Resolve a pull spec to world-space atom and target positions.
-pub(super) fn resolve_pull(
-    engine: &VisoEngine,
+fn resolve_pull(
+    ctx: &ConstraintContext<'_>,
     camera: &CameraController,
     viewport: (u32, u32),
     pull: &PullInfo,
 ) -> Option<ResolvedPull> {
-    let atom_pos = resolve_atom_ref(engine, &pull.atom)?;
+    let atom_pos = ctx.resolve_atom_ref(&pull.atom)?;
     let target_pos = camera.screen_to_world_at_depth(
         Vec2::new(pull.screen_target.0, pull.screen_target.1),
         UVec2::new(viewport.0, viewport.1),
@@ -57,61 +145,31 @@ pub(super) fn resolve_pull(
     })
 }
 
-/// Public entry point for [`resolve_atom_ref`] (used by
-/// [`VisoEngine::resolve_atom_position`]).
+/// Public entry point used by [`VisoEngine::resolve_atom_position`].
+///
+/// Builds a single-shot [`ConstraintContext`] — cheap (O(visible
+/// cartoon proteins)), but callers with multiple resolutions per
+/// frame should build a shared context via
+/// [`ConstraintContext::new`].
 pub(super) fn resolve_atom_ref_pub(
     engine: &VisoEngine,
     atom: &AtomRef,
 ) -> Option<Vec3> {
-    resolve_atom_ref(engine, atom)
-}
-
-/// Resolve an [`AtomRef`] to a world-space position.
-///
-/// The `residue` index is treated as a flat index across Cartoon-mode
-/// protein entities in assembly order (matching the convention of
-/// [`VisoEngine::concatenated_cartoon_ss`] and the GPU picking path
-/// that produced it). Backbone atoms (`N`, `CA`, `C`) resolve against
-/// each entity's topology `backbone_chain_layout`; other atom names
-/// search the entity's sidechain layout by name.
-fn resolve_atom_ref(engine: &VisoEngine, atom: &AtomRef) -> Option<Vec3> {
-    let mut residues_seen: u32 = 0;
-    for entity in engine.scene.current.entities() {
-        let eid = entity.id();
-        if !engine.is_entity_visible(eid.raw()) {
-            continue;
-        }
-        let state = engine.scene.entity_state.get(&eid)?;
-        if !state.topology.is_protein() {
-            continue;
-        }
-        let residue_count = state.topology.residue_atom_ranges.len() as u32;
-        if atom.residue >= residues_seen + residue_count {
-            residues_seen += residue_count;
-            continue;
-        }
-        let local_residue = atom.residue - residues_seen;
-        let positions = engine.scene.positions.get(eid)?;
-        return resolve_atom_in_entity(
-            state,
-            positions,
-            local_residue,
-            &atom.atom_name,
-        );
-    }
-    None
+    ConstraintContext::new(engine).resolve_atom_ref(atom)
 }
 
 fn resolve_atom_in_entity(
-    state: &super::entity_view::EntityView,
+    state: &EntityView,
     positions: &[Vec3],
     local_residue: u32,
     atom_name: &str,
 ) -> Option<Vec3> {
     match atom_name {
         "N" | "CA" | "C" => {
-            let range =
-                state.topology.residue_atom_ranges.get(local_residue as usize)?;
+            let range = state
+                .topology
+                .residue_atom_ranges
+                .get(local_residue as usize)?;
             let offset = match atom_name {
                 "N" => 0,
                 "CA" => 1,
@@ -122,19 +180,11 @@ fn resolve_atom_in_entity(
             positions.get(idx).copied()
         }
         other => {
-            let layout = &state.topology.sidechain_layout;
-            for (i, (&ri, name)) in layout
-                .residue_indices
-                .iter()
-                .zip(layout.atom_names.iter())
-                .enumerate()
-            {
-                if ri == local_residue && name == other {
-                    let atom_idx = layout.atom_indices.get(i)?;
-                    return positions.get(*atom_idx as usize).copied();
-                }
-            }
-            None
+            let atom_idx = state
+                .topology
+                .sidechain_layout
+                .atom_index(local_residue, other)?;
+            positions.get(atom_idx as usize).copied()
         }
     }
 }
@@ -145,30 +195,50 @@ impl VisoEngine {
     /// Resolve stored band/pull specs to world-space and update
     /// renderers.
     pub(super) fn resolve_and_render_constraints(&mut self) {
-        let resolved_bands: Vec<_> = self
-            .constraints
-            .band_specs
-            .iter()
-            .filter_map(|b| resolve_band(self, b))
-            .collect();
+        let viewport = (
+            self.gpu.context.config.width,
+            self.gpu.context.config.height,
+        );
+        // Resolve both bands and pull against one shared context, then
+        // drop it before taking `&mut self.gpu` for the upload. Holding
+        // the context across the GPU update would conflict with the
+        // immutable `&self` borrow the context carries.
+        let (resolved_bands, resolved_pull) = {
+            let ctx = ConstraintContext::new(self);
+            let bands: Vec<_> = self
+                .constraints
+                .band_specs
+                .iter()
+                .filter_map(|b| resolve_band(&ctx, b))
+                .collect();
+            let pull = self.constraints.pull_spec.as_ref().and_then(|p| {
+                resolve_pull(&ctx, &self.camera_controller, viewport, p)
+            });
+            (bands, pull)
+        };
+
         self.gpu.renderers.band.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
             &resolved_bands,
             Some(&self.options.colors),
         );
-
-        let viewport = (
-            self.gpu.context.config.width,
-            self.gpu.context.config.height,
-        );
-        let resolved_pull = self.constraints.pull_spec.as_ref().and_then(|p| {
-            resolve_pull(self, &self.camera_controller, viewport, p)
-        });
         self.gpu.renderers.pull.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
             resolved_pull.as_ref(),
         );
+    }
+
+    /// Replace the current set of constraint bands.
+    pub fn update_bands(&mut self, bands: Vec<BandInfo>) {
+        self.constraints.band_specs = bands;
+        self.resolve_and_render_constraints();
+    }
+
+    /// Set or clear the active pull constraint.
+    pub fn update_pull(&mut self, pull: Option<PullInfo>) {
+        self.constraints.pull_spec = pull;
+        self.resolve_and_render_constraints();
     }
 }

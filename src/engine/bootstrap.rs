@@ -1,20 +1,20 @@
 //! GPU pipeline initialization and engine assembly.
 //!
 //! Unlike pre-Phase-4 viso, this module no longer creates an
-//! [`Assembly`] or its publisher — those live on [`crate::VisoApp`]
-//! under the standalone-app feature gate, or on the real host
-//! application (e.g. `foldit-rs`) otherwise. The engine constructor
+//! [`Assembly`](molex::Assembly) or its publisher — those live on
+//! [`crate::VisoApp`] under the standalone-app feature gate, or on the real
+//! host application (e.g. `foldit-rs`) otherwise. The engine constructor
 //! takes an [`AssemblyConsumer`] built by whichever side owns the
-//! [`Assembly`].
+//! [`Assembly`](molex::Assembly).
 
 use std::time::Duration;
 
 use glam::Vec3;
 use web_time::Instant;
 
+use super::annotations::EntityAnnotations;
 use super::assembly_consumer::AssemblyConsumer;
 use super::density_store::DensityStore;
-use super::overlays::EntityOverlays;
 use super::scene::Scene;
 use super::{ConstraintSpecs, VisoEngine};
 use crate::animation::AnimationState;
@@ -183,10 +183,11 @@ impl VisoEngine {
                 cursor_pos: (0.0, 0.0),
                 last_cull_camera_eye: Vec3::ZERO,
                 shader_composer: bootstrap.shader_composer,
-                density_channel: crate::renderer::gpu_pipeline::DensityChannel {
-                    tx: density_tx,
-                    rx: density_rx,
-                },
+                density_channel:
+                    crate::renderer::gpu_pipeline::DensityChannel {
+                        tx: density_tx,
+                        rx: density_rx,
+                    },
             },
             camera_controller: bootstrap.camera_controller,
             constraints: ConstraintSpecs {
@@ -199,8 +200,7 @@ impl VisoEngine {
             frame_timing: FrameTiming::new(TARGET_FPS),
             density: DensityStore::new(),
             scene: Scene::new(consumer),
-            overlays: EntityOverlays::default(),
+            annotations: EntityAnnotations::default(),
         })
     }
 }
-

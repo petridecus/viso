@@ -1,9 +1,10 @@
 //! Fit-to-molecule-data helpers.
 //!
-//! Given one or more [`MoleculeEntity`]s, compute a bounding sphere
-//! (centroid + radius) and drive the [`CameraController`] at it. Lets
-//! engine-side code avoid hand-rolling geometry every time it wants
-//! to point the camera at something.
+//! Given one or more [`MoleculeEntity`](molex::MoleculeEntity)s,
+//! compute a bounding sphere (centroid + radius) and drive the
+//! [`CameraController`](crate::camera::controller::CameraController)
+//! at it. Lets engine-side code avoid hand-rolling geometry every
+//! time it wants to point the camera at something.
 
 use glam::Vec3;
 use molex::MoleculeEntity;

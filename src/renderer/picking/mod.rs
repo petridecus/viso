@@ -211,5 +211,4 @@ impl PickingSystem {
         self.selection
             .update(queue, &self.picking.selected_residues);
     }
-
 }

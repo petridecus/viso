@@ -7,8 +7,8 @@ use web_time::Instant;
 
 use super::StructureAnimator;
 use crate::animation::transition::Transition;
-use crate::engine::trajectory::{TrajectoryFrame, TrajectoryPlayer};
 use crate::engine::positions::EntityPositions;
+use crate::engine::trajectory::{TrajectoryFrame, TrajectoryPlayer};
 
 /// Grouped animation fields.
 pub(crate) struct AnimationState {
@@ -85,4 +85,3 @@ impl AnimationState {
         }
     }
 }
-

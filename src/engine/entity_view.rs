@@ -1,17 +1,15 @@
 //! Engine-main-thread per-entity state.
 //!
-//! - [`EntityView`] holds the engine's per-entity overlays (drawing
-//!   mode, SS override, mesh-cache version) plus an `Arc` handle to the
-//!   render-ready
-//!   [`EntityTopology`](crate::renderer::entity_topology::EntityTopology)
-//!   shared with the background mesh worker.
-//! - [`derive_topology`] is the sync-time factory that derives the
-//!   renderer contract from a `MoleculeEntity`. Defined here (not in
-//!   the renderer module) because derivation is an engine-side concern;
-//!   the renderer only defines the shape it wants.
-//! - [`RibbonBackbone`] is a per-sync cache of spline-projected backbone
-//!   anchor positions used by the bond resolver to attach H-bond
-//!   capsules to the rendered ribbon in Cartoon mode.
+//! - [`EntityView`] holds the engine's per-entity render state (drawing mode,
+//!   SS override, mesh-cache version) plus an `Arc` handle to the render-ready
+//!   [`EntityTopology`] shared with the background mesh worker.
+//! - [`derive_topology`] is the sync-time factory that derives the renderer
+//!   contract from a `MoleculeEntity`. Defined here (not in the renderer
+//!   module) because derivation is an engine-side concern; the renderer only
+//!   defines the shape it wants.
+//! - [`RibbonBackbone`] is a per-sync cache of spline-projected backbone anchor
+//!   positions used by the bond resolver to attach H-bond capsules to the
+//!   rendered ribbon in Cartoon mode.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -129,8 +127,7 @@ pub fn derive_topology(
     let molecule_type = entity.molecule_type();
     match entity {
         MoleculeEntity::Protein(protein) => {
-            let backbone_chain_layout =
-                protein_backbone_chain_layout(protein);
+            let backbone_chain_layout = protein_backbone_chain_layout(protein);
             let sidechain_layout = protein_sidechain_layout(protein);
             let (residue_names, residue_atom_ranges, atom_residue_index) =
                 residue_tables(
@@ -158,9 +155,7 @@ pub fn derive_topology(
         MoleculeEntity::NucleicAcid(na) => {
             let (residue_names, residue_atom_ranges, atom_residue_index) =
                 residue_tables(
-                    na.residues
-                        .iter()
-                        .map(|r| (r.name, r.atom_range.clone())),
+                    na.residues.iter().map(|r| (r.name, r.atom_range.clone())),
                     na.atoms.len(),
                 );
             EntityTopology {
@@ -282,11 +277,15 @@ fn protein_sidechain_layout(
 
     let mut atom_indices: Vec<u32> = Vec::new();
     let mut residue_indices: Vec<u32> = Vec::new();
-    let mut atom_names: Vec<String> = Vec::new();
     let mut hydrophobicity: Vec<bool> = Vec::new();
     // Map entity-local atom index → layout index, so we can resolve
     // bond endpoints back to positions within this layout.
     let mut atom_to_layout: FxHashMap<u32, u32> = FxHashMap::default();
+    // (residue_idx, atom_name) → entity-local atom index. Populated
+    // inline with the layout walk so constraint resolution can do
+    // O(1) atom-name lookups.
+    let mut atom_lookup: FxHashMap<u32, FxHashMap<Box<str>, u32>> =
+        FxHashMap::default();
 
     for (res_idx, residue) in protein.residues.iter().enumerate() {
         let start = residue.atom_range.start;
@@ -294,8 +293,9 @@ fn protein_sidechain_layout(
         if end.saturating_sub(start) < 4 {
             continue;
         }
-        let is_hydrophobic =
-            AminoAcid::from_code(residue.name).is_some_and(AminoAcid::is_hydrophobic);
+        let is_hydrophobic = AminoAcid::from_code(residue.name)
+            .is_some_and(AminoAcid::is_hydrophobic);
+        let res_idx_u32 = res_idx as u32;
         for atom_idx in (start + 4)..end {
             let atom = &protein.atoms[atom_idx];
             if atom.element == Element::H {
@@ -303,10 +303,14 @@ fn protein_sidechain_layout(
             }
             let layout_idx = atom_indices.len() as u32;
             atom_indices.push(atom_idx as u32);
-            residue_indices.push(res_idx as u32);
-            atom_names.push(atom_name_string(atom.name));
+            residue_indices.push(res_idx_u32);
             hydrophobicity.push(is_hydrophobic);
             let _ = atom_to_layout.insert(atom_idx as u32, layout_idx);
+            let name = atom_name_string(atom.name).into_boxed_str();
+            let _ = atom_lookup
+                .entry(res_idx_u32)
+                .or_default()
+                .insert(name, atom_idx as u32);
         }
     }
 
@@ -336,10 +340,10 @@ fn protein_sidechain_layout(
     SidechainLayout {
         atom_indices,
         residue_indices,
-        atom_names,
         hydrophobicity,
         bonds,
         backbone_bonds,
+        atom_lookup,
     }
 }
 
@@ -396,8 +400,7 @@ fn na_backbone_chain_layout(
 }
 
 /// Canonical hexagonal-ring atom names (all bases).
-const HEX_RING_NAMES: &[&[u8]] =
-    &[b"N1", b"C2", b"N3", b"C4", b"C5", b"C6"];
+const HEX_RING_NAMES: &[&[u8]] = &[b"N1", b"C2", b"N3", b"C4", b"C5", b"C6"];
 /// Canonical pentagonal-ring atom names (purines only).
 const PENT_RING_NAMES: &[&[u8]] = &[b"C4", b"C5", b"N7", b"C8", b"N9"];
 

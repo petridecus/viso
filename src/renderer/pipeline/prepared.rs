@@ -5,10 +5,12 @@ use molex::entity::molecule::id::EntityId;
 use molex::SSType;
 use rustc_hash::FxHashMap;
 
-use crate::renderer::entity_topology::EntityTopology;
 use crate::engine::positions::EntityPositions;
 use crate::engine::scene_state::SceneRenderState;
-use crate::options::{ColorOptions, DisplayOptions, DrawingMode, GeometryOptions};
+use crate::options::{
+    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
+};
+use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::geometry::backbone::ChainRange;
 use crate::renderer::picking::PickMap;
 
@@ -109,7 +111,7 @@ pub struct FullRebuildBody {
     /// Per-entity snapshots for mesh generation.
     pub entities: Vec<FullRebuildEntity>,
     /// Cross-entity derived state (disulfide + H-bond endpoints).
-    pub scene_state: Arc<SceneRenderState>,
+    pub render_state: Arc<SceneRenderState>,
     /// Current display options for mesh generation.
     pub display: DisplayOptions,
     /// Current color options for mesh generation.
@@ -118,7 +120,7 @@ pub struct FullRebuildBody {
     pub geometry: GeometryOptions,
     /// Per-entity resolved display+geometry overrides.
     pub entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
-    /// Scene generation counter (monotonically increasing).
+    /// Rebuild generation counter (monotonically increasing).
     pub generation: u64,
 }
 
@@ -134,7 +136,7 @@ pub struct AnimationFrameBody {
     pub per_chain_lod: Option<Vec<(usize, usize)>>,
     /// Whether to regenerate sidechain capsules this frame.
     pub include_sidechains: bool,
-    /// Scene generation this frame belongs to.
+    /// Rebuild generation this frame belongs to.
     pub generation: u64,
 }
 
@@ -154,8 +156,8 @@ pub enum SceneRequest {
 
 /// All pre-computed CPU data, ready for GPU-only upload on the main thread.
 #[derive(Clone)]
-pub(crate) struct PreparedScene {
-    /// Scene generation this prepared scene was produced for.
+pub(crate) struct PreparedRebuild {
+    /// Rebuild generation this prepared rebuild was produced for.
     pub(crate) generation: u64,
     /// Backbone mesh data.
     pub(crate) backbone: BackboneMeshData,
@@ -180,7 +182,7 @@ pub(crate) struct PreparedAnimationFrame {
     pub(crate) sidechain_instances: Option<Vec<u8>>,
     /// Number of sidechain capsule instances.
     pub(crate) sidechain_instance_count: u32,
-    /// Scene generation this frame was produced for.
+    /// Rebuild generation this frame was produced for.
     pub(crate) generation: u64,
 }
 

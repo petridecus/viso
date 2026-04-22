@@ -182,7 +182,7 @@ fn filtered_midpoint(points: &[Vec3], j: usize) -> Vec3 {
 ///
 /// The span `CA[j] → CA[j+1]` is split in half by a 4-tap filtered
 /// midpoint, and each half becomes a cubic Hermite segment. Tangents at
-/// all four knots (CA[j−1]-ish, CA[j], mid, CA[j+1]) are derived from
+/// all four knots (`CA[j−1]`-ish, `CA[j]`, mid, `CA[j+1]`) are derived from
 /// Catmull-Rom central differences on the interleaved CA/midpoint
 /// sequence, so their magnitudes are naturally proportional to the
 /// local knot spacing — no hand-tuned scalars. Inserting the midpoint

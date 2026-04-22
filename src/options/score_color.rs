@@ -47,9 +47,12 @@ pub(crate) fn compute_per_residue_colors_styled(
 
     let residue_count = ss_types.len().max(1);
     match scheme {
-        super::ColorScheme::Entity => {
-            per_entity_color(entity_index, backbone_chains, residue_count, palette)
-        }
+        super::ColorScheme::Entity => per_entity_color(
+            entity_index,
+            backbone_chains,
+            residue_count,
+            palette,
+        ),
         super::ColorScheme::SecondaryStructure => {
             if ss_types.is_empty() {
                 vec![[0.5, 0.5, 0.5]; residue_count]

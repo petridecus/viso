@@ -1,10 +1,11 @@
 //! Assembly sync + scene → renderer pipeline.
 //!
 //! All functions read [`VisoEngine`] state derived from the last
-//! [`Assembly`] snapshot and the animator's [`EntityPositions`].
-//! Neither `&Assembly` nor `&MoleculeEntity` appear in render-path
-//! signatures — the sync layer is the only place they're read, and
-//! it produces render-ready derived state downstream consumers use.
+//! [`Assembly`] snapshot and the animator's
+//! [`EntityPositions`](super::positions::EntityPositions). Neither
+//! `&Assembly` nor `&MoleculeEntity` appear in render-path signatures
+//! — the sync layer is the only place they're read, and it produces
+//! render-ready derived state downstream consumers use.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,13 +17,13 @@ use rustc_hash::FxHashMap;
 
 use super::entity_view::{EntityView, RibbonBackbone};
 use super::scene_state::{BondResolveInput, SceneRenderState};
-use crate::renderer::entity_topology::EntityTopology;
 use super::VisoEngine;
 use crate::animation::transition::Transition;
 use crate::options::{DisplayOptions, DrawingMode, GeometryOptions};
+use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::gpu_pipeline::SceneChainData;
 use crate::renderer::pipeline::prepared::{
-    FullRebuildBody, FullRebuildEntity, PreparedScene,
+    FullRebuildBody, FullRebuildEntity, PreparedRebuild,
 };
 use crate::renderer::pipeline::SceneRequest;
 
@@ -32,7 +33,7 @@ impl VisoEngine {
     /// Rederive viso-side state from an `Assembly` snapshot.
     ///
     /// Called when the triple buffer yields a snapshot whose
-    /// generation differs from [`Self::last_seen_generation`].
+    /// generation differs from `scene.last_seen_generation`.
     pub(crate) fn sync_from_assembly(&mut self, assembly: &Assembly) {
         self.scene.render_state =
             Arc::new(SceneRenderState::from_assembly(assembly));
@@ -43,9 +44,10 @@ impl VisoEngine {
             let id = entity.id();
             let _ = seen.insert(id);
             let ss = assembly.ss_types(id);
-            let ss_override = self.overlays.ss_overrides.get(&id).cloned();
-            let topology =
-                Arc::new(crate::engine::entity_view::derive_topology(entity, ss));
+            let ss_override = self.annotations.ss_overrides.get(&id).cloned();
+            let topology = Arc::new(
+                crate::engine::entity_view::derive_topology(entity, ss),
+            );
             let drawing_mode =
                 self.resolved_drawing_mode(id, topology.molecule_type);
             let fresh_version = self.scene.bump_mesh_version();
@@ -66,24 +68,25 @@ impl VisoEngine {
                     });
                 }
             }
-            self.scene.positions
+            self.scene
+                .positions
                 .insert_from_reference(id, &entity.positions());
 
             // New entity? Seed visibility from ambient-type defaults.
-            if !self.overlays.visibility.contains_key(&id) {
+            if !self.annotations.visibility.contains_key(&id) {
                 let visible = match entity.molecule_type() {
                     MoleculeType::Water => self.options.display.show_waters,
                     MoleculeType::Ion => self.options.display.show_ions,
                     MoleculeType::Solvent => self.options.display.show_solvent,
                     _ => true,
                 };
-                let _ = self.overlays.visibility.insert(id, visible);
+                let _ = self.annotations.visibility.insert(id, visible);
             }
         }
 
         self.scene.entity_state.retain(|id, _| seen.contains(id));
         self.scene.positions.retain(|id| seen.contains(&id));
-        self.overlays.retain_entities(|id| seen.contains(&id));
+        self.annotations.retain_entities(|id| seen.contains(&id));
     }
 }
 
@@ -123,7 +126,7 @@ impl VisoEngine {
         entity_transitions: HashMap<u32, Transition>,
     ) {
         self.install_per_entity_render_data();
-        self.resolve_structural_bonds_into_scene_state();
+        self.resolve_structural_bonds_into_render_state();
         let _ = self.gpu.renderers.bond.update(
             &self.gpu.context.device,
             &self.gpu.context.queue,
@@ -134,33 +137,33 @@ impl VisoEngine {
         let request_entities = self.build_full_rebuild_entities();
         self.animation.pending_transitions = entity_transitions;
 
-        let scene_state = Arc::clone(&self.scene.render_state);
+        let render_state = Arc::clone(&self.scene.render_state);
         let generation = self.gpu.scene_processor.next_generation();
         log::debug!(
-            "sync_scene_to_renderers: submitting FullRebuild gen={generation}, \
-             entity_count={}",
+            "sync_scene_to_renderers: submitting FullRebuild \
+             gen={generation}, entity_count={}",
             request_entities.len(),
         );
-        self.gpu.scene_processor.submit(SceneRequest::FullRebuild(Box::new(
-            FullRebuildBody {
+        self.gpu
+            .scene_processor
+            .submit(SceneRequest::FullRebuild(Box::new(FullRebuildBody {
                 entities: request_entities,
-                scene_state,
+                render_state,
                 display: self.options.display.clone(),
                 colors: self.options.colors.clone(),
                 geometry: self.resolved_geometry(),
                 entity_options,
                 generation,
-            },
-        )));
+            })));
     }
 
     /// Build the per-sync ribbon cache and let
     /// [`SceneRenderState::update_structural_bonds`] produce this
-    /// frame's `Vec<StructuralBond>` directly on `scene_state`. The
-    /// resolver reads visibility, drawing mode, and topology straight
-    /// off the engine's existing maps — the only thing worth caching
-    /// is the spline projection.
-    fn resolve_structural_bonds_into_scene_state(&mut self) {
+    /// frame's `Vec<StructuralBond>` directly on
+    /// `scene.render_state`. The resolver reads visibility, drawing
+    /// mode, and topology straight off the engine's existing maps —
+    /// the only thing worth caching is the spline projection.
+    fn resolve_structural_bonds_into_render_state(&mut self) {
         let ribbons: FxHashMap<EntityId, RibbonBackbone> = self
             .scene
             .entity_state
@@ -171,19 +174,21 @@ impl VisoEngine {
             })
             .filter_map(|(&id, state)| {
                 let positions = self.scene.positions.get(id)?;
-                let ribbon = RibbonBackbone::project(&state.topology, positions)?;
+                let ribbon =
+                    RibbonBackbone::project(&state.topology, positions)?;
                 Some((id, ribbon))
             })
             .collect();
         let input = BondResolveInput {
             positions: &self.scene.positions,
             entity_views: &self.scene.entity_state,
-            entity_visibility: &self.overlays.visibility,
+            entity_visibility: &self.annotations.visibility,
             ribbons: &ribbons,
             options: &self.options.display.bonds,
             colors: &self.options.colors,
         };
-        Arc::make_mut(&mut self.scene.render_state).update_structural_bonds(&input);
+        Arc::make_mut(&mut self.scene.render_state)
+            .update_structural_bonds(&input);
     }
 
     /// Walk protein entities, compute per-residue colors + sheet-plane
@@ -204,7 +209,7 @@ impl VisoEngine {
             let Some(state) = self.scene.entity_state.get_mut(&eid) else {
                 continue;
             };
-            let display = self.overlays.appearance.get(&eid).map_or_else(
+            let display = self.annotations.appearance.get(&eid).map_or_else(
                 || self.options.display.clone(),
                 |ovr| ovr.to_display_options(&self.options.display),
             );
@@ -219,7 +224,7 @@ impl VisoEngine {
                     entity_index,
                     &backbone_chains,
                     &ss_types,
-                    self.overlays.scores.get(&eid).map(Vec::as_slice),
+                    self.annotations.scores.get(&eid).map(Vec::as_slice),
                     &display,
                 )
             } else {
@@ -251,7 +256,7 @@ impl VisoEngine {
         &self,
     ) -> FxHashMap<u32, (DisplayOptions, GeometryOptions)> {
         let resolved_geometry = self.resolved_geometry();
-        self.overlays
+        self.annotations
             .appearance
             .iter()
             .map(|(&id, ovr)| {
@@ -270,7 +275,7 @@ impl VisoEngine {
     /// yielding `(entity, entity_id, view)`. Skips invisible entities
     /// and entities not yet reconciled into `entity_state`. Callers
     /// that also need positions look them up via `self.scene.positions.get`.
-    fn visible_entities(
+    pub(super) fn visible_entities(
         &self,
     ) -> impl Iterator<Item = (&MoleculeEntity, EntityId, &EntityView)> {
         self.scene.current.entities().iter().filter_map(|entity| {
@@ -310,7 +315,7 @@ impl VisoEngine {
     /// cache used by frustum culling + LOD tier comparison).
     fn upload_prepared_to_gpu(
         &mut self,
-        prepared: &PreparedScene,
+        prepared: &PreparedRebuild,
         animating: bool,
         suppress_sidechains: bool,
     ) {
@@ -351,7 +356,7 @@ impl VisoEngine {
 
     /// Apply any pending scene data from the background `SceneProcessor`.
     pub fn apply_pending_scene(&mut self) {
-        let Some(prepared) = self.gpu.scene_processor.try_recv_scene() else {
+        let Some(prepared) = self.gpu.scene_processor.try_recv_rebuild() else {
             return;
         };
 
@@ -398,9 +403,9 @@ impl VisoEngine {
                 .get(eid)
                 .map(<[Vec3]>::to_vec)
                 .unwrap_or_default();
-            self.animation.animator.animate_entity(
-                eid, current, target, transition,
-            );
+            self.animation
+                .animator
+                .animate_entity(eid, current, target, transition);
         }
     }
 
@@ -429,7 +434,7 @@ impl VisoEngine {
         }
     }
 
-    fn flat_cartoon_colors(&self) -> Vec<[f32; 3]> {
+    pub(super) fn flat_cartoon_colors(&self) -> Vec<[f32; 3]> {
         let mut out = Vec::new();
         for (_, _, state) in self.visible_entities() {
             if !state.topology.is_protein()
@@ -482,152 +487,9 @@ impl VisoEngine {
     }
 }
 
-// ── Frustum + LOD ──
+// ── Misc engine-side helpers ──
 
 impl VisoEngine {
-    /// Update sidechain instances with frustum culling when the camera
-    /// moves, rebuilding the flat sidechain view from per-entity
-    /// topology + positions.
-    pub(crate) fn update_frustum_culling(&mut self) {
-        if !self.has_any_sidechain_atoms() {
-            return;
-        }
-        if !self.should_update_culling() {
-            return;
-        }
-
-        self.gpu
-            .set_last_cull_camera_eye(self.camera_controller.camera.eye);
-        let frustum = self.camera_controller.frustum();
-
-        let (positions, bonds, backbone_bonds, hydrophobicity, residue_indices) =
-            self.flat_sidechain_state();
-        let offset_map: HashMap<u32, Vec3> = self
-            .gpu
-            .backbone_sheet_offsets()
-            .iter()
-            .copied()
-            .collect();
-        let raw_view = crate::renderer::geometry::SidechainView {
-            positions: &positions,
-            bonds: &bonds,
-            backbone_bonds: &backbone_bonds,
-            hydrophobicity: &hydrophobicity,
-            residue_indices: &residue_indices,
-        };
-        let adjusted =
-            crate::renderer::geometry::sheet_adjust::sheet_adjusted_view(
-                &raw_view,
-                &offset_map,
-            );
-        let sc_colors = if self.options.display.sidechain_color_mode
-            == crate::options::SidechainColorMode::Backbone
-        {
-            let flat = self.flat_cartoon_colors();
-            if flat.is_empty() {
-                None
-            } else {
-                Some(flat)
-            }
-        } else {
-            None
-        };
-        self.gpu.upload_frustum_culled_sidechains(
-            &adjusted.as_view(),
-            &frustum,
-            sc_colors.as_deref(),
-        );
-    }
-
-    fn has_any_sidechain_atoms(&self) -> bool {
-        self.scene.entity_state
-            .values()
-            .any(|s| !s.topology.sidechain_layout.atom_indices.is_empty())
-    }
-
-    /// Flatten per-entity sidechain layout + positions into a single
-    /// sidechain-view payload. Residue indices are offset per entity so
-    /// each entity's sidechain atoms get a unique global residue index.
-    #[allow(clippy::type_complexity)]
-    fn flat_sidechain_state(
-        &self,
-    ) -> (
-        Vec<Vec3>,
-        Vec<(u32, u32)>,
-        Vec<(Vec3, u32)>,
-        Vec<bool>,
-        Vec<u32>,
-    ) {
-        let mut positions: Vec<Vec3> = Vec::new();
-        let mut bonds: Vec<(u32, u32)> = Vec::new();
-        let mut backbone_bonds: Vec<(Vec3, u32)> = Vec::new();
-        let mut hydrophobicity: Vec<bool> = Vec::new();
-        let mut residue_indices: Vec<u32> = Vec::new();
-        let mut residue_offset: u32 = 0;
-
-        for (_, eid, state) in self.visible_entities() {
-            let layout = &state.topology.sidechain_layout;
-            if layout.atom_indices.is_empty() {
-                residue_offset +=
-                    state.topology.residue_atom_ranges.len() as u32;
-                continue;
-            }
-            let Some(entity_positions) = self.scene.positions.get(eid) else {
-                continue;
-            };
-            let layout_offset = positions.len() as u32;
-            for &atom_idx in &layout.atom_indices {
-                let pos = entity_positions
-                    .get(atom_idx as usize)
-                    .copied()
-                    .unwrap_or(Vec3::ZERO);
-                positions.push(pos);
-            }
-            for &(a, b) in &layout.bonds {
-                bonds.push((a + layout_offset, b + layout_offset));
-            }
-            for &(ca_atom_idx, layout_idx) in &layout.backbone_bonds {
-                let ca = entity_positions
-                    .get(ca_atom_idx as usize)
-                    .copied()
-                    .unwrap_or(Vec3::ZERO);
-                backbone_bonds.push((ca, layout_idx + layout_offset));
-            }
-            hydrophobicity.extend_from_slice(&layout.hydrophobicity);
-            for &ri in &layout.residue_indices {
-                residue_indices.push(ri + residue_offset);
-            }
-            residue_offset += state.topology.residue_atom_ranges.len() as u32;
-        }
-        (positions, bonds, backbone_bonds, hydrophobicity, residue_indices)
-    }
-
-    fn should_update_culling(&self) -> bool {
-        const CULL_UPDATE_THRESHOLD: f32 = 5.0;
-        if self.animation.animator.is_animating() {
-            return true;
-        }
-        let camera_eye = self.camera_controller.camera.eye;
-        let camera_delta =
-            (camera_eye - self.gpu.last_cull_camera_eye).length();
-        camera_delta >= CULL_UPDATE_THRESHOLD
-    }
-
-    /// Check per-chain LOD tiers and submit a background remesh if any
-    /// chain's tier has changed.
-    pub(crate) fn check_and_submit_lod(&mut self) {
-        let camera_eye = self.camera_controller.camera.eye;
-        let geo = self.resolved_geometry();
-        self.gpu
-            .check_and_submit_lod(camera_eye, &geo, &self.scene.positions);
-    }
-
-    /// Submit a backbone-only remesh with per-chain LOD.
-    pub(crate) fn submit_per_chain_lod_remesh(&self, camera_eye: Vec3) {
-        let geo = self.resolved_geometry();
-        self.gpu.submit_lod_remesh(camera_eye, &geo, &self.scene.positions);
-    }
-
     /// Geometry options with display helix/sheet style folded in.
     pub(crate) fn resolved_geometry(&self) -> GeometryOptions {
         self.options
@@ -759,15 +621,14 @@ fn per_entity_colors(
         return None;
     }
     let scores_slice = [scores];
-    let colors =
-        crate::options::score_color::compute_per_residue_colors_styled(
-            backbone_chains,
-            ss_types,
-            &scores_slice,
-            &display.backbone_color_scheme,
-            &display.backbone_palette(),
-            entity_index,
-        );
+    let colors = crate::options::score_color::compute_per_residue_colors_styled(
+        backbone_chains,
+        ss_types,
+        &scores_slice,
+        &display.backbone_color_scheme,
+        &display.backbone_palette(),
+        entity_index,
+    );
     if colors.is_empty() {
         None
     } else {
