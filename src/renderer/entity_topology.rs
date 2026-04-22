@@ -9,8 +9,8 @@
 //! [`SidechainLayout`] and [`NucleotideRingLayout`] are entity-internal
 //! geometry descriptions consumed by the sidechain and NA renderers.
 //!
-//! The `from_entity` factory that produces an `EntityTopology` from a
-//! `MoleculeEntity` lives on the engine side in
+//! The `derive_topology` factory that produces an `EntityTopology`
+//! from a `MoleculeEntity` lives on the engine side in
 //! [`crate::engine::entity_view`] because deriving it is engine-side
 //! sync work; this module only defines the contract.
 

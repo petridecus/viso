@@ -5,10 +5,10 @@
 //!   render-ready
 //!   [`EntityTopology`](crate::renderer::entity_topology::EntityTopology)
 //!   shared with the background mesh worker.
-//! - [`EntityTopology::from_entity`] is the sync-time factory that
-//!   derives the renderer contract from a `MoleculeEntity`. Defined
-//!   here (not in the renderer module) because derivation is an
-//!   engine-side concern; the renderer only defines the shape it wants.
+//! - [`derive_topology`] is the sync-time factory that derives the
+//!   renderer contract from a `MoleculeEntity`. Defined here (not in
+//!   the renderer module) because derivation is an engine-side concern;
+//!   the renderer only defines the shape it wants.
 //! - [`RibbonBackbone`] is a per-sync cache of spline-projected backbone
 //!   anchor positions used by the bond resolver to attach H-bond
 //!   capsules to the rendered ribbon in Cartoon mode.
@@ -113,105 +113,105 @@ impl RibbonBackbone {
 }
 
 // ---------------------------------------------------------------------------
-// EntityTopology::from_entity — engine-side derivation factory
+// derive_topology — engine-side derivation factory
 // ---------------------------------------------------------------------------
 
-impl EntityTopology {
-    /// Rederive the render-ready view of a single entity.
-    ///
-    /// `ss` is the per-residue secondary structure for the entity, as
-    /// produced by [`Assembly::ss_types`](molex::Assembly::ss_types).
-    /// For non-protein entities it should be an empty slice.
-    #[must_use]
-    pub fn from_entity(entity: &MoleculeEntity, ss: &[SSType]) -> Self {
-        let molecule_type = entity.molecule_type();
-        match entity {
-            MoleculeEntity::Protein(protein) => {
-                let backbone_chain_layout =
-                    protein_backbone_chain_layout(protein);
-                let sidechain_layout = protein_sidechain_layout(protein);
-                let (residue_names, residue_atom_ranges, atom_residue_index) =
-                    residue_tables(
-                        protein.residues.iter().map(|r| {
-                            (r.name, r.atom_range.clone())
-                        }),
-                        protein.atoms.len(),
-                    );
-                Self {
-                    molecule_type,
-                    backbone_chain_layout,
-                    sidechain_layout,
-                    ring_topology: Vec::new(),
-                    sheet_plane_normals: Vec::new(),
-                    per_residue_colors: None,
-                    ss_types: ss.to_vec(),
-                    atom_elements: atom_elements(&protein.atoms),
-                    atom_residue_index,
-                    residue_names,
-                    residue_atom_ranges,
-                    bonds: protein.bonds.clone(),
-                }
-            }
-            MoleculeEntity::NucleicAcid(na) => {
-                let (residue_names, residue_atom_ranges, atom_residue_index) =
-                    residue_tables(
-                        na.residues
-                            .iter()
-                            .map(|r| (r.name, r.atom_range.clone())),
-                        na.atoms.len(),
-                    );
-                Self {
-                    molecule_type,
-                    backbone_chain_layout: na_backbone_chain_layout(na),
-                    sidechain_layout: SidechainLayout::empty(),
-                    ring_topology: na_ring_topology(na),
-                    sheet_plane_normals: Vec::new(),
-                    per_residue_colors: None,
-                    ss_types: Vec::new(),
-                    atom_elements: atom_elements(&na.atoms),
-                    atom_residue_index,
-                    residue_names,
-                    residue_atom_ranges,
-                    bonds: na.bonds.clone(),
-                }
-            }
-            MoleculeEntity::SmallMolecule(sm) => Self {
+/// Rederive the render-ready [`EntityTopology`] view of a single entity.
+///
+/// `ss` is the per-residue secondary structure for the entity, as
+/// produced by [`Assembly::ss_types`](molex::Assembly::ss_types). For
+/// non-protein entities it should be an empty slice.
+#[must_use]
+pub fn derive_topology(
+    entity: &MoleculeEntity,
+    ss: &[SSType],
+) -> EntityTopology {
+    let molecule_type = entity.molecule_type();
+    match entity {
+        MoleculeEntity::Protein(protein) => {
+            let backbone_chain_layout =
+                protein_backbone_chain_layout(protein);
+            let sidechain_layout = protein_sidechain_layout(protein);
+            let (residue_names, residue_atom_ranges, atom_residue_index) =
+                residue_tables(
+                    protein
+                        .residues
+                        .iter()
+                        .map(|r| (r.name, r.atom_range.clone())),
+                    protein.atoms.len(),
+                );
+            EntityTopology {
                 molecule_type,
-                backbone_chain_layout: Vec::new(),
-                sidechain_layout: SidechainLayout::empty(),
+                backbone_chain_layout,
+                sidechain_layout,
                 ring_topology: Vec::new(),
                 sheet_plane_normals: Vec::new(),
                 per_residue_colors: None,
-                ss_types: Vec::new(),
-                atom_elements: atom_elements(&sm.atoms),
-                atom_residue_index: vec![0; sm.atoms.len()],
-                residue_names: vec![sm.residue_name],
-                residue_atom_ranges: std::iter::once(
-                    0..sm.atoms.len() as u32,
-                )
-                .collect(),
-                bonds: sm.bonds.clone(),
-            },
-            MoleculeEntity::Bulk(bulk) => Self {
-                molecule_type,
-                backbone_chain_layout: Vec::new(),
-                sidechain_layout: SidechainLayout::empty(),
-                ring_topology: Vec::new(),
-                sheet_plane_normals: Vec::new(),
-                per_residue_colors: None,
-                ss_types: Vec::new(),
-                atom_elements: atom_elements(&bulk.atoms),
-                atom_residue_index: Vec::new(),
-                residue_names: Vec::new(),
-                residue_atom_ranges: Vec::new(),
-                bonds: Vec::new(),
-            },
+                ss_types: ss.to_vec(),
+                atom_elements: atom_elements(&protein.atoms),
+                atom_residue_index,
+                residue_names,
+                residue_atom_ranges,
+                bonds: protein.bonds.clone(),
+            }
         }
+        MoleculeEntity::NucleicAcid(na) => {
+            let (residue_names, residue_atom_ranges, atom_residue_index) =
+                residue_tables(
+                    na.residues
+                        .iter()
+                        .map(|r| (r.name, r.atom_range.clone())),
+                    na.atoms.len(),
+                );
+            EntityTopology {
+                molecule_type,
+                backbone_chain_layout: na_backbone_chain_layout(na),
+                sidechain_layout: SidechainLayout::empty(),
+                ring_topology: na_ring_topology(na),
+                sheet_plane_normals: Vec::new(),
+                per_residue_colors: None,
+                ss_types: Vec::new(),
+                atom_elements: atom_elements(&na.atoms),
+                atom_residue_index,
+                residue_names,
+                residue_atom_ranges,
+                bonds: na.bonds.clone(),
+            }
+        }
+        MoleculeEntity::SmallMolecule(sm) => EntityTopology {
+            molecule_type,
+            backbone_chain_layout: Vec::new(),
+            sidechain_layout: SidechainLayout::empty(),
+            ring_topology: Vec::new(),
+            sheet_plane_normals: Vec::new(),
+            per_residue_colors: None,
+            ss_types: Vec::new(),
+            atom_elements: atom_elements(&sm.atoms),
+            atom_residue_index: vec![0; sm.atoms.len()],
+            residue_names: vec![sm.residue_name],
+            residue_atom_ranges: std::iter::once(0..sm.atoms.len() as u32)
+                .collect(),
+            bonds: sm.bonds.clone(),
+        },
+        MoleculeEntity::Bulk(bulk) => EntityTopology {
+            molecule_type,
+            backbone_chain_layout: Vec::new(),
+            sidechain_layout: SidechainLayout::empty(),
+            ring_topology: Vec::new(),
+            sheet_plane_normals: Vec::new(),
+            per_residue_colors: None,
+            ss_types: Vec::new(),
+            atom_elements: atom_elements(&bulk.atoms),
+            atom_residue_index: Vec::new(),
+            residue_names: Vec::new(),
+            residue_atom_ranges: Vec::new(),
+            bonds: Vec::new(),
+        },
     }
 }
 
 // ---------------------------------------------------------------------------
-// Builder helpers — private derivation used only by from_entity
+// Builder helpers — private derivation used only by derive_topology
 // ---------------------------------------------------------------------------
 
 fn atom_elements(atoms: &[molex::Atom]) -> Vec<Element> {

@@ -186,8 +186,10 @@ impl VisoEngine {
                 cursor_pos: (0.0, 0.0),
                 last_cull_camera_eye: Vec3::ZERO,
                 shader_composer: bootstrap.shader_composer,
-                density_tx,
-                density_rx,
+                density_channel: crate::renderer::gpu_pipeline::DensityChannel {
+                    tx: density_tx,
+                    rx: density_rx,
+                },
             },
             camera_controller: bootstrap.camera_controller,
             constraints: ConstraintSpecs {

@@ -26,7 +26,6 @@ struct EntityAnimationState {
 /// Drives per-entity position interpolation.
 pub(crate) struct StructureAnimator {
     runners: FxHashMap<EntityId, EntityAnimationState>,
-    enabled: bool,
 }
 
 impl StructureAnimator {
@@ -34,23 +33,7 @@ impl StructureAnimator {
     pub fn new() -> Self {
         Self {
             runners: FxHashMap::default(),
-            enabled: true,
         }
-    }
-
-    /// Enable or disable animations.
-    #[allow(dead_code)]
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.runners.clear();
-        }
-    }
-
-    /// Whether animations are enabled.
-    #[allow(dead_code)]
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
     }
 
     /// Whether any entity is currently animating.
@@ -73,9 +56,6 @@ impl StructureAnimator {
         target: Vec<Vec3>,
         transition: &Transition,
     ) {
-        if !self.enabled {
-            return;
-        }
         if start.len() != target.len() {
             // Sizes differ — snap without animation (record via
             // positions directly; bypass the runner).
@@ -95,12 +75,6 @@ impl StructureAnimator {
                 target,
             },
         );
-    }
-
-    /// Cancel an entity's active animation (if any).
-    #[allow(dead_code)]
-    pub fn cancel(&mut self, entity_id: EntityId) {
-        let _ = self.runners.remove(&entity_id);
     }
 
     /// Advance animations for the current frame and write interpolated
@@ -154,11 +128,6 @@ impl StructureAnimator {
         true
     }
 
-    /// Whether a specific entity is currently animating.
-    #[allow(dead_code)]
-    pub fn is_entity_animating(&self, entity_id: EntityId) -> bool {
-        self.runners.contains_key(&entity_id)
-    }
 }
 
 impl Default for StructureAnimator {
@@ -171,7 +140,6 @@ impl std::fmt::Debug for StructureAnimator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StructureAnimator")
             .field("runners", &self.runners.len())
-            .field("enabled", &self.enabled)
             .finish_non_exhaustive()
     }
 }

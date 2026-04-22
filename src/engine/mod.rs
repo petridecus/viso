@@ -529,8 +529,9 @@ impl VisoEngine {
     ) {
         let _ = self.entity_visibility.insert(id, visible);
         if let Some(eid) = self.entity_id(id) {
+            let v = self.bump_mesh_version();
             if let Some(state) = self.entity_state.get_mut(&eid) {
-                state.mesh_version = state.mesh_version.wrapping_add(1);
+                state.mesh_version = v;
             }
         }
     }
@@ -568,8 +569,9 @@ impl VisoEngine {
             }
         }
         if let Some(eid) = self.entity_id(id) {
+            let v = self.bump_mesh_version();
             if let Some(state) = self.entity_state.get_mut(&eid) {
-                state.mesh_version = state.mesh_version.wrapping_add(1);
+                state.mesh_version = v;
             }
         }
     }
@@ -582,8 +584,9 @@ impl VisoEngine {
     ) {
         let _ = self.entity_ss_overrides.insert(id, ss);
         if let Some(eid) = self.entity_id(id) {
+            let v = self.bump_mesh_version();
             if let Some(state) = self.entity_state.get_mut(&eid) {
-                state.mesh_version = state.mesh_version.wrapping_add(1);
+                state.mesh_version = v;
             }
         }
     }
@@ -684,8 +687,9 @@ impl VisoEngine {
             return;
         };
         let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
+        let v = self.bump_mesh_version();
         if let Some(state) = self.entity_state.get_mut(&eid) {
-            state.mesh_version = state.mesh_version.wrapping_add(1);
+            state.mesh_version = v;
             state.drawing_mode = drawing_mode;
         }
     }
@@ -1001,15 +1005,22 @@ impl VisoEngine {
         }
     }
 
+    /// Pull a fresh, never-reused `mesh_version` from the engine's
+    /// monotonic dispenser. All `mesh_version` writes must route through
+    /// this so a worker `MeshCache` entry for an `EntityId` is never
+    /// invalidated by a colliding version.
+    pub(crate) fn bump_mesh_version(&mut self) -> u64 {
+        let v = self.next_mesh_version;
+        self.next_mesh_version = self.next_mesh_version.wrapping_add(1);
+        v
+    }
+
     /// Bump every entity's `mesh_version` so the next sync regenerates
-    /// all meshes. Pulls fresh versions from the engine's monotonic
-    /// dispenser so a version never collides with a stale worker
-    /// `MeshCache` entry for the same `EntityId`.
+    /// all meshes.
     fn invalidate_all_mesh_versions(&mut self) {
         let ids: Vec<EntityId> = self.entity_state.keys().copied().collect();
         for id in ids {
-            let v = self.next_mesh_version;
-            self.next_mesh_version = self.next_mesh_version.wrapping_add(1);
+            let v = self.bump_mesh_version();
             if let Some(state) = self.entity_state.get_mut(&id) {
                 state.mesh_version = v;
             }

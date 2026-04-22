@@ -125,6 +125,59 @@ impl EntityAppearance {
         }
     }
 
+    /// Apply a single override field from a JSON value.
+    ///
+    /// `field` is the serde field name (matches a column in the entity
+    /// override panel). `value` is parsed into the typed slot via
+    /// `serde_json::from_value`. Unrecognised field names return `Err`.
+    ///
+    /// # Errors
+    /// Returns `Err(field)` if the field name is not recognised.
+    pub fn apply_json_field<'a>(
+        &mut self,
+        field: &'a str,
+        value: &serde_json::Value,
+    ) -> Result<(), &'a str> {
+        match field {
+            "backbone_color_scheme" | "color_scheme" => {
+                self.color_scheme = serde_json::from_value(value.clone()).ok();
+            }
+            "show_sidechains" => {
+                self.show_sidechains = value.as_bool();
+            }
+            "drawing_mode" => {
+                self.drawing_mode = serde_json::from_value(value.clone()).ok();
+            }
+            "helix_style" => {
+                self.helix_style = serde_json::from_value(value.clone()).ok();
+            }
+            "sheet_style" => {
+                self.sheet_style = serde_json::from_value(value.clone()).ok();
+            }
+            "surface_kind" => {
+                self.surface_kind = serde_json::from_value(value.clone()).ok();
+            }
+            "surface_opacity" => {
+                self.surface_opacity = value.as_f64().map(|v| v as f32);
+            }
+            "show_hbonds" => {
+                self.show_hbonds = value.as_bool();
+            }
+            "hbond_style" => {
+                self.hbond_style = serde_json::from_value(value.clone()).ok();
+            }
+            "show_disulfides" => {
+                self.show_disulfides = value.as_bool();
+            }
+            "disulfide_style" => {
+                self.disulfide_style =
+                    serde_json::from_value(value.clone()).ok();
+            }
+            _ => return Err(field),
+        }
+        Ok(())
+    }
+
     /// Whether all fields are `None` (no overrides).
     #[must_use]
     pub fn is_empty(&self) -> bool {

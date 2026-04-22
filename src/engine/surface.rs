@@ -211,11 +211,15 @@ impl VisoEngine {
         if jobs.is_empty() && density_jobs.is_empty() && cavity_jobs.is_empty()
         {
             // Nothing to generate — send empty mesh to clear renderer
-            let _ = self.gpu.density_tx.send((Vec::new(), Vec::new()));
+            let _ = self
+                .gpu
+                .density_channel
+                .tx
+                .send((Vec::new(), Vec::new()));
             return;
         }
 
-        let tx = self.gpu.density_tx.clone();
+        let tx = self.gpu.density_channel.tx.clone();
 
         let _ = std::thread::spawn(move || {
             let mut all_verts: Vec<IsosurfaceVertex> = Vec::new();

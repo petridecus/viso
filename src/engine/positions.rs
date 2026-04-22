@@ -19,8 +19,7 @@ use rustc_hash::FxHashMap;
 /// dropped.
 #[derive(Default, Clone)]
 pub struct EntityPositions {
-    /// Per-entity atom positions, keyed by entity id.
-    pub per_entity: FxHashMap<EntityId, Vec<Vec3>>,
+    per_entity: FxHashMap<EntityId, Vec<Vec3>>,
 }
 
 impl EntityPositions {

@@ -16,7 +16,6 @@ use crate::options::{
     ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
     SidechainColorMode,
 };
-use crate::renderer::geometry::backbone::sheet_fit;
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
@@ -462,9 +461,3 @@ fn generate_animation_sidechains(
     (Some(combined), total_count)
 }
 
-// Silence the unused import warning in sheet_fit when AnimationFrameCache
-// doesn't reach for sheet-plane-normals (kept for future hook).
-#[allow(dead_code)]
-fn _silence_sheet_fit() {
-    let _ = sheet_fit::compute_sheet_plane_normals as *const ();
-}

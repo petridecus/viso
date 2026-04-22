@@ -500,53 +500,14 @@ fn apply_entity_option(
     field: &str,
     value: &serde_json::Value,
 ) {
-    use crate::options::EntityAppearance;
-
     let mut ovr = engine
         .entity_appearance(entity_id)
         .cloned()
         .unwrap_or_default();
-
-    match field {
-        "backbone_color_scheme" | "color_scheme" => {
-            ovr.color_scheme = serde_json::from_value(value.clone()).ok();
-        }
-        "show_sidechains" => {
-            ovr.show_sidechains = value.as_bool();
-        }
-        "drawing_mode" => {
-            ovr.drawing_mode = serde_json::from_value(value.clone()).ok();
-        }
-        "helix_style" => {
-            ovr.helix_style = serde_json::from_value(value.clone()).ok();
-        }
-        "sheet_style" => {
-            ovr.sheet_style = serde_json::from_value(value.clone()).ok();
-        }
-        "surface_kind" => {
-            ovr.surface_kind = serde_json::from_value(value.clone()).ok();
-        }
-        "surface_opacity" => {
-            ovr.surface_opacity = value.as_f64().map(|v| v as f32);
-        }
-        "show_hbonds" => {
-            ovr.show_hbonds = value.as_bool();
-        }
-        "hbond_style" => {
-            ovr.hbond_style = serde_json::from_value(value.clone()).ok();
-        }
-        "show_disulfides" => {
-            ovr.show_disulfides = value.as_bool();
-        }
-        "disulfide_style" => {
-            ovr.disulfide_style = serde_json::from_value(value.clone()).ok();
-        }
-        _ => {
-            log::warn!("Unknown entity appearance field: {field}");
-            return;
-        }
+    if let Err(unknown) = ovr.apply_json_field(field, value) {
+        log::warn!("Unknown entity appearance field: {unknown}");
+        return;
     }
-
     if ovr.is_empty() {
         engine.clear_entity_appearance(entity_id);
     } else {

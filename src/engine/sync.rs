@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use molex::entity::molecule::id::EntityId;
-use molex::{Assembly, MoleculeType, SSType};
+use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
 use rustc_hash::FxHashMap;
 
 use super::entity_view::{EntityView, RibbonBackbone};
@@ -44,12 +44,11 @@ impl VisoEngine {
             let _ = seen.insert(id);
             let ss = assembly.ss_types(id);
             let ss_override = self.entity_ss_overrides.get(&id.raw()).cloned();
-            let topology = Arc::new(EntityTopology::from_entity(entity, ss));
+            let topology =
+                Arc::new(crate::engine::entity_view::derive_topology(entity, ss));
             let drawing_mode = self
                 .resolved_drawing_mode(id.raw(), topology.molecule_type);
-            let fresh_version = self.next_mesh_version;
-            self.next_mesh_version =
-                self.next_mesh_version.wrapping_add(1);
+            let fresh_version = self.bump_mesh_version();
             match self.entity_state.entry(id) {
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
                     let state = slot.get_mut();
@@ -274,29 +273,39 @@ impl VisoEngine {
             .collect()
     }
 
+    /// Iterate every visible entity that has an `entity_state` slot,
+    /// yielding `(entity, entity_id, view)`. Skips invisible entities
+    /// and entities not yet reconciled into `entity_state`. Callers
+    /// that also need positions look them up via `self.positions.get`.
+    fn visible_entities(
+        &self,
+    ) -> impl Iterator<Item = (&MoleculeEntity, EntityId, &EntityView)> {
+        self.current_assembly.entities().iter().filter_map(|entity| {
+            let eid = entity.id();
+            if !self.is_entity_visible(eid.raw()) {
+                return None;
+            }
+            let state = self.entity_state.get(&eid)?;
+            Some((entity, eid, state))
+        })
+    }
+
     fn build_full_rebuild_entities(&self) -> Vec<FullRebuildEntity> {
-        self.current_assembly
-            .entities()
-            .iter()
-            .filter_map(|entity| {
-                let eid = entity.id();
-                if !self.is_entity_visible(eid.raw()) {
-                    return None;
-                }
-                let state = self.entity_state.get(&eid)?;
+        self.visible_entities()
+            .map(|(_, eid, state)| {
                 let positions = self
                     .positions
                     .get(eid)
                     .map(<[Vec3]>::to_vec)
                     .unwrap_or_default();
-                Some(FullRebuildEntity {
+                FullRebuildEntity {
                     id: eid,
                     mesh_version: state.mesh_version,
                     drawing_mode: state.drawing_mode,
                     topology: Arc::clone(&state.topology),
                     positions,
                     ss_override: state.ss_override.clone(),
-                })
+                }
             })
             .collect()
     }
@@ -330,14 +339,7 @@ impl VisoEngine {
     fn flat_scene_chains(&self) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
         let mut backbone = Vec::new();
         let mut na = Vec::new();
-        for entity in self.current_assembly.entities() {
-            let eid = entity.id();
-            if !self.is_entity_visible(eid.raw()) {
-                continue;
-            }
-            let Some(state) = self.entity_state.get(&eid) else {
-                continue;
-            };
+        for (_, eid, state) in self.visible_entities() {
             let Some(positions) = self.positions.get(eid) else {
                 continue;
             };
@@ -433,14 +435,7 @@ impl VisoEngine {
 
     fn flat_cartoon_colors(&self) -> Vec<[f32; 3]> {
         let mut out = Vec::new();
-        for entity in self.current_assembly.entities() {
-            let eid = entity.id();
-            if !self.is_entity_visible(eid.raw()) {
-                continue;
-            }
-            let Some(state) = self.entity_state.get(&eid) else {
-                continue;
-            };
+        for (_, _, state) in self.visible_entities() {
             if !state.topology.is_protein()
                 || state.drawing_mode != DrawingMode::Cartoon
             {
@@ -574,14 +569,7 @@ impl VisoEngine {
         let mut residue_indices: Vec<u32> = Vec::new();
         let mut residue_offset: u32 = 0;
 
-        for entity in self.current_assembly.entities() {
-            let eid = entity.id();
-            if !self.is_entity_visible(eid.raw()) {
-                continue;
-            }
-            let Some(state) = self.entity_state.get(&eid) else {
-                continue;
-            };
+        for (_, eid, state) in self.visible_entities() {
             let layout = &state.topology.sidechain_layout;
             if layout.atom_indices.is_empty() {
                 residue_offset +=
@@ -657,14 +645,7 @@ impl VisoEngine {
     /// assembly order. Used by the `SelectSegment` command path.
     pub(crate) fn concatenated_cartoon_ss(&self) -> Vec<SSType> {
         let mut ss = Vec::new();
-        for entity in self.current_assembly.entities() {
-            let eid = entity.id();
-            if !self.is_entity_visible(eid.raw()) {
-                continue;
-            }
-            let Some(state) = self.entity_state.get(&eid) else {
-                continue;
-            };
+        for (_, _, state) in self.visible_entities() {
             if state.topology.is_protein()
                 && state.drawing_mode == DrawingMode::Cartoon
             {

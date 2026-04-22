@@ -15,7 +15,6 @@ pub struct AnimationRunner {
     start_time: Instant,
     phases: Vec<AnimationPhase>,
     total_duration: Duration,
-    name: &'static str,
 }
 
 impl AnimationRunner {
@@ -25,7 +24,6 @@ impl AnimationRunner {
             start_time: Instant::now(),
             phases: transition.phases.clone(),
             total_duration: transition.total_duration(),
-            name: transition.name,
         }
     }
 
@@ -36,20 +34,7 @@ impl AnimationRunner {
             start_time,
             phases: transition.phases.clone(),
             total_duration: transition.total_duration(),
-            name: transition.name,
         }
-    }
-
-    /// Transition's human-readable name (for logging).
-    #[allow(dead_code)]
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
-
-    /// Total animation duration across all phases.
-    #[allow(dead_code)]
-    pub fn duration(&self) -> Duration {
-        self.total_duration
     }
 
     /// Normalized progress 0.0..=1.0.
@@ -132,7 +117,6 @@ impl AnimationRunner {
 impl std::fmt::Debug for AnimationRunner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimationRunner")
-            .field("name", &self.name)
             .field("duration", &self.total_duration)
             .field("phases", &self.phases.len())
             .finish_non_exhaustive()
@@ -175,7 +159,6 @@ mod tests {
         let runner = AnimationRunner::new(&transition);
 
         assert!(runner.is_complete(Instant::now()));
-        assert_eq!(runner.duration(), Duration::ZERO);
     }
 
     #[test]

@@ -34,6 +34,14 @@ pub(crate) struct SceneChainData<'a> {
     pub na_chains: &'a [Vec<Vec3>],
 }
 
+/// Channel carrying density mesh data from the background worker
+/// thread to the main thread. The main thread drains `rx` each frame;
+/// worker-side code clones `tx` to send a completed mesh.
+pub(crate) struct DensityChannel {
+    pub tx: mpsc::Sender<(Vec<IsosurfaceVertex>, Vec<u32>)>,
+    pub rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
+}
+
 /// All GPU infrastructure grouped together: device/queue, renderers,
 /// picking, background mesh processor, post-processing, lighting, and
 /// per-frame cursor/culling state.
@@ -59,10 +67,8 @@ pub(crate) struct GpuPipeline {
     /// Retained so compiled shader modules stay alive for the engine lifetime.
     #[allow(dead_code)]
     pub(crate) shader_composer: ShaderComposer,
-    /// Sender for density mesh data (background thread → main thread).
-    pub(crate) density_tx: mpsc::Sender<(Vec<IsosurfaceVertex>, Vec<u32>)>,
-    /// Receiver for density mesh data.
-    pub(crate) density_rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
+    /// Worker→main channel for background-extracted density meshes.
+    pub(crate) density_channel: DensityChannel,
 }
 
 impl GpuPipeline {
@@ -378,7 +384,7 @@ impl GpuPipeline {
     /// so rapid slider changes don't queue up stale meshes.
     pub(crate) fn apply_pending_density_mesh(&mut self) -> bool {
         let mut latest = None;
-        while let Ok(data) = self.density_rx.try_recv() {
+        while let Ok(data) = self.density_channel.rx.try_recv() {
             latest = Some(data);
         }
         let Some((vertices, indices)) = latest else {
