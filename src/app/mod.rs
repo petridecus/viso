@@ -212,24 +212,35 @@ impl VisoApp {
         updated: Vec<MoleculeEntity>,
         default_transition: &Transition,
     ) {
+        // Bulk rebuild (see `load_entities` comment): every
+        // `&mut Assembly` mutation re-runs DSSP + H-bond detection over
+        // all entities, so looping `remove_entity` + `add_entity` is
+        // O(N²) over the assembly.
+        let mut updated_by_id: HashMap<u32, MoleculeEntity> =
+            updated.into_iter().map(|e| (e.id().raw(), e)).collect();
+
+        let current = self.assembly.entities().to_vec();
+        let mut combined: Vec<MoleculeEntity> =
+            Vec::with_capacity(current.len());
         let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
-        for new_entity in updated {
-            let raw_id = new_entity.id().raw();
-            if self.assembly.entity(new_entity.id()).is_none() {
-                continue;
+        for entity in current {
+            let raw_id = entity.id().raw();
+            if let Some(new_entity) = updated_by_id.remove(&raw_id) {
+                let transition = engine
+                    .entity_behavior(raw_id)
+                    .cloned()
+                    .unwrap_or_else(|| default_transition.clone());
+                let _ = entity_transitions.insert(raw_id, transition);
+                combined.push(new_entity);
+            } else {
+                combined.push(entity);
             }
-            self.assembly.remove_entity(new_entity.id());
-            self.assembly.add_entity(new_entity);
-            let transition = engine
-                .entity_behavior(raw_id)
-                .cloned()
-                .unwrap_or_else(|| default_transition.clone());
-            let _ = entity_transitions.insert(raw_id, transition);
         }
 
         if entity_transitions.is_empty() {
             return;
         }
+        self.assembly = Assembly::new(combined);
         engine.animation.pending_transitions = entity_transitions;
         self.publish();
         engine.sync_now();
@@ -324,38 +335,36 @@ impl VisoApp {
 
         let incoming_ids: HashSet<u32> =
             entities.iter().map(|e| e.id().raw()).collect();
-        let current_ids: Vec<_> = self
+        let current_raw_ids: HashSet<u32> = self
             .assembly
             .entities()
             .iter()
-            .map(MoleculeEntity::id)
+            .map(|e| e.id().raw())
             .collect();
 
-        for eid in current_ids {
-            if !incoming_ids.contains(&eid.raw()) {
-                engine.clear_entity_behavior_internal(eid.raw());
-                self.assembly.remove_entity(eid);
+        for &raw_id in &current_raw_ids {
+            if !incoming_ids.contains(&raw_id) {
+                engine.clear_entity_behavior_internal(raw_id);
             }
         }
 
+        // Bulk rebuild (see `load_entities` comment): per-entity
+        // `remove_entity`/`add_entity` would force an O(N²) DSSP +
+        // H-bond recompute over the full assembly.
         let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
-        for entity in entities {
+        for entity in &entities {
             let raw_id = entity.id().raw();
-            let present = self.assembly.entity(entity.id()).is_some();
-            if present {
-                self.assembly.remove_entity(entity.id());
-                self.assembly.add_entity(entity);
-                let transition = engine
+            let transition = if current_raw_ids.contains(&raw_id) {
+                engine
                     .entity_behavior(raw_id)
                     .cloned()
-                    .unwrap_or_else(|| default_transition.clone());
-                let _ = entity_transitions.insert(raw_id, transition);
+                    .unwrap_or_else(|| default_transition.clone())
             } else {
-                self.assembly.add_entity(entity);
-                let _ = entity_transitions
-                    .insert(raw_id, default_transition.clone());
-            }
+                default_transition.clone()
+            };
+            let _ = entity_transitions.insert(raw_id, transition);
         }
+        self.assembly = Assembly::new(entities);
 
         engine.animation.pending_transitions = entity_transitions;
         self.publish();

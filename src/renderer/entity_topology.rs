@@ -53,15 +53,6 @@ pub struct EntityTopology {
     /// rendering. Empty for non-NA entities.
     pub ring_topology: Vec<NucleotideRingLayout>,
 
-    /// Fitted β-sheet plane normals `(residue_idx, normal)`. Empty when
-    /// no multi-strand sheets were detected or fit. See
-    /// `renderer/geometry/backbone/sheet_fit.rs`.
-    pub sheet_plane_normals: Vec<(u32, Vec3)>,
-
-    /// Per-residue vertex colors (Cartoon-mode). `None` when the current
-    /// color scheme doesn't produce per-residue colors.
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
-
     /// Per-residue secondary structure from
     /// [`molex::Assembly::ss_types`]. Empty for non-protein entities.
     pub ss_types: Vec<SSType>,

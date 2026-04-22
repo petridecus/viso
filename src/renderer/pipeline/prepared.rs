@@ -6,7 +6,6 @@ use molex::SSType;
 use rustc_hash::FxHashMap;
 
 use crate::engine::positions::EntityPositions;
-use crate::engine::scene_state::SceneRenderState;
 use crate::options::{
     ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
 };
@@ -95,14 +94,20 @@ pub struct FullRebuildEntity {
     pub mesh_version: u64,
     /// Resolved drawing mode.
     pub drawing_mode: DrawingMode,
-    /// Render-ready view (atom elements, bond list, backbone/sidechain
-    /// layout, ring topology, per-residue colors, ...).
+    /// Immutable render-ready view (atom elements, bond list,
+    /// backbone/sidechain layout, ring topology, ...).
     pub topology: Arc<EntityTopology>,
     /// Interpolated atom positions at request-build time (entity-local,
     /// parallel to `topology.atom_elements`).
     pub positions: Vec<Vec3>,
     /// Optional SS override, taking priority over `topology.ss_types`.
     pub ss_override: Option<Vec<SSType>>,
+    /// Per-residue vertex colors for Cartoon-mode protein entities.
+    /// `None` when the current color scheme produces no per-residue colors.
+    pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// Fitted β-sheet plane normals `(residue_idx, normal)` for
+    /// Cartoon-mode protein entities. Empty otherwise.
+    pub sheet_plane_normals: Vec<(u32, Vec3)>,
 }
 
 /// Body of a full scene rebuild request, boxed on the enum variant to
@@ -110,8 +115,6 @@ pub struct FullRebuildEntity {
 pub struct FullRebuildBody {
     /// Per-entity snapshots for mesh generation.
     pub entities: Vec<FullRebuildEntity>,
-    /// Cross-entity derived state (disulfide + H-bond endpoints).
-    pub render_state: Arc<SceneRenderState>,
     /// Current display options for mesh generation.
     pub display: DisplayOptions,
     /// Current color options for mesh generation.

@@ -46,9 +46,10 @@ pub(crate) struct Scene {
     pub last_seen_generation: u64,
 
     // ── Derived ───────────────────────────────────────────────────
-    /// Cross-entity rendering data (disulfide + H-bond endpoints)
-    /// rederived on every sync.
-    pub render_state: Arc<SceneRenderState>,
+    /// Cross-entity rendering data (disulfide + H-bond endpoints +
+    /// per-sync resolved structural bonds). Rederived on every sync;
+    /// lives on the main thread only.
+    pub render_state: SceneRenderState,
     /// Per-entity rendering state (topology + drawing mode + SS
     /// override + mesh version) rederived on every sync.
     pub entity_state: FxHashMap<EntityId, EntityView>,
@@ -73,7 +74,7 @@ impl Scene {
             consumer,
             current: Arc::new(Assembly::new(Vec::new())),
             last_seen_generation: u64::MAX,
-            render_state: Arc::new(SceneRenderState::new()),
+            render_state: SceneRenderState::new(),
             entity_state: FxHashMap::default(),
             positions: EntityPositions::new(),
             next_mesh_version: 1,
@@ -112,7 +113,7 @@ impl Scene {
     pub fn reset_local_state(&mut self) {
         self.entity_state.clear();
         self.positions = EntityPositions::new();
-        self.render_state = Arc::new(SceneRenderState::new());
+        self.render_state = SceneRenderState::new();
         self.current = Arc::new(Assembly::new(Vec::new()));
         self.last_seen_generation = u64::MAX;
     }

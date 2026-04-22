@@ -118,7 +118,7 @@ fn generate_non_backbone_bytes(
             Some(colors),
             0,
             entity.drawing_mode,
-            entity.topology.per_residue_colors.as_deref(),
+            entity.per_residue_colors.as_deref(),
         );
     let na_chains = entity.topology.backbone_chain_positions(&entity.positions);
     let na_chain_slice: &[Vec<Vec3>] = if entity.topology.is_nucleic_acid() {
@@ -214,8 +214,8 @@ pub(super) fn generate_entity_mesh(
                 na: na_chains,
             },
             ss_slice,
-            topology.per_residue_colors.as_deref(),
-            &topology.sheet_plane_normals,
+            entity.per_residue_colors.as_deref(),
+            &entity.sheet_plane_normals,
             geometry,
             None,
             na_colors_ref,
@@ -228,7 +228,7 @@ pub(super) fn generate_entity_mesh(
         generate_sidechain_bytes(
             topology,
             &entity.positions,
-            topology.per_residue_colors.as_deref(),
+            entity.per_residue_colors.as_deref(),
             &backbone_mesh.sheet_offsets,
             colors,
             display,

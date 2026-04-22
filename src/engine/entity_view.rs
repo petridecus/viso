@@ -30,11 +30,10 @@ use crate::renderer::geometry::backbone::spline::project_backbone_atoms;
 
 /// Per-entity state held by [`VisoEngine`](super::VisoEngine).
 ///
-/// Four fields: the drawing mode chosen for this entity, an optional
-/// SS override (used by the viewer to pin SS assignments), the
-/// Arc-shared [`EntityTopology`], and a monotonically increasing
-/// `mesh_version` the mesh cache uses to detect when geometry needs
-/// regeneration.
+/// Holds the drawing mode chosen for this entity, an optional SS
+/// override, the Arc-shared (immutable) [`EntityTopology`], a cached
+/// per-sync per-residue color vector used by Cartoon color uploads,
+/// and a monotonically increasing `mesh_version`.
 pub struct EntityView {
     /// Drawing mode for this entity (Cartoon / Stick / `BallAndStick`).
     pub drawing_mode: DrawingMode,
@@ -42,9 +41,13 @@ pub struct EntityView {
     /// priority over [`EntityTopology::ss_types`] at render time.
     pub ss_override: Option<Vec<SSType>>,
     /// Rederived render-ready view of this entity. Arc-wrapped so the
-    /// background mesh worker can snapshot a request without cloning
-    /// the underlying buffers.
+    /// background mesh worker can hold a handle without cloning the
+    /// underlying buffers. Immutable after derive.
     pub topology: Arc<EntityTopology>,
+    /// Per-residue Cartoon-mode vertex colors, rederived each sync.
+    /// Cached here so main-thread color uploads can concatenate across
+    /// entities without recomputing.
+    pub per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Bumped whenever this entity's geometry needs to be regenerated.
     pub mesh_version: u64,
 }
@@ -142,8 +145,6 @@ pub fn derive_topology(
                 backbone_chain_layout,
                 sidechain_layout,
                 ring_topology: Vec::new(),
-                sheet_plane_normals: Vec::new(),
-                per_residue_colors: None,
                 ss_types: ss.to_vec(),
                 atom_elements: atom_elements(&protein.atoms),
                 atom_residue_index,
@@ -163,8 +164,6 @@ pub fn derive_topology(
                 backbone_chain_layout: na_backbone_chain_layout(na),
                 sidechain_layout: SidechainLayout::empty(),
                 ring_topology: na_ring_topology(na),
-                sheet_plane_normals: Vec::new(),
-                per_residue_colors: None,
                 ss_types: Vec::new(),
                 atom_elements: atom_elements(&na.atoms),
                 atom_residue_index,
@@ -178,8 +177,6 @@ pub fn derive_topology(
             backbone_chain_layout: Vec::new(),
             sidechain_layout: SidechainLayout::empty(),
             ring_topology: Vec::new(),
-            sheet_plane_normals: Vec::new(),
-            per_residue_colors: None,
             ss_types: Vec::new(),
             atom_elements: atom_elements(&sm.atoms),
             atom_residue_index: vec![0; sm.atoms.len()],
@@ -193,8 +190,6 @@ pub fn derive_topology(
             backbone_chain_layout: Vec::new(),
             sidechain_layout: SidechainLayout::empty(),
             ring_topology: Vec::new(),
-            sheet_plane_normals: Vec::new(),
-            per_residue_colors: None,
             ss_types: Vec::new(),
             atom_elements: atom_elements(&bulk.atoms),
             atom_residue_index: Vec::new(),

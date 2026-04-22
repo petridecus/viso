@@ -35,8 +35,7 @@ impl VisoEngine {
     /// Called when the triple buffer yields a snapshot whose
     /// generation differs from `scene.last_seen_generation`.
     pub(crate) fn sync_from_assembly(&mut self, assembly: &Assembly) {
-        self.scene.render_state =
-            Arc::new(SceneRenderState::from_assembly(assembly));
+        self.scene.render_state = SceneRenderState::from_assembly(assembly);
 
         let mut seen: std::collections::HashSet<EntityId> =
             std::collections::HashSet::default();
@@ -58,12 +57,14 @@ impl VisoEngine {
                     state.ss_override = ss_override;
                     state.drawing_mode = drawing_mode;
                     state.mesh_version = fresh_version;
+                    state.per_residue_colors = None;
                 }
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     let _ = slot.insert(EntityView {
                         drawing_mode,
                         ss_override,
                         topology,
+                        per_residue_colors: None,
                         mesh_version: fresh_version,
                     });
                 }
@@ -125,7 +126,7 @@ impl VisoEngine {
         &mut self,
         entity_transitions: HashMap<u32, Transition>,
     ) {
-        self.install_per_entity_render_data();
+        let request_entities = self.build_full_rebuild_entities();
         self.resolve_structural_bonds_into_render_state();
         let _ = self.gpu.renderers.bond.update(
             &self.gpu.context.device,
@@ -134,10 +135,8 @@ impl VisoEngine {
         );
 
         let entity_options = self.resolve_entity_options();
-        let request_entities = self.build_full_rebuild_entities();
         self.animation.pending_transitions = entity_transitions;
 
-        let render_state = Arc::clone(&self.scene.render_state);
         let generation = self.gpu.scene_processor.next_generation();
         log::debug!(
             "sync_scene_to_renderers: submitting FullRebuild \
@@ -148,7 +147,6 @@ impl VisoEngine {
             .scene_processor
             .submit(SceneRequest::FullRebuild(Box::new(FullRebuildBody {
                 entities: request_entities,
-                render_state,
                 display: self.options.display.clone(),
                 colors: self.options.colors.clone(),
                 geometry: self.resolved_geometry(),
@@ -187,69 +185,7 @@ impl VisoEngine {
             options: &self.options.display.bonds,
             colors: &self.options.colors,
         };
-        Arc::make_mut(&mut self.scene.render_state)
-            .update_structural_bonds(&input);
-    }
-
-    /// Walk protein entities, compute per-residue colors + sheet-plane
-    /// normals, and mirror them onto the Arc-shared topology so the
-    /// mesh worker sees them.
-    fn install_per_entity_render_data(&mut self) {
-        // Take an Arc handle so the entity walk is decoupled from
-        // `&mut self` borrows used for per-entity mutation below.
-        let assembly = Arc::clone(&self.scene.current);
-        let hbond_ranges = protein_hbond_ranges(assembly.as_ref());
-
-        for (entity_index, entity) in assembly.entities().iter().enumerate() {
-            let eid = entity.id();
-            let Some(positions) = self.scene.positions.get(eid) else {
-                continue;
-            };
-            let positions = positions.to_vec();
-            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
-                continue;
-            };
-            let display = self.annotations.appearance.get(&eid).map_or_else(
-                || self.options.display.clone(),
-                |ovr| ovr.to_display_options(&self.options.display),
-            );
-            let ss_types: Vec<SSType> = state
-                .ss_override
-                .clone()
-                .unwrap_or_else(|| state.topology.ss_types.clone());
-            let backbone_chains =
-                state.topology.backbone_chain_positions(&positions);
-            let colors = if state.topology.is_protein() {
-                per_entity_colors(
-                    entity_index,
-                    &backbone_chains,
-                    &ss_types,
-                    self.annotations.scores.get(&eid).map(Vec::as_slice),
-                    &display,
-                )
-            } else {
-                None
-            };
-
-            let sheet_plane_normals = if state.topology.is_protein()
-                && state.drawing_mode == DrawingMode::Cartoon
-            {
-                entity_sheet_plane_normals(
-                    &self.scene.current,
-                    eid,
-                    &ss_types,
-                    &positions,
-                    &state.topology,
-                    &hbond_ranges,
-                )
-            } else {
-                Vec::new()
-            };
-
-            let topology = Arc::make_mut(&mut state.topology);
-            topology.per_residue_colors = colors;
-            topology.sheet_plane_normals = sheet_plane_normals;
-        }
+        self.scene.render_state.update_structural_bonds(&input);
     }
 
     fn resolve_entity_options(
@@ -288,25 +224,79 @@ impl VisoEngine {
         })
     }
 
-    fn build_full_rebuild_entities(&self) -> Vec<FullRebuildEntity> {
-        self.visible_entities()
-            .map(|(_, eid, state)| {
-                let positions = self
-                    .scene
-                    .positions
-                    .get(eid)
-                    .map(<[Vec3]>::to_vec)
-                    .unwrap_or_default();
-                FullRebuildEntity {
-                    id: eid,
-                    mesh_version: state.mesh_version,
-                    drawing_mode: state.drawing_mode,
-                    topology: Arc::clone(&state.topology),
-                    positions,
-                    ss_override: state.ss_override.clone(),
-                }
-            })
-            .collect()
+    /// Build the per-sync FullRebuild payload: for each visible entity,
+    /// compute per-residue colors + sheet-plane normals from current
+    /// display options, positions, and hbonds. Caches colors onto
+    /// `EntityView` so main-thread color uploads can concatenate
+    /// without recomputing. Sheet normals have no main-thread reader and
+    /// live only on the request.
+    fn build_full_rebuild_entities(&mut self) -> Vec<FullRebuildEntity> {
+        let assembly = Arc::clone(&self.scene.current);
+        let hbond_ranges = protein_hbond_ranges(assembly.as_ref());
+        let mut result = Vec::new();
+
+        for (entity_index, entity) in assembly.entities().iter().enumerate() {
+            let eid = entity.id();
+            if !self.annotations.is_visible(eid) {
+                continue;
+            }
+            let Some(positions) = self.scene.positions.get(eid) else {
+                continue;
+            };
+            let positions = positions.to_vec();
+            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
+                continue;
+            };
+            let display = self.annotations.appearance.get(&eid).map_or_else(
+                || self.options.display.clone(),
+                |ovr| ovr.to_display_options(&self.options.display),
+            );
+            let ss_types: Vec<SSType> = state
+                .ss_override
+                .clone()
+                .unwrap_or_else(|| state.topology.ss_types.clone());
+            let backbone_chains =
+                state.topology.backbone_chain_positions(&positions);
+            let per_residue_colors = if state.topology.is_protein() {
+                per_entity_colors(
+                    entity_index,
+                    &backbone_chains,
+                    &ss_types,
+                    self.annotations.scores.get(&eid).map(Vec::as_slice),
+                    &display,
+                )
+            } else {
+                None
+            };
+            let sheet_plane_normals = if state.topology.is_protein()
+                && state.drawing_mode == DrawingMode::Cartoon
+            {
+                entity_sheet_plane_normals(
+                    assembly.as_ref(),
+                    eid,
+                    &ss_types,
+                    &positions,
+                    &state.topology,
+                    &hbond_ranges,
+                )
+            } else {
+                Vec::new()
+            };
+
+            state.per_residue_colors.clone_from(&per_residue_colors);
+
+            result.push(FullRebuildEntity {
+                id: eid,
+                mesh_version: state.mesh_version,
+                drawing_mode: state.drawing_mode,
+                topology: Arc::clone(&state.topology),
+                positions,
+                ss_override: state.ss_override.clone(),
+                per_residue_colors,
+                sheet_plane_normals,
+            });
+        }
+        result
     }
 
     /// Upload prepared scene geometry to GPU renderers. Rebuilds the
@@ -442,7 +432,7 @@ impl VisoEngine {
             {
                 continue;
             }
-            if let Some(colors) = &state.topology.per_residue_colors {
+            if let Some(colors) = &state.per_residue_colors {
                 out.extend_from_slice(colors);
             } else {
                 let residue_count = state.topology.residue_atom_ranges.len();
@@ -524,8 +514,40 @@ impl VisoEngine {
     }
 
     /// Recompute per-chain backbone colors and upload them immediately.
+    /// Used by display-option changes that affect backbone tint but
+    /// don't invalidate mesh geometry.
     pub(crate) fn recompute_backbone_colors(&mut self) {
-        self.install_per_entity_render_data();
+        let assembly = Arc::clone(&self.scene.current);
+        for (entity_index, entity) in assembly.entities().iter().enumerate() {
+            let eid = entity.id();
+            let Some(positions) = self.scene.positions.get(eid) else {
+                continue;
+            };
+            let positions = positions.to_vec();
+            let Some(state) = self.scene.entity_state.get_mut(&eid) else {
+                continue;
+            };
+            if !state.topology.is_protein() {
+                continue;
+            }
+            let display = self.annotations.appearance.get(&eid).map_or_else(
+                || self.options.display.clone(),
+                |ovr| ovr.to_display_options(&self.options.display),
+            );
+            let ss_types: Vec<SSType> = state
+                .ss_override
+                .clone()
+                .unwrap_or_else(|| state.topology.ss_types.clone());
+            let backbone_chains =
+                state.topology.backbone_chain_positions(&positions);
+            state.per_residue_colors = per_entity_colors(
+                entity_index,
+                &backbone_chains,
+                &ss_types,
+                self.annotations.scores.get(&eid).map(Vec::as_slice),
+                &display,
+            );
+        }
         let flat = self.flat_cartoon_colors();
         if !flat.is_empty() {
             self.gpu.set_colors_immediate(&flat);

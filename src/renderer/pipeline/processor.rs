@@ -220,7 +220,6 @@ impl SceneProcessor {
                 SceneRequest::FullRebuild(body) => {
                     let FullRebuildBody {
                         entities,
-                        render_state: _render_state,
                         display,
                         colors,
                         geometry,
@@ -353,7 +352,7 @@ impl MeshCache {
             if e.drawing_mode != DrawingMode::Cartoon {
                 continue;
             }
-            if let Some(c) = e.topology.per_residue_colors.as_deref() {
+            if let Some(c) = e.per_residue_colors.as_deref() {
                 colors.extend_from_slice(c);
             }
         }
