@@ -288,7 +288,8 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
         .entities()
         .iter()
         .map(|entity| {
-            let raw_id = entity.id().raw();
+            let eid = entity.id();
+            let raw_id = eid.raw();
             let mol_type = match entity.molecule_type() {
                 MoleculeType::Protein => "Protein",
                 MoleculeType::DNA => "DNA",
@@ -305,7 +306,7 @@ pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 .map_or_else(Vec::new, |cid| vec![String::from(cid as char)]);
             let focused =
                 matches!(focus, Focus::Entity(eid) if eid.raw() == raw_id);
-            let ovr = engine.entity_appearance(raw_id);
+            let ovr = engine.entity_appearance(eid);
             let resolved_display = ovr.map_or_else(
                 || engine.options().display.clone(),
                 |o| o.to_display_options(&engine.options().display),

@@ -4,6 +4,8 @@
 //! the shared `IsosurfaceRenderer`. Multiple entities can each have
 //! surfaces — their meshes are concatenated before upload.
 
+use molex::entity::molecule::id::EntityId;
+
 use super::VisoEngine;
 use crate::renderer::geometry::isosurface::IsosurfaceVertex;
 
@@ -48,7 +50,11 @@ impl Default for EntitySurface {
 
 impl VisoEngine {
     /// Add a Gaussian surface for an entity.
-    pub fn add_gaussian_surface(&mut self, entity_id: u32, color: [f32; 4]) {
+    pub fn add_gaussian_surface(
+        &mut self,
+        entity_id: EntityId,
+        color: [f32; 4],
+    ) {
         let surface = EntitySurface {
             kind: SurfaceKind::Gaussian,
             color,
@@ -58,7 +64,7 @@ impl VisoEngine {
     }
 
     /// Add a solvent-excluded (Connolly) surface for an entity.
-    pub fn add_ses_surface(&mut self, entity_id: u32, color: [f32; 4]) {
+    pub fn add_ses_surface(&mut self, entity_id: EntityId, color: [f32; 4]) {
         let surface = EntitySurface {
             kind: SurfaceKind::Ses,
             color,
@@ -70,14 +76,11 @@ impl VisoEngine {
     /// Update a single color channel or opacity on an entity's surface.
     pub fn set_surface_color_channel(
         &mut self,
-        entity_id: u32,
+        entity_id: EntityId,
         channel: usize,
         value: f32,
     ) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        if let Some(surface) = self.annotations.surfaces.get_mut(&eid) {
+        if let Some(surface) = self.annotations.surfaces.get_mut(&entity_id) {
             surface.color[channel] = value.clamp(0.0, 1.0);
             self.regenerate_entity_surfaces();
         }
@@ -88,17 +91,14 @@ impl VisoEngine {
     /// When a global surface is active, this stores an invisible sentinel
     /// so the entity explicitly opts out instead of falling back to the
     /// global default.
-    pub fn remove_entity_surface(&mut self, entity_id: u32) {
+    pub fn remove_entity_surface(&mut self, entity_id: EntityId) {
         use crate::options::SurfaceKindOption;
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        let had = self.annotations.surfaces.remove(&eid).is_some();
+        let had = self.annotations.surfaces.remove(&entity_id).is_some();
         // If there's a global surface, store an invisible sentinel so
         // this entity doesn't inherit the global.
         if self.options.display.surface_kind != SurfaceKindOption::None {
             let _ = self.annotations.surfaces.insert(
-                eid,
+                entity_id,
                 EntitySurface {
                     visible: false,
                     ..Default::default()
@@ -106,18 +106,23 @@ impl VisoEngine {
             );
         }
         if had || self.options.display.surface_kind != SurfaceKindOption::None {
-            log::info!("removed surface for entity {entity_id}");
+            log::info!("removed surface for entity {}", entity_id.raw());
             self.regenerate_entity_surfaces();
         }
     }
 
     /// Set surface parameters for an entity and regenerate.
-    fn set_entity_surface(&mut self, entity_id: u32, surface: EntitySurface) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        log::info!("set {:?} surface for entity {entity_id}", surface.kind);
-        let _ = self.annotations.surfaces.insert(eid, surface);
+    fn set_entity_surface(
+        &mut self,
+        entity_id: EntityId,
+        surface: EntitySurface,
+    ) {
+        log::info!(
+            "set {:?} surface for entity {}",
+            surface.kind,
+            entity_id.raw()
+        );
+        let _ = self.annotations.surfaces.insert(entity_id, surface);
         self.regenerate_entity_surfaces();
     }
 

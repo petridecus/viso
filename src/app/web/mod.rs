@@ -473,7 +473,9 @@ fn handle_ipc_action(
         }
         UiAction::ClearEntityOption { entity_id } => {
             let mut eng = engine.borrow_mut();
-            eng.clear_entity_appearance(entity_id);
+            if let Some(eid) = eng.entity_id(entity_id) {
+                eng.clear_entity_appearance(eid);
+            }
             push_scene_entities(&eng);
         }
         UiAction::SetEntityAppearance {
@@ -500,18 +502,18 @@ fn apply_entity_option(
     field: &str,
     value: &serde_json::Value,
 ) {
-    let mut ovr = engine
-        .entity_appearance(entity_id)
-        .cloned()
-        .unwrap_or_default();
+    let Some(eid) = engine.entity_id(entity_id) else {
+        return;
+    };
+    let mut ovr = engine.entity_appearance(eid).cloned().unwrap_or_default();
     if let Err(unknown) = ovr.apply_json_field(field, value) {
         log::warn!("Unknown entity appearance field: {unknown}");
         return;
     }
     if ovr.is_empty() {
-        engine.clear_entity_appearance(entity_id);
+        engine.clear_entity_appearance(eid);
     } else {
-        engine.set_entity_appearance(entity_id, ovr);
+        engine.set_entity_appearance(eid, ovr);
     }
 }
 

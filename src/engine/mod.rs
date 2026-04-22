@@ -435,10 +435,12 @@ impl VisoEngine {
     }
 
     /// Look up the opaque [`EntityId`] for a raw `u32` id. Returns
-    /// `None` if no entity with that raw id exists. Thin delegator to
-    /// [`Scene::entity_id`] used by every annotation mutation entry
-    /// point that takes a raw id at the API boundary.
-    pub(crate) fn entity_id(&self, raw: u32) -> Option<EntityId> {
+    /// `None` if no entity with that raw id exists. The boundary
+    /// translator: callers arriving from a wire format (IPC, TOML,
+    /// CLI) translate *once* here and then pass [`EntityId`] to the
+    /// per-entity engine methods.
+    #[must_use]
+    pub fn entity_id(&self, raw: u32) -> Option<EntityId> {
         self.scene.entity_id(raw)
     }
 }
@@ -454,9 +456,9 @@ impl VisoEngine {
 
     /// The currently focused entity ID, or `None` when focus is session-wide.
     #[must_use]
-    pub fn focused_entity(&self) -> Option<u32> {
+    pub fn focused_entity(&self) -> Option<EntityId> {
         match self.annotations.focus {
-            Focus::Entity(id) => Some(id.raw()),
+            Focus::Entity(id) => Some(id),
             Focus::Session => None,
         }
     }

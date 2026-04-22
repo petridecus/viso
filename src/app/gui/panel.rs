@@ -260,20 +260,24 @@ impl PanelController {
                 self.push_scene_entities(engine);
             }
             UiAction::ClearEntityOption { entity_id } => {
-                engine.clear_entity_appearance(entity_id);
+                if let Some(eid) = engine.entity_id(entity_id) {
+                    engine.clear_entity_appearance(eid);
+                }
                 self.push_scene_entities(engine);
             }
             UiAction::SetEntitySurface { entity_id, kind } => {
-                let default_color = [0.7, 0.7, 0.7, 0.35];
-                match kind.as_str() {
-                    "gaussian" => {
-                        engine.add_gaussian_surface(entity_id, default_color);
-                    }
-                    "ses" => {
-                        engine.add_ses_surface(entity_id, default_color);
-                    }
-                    _ => {
-                        engine.remove_entity_surface(entity_id);
+                if let Some(eid) = engine.entity_id(entity_id) {
+                    let default_color = [0.7, 0.7, 0.7, 0.35];
+                    match kind.as_str() {
+                        "gaussian" => {
+                            engine.add_gaussian_surface(eid, default_color);
+                        }
+                        "ses" => {
+                            engine.add_ses_surface(eid, default_color);
+                        }
+                        _ => {
+                            engine.remove_entity_surface(eid);
+                        }
                     }
                 }
                 self.push_scene_entities(engine);
@@ -283,7 +287,9 @@ impl PanelController {
                 field,
                 value,
             } => {
-                if let Some(v) = value.as_f64() {
+                if let (Some(eid), Some(v)) =
+                    (engine.entity_id(entity_id), value.as_f64())
+                {
                     let ch = match field.as_str() {
                         "color_r" => Some(0),
                         "color_g" => Some(1),
@@ -292,8 +298,7 @@ impl PanelController {
                         _ => None,
                     };
                     if let Some(ch) = ch {
-                        engine
-                            .set_surface_color_channel(entity_id, ch, v as f32);
+                        engine.set_surface_color_channel(eid, ch, v as f32);
                     }
                 }
                 self.push_scene_entities(engine);
@@ -361,18 +366,18 @@ impl PanelController {
         field: &str,
         value: &serde_json::Value,
     ) {
-        let mut ovr = engine
-            .entity_appearance(entity_id)
-            .cloned()
-            .unwrap_or_default();
+        let Some(eid) = engine.entity_id(entity_id) else {
+            return;
+        };
+        let mut ovr = engine.entity_appearance(eid).cloned().unwrap_or_default();
         if let Err(unknown) = ovr.apply_json_field(field, value) {
             log::warn!("Unknown entity appearance field: {unknown}");
             return;
         }
         if ovr.is_empty() {
-            engine.clear_entity_appearance(entity_id);
+            engine.clear_entity_appearance(eid);
         } else {
-            engine.set_entity_appearance(entity_id, ovr);
+            engine.set_entity_appearance(eid, ovr);
         }
     }
 

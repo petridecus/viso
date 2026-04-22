@@ -214,40 +214,32 @@ impl VisoEngine {
     /// Set the animation behavior for a specific entity.
     pub fn set_entity_behavior(
         &mut self,
-        entity_id: u32,
+        entity_id: EntityId,
         transition: Transition,
     ) {
-        if let Some(eid) = self.entity_id(entity_id) {
-            let _ = self.annotations.behaviors.insert(eid, transition);
-        }
+        let _ = self.annotations.behaviors.insert(entity_id, transition);
     }
 
     /// Clear a per-entity behavior override.
-    pub fn clear_entity_behavior(&mut self, entity_id: u32) {
-        self.clear_entity_behavior_internal(entity_id);
+    pub fn clear_entity_behavior(&mut self, entity_id: EntityId) {
+        let _ = self.annotations.behaviors.remove(&entity_id);
     }
 
     /// Set per-entity appearance overrides.
     pub fn set_entity_appearance(
         &mut self,
-        entity_id: u32,
+        entity_id: EntityId,
         overrides: EntityAppearance,
     ) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        let _ = self.annotations.appearance.insert(eid, overrides);
-        self.apply_appearance_change(eid);
+        let _ = self.annotations.appearance.insert(entity_id, overrides);
+        self.apply_appearance_change(entity_id);
         self.sync_scene_to_renderers(HashMap::new());
     }
 
     /// Clear a per-entity appearance override.
-    pub fn clear_entity_appearance(&mut self, entity_id: u32) {
-        let Some(eid) = self.entity_id(entity_id) else {
-            return;
-        };
-        let _ = self.annotations.appearance.remove(&eid);
-        self.apply_appearance_change(eid);
+    pub fn clear_entity_appearance(&mut self, entity_id: EntityId) {
+        let _ = self.annotations.appearance.remove(&entity_id);
+        self.apply_appearance_change(entity_id);
         self.sync_scene_to_renderers(HashMap::new());
     }
 
@@ -255,10 +247,9 @@ impl VisoEngine {
     #[must_use]
     pub fn entity_appearance(
         &self,
-        entity_id: u32,
+        entity_id: EntityId,
     ) -> Option<&EntityAppearance> {
-        let eid = self.entity_id(entity_id)?;
-        self.annotations.appearance.get(&eid)
+        self.annotations.appearance.get(&entity_id)
     }
 
     /// Resolve the drawing mode for an entity: per-entity override wins,

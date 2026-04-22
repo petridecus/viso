@@ -56,6 +56,7 @@ pub use engine::command::{
 };
 pub use engine::focus::Focus;
 pub use engine::VisoEngine;
+pub use molex::entity::EntityId;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
 pub use gpu::texture::RenderTarget;
