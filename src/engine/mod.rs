@@ -62,7 +62,7 @@ pub struct VisoEngine {
     /// lighting, cursor, culling state).
     pub(crate) gpu: GpuPipeline,
     /// Orbital camera controller.
-    pub camera_controller: CameraController,
+    pub(crate) camera_controller: CameraController,
 
     // ── Runtime state ─────────────────────────────────────────────
     /// Stored band/pull constraint specs.
@@ -256,7 +256,7 @@ impl VisoEngine {
             }
             // Focus
             VisoCommand::CycleFocus => {
-                let _ = self.cycle_focus();
+                let _ = self.annotations_mut().cycle_focus();
                 self.fit_camera_to_focus();
                 CommandOutcome::FocusChanged
             }
@@ -368,7 +368,7 @@ fn selection_outcome(changed: bool) -> command::CommandOutcome {
     }
 }
 
-// ── Public API: lifecycle ──
+// ── Lifecycle + queries ──
 
 impl VisoEngine {
     /// Advance camera animation and apply any pending scene from the
@@ -407,12 +407,7 @@ impl VisoEngine {
             &self.annotations,
         );
     }
-}
 
-// ── Camera + focus (thin dispatchers; logic lives in camera::fit +
-// annotations) ──
-
-impl VisoEngine {
     /// Fit the camera to the currently focused element (session-wide
     /// bounding sphere, or the focused entity's bounding sphere).
     pub fn fit_camera_to_focus(&mut self) {
@@ -444,26 +439,6 @@ impl VisoEngine {
         camera::fit::fit_to_entities(&mut self.camera_controller, visible);
     }
 
-    /// Advance focus to the next visible, focusable entity. Wraps to
-    /// session after the last. Returns the new focus.
-    fn cycle_focus(&mut self) -> Focus {
-        let focusable: Vec<EntityId> = self
-            .scene
-            .current
-            .entities()
-            .iter()
-            .filter(|e| {
-                self.is_entity_visible(e.id().raw()) && e.is_focusable()
-            })
-            .map(MoleculeEntity::id)
-            .collect();
-        self.annotations.cycle_focus(&focusable)
-    }
-}
-
-// ── Lifecycle + EntityId translation ──
-
-impl VisoEngine {
     /// Reset all scene-local state (animation, scene ingest, derived
     /// per-entity views, annotations). Called when replacing or
     /// clearing the scene.
@@ -496,11 +471,7 @@ impl VisoEngine {
     pub fn entity_id(&self, raw: u32) -> Option<EntityId> {
         self.scene.entity_id(raw)
     }
-}
 
-// ── Public API: queries ──
-
-impl VisoEngine {
     /// The pick target currently under the cursor (resolved from the
     /// previous frame's GPU picking pass).
     pub fn hovered_target(&self) -> crate::renderer::picking::PickTarget {

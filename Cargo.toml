@@ -171,6 +171,7 @@ unused_results = "deny"
 unused_qualifications = "deny"
 trivial_casts = "deny"
 trivial_numeric_casts = "deny"
+unreachable_pub = "warn"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

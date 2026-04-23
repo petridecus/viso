@@ -13,7 +13,7 @@ const TURNTABLE_SPEED: f32 = 0.5;
 
 /// Orbital camera controller managing rotation, panning, zoom, and GPU
 /// resources.
-pub struct CameraController {
+pub(crate) struct CameraController {
     orientation: Quat,
     distance: f32,
     focus_point: Vec3,
@@ -98,7 +98,7 @@ impl CameraController {
 
     /// Create a new camera controller with default orbital parameters and GPU
     /// resources.
-    pub fn new(context: &RenderContext) -> Self {
+    pub(crate) fn new(context: &RenderContext) -> Self {
         let focus_point = Vec3::new(50.0, 50.0, 50.0);
         let distance = 150.0;
         let orientation = Quat::IDENTITY;
@@ -142,7 +142,7 @@ impl CameraController {
 
     /// Update camera animation. Call this every frame.
     /// Returns true if animation is still in progress.
-    pub fn update_animation(&mut self, dt: f32) -> bool {
+    pub(crate) fn update_animation(&mut self, dt: f32) -> bool {
         let mut animating = false;
         let t = (CAMERA_ANIMATION_SPEED * dt).min(1.0);
 
@@ -199,7 +199,8 @@ impl CameraController {
     }
 
     /// Check if camera is currently animating
-    pub fn is_animating(&self) -> bool {
+    #[allow(dead_code)]
+    pub(crate) fn is_animating(&self) -> bool {
         self.target_focus_point.is_some()
             || self.target_distance.is_some()
             || self.target_bounding_radius.is_some()
@@ -207,7 +208,7 @@ impl CameraController {
 
     /// Toggle turntable auto-rotation. Captures the camera's current up vector
     /// as the spin axis when enabling.
-    pub fn toggle_auto_rotate(&mut self) -> bool {
+    pub(crate) fn toggle_auto_rotate(&mut self) -> bool {
         if self.auto_rotate_axis.is_some() {
             self.auto_rotate_axis = None;
             false
@@ -219,37 +220,38 @@ impl CameraController {
     }
 
     /// Whether auto-rotation is currently active.
-    pub fn is_auto_rotating(&self) -> bool {
+    #[allow(dead_code)]
+    pub(crate) fn is_auto_rotating(&self) -> bool {
         self.auto_rotate_axis.is_some()
     }
 
     /// Get the orbital distance from focus point.
     #[inline]
-    pub fn distance(&self) -> f32 {
+    pub(crate) fn distance(&self) -> f32 {
         self.distance
     }
 
     /// Get the bounding radius of the current protein.
     #[inline]
-    pub fn bounding_radius(&self) -> f32 {
+    pub(crate) fn bounding_radius(&self) -> f32 {
         self.bounding_radius
     }
 
     /// Get the camera's right vector from the orientation quaternion.
     #[inline]
-    pub fn right(&self) -> Vec3 {
+    pub(crate) fn right(&self) -> Vec3 {
         self.orientation * Vec3::X
     }
 
     /// Get the camera's up vector from the orientation quaternion.
     #[inline]
-    pub fn up(&self) -> Vec3 {
+    pub(crate) fn up(&self) -> Vec3 {
         self.orientation * Vec3::Y
     }
 
     /// Get the camera's forward vector from the orientation quaternion.
     #[inline]
-    pub fn forward(&self) -> Vec3 {
+    pub(crate) fn forward(&self) -> Vec3 {
         -(self.orientation * Vec3::Z)
     }
 
@@ -266,7 +268,7 @@ impl CameraController {
     }
 
     /// Write the current camera uniform to the GPU buffer.
-    pub fn update_gpu(&mut self, queue: &wgpu::Queue) {
+    pub(crate) fn update_gpu(&mut self, queue: &wgpu::Queue) {
         self.uniform.update_view_proj(&self.camera);
         let mut buf = encase::UniformBuffer::new(Vec::new());
         let _ = buf.write(&self.uniform);
@@ -274,7 +276,7 @@ impl CameraController {
     }
 
     /// Apply camera options from the configuration.
-    pub fn apply_camera_options(
+    pub(crate) fn apply_camera_options(
         &mut self,
         opts: &crate::options::CameraOptions,
     ) {
@@ -287,7 +289,7 @@ impl CameraController {
     }
 
     /// Apply debug options (normals visualization mode).
-    pub fn apply_debug_options(
+    pub(crate) fn apply_debug_options(
         &mut self,
         debug: &crate::options::DebugOptions,
         queue: &wgpu::Queue,
@@ -297,12 +299,12 @@ impl CameraController {
     }
 
     /// Update the camera aspect ratio after a window resize.
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.camera.aspect = width as f32 / height as f32;
     }
 
     /// Apply an orbital rotation from a screen-space mouse delta.
-    pub fn rotate(&mut self, delta: Vec2) {
+    pub(crate) fn rotate(&mut self, delta: Vec2) {
         // Horizontal rotation around camera's up vector
         let up = self.orientation * Vec3::Y;
         let horizontal_rotation =
@@ -324,7 +326,7 @@ impl CameraController {
     }
 
     /// Pan the camera focus point along the view plane.
-    pub fn pan(&mut self, delta: Vec2) {
+    pub(crate) fn pan(&mut self, delta: Vec2) {
         // Cancel any animated focus point — user input takes priority
         self.target_focus_point = None;
 
@@ -339,7 +341,7 @@ impl CameraController {
     }
 
     /// Zoom the camera by adjusting the orbital distance.
-    pub fn zoom(&mut self, delta: f32) {
+    pub(crate) fn zoom(&mut self, delta: f32) {
         // Cancel any animated zoom — user input takes priority
         self.target_distance = None;
         self.distance *= 1.0 - delta * self.zoom_speed;
@@ -358,7 +360,7 @@ impl CameraController {
     }
 
     /// Adjust camera to frame a pre-computed bounding sphere instantly.
-    pub fn fit_to_sphere(&mut self, centroid: Vec3, radius: f32) {
+    pub(crate) fn fit_to_sphere(&mut self, centroid: Vec3, radius: f32) {
         self.focus_point = centroid;
         self.bounding_radius = radius;
         self.distance = self.fit_distance_for_radius(radius);
@@ -371,7 +373,11 @@ impl CameraController {
     }
 
     /// Adjust camera to frame a pre-computed bounding sphere with animation.
-    pub fn fit_to_sphere_animated(&mut self, centroid: Vec3, radius: f32) {
+    pub(crate) fn fit_to_sphere_animated(
+        &mut self,
+        centroid: Vec3,
+        radius: f32,
+    ) {
         self.target_focus_point = Some(centroid);
         self.target_bounding_radius = Some(radius);
         self.target_distance = Some(self.fit_distance_for_radius(radius));
@@ -379,7 +385,12 @@ impl CameraController {
 
     /// Convert screen delta (pixels) to world-space offset.
     /// Uses camera orientation to map 2D mouse movement to 3D space.
-    pub fn screen_delta_to_world(&self, delta_x: f32, delta_y: f32) -> Vec3 {
+    #[allow(dead_code)]
+    pub(crate) fn screen_delta_to_world(
+        &self,
+        delta_x: f32,
+        delta_y: f32,
+    ) -> Vec3 {
         // Scale factor based on distance (further = larger movements)
         let scale = self.distance * 0.002;
 
@@ -399,7 +410,7 @@ impl CameraController {
     /// * `screen_width`, `screen_height` - Screen dimensions
     /// * `world_point` - A point in world space; the result will be on a plane
     ///   parallel to the camera at this point's depth
-    pub fn screen_to_world_at_depth(
+    pub(crate) fn screen_to_world_at_depth(
         &self,
         screen_pos: Vec2,
         viewport_size: UVec2,

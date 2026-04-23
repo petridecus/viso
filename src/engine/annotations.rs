@@ -366,6 +366,24 @@ impl<'a> AnnotationsScene<'a> {
             self.regenerate_surfaces();
         }
     }
+
+    /// Advance focus to the next visible, focusable entity. Wraps to
+    /// session after the last. Returns the new focus.
+    ///
+    /// The eligibility filter (visible + focusable molecule type) is
+    /// computed from the assembly held on `scene`, keeping the policy
+    /// next to the focus state that answers to it.
+    pub(crate) fn cycle_focus(&mut self) -> Focus {
+        let focusable: Vec<EntityId> = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| self.annotations.is_visible(e.id()) && e.is_focusable())
+            .map(molex::MoleculeEntity::id)
+            .collect();
+        self.annotations.cycle_focus(&focusable)
+    }
 }
 
 // ── Engine-side annotation dispatchers ─────────────────────────────

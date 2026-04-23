@@ -63,7 +63,6 @@ pub use gpu::texture::RenderTarget;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
 pub use molex;
-pub use molex::entity::EntityId;
 // Per-entity appearance + drawing mode enums
 pub use options::{DrawingMode, EntityAppearance, HelixStyle, SheetStyle};
 // Picking output
