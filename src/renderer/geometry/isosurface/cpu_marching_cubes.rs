@@ -18,7 +18,7 @@ use super::IsosurfaceVertex;
 /// - `color`: uniform color for all vertices
 ///
 /// Returns `(vertices, indices)` for an indexed triangle mesh.
-pub fn extract_isosurface(
+pub(crate) fn extract_isosurface(
     data: &[f32],
     dims: [usize; 3],
     threshold: f32,

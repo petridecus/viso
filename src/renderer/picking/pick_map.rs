@@ -44,14 +44,17 @@ impl PickTarget {
 ///
 /// Atom entries store `(entity_id, atom_idx)` pairs in contiguous order.
 #[derive(Clone)]
-pub struct PickMap {
+pub(crate) struct PickMap {
     residue_count: u32,
     atom_entries: Vec<(u32, u32)>,
 }
 
 impl PickMap {
     /// Create a new PickMap.
-    pub fn new(residue_count: u32, atom_entries: Vec<(u32, u32)>) -> Self {
+    pub(crate) fn new(
+        residue_count: u32,
+        atom_entries: Vec<(u32, u32)>,
+    ) -> Self {
         Self {
             residue_count,
             atom_entries,
@@ -60,7 +63,7 @@ impl PickMap {
 
     /// Resolve a raw pick ID (as read from the GPU picking buffer) to a typed
     /// target.
-    pub fn resolve(&self, raw_id: u32) -> PickTarget {
+    pub(crate) fn resolve(&self, raw_id: u32) -> PickTarget {
         if raw_id == 0 {
             return PickTarget::None;
         }

@@ -21,7 +21,6 @@ mod pipeline;
 use std::collections::HashMap;
 
 use molex::{Assembly, SSType};
-
 pub(crate) use pipeline::SyncPipeline;
 
 use super::trajectory::TrajectoryFrame;

@@ -18,12 +18,12 @@ use molex::{HBond, SSType};
 pub(crate) struct SheetGroup {
     /// Residue indices (flat, matching `ss_types` indexing) that
     /// belong to this sheet.
-    pub residues: Vec<usize>,
+    pub(crate) residues: Vec<usize>,
     /// How many contiguous strands merged into this group. A value of
     /// 1 means the group is a single isolated strand (no cross-strand
     /// H-bonds), and its CA positions are nearly collinear — plane
     /// fitting would be degenerate. Sheets proper have ≥ 2.
-    pub strand_count: usize,
+    pub(crate) strand_count: usize,
 }
 
 /// Group sheet-classified residues into β-sheets.

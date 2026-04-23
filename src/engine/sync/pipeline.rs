@@ -21,7 +21,9 @@ use super::super::scene_state::{BondResolveInput, SceneRenderState};
 use super::super::trajectory::TrajectoryFrame;
 use crate::animation::transition::Transition;
 use crate::animation::AnimationState;
-use crate::options::{DisplayOptions, DrawingMode, GeometryOptions, VisoOptions};
+use crate::options::{
+    DisplayOptions, DrawingMode, GeometryOptions, VisoOptions,
+};
 use crate::renderer::entity_topology::EntityTopology;
 use crate::renderer::gpu_pipeline::SceneChainData;
 use crate::renderer::pipeline::prepared::{
@@ -180,8 +182,8 @@ impl SyncPipeline {
 
         let generation = gpu.scene_processor.next_generation();
         log::debug!(
-            "submit_full_rebuild: submitting FullRebuild \
-             gen={generation}, entity_count={}",
+            "submit_full_rebuild: submitting FullRebuild gen={generation}, \
+             entity_count={}",
             request_entities.len(),
         );
         gpu.scene_processor
@@ -464,7 +466,8 @@ impl SyncPipeline {
         annotations: &EntityAnnotations,
         gpu: &mut GpuPipeline,
     ) {
-        let (backbone_chains, _na) = Self::flat_scene_chains(scene, annotations);
+        let (backbone_chains, _na) =
+            Self::flat_scene_chains(scene, annotations);
         let total_residues =
             crate::renderer::geometry::sheet_adjust::backbone_residue_count(
                 &backbone_chains,

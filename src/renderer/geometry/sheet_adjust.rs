@@ -5,13 +5,13 @@ use glam::Vec3;
 use crate::renderer::geometry::sidechain::{OwnedSidechainView, SidechainView};
 
 /// Total residue count from backbone chains (3 atoms per residue: N, CA, C).
-pub fn backbone_residue_count(backbone_chains: &[Vec<Vec3>]) -> usize {
+pub(crate) fn backbone_residue_count(backbone_chains: &[Vec<Vec3>]) -> usize {
     backbone_chains.iter().map(|c| c.len() / 3).sum()
 }
 
 /// Apply sheet-surface offsets to sidechain positions and backbone-sidechain
 /// bonds, returning an [`OwnedSidechainView`] ready for the renderer.
-pub fn sheet_adjusted_view(
+pub(crate) fn sheet_adjusted_view(
     sidechain: &SidechainView<'_>,
     offset_map: &HashMap<u32, Vec3>,
 ) -> OwnedSidechainView {
@@ -35,7 +35,7 @@ pub fn sheet_adjusted_view(
 }
 
 /// Translate sidechain atom positions by sheet-flattening offsets.
-pub fn adjust_sidechains_for_sheet(
+pub(crate) fn adjust_sidechains_for_sheet(
     positions: &[Vec3],
     sidechain_residue_indices: &[u32],
     offset_map: &HashMap<u32, Vec3>,
@@ -61,7 +61,7 @@ pub fn adjust_sidechains_for_sheet(
 }
 
 /// Translate CA-CB bond base positions by sheet-flattening offsets.
-pub fn adjust_bonds_for_sheet(
+pub(crate) fn adjust_bonds_for_sheet(
     bonds: &[(Vec3, u32)],
     sidechain_residue_indices: &[u32],
     offset_map: &HashMap<u32, Vec3>,

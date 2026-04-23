@@ -29,7 +29,7 @@ const NA_COLOR: [f32; 3] = [0.45, 0.55, 0.85];
 const STEM_RADIUS: f32 = 0.25;
 
 /// Renders DNA/RNA base rings and stem tubes as impostors.
-pub struct NucleicAcidRenderer {
+pub(crate) struct NucleicAcidRenderer {
     stem_pass: ImpostorPass<CapsuleInstance>,
     ring_pass: ImpostorPass<ExtrudedPolygonInstance>,
     last_chain_hash: u64,
@@ -37,7 +37,7 @@ pub struct NucleicAcidRenderer {
 
 impl NucleicAcidRenderer {
     /// Create a new nucleic acid renderer from phosphorus atom chains.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         na_chains: &[Vec<Vec3>],
@@ -86,7 +86,7 @@ impl NucleicAcidRenderer {
     }
 
     /// Draw nucleic acid geometry into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
@@ -96,7 +96,7 @@ impl NucleicAcidRenderer {
     }
 
     /// Apply pre-computed instance data (GPU upload only, no CPU generation).
-    pub fn apply_prepared(
+    pub(crate) fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -118,7 +118,7 @@ impl NucleicAcidRenderer {
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
             self.stem_pass.buffer_info("NA Stems"),
             self.ring_pass.buffer_info("NA Rings"),

@@ -2,25 +2,58 @@
 
 use molex::entity::surface::Density;
 
+use super::annotations::EntityAnnotations;
+use super::density_store::DensityStore;
+use super::scene::Scene;
+use super::surface_regen::{regenerate_surfaces, SurfaceRegen};
 use super::VisoEngine;
 use crate::camera::fit::combined_bounding_sphere;
+use crate::options::VisoOptions;
 
-impl VisoEngine {
-    /// Load a density map into the engine. Returns the assigned map ID.
+/// Disjoint-borrow write view over the density store plus the scene
+/// fields a regeneration needs to read.
+///
+/// Density mutations always trigger a surface/density mesh regeneration,
+/// which reads the [`Scene`], [`EntityAnnotations`], [`VisoOptions`],
+/// and the [`SurfaceRegen`] sender. Bundling those four shared borrows
+/// alongside `&mut DensityStore` lets every mutator be expressed without
+/// `&mut self` methods on `VisoEngine` fighting over the whole engine.
+/// [`VisoEngine::density_mut`] is the constructor.
+pub(crate) struct DensityScene<'a> {
+    store: &'a mut DensityStore,
+    scene: &'a Scene,
+    annotations: &'a EntityAnnotations,
+    options: &'a VisoOptions,
+    regen: &'a SurfaceRegen,
+}
+
+impl DensityScene<'_> {
+    /// Trigger a regeneration of all isosurface meshes (density maps,
+    /// entity surfaces, cavities) on the background thread.
+    fn regenerate(&self) {
+        regenerate_surfaces(
+            self.scene,
+            self.annotations,
+            &*self.store,
+            self.options,
+            self.regen,
+        );
+    }
+
+    /// Load a density map. Returns the assigned map ID.
     ///
-    /// The map is immediately visible at the default sigma level (1.5σ).
+    /// The map is immediately visible at the default sigma level.
     /// Mesh generation runs on a background thread; the result appears
-    /// on the next frame after completion. The mesh is cropped to the
-    /// bounding box of currently loaded entities.
-    pub fn load_density_map(&mut self, map: Density) -> u32 {
-        let id = self.density.add(map);
+    /// on the next frame after completion.
+    pub(crate) fn load(&mut self, map: Density) -> u32 {
+        let id = self.store.add(map);
         log::info!("loaded density map id={id}");
         let visible = self
             .scene
             .current
             .entities()
             .iter()
-            .filter(|e| self.is_entity_visible(e.id().raw()));
+            .filter(|e| self.annotations.is_visible(e.id()));
         if let Some((centroid, radius)) = combined_bounding_sphere(visible) {
             log::info!(
                 "protein bounding sphere: center=[{:.1},{:.1},{:.1}], \
@@ -37,40 +70,54 @@ impl VisoEngine {
                 centroid.z + radius,
             );
         }
-        self.regenerate_entity_surfaces();
+        self.regenerate();
         id
     }
 
     /// Remove a density map by ID.
-    pub fn remove_density_map(&mut self, id: u32) {
-        if self.density.remove(id) {
+    pub(crate) fn remove(&mut self, id: u32) {
+        if self.store.remove(id) {
             log::info!("removed density map id={id}");
-            self.regenerate_entity_surfaces();
+            self.regenerate();
         }
     }
 
     /// Set the raw density threshold for a density map.
-    pub fn set_density_threshold(&mut self, id: u32, threshold: f32) {
+    pub(crate) fn set_threshold(&mut self, id: u32, threshold: f32) {
         log::info!("set_density_threshold id={id} threshold={threshold:.4}");
-        self.density.set_threshold(id, threshold);
-        self.regenerate_entity_surfaces();
+        self.store.set_threshold(id, threshold);
+        self.regenerate();
     }
 
     /// Set visibility for a density map.
-    pub fn set_density_visible(&mut self, id: u32, visible: bool) {
-        self.density.set_visible(id, visible);
-        self.regenerate_entity_surfaces();
+    pub(crate) fn set_visible(&mut self, id: u32, visible: bool) {
+        self.store.set_visible(id, visible);
+        self.regenerate();
     }
 
     /// Set color for a density map.
-    pub fn set_density_color(&mut self, id: u32, color: [f32; 3]) {
-        self.density.set_color(id, color);
-        self.regenerate_entity_surfaces();
+    pub(crate) fn set_color(&mut self, id: u32, color: [f32; 3]) {
+        self.store.set_color(id, color);
+        self.regenerate();
     }
 
     /// Set opacity for a density map (0.0–1.0).
-    pub fn set_density_opacity(&mut self, id: u32, opacity: f32) {
-        self.density.set_opacity(id, opacity);
-        self.regenerate_entity_surfaces();
+    pub(crate) fn set_opacity(&mut self, id: u32, opacity: f32) {
+        self.store.set_opacity(id, opacity);
+        self.regenerate();
+    }
+}
+
+impl VisoEngine {
+    /// Disjoint-borrow write view over the density store plus the
+    /// scene fields every density mutation has to read for regeneration.
+    pub(crate) fn density_mut(&mut self) -> DensityScene<'_> {
+        DensityScene {
+            store: &mut self.density,
+            scene: &self.scene,
+            annotations: &self.annotations,
+            options: &self.options,
+            regen: &self.surface_regen,
+        }
     }
 }

@@ -34,7 +34,7 @@ pub struct KeyBindings {
 /// key-bound (discrete, parameterless actions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum KeyCommandTag {
+pub(crate) enum KeyCommandTag {
     /// Re-center camera on the current focus.
     RecenterCamera,
     /// Toggle trajectory playback.
@@ -67,9 +67,18 @@ impl KeyCommandTag {
             Self::ToggleAutoRotate => VisoCommand::ToggleAutoRotate,
             Self::ResetFocus => VisoCommand::ResetFocus,
             Self::Cancel => VisoCommand::ClearSelection,
-            Self::ToggleIons => VisoCommand::ToggleIons,
-            Self::ToggleWaters => VisoCommand::ToggleWaters,
-            Self::ToggleSolvent => VisoCommand::ToggleSolvent,
+            Self::ToggleIons => VisoCommand::SetTypeVisibility {
+                mol_type: molex::MoleculeType::Ion,
+                visible: None,
+            },
+            Self::ToggleWaters => VisoCommand::SetTypeVisibility {
+                mol_type: molex::MoleculeType::Water,
+                visible: None,
+            },
+            Self::ToggleSolvent => VisoCommand::SetTypeVisibility {
+                mol_type: molex::MoleculeType::Solvent,
+                visible: None,
+            },
             Self::CycleLipidMode => VisoCommand::CycleLipidMode,
         }
     }

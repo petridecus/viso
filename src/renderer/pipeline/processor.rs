@@ -72,7 +72,7 @@ fn join_background(handle: &mut WorkerHandle) {
 // ---------------------------------------------------------------------------
 
 /// Background thread that generates CPU-side geometry from scene data.
-pub struct SceneProcessor {
+pub(crate) struct SceneProcessor {
     request_tx: mpsc::Sender<SceneRequest>,
     rebuild_result: triple_buffer::Output<Option<PreparedRebuild>>,
     anim_result: triple_buffer::Output<Option<PreparedAnimationFrame>>,
@@ -93,7 +93,7 @@ impl SceneProcessor {
     /// # Errors
     ///
     /// Returns [`std::io::Error`] if the background thread fails to spawn.
-    pub fn new() -> Result<Self, std::io::Error> {
+    pub(crate) fn new() -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel::<SceneRequest>();
         let (rebuild_input, rebuild_output) =
             triple_buffer::triple_buffer(&None);
@@ -118,19 +118,19 @@ impl SceneProcessor {
     /// Also sets `rebuild_pending`, which prevents LOD from reading the
     /// backbone renderer's stale cached chains until the corresponding
     /// `PreparedRebuild` is consumed.
-    pub fn next_generation(&mut self) -> u64 {
+    pub(crate) fn next_generation(&mut self) -> u64 {
         self.rebuild_generation += 1;
         self.rebuild_pending = true;
         self.rebuild_generation
     }
 
     /// Current rebuild generation counter.
-    pub fn generation(&self) -> u64 {
+    pub(crate) fn generation(&self) -> u64 {
         self.rebuild_generation
     }
 
     /// Submit a scene request (non-blocking send).
-    pub fn submit(&self, request: SceneRequest) {
+    pub(crate) fn submit(&self, request: SceneRequest) {
         let _ = self.request_tx.send(request);
     }
 
@@ -143,7 +143,7 @@ impl SceneProcessor {
     /// Clears `rebuild_pending` on successful consumption so that LOD
     /// submission (gated by [`Self::is_rebuild_pending`]) resumes with
     /// the now-correct backbone renderer cache.
-    pub fn try_recv_rebuild(&mut self) -> Option<PreparedRebuild> {
+    pub(crate) fn try_recv_rebuild(&mut self) -> Option<PreparedRebuild> {
         let _ = self.rebuild_result.update();
         let prepared = self.rebuild_result.output_buffer_mut().take()?;
         if prepared.generation < self.rebuild_generation {
@@ -170,7 +170,7 @@ impl SceneProcessor {
     /// While true, the backbone renderer's cached chains are stale —
     /// callers that read the cache to build `AnimationFrame` requests
     /// (notably LOD) must skip submission.
-    pub fn is_rebuild_pending(&self) -> bool {
+    pub(crate) fn is_rebuild_pending(&self) -> bool {
         self.rebuild_pending
     }
 
@@ -181,7 +181,9 @@ impl SceneProcessor {
     /// (bumping `rebuild_generation`), all prior animation frames
     /// become stale — even before the rebuild result arrives on the
     /// main thread.
-    pub fn try_recv_animation(&mut self) -> Option<PreparedAnimationFrame> {
+    pub(crate) fn try_recv_animation(
+        &mut self,
+    ) -> Option<PreparedAnimationFrame> {
         let _ = self.anim_result.update();
         let prepared = self.anim_result.output_buffer_mut().take()?;
         if prepared.generation < self.rebuild_generation {
@@ -196,7 +198,7 @@ impl SceneProcessor {
     }
 
     /// Shut down the background thread and wait for it to finish.
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         let _ = self.request_tx.send(SceneRequest::Shutdown);
         join_background(&mut self.worker);
     }

@@ -48,7 +48,7 @@ pub(crate) struct CameraUniform {
 
 impl Camera {
     /// Build the combined view-projection matrix.
-    pub fn build_matrix(&self) -> Mat4 {
+    pub(crate) fn build_matrix(&self) -> Mat4 {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
         // perspective_rh already uses [0,1] depth range (wgpu/Vulkan
         // convention)
@@ -62,7 +62,7 @@ impl Camera {
     }
 
     /// Get just the projection matrix for SSAO
-    pub fn build_projection(&self) -> Mat4 {
+    pub(crate) fn build_projection(&self) -> Mat4 {
         // perspective_rh already uses [0,1] depth range (wgpu/Vulkan
         // convention)
         Mat4::perspective_rh(
@@ -82,7 +82,7 @@ impl Default for CameraUniform {
 
 impl CameraUniform {
     /// Create a new camera uniform with identity view-projection.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             view_proj: Mat4::IDENTITY,
             position: Vec3::ZERO,
@@ -97,7 +97,7 @@ impl CameraUniform {
     }
 
     /// Update uniform fields from the given camera's current state.
-    pub fn update_view_proj(&mut self, camera: &Camera) {
+    pub(crate) fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.build_matrix();
         self.position = camera.eye;
         self.aspect = camera.aspect;

@@ -32,18 +32,18 @@ const CAVITY_RGBA: [f32; 4] = [0.22, 0.30, 1.0, 0.90];
 
 /// A single detected cavity with its extracted mesh.
 #[derive(Clone)]
-pub struct CavityMesh {
+pub(crate) struct CavityMesh {
     /// Isosurface vertices for this cavity.
-    pub vertices: Vec<IsosurfaceVertex>,
+    pub(crate) vertices: Vec<IsosurfaceVertex>,
     /// Triangle indices into `vertices`.
-    pub indices: Vec<u32>,
+    pub(crate) indices: Vec<u32>,
 }
 
 /// A collection of cavities detected in a single pose.
 #[derive(Clone, Default)]
-pub struct CavitySet {
+pub(crate) struct CavitySet {
     /// One entry per distinct cavity, in label order.
-    pub meshes: Vec<CavityMesh>,
+    pub(crate) meshes: Vec<CavityMesh>,
 }
 
 /// Generate cavity meshes from atom positions.
@@ -62,7 +62,7 @@ pub struct CavitySet {
 /// - `probe_radius`: solvent probe radius; defaults to 1.4 Å
 /// - `resolution`: grid spacing in Angstroms (lower = finer, typ. 0.5–1.0)
 #[must_use]
-pub fn generate_cavities(
+pub(crate) fn generate_cavities(
     positions: &[glam::Vec3],
     radii: &[f32],
     probe_radius: Option<f32>,

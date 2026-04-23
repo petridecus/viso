@@ -7,9 +7,9 @@ use molex::SSType;
 /// Segment a residue SS-type array into contiguous runs.
 #[derive(Debug)]
 pub(crate) struct SSSegment {
-    pub ss_type: SSType,
-    pub start_residue: usize,
-    pub end_residue: usize,
+    pub(crate) ss_type: SSType,
+    pub(crate) start_residue: usize,
+    pub(crate) end_residue: usize,
 }
 
 pub(crate) fn segment_by_ss(ss_types: &[SSType]) -> Vec<SSSegment> {

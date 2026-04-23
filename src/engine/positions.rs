@@ -18,14 +18,14 @@ use rustc_hash::FxHashMap;
 /// get an initial reference snapshot inserted; removed entities are
 /// dropped.
 #[derive(Default, Clone)]
-pub struct EntityPositions {
+pub(crate) struct EntityPositions {
     per_entity: FxHashMap<EntityId, Vec<Vec3>>,
 }
 
 impl EntityPositions {
     /// Empty positions map.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             per_entity: FxHashMap::default(),
         }
@@ -33,17 +33,17 @@ impl EntityPositions {
 
     /// Read-only position slice for an entity.
     #[must_use]
-    pub fn get(&self, id: EntityId) -> Option<&[Vec3]> {
+    pub(crate) fn get(&self, id: EntityId) -> Option<&[Vec3]> {
         self.per_entity.get(&id).map(Vec::as_slice)
     }
 
     /// Mutable position slice for an entity.
-    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Vec<Vec3>> {
+    pub(crate) fn get_mut(&mut self, id: EntityId) -> Option<&mut Vec<Vec3>> {
         self.per_entity.get_mut(&id)
     }
 
     /// Replace the positions for an entity (overwrites existing slot).
-    pub fn set(&mut self, id: EntityId, positions: Vec<Vec3>) {
+    pub(crate) fn set(&mut self, id: EntityId, positions: Vec<Vec3>) {
         let _ = self.per_entity.insert(id, positions);
     }
 
@@ -52,7 +52,11 @@ impl EntityPositions {
     /// Used on sync when a new entity joined the assembly: the initial
     /// positions are copied from the assembly's reference positions so
     /// the animator has a visual state to interpolate from.
-    pub fn insert_from_reference(&mut self, id: EntityId, reference: &[Vec3]) {
+    pub(crate) fn insert_from_reference(
+        &mut self,
+        id: EntityId,
+        reference: &[Vec3],
+    ) {
         let _ = self
             .per_entity
             .entry(id)
@@ -60,7 +64,7 @@ impl EntityPositions {
     }
 
     /// Keep only entities for which `keep` returns true.
-    pub fn retain(&mut self, mut keep: impl FnMut(EntityId) -> bool) {
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(EntityId) -> bool) {
         self.per_entity.retain(|&id, _| keep(id));
     }
 }

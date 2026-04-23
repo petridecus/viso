@@ -1,7 +1,7 @@
 //! Shared wgpu boilerplate helpers for screen-space post-process pipelines.
 
 /// Fragment-visible, filterable float 2D texture binding.
-pub fn texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -15,7 +15,9 @@ pub fn texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible, **non-filterable** float 2D texture binding.
-pub fn texture_2d_unfilterable(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_2d_unfilterable(
+    binding: u32,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -29,7 +31,7 @@ pub fn texture_2d_unfilterable(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible depth 2D texture binding.
-pub fn depth_texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn depth_texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -43,7 +45,7 @@ pub fn depth_texture_2d(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible filtering sampler binding.
-pub fn filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -53,7 +55,9 @@ pub fn filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible non-filtering sampler binding.
-pub fn non_filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn non_filtering_sampler(
+    binding: u32,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -63,7 +67,9 @@ pub fn non_filtering_sampler(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Vertex+fragment-visible read-only storage buffer binding.
-pub fn read_only_storage_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn read_only_storage_buffer(
+    binding: u32,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -77,7 +83,7 @@ pub fn read_only_storage_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible filterable cube texture binding.
-pub fn cube_texture(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn cube_texture(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -91,7 +97,7 @@ pub fn cube_texture(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Fragment-visible uniform buffer binding.
-pub fn uniform_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn uniform_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -105,22 +111,22 @@ pub fn uniform_buffer(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Description of a full-screen screen-space render pipeline.
-pub struct ScreenSpacePipelineDef<'a> {
+pub(crate) struct ScreenSpacePipelineDef<'a> {
     /// Debug label for wgpu.
-    pub label: &'a str,
+    pub(crate) label: &'a str,
     /// Compiled shader module.
-    pub shader: &'a wgpu::ShaderModule,
+    pub(crate) shader: &'a wgpu::ShaderModule,
     /// Color target texture format.
-    pub format: wgpu::TextureFormat,
+    pub(crate) format: wgpu::TextureFormat,
     /// Optional blend state for the color target.
-    pub blend: Option<wgpu::BlendState>,
+    pub(crate) blend: Option<wgpu::BlendState>,
     /// Bind group layouts for the pipeline layout.
-    pub bind_group_layouts: &'a [&'a wgpu::BindGroupLayout],
+    pub(crate) bind_group_layouts: &'a [&'a wgpu::BindGroupLayout],
 }
 
 /// Create a full-screen render pipeline with `vs_main` / `fs_main` entry
 /// points, no vertex buffers, and a single color target.
-pub fn create_screen_space_pipeline(
+pub(crate) fn create_screen_space_pipeline(
     device: &wgpu::Device,
     def: &ScreenSpacePipelineDef<'_>,
 ) -> wgpu::RenderPipeline {
@@ -166,7 +172,7 @@ pub fn create_screen_space_pipeline(
 ///
 /// Returns the texture and its default view. Covers the common case for all
 /// post-process pass textures (color, depth, SSAO, bloom mips, etc.).
-pub fn create_render_texture(
+pub(crate) fn create_render_texture(
     device: &wgpu::Device,
     width: u32,
     height: u32,
@@ -193,7 +199,10 @@ pub fn create_render_texture(
 }
 
 /// ClampToEdge + Linear sampler (the most common post-process sampler).
-pub fn linear_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
+pub(crate) fn linear_sampler(
+    device: &wgpu::Device,
+    label: &str,
+) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: wgpu::AddressMode::ClampToEdge,

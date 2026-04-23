@@ -16,7 +16,7 @@ use super::IsosurfaceVertex;
 ///
 /// Vertices are colored by mean curvature: blue (convex) → white (flat)
 /// → red (concave). The `color` alpha channel controls opacity.
-pub fn generate_ses(
+pub(crate) fn generate_ses(
     positions: &[Vec3],
     radii: &[f32],
     probe_radius: Option<f32>,

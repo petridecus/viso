@@ -3,7 +3,7 @@
 /// Returns two Rgba16Float targets:
 /// - Target 0: scene color with alpha blending
 /// - Target 1: normals/metadata, no blending
-pub fn hdr_fragment_targets() -> [Option<wgpu::ColorTargetState>; 2] {
+pub(crate) fn hdr_fragment_targets() -> [Option<wgpu::ColorTargetState>; 2] {
     [
         Some(wgpu::ColorTargetState {
             format: wgpu::TextureFormat::Rgba16Float,
@@ -19,7 +19,7 @@ pub fn hdr_fragment_targets() -> [Option<wgpu::ColorTargetState>; 2] {
 }
 
 /// Standard depth-stencil state used by all render pipelines.
-pub fn depth_stencil_state() -> wgpu::DepthStencilState {
+pub(crate) fn depth_stencil_state() -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: wgpu::TextureFormat::Depth32Float,
         depth_write_enabled: true,

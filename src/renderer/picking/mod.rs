@@ -9,8 +9,9 @@ pub(crate) mod state;
 
 use glam::Vec3;
 use molex::SSType;
-pub use pick_map::{PickMap, PickTarget};
-pub use pipeline::{Picking, PickingGeometry, SelectionBuffer};
+pub(crate) use pick_map::PickMap;
+pub use pick_map::PickTarget;
+pub(crate) use pipeline::{Picking, PickingGeometry, SelectionBuffer};
 
 use self::state::PickingState;
 use super::Renderers;
@@ -20,23 +21,23 @@ use crate::gpu::{RenderContext, ShaderComposer};
 /// GPU picking, selection, and per-residue color buffers grouped together.
 pub(crate) struct PickingSystem {
     /// The GPU picking pipeline.
-    pub picking: Picking,
+    pub(crate) picking: Picking,
     /// Picking bind group state (capsule, ball-and-stick).
-    pub groups: PickingState,
+    pub(crate) groups: PickingState,
     /// Per-residue selection highlight buffer.
-    pub selection: SelectionBuffer,
+    pub(crate) selection: SelectionBuffer,
     /// Per-residue color buffer for shaders.
-    pub residue_colors: ResidueColorBuffer,
+    pub(crate) residue_colors: ResidueColorBuffer,
     /// Current pick map (maps raw IDs to typed targets).
-    pub pick_map: Option<PickMap>,
+    pub(crate) pick_map: Option<PickMap>,
     /// Last resolved hover target.
-    pub hovered_target: PickTarget,
+    pub(crate) hovered_target: PickTarget,
 }
 
 impl PickingSystem {
     /// Create the picking system from pre-built selection and residue-color
     /// buffers.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         camera_layout: &wgpu::BindGroupLayout,
         selection: SelectionBuffer,
@@ -59,7 +60,7 @@ impl PickingSystem {
     ///
     /// Non-blocking: returns immediately if no readback data is ready yet.
     /// When data is available, the internal `hovered_target` is updated.
-    pub fn poll_and_resolve(&mut self, device: &wgpu::Device) {
+    pub(crate) fn poll_and_resolve(&mut self, device: &wgpu::Device) {
         if let Some(raw_id) = self.picking.complete_readback(device) {
             self.hovered_target = self
                 .pick_map
@@ -70,7 +71,7 @@ impl PickingSystem {
 
     /// Clear the residue selection. Returns `true` if the selection was
     /// non-empty (i.e. it actually changed).
-    pub fn clear_selection(&mut self) -> bool {
+    pub(crate) fn clear_selection(&mut self) -> bool {
         if self.picking.selected_residues.is_empty() {
             false
         } else {
@@ -87,7 +88,7 @@ impl PickingSystem {
     /// (indexed by flat residue index).
     ///
     /// Returns `true` if the selection changed.
-    pub fn select_segment(
+    pub(crate) fn select_segment(
         &mut self,
         residue_idx: i32,
         ss_types: &[SSType],
@@ -134,7 +135,7 @@ impl PickingSystem {
     /// selection; otherwise the selection is replaced.
     ///
     /// Returns `true` if the selection changed.
-    pub fn select_chain(
+    pub(crate) fn select_chain(
         &mut self,
         residue_idx: i32,
         backbone_chains: &[Vec<Vec3>],
@@ -172,7 +173,7 @@ impl PickingSystem {
     }
 
     /// Build the picking geometry descriptor from current renderer state.
-    pub fn build_geometry<'a>(
+    pub(crate) fn build_geometry<'a>(
         &'a self,
         renderers: &'a Renderers,
         show_sidechains: bool,
@@ -202,12 +203,12 @@ impl PickingSystem {
 
     /// Read-only access to the currently selected residue indices.
     #[allow(dead_code)] // API surface, not yet called by engine
-    pub fn selected_residues(&self) -> &[i32] {
+    pub(crate) fn selected_residues(&self) -> &[i32] {
         &self.picking.selected_residues
     }
 
     /// Upload the current selection state to the GPU selection buffer.
-    pub fn update_selection_buffer(&self, queue: &wgpu::Queue) {
+    pub(crate) fn update_selection_buffer(&self, queue: &wgpu::Queue) {
         self.selection
             .update(queue, &self.picking.selected_residues);
     }

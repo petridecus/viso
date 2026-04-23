@@ -17,7 +17,7 @@ const SHRINK_MIN_CAPACITY: usize = 4096;
 /// Uses a 2× growth strategy when capacity is exceeded.  Shrinks when
 /// utilization stays below 25 % of capacity for [`SHRINK_AFTER_WRITES`]
 /// consecutive writes, reallocating to 2× the used size.
-pub struct DynamicBuffer {
+pub(crate) struct DynamicBuffer {
     buffer: wgpu::Buffer,
     capacity: usize, // Capacity in bytes
     len: usize,      // Current data length in bytes
@@ -29,7 +29,7 @@ pub struct DynamicBuffer {
 
 impl DynamicBuffer {
     /// Buffer with the given initial byte capacity.
-    pub fn new(
+    pub(crate) fn new(
         device: &wgpu::Device,
         label: &str,
         initial_capacity: usize,
@@ -55,7 +55,7 @@ impl DynamicBuffer {
     }
 
     /// Buffer initialized from existing data.
-    pub fn new_with_data<T: bytemuck::Pod>(
+    pub(crate) fn new_with_data<T: bytemuck::Pod>(
         device: &wgpu::Device,
         label: &str,
         data: &[T],
@@ -84,7 +84,7 @@ impl DynamicBuffer {
     /// Write data to buffer, growing if necessary.
     ///
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
-    pub fn write<T: bytemuck::Pod>(
+    pub(crate) fn write<T: bytemuck::Pod>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -96,7 +96,7 @@ impl DynamicBuffer {
     /// Write raw bytes to buffer, growing or shrinking as needed.
     ///
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
-    pub fn write_bytes(
+    pub(crate) fn write_bytes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -159,17 +159,17 @@ impl DynamicBuffer {
     }
 
     /// Returns a reference to the underlying `wgpu::Buffer`.
-    pub fn buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
     }
 
     /// Returns the current data length in bytes.
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.len
     }
 
     /// Returns the allocated capacity in bytes.
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.capacity
     }
 }
@@ -177,7 +177,7 @@ impl DynamicBuffer {
 /// Typed wrapper for DynamicBuffer with cleaner API
 ///
 /// Tracks item count rather than byte length.
-pub struct TypedBuffer<T> {
+pub(crate) struct TypedBuffer<T> {
     inner: DynamicBuffer,
     count: usize,
     _marker: std::marker::PhantomData<T>,
@@ -185,7 +185,7 @@ pub struct TypedBuffer<T> {
 
 impl<T: bytemuck::Pod> TypedBuffer<T> {
     /// Typed buffer initialized from existing data.
-    pub fn new_with_data(
+    pub(crate) fn new_with_data(
         device: &wgpu::Device,
         label: &str,
         data: &[T],
@@ -201,7 +201,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     /// Write data to buffer, growing if necessary
     ///
     /// Returns `true` if buffer was reallocated (bind groups need recreation)
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -215,7 +215,7 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     ///
     /// Infers item count from byte length / type size.
     /// Returns `true` if buffer was reallocated (bind groups need recreation).
-    pub fn write_bytes(
+    pub(crate) fn write_bytes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -226,17 +226,17 @@ impl<T: bytemuck::Pod> TypedBuffer<T> {
     }
 
     /// Returns a reference to the underlying `wgpu::Buffer`.
-    pub fn buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
         self.inner.buffer()
     }
 
     /// Returns the current data length in bytes.
-    pub fn len_bytes(&self) -> usize {
+    pub(crate) fn len_bytes(&self) -> usize {
         self.inner.len()
     }
 
     /// Returns the allocated capacity in bytes.
-    pub fn capacity_bytes(&self) -> usize {
+    pub(crate) fn capacity_bytes(&self) -> usize {
         self.inner.capacity()
     }
 }

@@ -4,7 +4,7 @@
 //! nucleic acids) and post-processing effects (SSAO, bloom, FXAA).
 
 /// Bind groups shared across all molecular draw calls.
-pub mod draw_context;
+pub(crate) mod draw_context;
 /// Render-ready per-entity contract — [`EntityTopology`] plus the
 /// [`SidechainLayout`] / [`NucleotideRingLayout`] consumed across the
 /// renderer.
@@ -12,23 +12,23 @@ pub mod draw_context;
 /// [`EntityTopology`]: entity_topology::EntityTopology
 /// [`SidechainLayout`]: entity_topology::SidechainLayout
 /// [`NucleotideRingLayout`]: entity_topology::NucleotideRingLayout
-pub mod entity_topology;
+pub(crate) mod entity_topology;
 /// All GPU infrastructure grouped together (device, renderers, picking, etc.).
 pub(crate) mod gpu_pipeline;
 pub(crate) use gpu_pipeline::GpuPipeline;
 /// Molecular geometry assemblers (backbone, sidechain, ball-and-stick, etc.).
-pub mod geometry;
+pub(crate) mod geometry;
 /// Reusable impostor-pass primitives and instance types.
-pub mod impostor;
+pub(crate) mod impostor;
 /// Shared indexed-mesh draw-pass abstraction.
 pub(crate) mod mesh;
 /// GPU-based object picking and selection management.
-pub mod picking;
+pub(crate) mod picking;
 /// Background mesh generation pipeline (scene → GPU-ready buffers).
 pub(crate) mod pipeline;
 pub(crate) mod pipeline_util;
 /// Post-processing effects (SSAO, bloom, FXAA).
-pub mod postprocess;
+pub(crate) mod postprocess;
 
 use self::draw_context::DrawBindGroups;
 use self::geometry::isosurface::IsosurfaceRenderer;
@@ -88,7 +88,7 @@ impl Renderers {
     ///
     /// First-frame geometry arrives via the background scene processor's
     /// `PreparedRebuild`, not from renderer construction.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -151,7 +151,7 @@ impl Renderers {
     /// R32Float `backface_depth_view`, writing linear view-space z. The
     /// main isosurface fragment shader samples this texture to compute
     /// thickness for Beer-Lambert absorption.
-    pub fn encode_isosurface_backface_pass(
+    pub(crate) fn encode_isosurface_backface_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         backface_depth_view: &wgpu::TextureView,
@@ -181,7 +181,7 @@ impl Renderers {
     }
 
     /// Encode the main geometry render pass.
-    pub fn encode_geometry_pass(
+    pub(crate) fn encode_geometry_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         input: &GeometryPassInput<'_>,
@@ -240,7 +240,7 @@ impl Renderers {
     /// GPU buffer sizes across all renderers.
     ///
     /// Each entry is `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&str, usize, usize)> {
         let mut stats = Vec::new();
         stats.extend(self.backbone.buffer_info());
         stats.extend(self.sidechain.buffer_info());

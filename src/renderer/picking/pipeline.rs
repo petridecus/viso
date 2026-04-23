@@ -15,19 +15,19 @@ use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::geometry::backbone::backbone_vertex_buffer_layout;
 
 /// Selection buffer for GPU - stores selection state as a bit array
-pub struct SelectionBuffer {
+pub(crate) struct SelectionBuffer {
     buffer: wgpu::Buffer,
     /// Bind group layout for the selection storage buffer.
-    pub layout: wgpu::BindGroupLayout,
+    pub(crate) layout: wgpu::BindGroupLayout,
     /// Bind group referencing the selection storage buffer.
-    pub bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: wgpu::BindGroup,
     /// Number of residues (for sizing)
     capacity: usize,
 }
 
 impl SelectionBuffer {
     /// Create a selection buffer sized for up to `max_residues` residues.
-    pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, max_residues: usize) -> Self {
         // Round up to multiple of 32 bits
         let num_words = max_residues.div_ceil(32);
         let data = vec![0u32; num_words.max(1)];
@@ -64,7 +64,11 @@ impl SelectionBuffer {
     }
 
     /// Update selection state from a list of selected residue indices
-    pub fn update(&self, queue: &wgpu::Queue, selected_residues: &[i32]) {
+    pub(crate) fn update(
+        &self,
+        queue: &wgpu::Queue,
+        selected_residues: &[i32],
+    ) {
         let num_words = self.capacity.div_ceil(32);
         let mut data = vec![0u32; num_words.max(1)];
 
@@ -81,7 +85,11 @@ impl SelectionBuffer {
 
     /// Ensure the buffer has capacity for at least `required` residues.
     /// Recreates the buffer and bind_group if current capacity is insufficient.
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: usize) {
+    pub(crate) fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        required: usize,
+    ) {
         if required <= self.capacity {
             return;
         }
@@ -113,40 +121,40 @@ impl SelectionBuffer {
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         let bytes = self.capacity.div_ceil(32).max(1) * 4;
         vec![("Selection", bytes, bytes)]
     }
 }
 
 /// Geometry buffers needed for the picking render pass.
-pub struct PickingGeometry<'a> {
+pub(crate) struct PickingGeometry<'a> {
     /// Backbone vertex buffer (shared by tube and ribbon passes).
-    pub backbone_vertex_buffer: &'a wgpu::Buffer,
+    pub(crate) backbone_vertex_buffer: &'a wgpu::Buffer,
     /// Backbone tube index buffer (back-face culled pass).
-    pub backbone_tube_index_buffer: &'a wgpu::Buffer,
+    pub(crate) backbone_tube_index_buffer: &'a wgpu::Buffer,
     /// Number of backbone tube indices to draw.
-    pub backbone_tube_index_count: u32,
+    pub(crate) backbone_tube_index_count: u32,
     /// Backbone ribbon index buffer (no-cull pass).
-    pub backbone_ribbon_index_buffer: &'a wgpu::Buffer,
+    pub(crate) backbone_ribbon_index_buffer: &'a wgpu::Buffer,
     /// Number of backbone ribbon indices to draw.
-    pub backbone_ribbon_index_count: u32,
+    pub(crate) backbone_ribbon_index_count: u32,
     /// Sidechain capsule bind group for picking.
-    pub capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    pub(crate) capsule_bind_group: Option<&'a wgpu::BindGroup>,
     /// Number of sidechain capsule instances.
-    pub capsule_count: u32,
+    pub(crate) capsule_count: u32,
     /// Ball-and-stick capsule bind group for picking.
-    pub bns_capsule_bind_group: Option<&'a wgpu::BindGroup>,
+    pub(crate) bns_capsule_bind_group: Option<&'a wgpu::BindGroup>,
     /// Number of ball-and-stick capsule instances.
-    pub bns_capsule_count: u32,
+    pub(crate) bns_capsule_count: u32,
     /// Ball-and-stick sphere bind group for picking.
-    pub bns_sphere_bind_group: Option<&'a wgpu::BindGroup>,
+    pub(crate) bns_sphere_bind_group: Option<&'a wgpu::BindGroup>,
     /// Number of ball-and-stick sphere instances.
-    pub bns_sphere_count: u32,
+    pub(crate) bns_sphere_count: u32,
 }
 
 /// Manages GPU-based residue picking via an offscreen R32Uint render pass.
-pub struct Picking {
+pub(crate) struct Picking {
     /// Picking texture (R32Uint format for residue indices)
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
@@ -169,7 +177,7 @@ pub struct Picking {
     width: u32,
     height: u32,
     /// Currently selected residue indices
-    pub selected_residues: Vec<i32>,
+    pub(crate) selected_residues: Vec<i32>,
     /// Whether a readback is in flight (buffer mapping requested)
     readback_in_flight: bool,
     /// Flag set by callback when buffer mapping is complete
@@ -179,7 +187,7 @@ pub struct Picking {
 impl Picking {
     /// Create a new picking system with pipelines and textures sized to the
     /// current context.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_composer: &mut ShaderComposer,
@@ -425,7 +433,12 @@ impl Picking {
     }
 
     /// Resize the picking and depth textures to match the new dimensions.
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    pub(crate) fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) {
         if width == self.width && height == self.height {
             return;
         }
@@ -442,7 +455,7 @@ impl Picking {
     }
 
     /// Create a bind group for capsule storage buffer
-    pub fn create_capsule_bind_group(
+    pub(crate) fn create_capsule_bind_group(
         &self,
         device: &wgpu::Device,
         capsule_buffer: &wgpu::Buffer,
@@ -458,7 +471,7 @@ impl Picking {
     }
 
     /// Create a bind group for sphere storage buffer
-    pub fn create_sphere_bind_group(
+    pub(crate) fn create_sphere_bind_group(
         &self,
         device: &wgpu::Device,
         sphere_buffer: &wgpu::Buffer,
@@ -478,7 +491,7 @@ impl Picking {
     /// In Ribbon mode, pass ribbon buffers to render helices/sheets for
     /// picking. Tubes are still rendered (for coils in ribbon mode, or
     /// everything in tube mode).
-    pub fn render(
+    pub(crate) fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         camera_bind_group: &wgpu::BindGroup,
@@ -574,7 +587,7 @@ impl Picking {
 
     /// Start async readback (call after queue.submit)
     /// This initiates the buffer mapping without blocking
-    pub fn start_readback(&mut self) {
+    pub(crate) fn start_readback(&mut self) {
         if self.readback_in_flight {
             return;
         }
@@ -592,7 +605,10 @@ impl Picking {
     /// Try to complete the readback without blocking.
     /// Returns the raw pick ID if data was read, `None` if still pending.
     /// Uses previous frame's hover result until new data is ready.
-    pub fn complete_readback(&mut self, device: &wgpu::Device) -> Option<u32> {
+    pub(crate) fn complete_readback(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<u32> {
         if !self.readback_in_flight {
             return None;
         }
@@ -621,7 +637,11 @@ impl Picking {
     ///
     /// Returns `true` if the selection changed. Shift-click toggles individual
     /// residues. Pass a negative index to clear the selection.
-    pub fn handle_click(&mut self, residue_idx: i32, shift_held: bool) -> bool {
+    pub(crate) fn handle_click(
+        &mut self,
+        residue_idx: i32,
+        shift_held: bool,
+    ) -> bool {
         let hit = residue_idx;
 
         if hit < 0 {

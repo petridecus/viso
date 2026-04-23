@@ -86,65 +86,66 @@ pub(super) struct CachedBackbone {
 /// syncs); positions are cloned per request because the animator writes
 /// them every frame on the main thread.
 #[derive(Clone)]
-pub struct FullRebuildEntity {
+pub(crate) struct FullRebuildEntity {
     /// Molex entity id.
-    pub id: EntityId,
+    pub(crate) id: EntityId,
     /// Monotonic cache key. Bumped when this entity's topology was
     /// rederived or the engine otherwise wants a remesh.
-    pub mesh_version: u64,
+    pub(crate) mesh_version: u64,
     /// Resolved drawing mode.
-    pub drawing_mode: DrawingMode,
+    pub(crate) drawing_mode: DrawingMode,
     /// Immutable render-ready view (atom elements, bond list,
     /// backbone/sidechain layout, ring topology, ...).
-    pub topology: Arc<EntityTopology>,
+    pub(crate) topology: Arc<EntityTopology>,
     /// Interpolated atom positions at request-build time (entity-local,
     /// parallel to `topology.atom_elements`).
-    pub positions: Vec<Vec3>,
+    pub(crate) positions: Vec<Vec3>,
     /// Optional SS override, taking priority over `topology.ss_types`.
-    pub ss_override: Option<Vec<SSType>>,
+    pub(crate) ss_override: Option<Vec<SSType>>,
     /// Per-residue vertex colors for Cartoon-mode protein entities.
     /// `None` when the current color scheme produces no per-residue colors.
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    pub(crate) per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Fitted β-sheet plane normals `(residue_idx, normal)` for
     /// Cartoon-mode protein entities. Empty otherwise.
-    pub sheet_plane_normals: Vec<(u32, Vec3)>,
+    pub(crate) sheet_plane_normals: Vec<(u32, Vec3)>,
 }
 
 /// Body of a full scene rebuild request, boxed on the enum variant to
 /// keep [`SceneRequest`] compact.
-pub struct FullRebuildBody {
+pub(crate) struct FullRebuildBody {
     /// Per-entity snapshots for mesh generation.
-    pub entities: Vec<FullRebuildEntity>,
+    pub(crate) entities: Vec<FullRebuildEntity>,
     /// Current display options for mesh generation.
-    pub display: DisplayOptions,
+    pub(crate) display: DisplayOptions,
     /// Current color options for mesh generation.
-    pub colors: ColorOptions,
+    pub(crate) colors: ColorOptions,
     /// Current geometry options for mesh generation.
-    pub geometry: GeometryOptions,
+    pub(crate) geometry: GeometryOptions,
     /// Per-entity resolved display+geometry overrides.
-    pub entity_options: FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
+    pub(crate) entity_options:
+        FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
     /// Rebuild generation counter (monotonically increasing).
-    pub generation: u64,
+    pub(crate) generation: u64,
 }
 
 /// Body of an animation-frame request, boxed for variant-size balance.
-pub struct AnimationFrameBody {
+pub(crate) struct AnimationFrameBody {
     /// Interpolated positions keyed on entity id. The animator
     /// writes these on the main thread; the worker reads.
-    pub positions: EntityPositions,
+    pub(crate) positions: EntityPositions,
     /// Geometry options for mesh generation.
-    pub geometry: GeometryOptions,
+    pub(crate) geometry: GeometryOptions,
     /// Per-chain (spr, csv) overrides for LOD. When `Some`, each chain
     /// uses its own detail level instead of the global geo settings.
-    pub per_chain_lod: Option<Vec<(usize, usize)>>,
+    pub(crate) per_chain_lod: Option<Vec<(usize, usize)>>,
     /// Whether to regenerate sidechain capsules this frame.
-    pub include_sidechains: bool,
+    pub(crate) include_sidechains: bool,
     /// Rebuild generation this frame belongs to.
-    pub generation: u64,
+    pub(crate) generation: u64,
 }
 
 /// Request sent from main thread to scene processor.
-pub enum SceneRequest {
+pub(crate) enum SceneRequest {
     /// Full scene rebuild with per-entity derived state.
     FullRebuild(Box<FullRebuildBody>),
     /// Per-frame animation mesh generation (backbone + optional sidechains).

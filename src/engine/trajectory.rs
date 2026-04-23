@@ -19,17 +19,17 @@ use web_time::Instant;
 /// indices to overwrite and the new [`Vec3`] at each.
 pub(crate) struct TrajectoryFrame {
     /// The entity this frame belongs to.
-    pub entity: EntityId,
+    pub(crate) entity: EntityId,
     /// Replacement positions — parallel to `atom_indices`.
-    pub positions: Vec<Vec3>,
+    pub(crate) positions: Vec<Vec3>,
     /// Entity-local atom indices to overwrite (parallel to
     /// `positions`). An atom not in this list keeps its previous
     /// position.
-    pub atom_indices: Vec<u32>,
+    pub(crate) atom_indices: Vec<u32>,
 }
 
 /// Auto-advancing DCD frame sequencer for a single entity.
-pub struct TrajectoryPlayer {
+pub(crate) struct TrajectoryPlayer {
     frames: Vec<DcdFrame>,
     num_atoms: usize,
     current_frame: usize,
@@ -45,7 +45,7 @@ pub struct TrajectoryPlayer {
 
 impl TrajectoryPlayer {
     /// New player over pre-loaded DCD frames.
-    pub fn new(
+    pub(crate) fn new(
         frames: Vec<DcdFrame>,
         num_atoms: usize,
         entity: EntityId,
@@ -65,7 +65,7 @@ impl TrajectoryPlayer {
     }
 
     /// Advance time and return the next frame's per-entity update.
-    pub fn tick(&mut self, now: Instant) -> Option<TrajectoryFrame> {
+    pub(crate) fn tick(&mut self, now: Instant) -> Option<TrajectoryFrame> {
         if !self.playing || self.frames.is_empty() {
             return None;
         }
@@ -113,7 +113,7 @@ impl TrajectoryPlayer {
     }
 
     /// Toggle between playing and paused states.
-    pub fn toggle_playback(&mut self) {
+    pub(crate) fn toggle_playback(&mut self) {
         self.playing = !self.playing;
         if self.playing {
             self.last_advance = Instant::now();
@@ -121,17 +121,17 @@ impl TrajectoryPlayer {
     }
 
     /// Index of the current frame.
-    pub fn current_frame(&self) -> usize {
+    pub(crate) fn current_frame(&self) -> usize {
         self.current_frame
     }
 
     /// Total number of frames in the trajectory.
-    pub fn total_frames(&self) -> usize {
+    pub(crate) fn total_frames(&self) -> usize {
         self.frames.len()
     }
 
     /// Whether the player is currently advancing frames.
-    pub fn is_playing(&self) -> bool {
+    pub(crate) fn is_playing(&self) -> bool {
         self.playing
     }
 }
@@ -146,7 +146,8 @@ pub(crate) fn pick_trajectory_target(
     annotations: &super::annotations::EntityAnnotations,
 ) -> Option<(EntityId, usize, Vec<usize>)> {
     let entity = scene.current.entities().iter().find(|e| {
-        annotations.is_visible(e.id()) && e.molecule_type() == MoleculeType::Protein
+        annotations.is_visible(e.id())
+            && e.molecule_type() == MoleculeType::Protein
     })?;
     let protein = entity.as_protein()?;
     let indices = build_backbone_atom_indices(protein);

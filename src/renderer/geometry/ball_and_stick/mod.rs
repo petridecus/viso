@@ -57,15 +57,15 @@ pub(super) fn atom_color(
 }
 
 /// Pre-computed instance data for GPU upload.
-pub struct PreparedBallAndStickData<'a> {
+pub(crate) struct PreparedBallAndStickData<'a> {
     /// Raw bytes for sphere instance data.
-    pub sphere_bytes: &'a [u8],
+    pub(crate) sphere_bytes: &'a [u8],
     /// Number of sphere instances.
-    pub sphere_count: u32,
+    pub(crate) sphere_count: u32,
     /// Raw bytes for bond capsule instance data.
-    pub capsule_bytes: &'a [u8],
+    pub(crate) capsule_bytes: &'a [u8],
     /// Number of bond capsule instances.
-    pub capsule_count: u32,
+    pub(crate) capsule_count: u32,
 }
 
 /// Output buffers for instance generation.
@@ -106,14 +106,14 @@ pub(super) fn find_perpendicular(v: Vec3) -> Vec3 {
 }
 
 /// Renders small molecules as ray-cast sphere + capsule impostors.
-pub struct BallAndStickRenderer {
+pub(crate) struct BallAndStickRenderer {
     sphere_pass: ImpostorPass<SphereInstance>,
     bond_pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BallAndStickRenderer {
     /// Create a new ball-and-stick renderer with empty buffers.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -183,7 +183,7 @@ impl BallAndStickRenderer {
     }
 
     /// Apply pre-computed instance data (GPU upload only, no CPU generation).
-    pub fn apply_prepared(
+    pub(crate) fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -204,7 +204,7 @@ impl BallAndStickRenderer {
     }
 
     /// Draw both spheres and bonds in a single render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
@@ -214,27 +214,27 @@ impl BallAndStickRenderer {
     }
 
     /// Get the sphere instance buffer (visual pass).
-    pub fn sphere_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn sphere_buffer(&self) -> &wgpu::Buffer {
         self.sphere_pass.buffer()
     }
 
     /// Get the bond capsule instance buffer (visual pass).
-    pub fn bond_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn bond_buffer(&self) -> &wgpu::Buffer {
         self.bond_pass.buffer()
     }
 
     /// Get the sphere instance count.
-    pub fn sphere_count(&self) -> u32 {
+    pub(crate) fn sphere_count(&self) -> u32 {
         self.sphere_pass.instance_count
     }
 
     /// Get the bond capsule instance count.
-    pub fn bond_count(&self) -> u32 {
+    pub(crate) fn bond_count(&self) -> u32 {
         self.bond_pass.instance_count
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
             self.sphere_pass.buffer_info("BnS Spheres"),
             self.bond_pass.buffer_info("BnS Bonds"),

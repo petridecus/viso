@@ -27,39 +27,39 @@ const CAPSULE_RADIUS: f32 = 0.3;
 ///
 /// This is the renderer's input type — a set of borrowed slices that travel
 /// together.
-pub struct SidechainView<'a> {
+pub(crate) struct SidechainView<'a> {
     /// World-space atom positions.
-    pub positions: &'a [Vec3],
+    pub(crate) positions: &'a [Vec3],
     /// Intra-sidechain bonds as `(atom_a, atom_b)` index pairs.
-    pub bonds: &'a [(u32, u32)],
+    pub(crate) bonds: &'a [(u32, u32)],
     /// CA-CB backbone bonds as `(ca_position, cb_sidechain_index)`.
-    pub backbone_bonds: &'a [(Vec3, u32)],
+    pub(crate) backbone_bonds: &'a [(Vec3, u32)],
     /// Per-atom hydrophobicity flags.
-    pub hydrophobicity: &'a [bool],
+    pub(crate) hydrophobicity: &'a [bool],
     /// Residue index for each sidechain atom.
-    pub residue_indices: &'a [u32],
+    pub(crate) residue_indices: &'a [u32],
 }
 
 /// Owned sidechain data with optional position/bond overrides (e.g.
 /// sheet-surface adjustment). Use [`as_view`](Self::as_view) to borrow as a
 /// [`SidechainView`].
-pub struct OwnedSidechainView {
+pub(crate) struct OwnedSidechainView {
     /// World-space atom positions (may be sheet-adjusted).
-    pub positions: Vec<Vec3>,
+    pub(crate) positions: Vec<Vec3>,
     /// Intra-sidechain bonds.
-    pub bonds: Vec<(u32, u32)>,
+    pub(crate) bonds: Vec<(u32, u32)>,
     /// CA-CB backbone bonds (may be sheet-adjusted).
-    pub backbone_bonds: Vec<(Vec3, u32)>,
+    pub(crate) backbone_bonds: Vec<(Vec3, u32)>,
     /// Per-atom hydrophobicity flags.
-    pub hydrophobicity: Vec<bool>,
+    pub(crate) hydrophobicity: Vec<bool>,
     /// Residue index for each sidechain atom.
-    pub residue_indices: Vec<u32>,
+    pub(crate) residue_indices: Vec<u32>,
 }
 
 impl OwnedSidechainView {
     /// Borrow as a [`SidechainView`] for passing to renderers.
     #[must_use]
-    pub fn as_view(&self) -> SidechainView<'_> {
+    pub(crate) fn as_view(&self) -> SidechainView<'_> {
         SidechainView {
             positions: &self.positions,
             bonds: &self.bonds,
@@ -71,14 +71,14 @@ impl OwnedSidechainView {
 }
 
 /// Renders sidechains as capsule chains (cylinders with hemispherical caps).
-pub struct SidechainRenderer {
+pub(crate) struct SidechainRenderer {
     pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl SidechainRenderer {
     /// `sidechain.backbone_bonds`: CA-CB bonds as (ca_position,
     /// cb_sidechain_index) tuples.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         sidechain: &SidechainView,
@@ -231,7 +231,7 @@ impl SidechainRenderer {
 
     /// Update sidechain geometry (no frustum culling).
     #[allow(dead_code)] // API surface, not yet called by engine
-    pub fn update(
+    pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -241,7 +241,7 @@ impl SidechainRenderer {
     }
 
     /// Update sidechain geometry with frustum culling.
-    pub fn update_with_frustum(
+    pub(crate) fn update_with_frustum(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -260,7 +260,7 @@ impl SidechainRenderer {
     }
 
     /// Draw sidechain capsules into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,
@@ -272,7 +272,7 @@ impl SidechainRenderer {
     ///
     /// Returns `true` if the buffer was reallocated (picking bind groups need
     /// recreation).
-    pub fn apply_prepared(
+    pub(crate) fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -284,17 +284,17 @@ impl SidechainRenderer {
     }
 
     /// Get the capsule instance buffer for picking
-    pub fn capsule_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn capsule_buffer(&self) -> &wgpu::Buffer {
         self.pass.buffer()
     }
 
     /// Number of capsule instances currently drawn.
-    pub fn instance_count(&self) -> u32 {
+    pub(crate) fn instance_count(&self) -> u32 {
         self.pass.instance_count
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![self.pass.buffer_info("Sidechain Capsules")]
     }
 }

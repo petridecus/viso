@@ -52,16 +52,18 @@ pub use app::VisoApp;
 pub use bridge::UiAction;
 pub use engine::assembly_consumer::AssemblyConsumer;
 pub use engine::command::{
-    AtomRef, BandInfo, BandTarget, BandType, PullInfo, VisoCommand,
+    AtomRef, BandInfo, BandTarget, BandType, CommandOutcome, PullInfo,
+    VisoCommand,
 };
 pub use engine::focus::Focus;
 pub use engine::VisoEngine;
-pub use molex::entity::EntityId;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
 pub use gpu::texture::RenderTarget;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
+pub use molex;
+pub use molex::entity::EntityId;
 // Per-entity appearance + drawing mode enums
 pub use options::{DrawingMode, EntityAppearance, HelixStyle, SheetStyle};
 // Picking output

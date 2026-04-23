@@ -27,17 +27,9 @@ use crate::renderer::{GeometryPassInput, Renderers};
 /// Borrowed scene chain data needed by [`GpuPipeline::upload_prepared`].
 pub(crate) struct SceneChainData<'a> {
     /// Backbone chains (interpolated or at-rest).
-    pub backbone_chains: &'a [Vec<Vec3>],
+    pub(crate) backbone_chains: &'a [Vec<Vec3>],
     /// Nucleic-acid chains.
-    pub na_chains: &'a [Vec<Vec3>],
-}
-
-/// Channel carrying density mesh data from the background worker
-/// thread to the main thread. The main thread drains `rx` each frame;
-/// worker-side code clones `tx` to send a completed mesh.
-pub(crate) struct DensityChannel {
-    pub tx: mpsc::Sender<(Vec<IsosurfaceVertex>, Vec<u32>)>,
-    pub rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
+    pub(crate) na_chains: &'a [Vec<Vec3>],
 }
 
 /// All GPU infrastructure grouped together: device/queue, renderers,
@@ -45,28 +37,30 @@ pub(crate) struct DensityChannel {
 /// per-frame cursor/culling state.
 pub(crate) struct GpuPipeline {
     /// Core wgpu device, queue, and surface.
-    pub context: RenderContext,
+    pub(crate) context: RenderContext,
     /// All geometry renderers (backbone, sidechain, band, pull,
     /// ball-and-stick, nucleic acid).
-    pub renderers: Renderers,
+    pub(crate) renderers: Renderers,
     /// GPU picking, selection, and per-residue color buffers.
-    pub pick: PickingSystem,
+    pub(crate) pick: PickingSystem,
     /// Background thread for off-main-thread mesh generation.
-    pub scene_processor: SceneProcessor,
+    pub(crate) scene_processor: SceneProcessor,
     /// Post-processing pass stack (SSAO, bloom, composite, FXAA).
-    pub post_process: PostProcessStack,
+    pub(crate) post_process: PostProcessStack,
     /// GPU lighting uniform and bind group.
-    pub lighting: Lighting,
+    pub(crate) lighting: Lighting,
     /// Current cursor position in physical pixels (set by the viewer /
     /// input processor each frame for GPU picking).
-    pub cursor_pos: (f32, f32),
+    pub(crate) cursor_pos: (f32, f32),
     /// Camera eye position at the last frustum-culling update.
-    pub last_cull_camera_eye: Vec3,
+    pub(crate) last_cull_camera_eye: Vec3,
     /// Retained so compiled shader modules stay alive for the engine lifetime.
     #[allow(dead_code)]
     pub(crate) shader_composer: ShaderComposer,
-    /// Worker→main channel for background-extracted density meshes.
-    pub(crate) density_channel: DensityChannel,
+    /// Receiver for background-extracted isosurface meshes (density
+    /// maps, entity surfaces, cavities). The matching sender lives on
+    /// [`crate::engine::surface_regen::SurfaceRegen`].
+    pub(crate) density_rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
 }
 
 impl GpuPipeline {
@@ -383,7 +377,7 @@ impl GpuPipeline {
     /// so rapid slider changes don't queue up stale meshes.
     pub(crate) fn apply_pending_density_mesh(&mut self) -> bool {
         let mut latest = None;
-        while let Ok(data) = self.density_channel.rx.try_recv() {
+        while let Ok(data) = self.density_rx.try_recv() {
             latest = Some(data);
         }
         let Some((vertices, indices)) = latest else {

@@ -36,42 +36,46 @@ use crate::options::DrawingMode;
 pub(crate) struct Scene {
     // ── Ingest ────────────────────────────────────────────────────
     /// Triple-buffer reader for the host-owned [`Assembly`].
-    pub consumer: AssemblyConsumer,
+    pub(crate) consumer: AssemblyConsumer,
     /// Last `Assembly` snapshot applied by `sync_from_assembly`. Held
     /// for read-only queries (entity metadata for the UI panel, atom
     /// positions for the picking pipeline). Always up to date with
     /// `entity_state` / `positions`.
-    pub current: Arc<Assembly>,
+    pub(crate) current: Arc<Assembly>,
     /// Generation of the most recently consumed snapshot. Initialized
     /// to `u64::MAX` so the first snapshot (generation 0) always
     /// triggers a sync.
-    pub last_seen_generation: u64,
+    pub(crate) last_seen_generation: u64,
 
     // ── Derived ───────────────────────────────────────────────────
     /// Cross-entity rendering data (disulfide + H-bond endpoints +
     /// per-sync resolved structural bonds). Rederived on every sync;
     /// lives on the main thread only.
-    pub render_state: SceneRenderState,
+    pub(crate) render_state: SceneRenderState,
     /// Per-entity rendering state (topology + drawing mode + SS
     /// override + mesh version) rederived on every sync.
-    pub entity_state: FxHashMap<EntityId, EntityView>,
+    pub(crate) entity_state: FxHashMap<EntityId, EntityView>,
     /// Per-entity animator write surface; renderer reads back each
     /// frame. Seeded from the assembly's reference positions when
     /// new entities appear, animated locally thereafter.
-    pub positions: EntityPositions,
+    pub(crate) positions: EntityPositions,
 
     /// Monotonic mesh-version dispenser. Survives
     /// `reset_scene_local_state` so a Vacant insert never collides
     /// with a stale worker `MeshCache` entry for the same `EntityId`
     /// (fresh per-file allocators reuse low ids across
     /// `replace_scene`).
-    pub next_mesh_version: u64,
+    pub(crate) next_mesh_version: u64,
 }
+
+/// Iterator item for [`Scene::visible_entities`].
+pub(crate) type VisibleEntity<'a> =
+    (&'a MoleculeEntity, EntityId, &'a EntityView);
 
 impl Scene {
     /// Empty scene with a valid (but empty) assembly snapshot. The
     /// caller provides the triple-buffer reader.
-    pub fn new(consumer: AssemblyConsumer) -> Self {
+    pub(crate) fn new(consumer: AssemblyConsumer) -> Self {
         Self {
             consumer,
             current: Arc::new(Assembly::new(Vec::new())),
@@ -87,7 +91,7 @@ impl Scene {
     /// All writes to `EntityView.mesh_version` must route through
     /// this so a worker `MeshCache` entry for an `EntityId` is never
     /// invalidated by a colliding version.
-    pub fn bump_mesh_version(&mut self) -> u64 {
+    pub(crate) fn bump_mesh_version(&mut self) -> u64 {
         let v = self.next_mesh_version;
         self.next_mesh_version = self.next_mesh_version.wrapping_add(1);
         v
@@ -98,7 +102,7 @@ impl Scene {
     /// a raw id should translate here *once* and then pass `EntityId`
     /// down.
     #[must_use]
-    pub fn entity_id(&self, raw: u32) -> Option<EntityId> {
+    pub(crate) fn entity_id(&self, raw: u32) -> Option<EntityId> {
         self.current
             .entities()
             .iter()
@@ -114,8 +118,7 @@ impl Scene {
     pub(crate) fn visible_entities<'a>(
         &'a self,
         annotations: &'a EntityAnnotations,
-    ) -> impl Iterator<Item = (&'a MoleculeEntity, EntityId, &'a EntityView)> + 'a
-    {
+    ) -> impl Iterator<Item = VisibleEntity<'a>> + 'a {
         self.current.entities().iter().filter_map(|entity| {
             let eid = entity.id();
             if !annotations.is_visible(eid) {
@@ -159,7 +162,7 @@ impl Scene {
     /// collide with stale worker mesh cache entries). Also resets
     /// `last_seen_generation` to `u64::MAX` so the next snapshot
     /// triggers a sync unconditionally.
-    pub fn reset_local_state(&mut self) {
+    pub(crate) fn reset_local_state(&mut self) {
         self.entity_state.clear();
         self.positions = EntityPositions::new();
         self.render_state = SceneRenderState::new();

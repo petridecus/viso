@@ -24,14 +24,14 @@ const PULL_CONE_RADIUS: f32 = 0.6; // Larger than cylinder for visible arrow
 const PULL_CONE_LENGTH: f32 = 2.0;
 
 /// Renders the active pull constraint (capsule cylinder + cone arrow).
-pub struct PullRenderer {
+pub(crate) struct PullRenderer {
     capsule_pass: ImpostorPass<CapsuleInstance>,
     cone_pass: ImpostorPass<ConeInstance>,
 }
 
 impl PullRenderer {
     /// Create a new pull renderer with empty instance buffers.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -65,7 +65,7 @@ impl PullRenderer {
     }
 
     /// Update with the active pull, or clear if None
-    pub fn update(
+    pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -83,13 +83,13 @@ impl PullRenderer {
 
     /// Clear the pull visualization
     #[allow(dead_code)] // API surface, not yet called by engine
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.capsule_pass.instance_count = 0;
         self.cone_pass.instance_count = 0;
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
             self.capsule_pass.buffer_info("Pull Capsules"),
             self.cone_pass.buffer_info("Pull Cones"),
@@ -159,7 +159,7 @@ impl PullRenderer {
     }
 
     /// Draw pull geometry (cylinder + cone arrow) into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,

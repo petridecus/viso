@@ -11,7 +11,7 @@ use super::transition::{AnimationPhase, Transition};
 /// The runner tracks start time + phases and computes `eased_t` on
 /// demand. Per-atom interpolation is done by the caller using the
 /// eased value; the runner stays purely about *when*, not *what*.
-pub struct AnimationRunner {
+pub(crate) struct AnimationRunner {
     start_time: Instant,
     phases: Vec<AnimationPhase>,
     total_duration: Duration,
@@ -19,7 +19,7 @@ pub struct AnimationRunner {
 
 impl AnimationRunner {
     /// Start a new animation from the given transition.
-    pub fn new(transition: &Transition) -> Self {
+    pub(crate) fn new(transition: &Transition) -> Self {
         Self {
             start_time: Instant::now(),
             phases: transition.phases.clone(),
@@ -29,7 +29,7 @@ impl AnimationRunner {
 
     /// Create with explicit start time (for testing).
     #[cfg(test)]
-    pub fn with_start_time(
+    pub(crate) fn with_start_time(
         start_time: Instant,
         transition: &Transition,
     ) -> Self {
@@ -41,7 +41,7 @@ impl AnimationRunner {
     }
 
     /// Normalized progress 0.0..=1.0.
-    pub fn progress(&self, now: Instant) -> f32 {
+    pub(crate) fn progress(&self, now: Instant) -> f32 {
         let elapsed = now.saturating_duration_since(self.start_time);
         if self.total_duration.is_zero() {
             1.0
@@ -52,13 +52,13 @@ impl AnimationRunner {
 
     /// Whether the animation has reached completion.
     #[cfg(test)]
-    pub fn is_complete(&self, now: Instant) -> bool {
+    pub(crate) fn is_complete(&self, now: Instant) -> bool {
         self.progress(now) >= 1.0
     }
 
     /// Eased interpolation value for the given raw progress, respecting
     /// the phase sequence.
-    pub fn eased_t(&self, raw_t: f32) -> f32 {
+    pub(crate) fn eased_t(&self, raw_t: f32) -> f32 {
         if raw_t >= 1.0 {
             return 1.0;
         }
@@ -76,7 +76,7 @@ impl AnimationRunner {
     ///
     /// Multi-phase behaviors hide sidechains during the backbone-lerp
     /// phase so new atoms don't flash at their final positions.
-    pub fn should_include_sidechains(&self, raw_t: f32) -> bool {
+    pub(crate) fn should_include_sidechains(&self, raw_t: f32) -> bool {
         if raw_t >= 1.0 {
             return true;
         }

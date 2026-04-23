@@ -17,17 +17,17 @@ const DEFAULT_OPACITY: f32 = 0.35;
 /// A single density map entry with display parameters.
 pub(crate) struct DensityEntry {
     /// The parsed density map (owns the 3D grid).
-    pub map: Density,
+    pub(crate) map: Density,
     /// Raw density threshold for isosurface extraction.
-    pub threshold: f32,
+    pub(crate) threshold: f32,
     /// Whether this map is visible.
-    pub visible: bool,
+    pub(crate) visible: bool,
     /// Mesh color RGB.
-    pub color: [f32; 3],
+    pub(crate) color: [f32; 3],
     /// Mesh opacity (0.0 = fully transparent, 1.0 = opaque).
-    pub opacity: f32,
+    pub(crate) opacity: f32,
     /// Dirty generation counter (bumped on any parameter change).
-    pub generation: u64,
+    pub(crate) generation: u64,
 }
 
 /// Manages all loaded density maps with dirty tracking.
@@ -41,7 +41,7 @@ pub(crate) struct DensityStore {
 
 impl DensityStore {
     /// Create an empty density store.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: Vec::new(),
             next_id: 0,
@@ -50,7 +50,7 @@ impl DensityStore {
     }
 
     /// Add a density map. Returns the assigned ID.
-    pub fn add(&mut self, map: Density) -> u32 {
+    pub(crate) fn add(&mut self, map: Density) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         let threshold = map.sigma_level(DEFAULT_SIGMA);
@@ -69,7 +69,7 @@ impl DensityStore {
     }
 
     /// Remove a density map by ID. Returns `true` if found.
-    pub fn remove(&mut self, id: u32) -> bool {
+    pub(crate) fn remove(&mut self, id: u32) -> bool {
         let len = self.entries.len();
         self.entries.retain(|(eid, _)| *eid != id);
         self.entries.len() != len
@@ -77,7 +77,7 @@ impl DensityStore {
 
     /// Get a density entry by ID.
     #[allow(dead_code)]
-    pub fn get(&self, id: u32) -> Option<&DensityEntry> {
+    pub(crate) fn get(&self, id: u32) -> Option<&DensityEntry> {
         self.entries
             .iter()
             .find(|(eid, _)| *eid == id)
@@ -96,28 +96,28 @@ impl DensityStore {
     }
 
     /// Set the raw density threshold for a density map.
-    pub fn set_threshold(&mut self, id: u32, threshold: f32) {
+    pub(crate) fn set_threshold(&mut self, id: u32, threshold: f32) {
         if let Some(entry) = self.get_mut(id) {
             entry.threshold = threshold;
         }
     }
 
     /// Set visibility for a density map.
-    pub fn set_visible(&mut self, id: u32, visible: bool) {
+    pub(crate) fn set_visible(&mut self, id: u32, visible: bool) {
         if let Some(entry) = self.get_mut(id) {
             entry.visible = visible;
         }
     }
 
     /// Set color for a density map.
-    pub fn set_color(&mut self, id: u32, color: [f32; 3]) {
+    pub(crate) fn set_color(&mut self, id: u32, color: [f32; 3]) {
         if let Some(entry) = self.get_mut(id) {
             entry.color = color;
         }
     }
 
     /// Set opacity for a density map (0.0–1.0).
-    pub fn set_opacity(&mut self, id: u32, opacity: f32) {
+    pub(crate) fn set_opacity(&mut self, id: u32, opacity: f32) {
         if let Some(entry) = self.get_mut(id) {
             entry.opacity = opacity.clamp(0.0, 1.0);
         }
@@ -125,23 +125,25 @@ impl DensityStore {
 
     /// Whether any density map has been modified since the last render.
     #[allow(dead_code)]
-    pub fn is_dirty(&self) -> bool {
+    pub(crate) fn is_dirty(&self) -> bool {
         self.max_generation() > self.rendered_generation
     }
 
     /// Mark all current state as rendered.
     #[allow(dead_code)]
-    pub fn mark_rendered(&mut self) {
+    pub(crate) fn mark_rendered(&mut self) {
         self.rendered_generation = self.max_generation();
     }
 
     /// All density entries (visible and hidden).
-    pub fn all_entries(&self) -> impl Iterator<Item = (u32, &DensityEntry)> {
+    pub(crate) fn all_entries(
+        &self,
+    ) -> impl Iterator<Item = (u32, &DensityEntry)> {
         self.entries.iter().map(|(id, e)| (*id, e))
     }
 
     /// All visible density entries.
-    pub fn visible_entries(
+    pub(crate) fn visible_entries(
         &self,
     ) -> impl Iterator<Item = (u32, &DensityEntry)> {
         self.entries
@@ -152,7 +154,7 @@ impl DensityStore {
 
     /// Whether any density maps are loaded.
     #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 

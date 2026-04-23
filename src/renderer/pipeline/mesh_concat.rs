@@ -14,7 +14,11 @@ use crate::renderer::picking::PickMap;
 /// vertices from multiple entities, each entity's local residue indices
 /// must be shifted by the global offset so the GPU's per-residue color
 /// buffer is indexed correctly.
-pub fn offset_vertex_residue_idx(dst: &mut Vec<u8>, src: &[u8], offset: u32) {
+pub(crate) fn offset_vertex_residue_idx(
+    dst: &mut Vec<u8>,
+    src: &[u8],
+    offset: u32,
+) {
     const VERTEX_SIZE: usize = 52;
     const RESIDUE_IDX_OFFSET: usize = 36;
 
@@ -270,7 +274,7 @@ fn patch_pick_id_buffer(
 }
 
 /// Concatenate per-entity cached meshes into a single `PreparedRebuild`.
-pub fn concatenate_meshes(
+pub(crate) fn concatenate_meshes(
     entity_meshes: &[&CachedEntityMesh],
 ) -> PreparedRebuild {
     let mut acc = MeshAccumulator::default();

@@ -6,12 +6,12 @@
 //! Integrates with depth, normals, SSAO, and bloom through the standard
 //! dual render target (color + normal).
 
-pub mod cavity;
+pub(crate) mod cavity;
 pub(crate) mod cpu_marching_cubes;
-pub mod density;
-pub mod gaussian_surface;
+pub(crate) mod density;
+pub(crate) mod gaussian_surface;
 pub(crate) mod mesh_smooth;
-pub mod ses;
+pub(crate) mod ses;
 pub(crate) mod tables;
 
 use crate::error::VisoError;
@@ -31,36 +31,36 @@ use crate::renderer::PipelineLayouts;
 ///
 /// Values are pinned because they're mirrored verbatim in the WGSL
 /// shader (`isosurface.wgsl`).
-pub mod isosurface_kind {
+pub(crate) mod isosurface_kind {
     /// Generic surface mesh — Gaussian, SES, or any future PBR-shaded
     /// surface that doesn't need special-case effects. Default value.
-    pub const SURFACE: u32 = 0;
+    pub(crate) const SURFACE: u32 = 0;
     /// Internal cavity mesh — gets the cavity-specific pulsing rim and
     /// (eventually) volumetric / depth-absorption shading.
-    pub const CAVITY: u32 = 1;
+    pub(crate) const CAVITY: u32 = 1;
 }
 
 /// A vertex on the extracted isosurface.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct IsosurfaceVertex {
+pub(crate) struct IsosurfaceVertex {
     /// World-space position.
-    pub position: [f32; 3],
+    pub(crate) position: [f32; 3],
     /// Surface normal (central-difference gradient).
-    pub normal: [f32; 3],
+    pub(crate) normal: [f32; 3],
     /// Vertex color RGBA (alpha controls transparency).
-    pub color: [f32; 4],
+    pub(crate) color: [f32; 4],
     /// Source kind discriminator — see [`isosurface_kind`].
-    pub kind: u32,
+    pub(crate) kind: u32,
     /// World-space centroid of the parent cavity, baked at mesh build
     /// time. Only meaningful when `kind == isosurface_kind::CAVITY` —
     /// other kinds set this to `[0.0; 3]` and the shader ignores it.
     /// Used by the vertex shader for radial-breath displacement.
-    pub cavity_center: [f32; 3],
+    pub(crate) cavity_center: [f32; 3],
 }
 
 /// Isosurface vertex buffer layout for wgpu.
-pub fn isosurface_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+pub(crate) fn isosurface_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<IsosurfaceVertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -117,7 +117,7 @@ impl IsosurfaceRenderer {
     /// the back-face pre-pass writes to and the main pass samples. Pass
     /// the same view that's resized in lockstep with the framebuffer
     /// (see `PostProcessStack::backface_depth_view`).
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -180,7 +180,7 @@ impl IsosurfaceRenderer {
 
     /// Rebuild the back-face depth bind group when the underlying
     /// texture is recreated (e.g. after a window resize).
-    pub fn set_back_face_depth_view(
+    pub(crate) fn set_back_face_depth_view(
         &mut self,
         device: &wgpu::Device,
         view: &wgpu::TextureView,
@@ -193,7 +193,7 @@ impl IsosurfaceRenderer {
     }
 
     /// Upload new isosurface mesh data to the GPU.
-    pub fn apply_prepared(
+    pub(crate) fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -211,7 +211,7 @@ impl IsosurfaceRenderer {
     }
 
     /// Draw the isosurface mesh into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &DrawBindGroups<'a>,
@@ -232,7 +232,7 @@ impl IsosurfaceRenderer {
     /// R32Float color attachment and binding the camera bind group.
     /// Renders all isosurface back-faces (front-face culling) writing
     /// linear view-space z.
-    pub fn draw_back_face_pass<'a>(
+    pub(crate) fn draw_back_face_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
@@ -251,7 +251,7 @@ impl IsosurfaceRenderer {
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
             (
                 "Isosurface Vertices",

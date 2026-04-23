@@ -50,13 +50,13 @@ const MAX_HBOND_DIST: f32 = 3.0;
 const OPTIMAL_DIST_EPSILON: f32 = 0.1;
 
 /// Renders constraint bands between atoms as capsule impostors.
-pub struct BandRenderer {
+pub(crate) struct BandRenderer {
     pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BandRenderer {
     /// Create a new band renderer with empty instance buffer.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -237,7 +237,7 @@ impl BandRenderer {
     }
 
     /// Update band geometry
-    pub fn update(
+    pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -250,17 +250,17 @@ impl BandRenderer {
 
     /// Clear all bands
     #[allow(dead_code)] // API surface, not yet called by engine
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.pass.instance_count = 0;
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![self.pass.buffer_info("Band Capsules")]
     }
 
     /// Draw band capsules into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,

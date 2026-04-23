@@ -46,13 +46,13 @@ impl PanelAxis {
 /// Both web and desktop hosts use the same logical value.  The desktop
 /// host converts to physical pixels via `scale_factor` at the point of
 /// `set_bounds()`.
-pub const DEFAULT_PANEL_SIZE: u32 = 340;
+pub(crate) const DEFAULT_PANEL_SIZE: u32 = 340;
 
 /// Minimum panel size in CSS pixels for resize.
-pub const MIN_PANEL_SIZE: u32 = 220;
+pub(crate) const MIN_PANEL_SIZE: u32 = 220;
 
 /// Maximum panel size in CSS pixels for resize.
-pub const MAX_PANEL_SIZE: u32 = 700;
+pub(crate) const MAX_PANEL_SIZE: u32 = 700;
 
 /// Panel size when collapsed (just the toggle arrow strip), in CSS
 /// pixels.
@@ -165,7 +165,7 @@ pub enum UiAction {
 // ── IPC parsing ──────────────────────────────────────────────────────────
 
 /// Parse an IPC message from viso-ui into a [`UiAction`].
-pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
+pub(crate) fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
     let action = msg.get("action")?.as_str()?;
     match action {
         "set_option" => {
@@ -269,7 +269,7 @@ pub fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
 
 /// Escape a string for safe embedding in a JavaScript single-quoted
 /// literal.
-pub fn escape_for_js(s: &str) -> String {
+pub(crate) fn escape_for_js(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
@@ -277,7 +277,7 @@ pub fn escape_for_js(s: &str) -> String {
 
 /// Build a JSON-serializable summary of all entities for the viso-ui
 /// panel.
-pub fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+pub(crate) fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
     use molex::MoleculeType;
 
     use crate::options::DrawingMode;
@@ -395,7 +395,7 @@ fn effective_surface_color(engine: &VisoEngine, raw: u32) -> serde_json::Value {
 
 /// Build a JSON-serializable summary of all density maps for the viso-ui
 /// panel.
-pub fn density_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
+pub(crate) fn density_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
     engine
         .density
         .all_entries()
@@ -417,7 +417,7 @@ pub fn density_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
 
 /// Result of parsing a file — either a structure or a density map.
 #[allow(dead_code)]
-pub enum ParsedFile {
+pub(crate) enum ParsedFile {
     /// Molecular structure (protein, ligand, etc.).
     Structure(Vec<molex::MoleculeEntity>),
     /// Electron density map (CCP4/MRC format).
@@ -425,7 +425,7 @@ pub enum ParsedFile {
 }
 
 /// Returns `true` if the extension indicates a density map format.
-pub fn is_density_extension(ext: &str) -> bool {
+pub(crate) fn is_density_extension(ext: &str) -> bool {
     let lower = ext.to_ascii_lowercase();
     let trimmed = lower.trim_start_matches('.');
     matches!(trimmed, "mrc" | "map" | "ccp4")
@@ -437,7 +437,7 @@ pub fn is_density_extension(ext: &str) -> bool {
 /// `format_hint` should be the file extension (e.g. `"cif"`, `"mrc"`),
 /// with or without a leading dot.
 #[allow(dead_code)]
-pub fn parse_file_bytes(
+pub(crate) fn parse_file_bytes(
     bytes: &[u8],
     format_hint: &str,
 ) -> Result<ParsedFile, String> {
@@ -500,7 +500,7 @@ pub fn parse_structure_bytes(
 /// Both native (wry) and web (wasm) hosts use this same core script.
 /// The native host appends additional platform-specific code for Tab key
 /// forwarding and `addEventListener` replay.
-pub const BRIDGE_JS: &str = r"
+pub(crate) const BRIDGE_JS: &str = r"
 (function() {
     var pending = {};
     function dispatch(name, json) {

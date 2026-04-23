@@ -15,10 +15,10 @@ use crate::renderer::pipeline_util;
 
 /// Description of an indexed-mesh render pipeline.
 pub(crate) struct MeshPipelineDef {
-    pub label: &'static str,
-    pub shader: Shader,
-    pub cull_mode: Option<wgpu::Face>,
-    pub vertex_layout: wgpu::VertexBufferLayout<'static>,
+    pub(crate) label: &'static str,
+    pub(crate) shader: Shader,
+    pub(crate) cull_mode: Option<wgpu::Face>,
+    pub(crate) vertex_layout: wgpu::VertexBufferLayout<'static>,
 }
 
 /// Create a standard indexed-mesh render pipeline.
@@ -74,12 +74,12 @@ pub(crate) fn create_mesh_pipeline(
 pub(crate) struct MeshPass {
     pipeline: wgpu::RenderPipeline,
     index_buffer: DynamicBuffer,
-    pub index_count: u32,
+    pub(crate) index_count: u32,
 }
 
 impl MeshPass {
     /// Create a pass with initial index data.
-    pub fn new(
+    pub(crate) fn new(
         device: &wgpu::Device,
         label: &str,
         pipeline: wgpu::RenderPipeline,
@@ -110,7 +110,7 @@ impl MeshPass {
     /// Set pipeline, vertex buffer, index buffer, and draw.
     ///
     /// Caller must set bind groups before calling this.
-    pub fn draw_indexed<'a>(
+    pub(crate) fn draw_indexed<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         vertex_buffer: &'a wgpu::Buffer,
@@ -130,7 +130,7 @@ impl MeshPass {
     /// Draw a sub-range of the index buffer (for frustum culling).
     ///
     /// Caller must set bind groups before calling this.
-    pub fn draw_indexed_range<'a>(
+    pub(crate) fn draw_indexed_range<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         vertex_buffer: &'a wgpu::Buffer,
@@ -149,7 +149,7 @@ impl MeshPass {
     }
 
     /// Write typed index data.
-    pub fn write_indices(
+    pub(crate) fn write_indices(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -162,7 +162,7 @@ impl MeshPass {
     }
 
     /// Write raw index bytes (from scene processor).
-    pub fn write_indices_bytes(
+    pub(crate) fn write_indices_bytes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -176,17 +176,17 @@ impl MeshPass {
     }
 
     /// Get the underlying index buffer (for picking).
-    pub fn index_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn index_buffer(&self) -> &wgpu::Buffer {
         self.index_buffer.buffer()
     }
 
     /// Current index data size in bytes.
-    pub fn index_buffer_len(&self) -> usize {
+    pub(crate) fn index_buffer_len(&self) -> usize {
         self.index_buffer.len()
     }
 
     /// Allocated index buffer capacity in bytes.
-    pub fn index_buffer_capacity(&self) -> usize {
+    pub(crate) fn index_buffer_capacity(&self) -> usize {
         self.index_buffer.capacity()
     }
 }

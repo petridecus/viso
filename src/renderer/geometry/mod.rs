@@ -6,28 +6,30 @@
 //! bands, and interactive pulls.
 
 /// Unified backbone renderer (protein + nucleic acid).
-pub mod backbone;
+pub(crate) mod backbone;
 /// Ball-and-stick renderer for ligands, ions, and waters.
-pub mod ball_and_stick;
+pub(crate) mod ball_and_stick;
 /// Constraint band renderer (pulls, H-bonds, disulfides).
-pub mod band;
+pub(crate) mod band;
 /// Structural bond renderer (H-bonds, disulfide bonds).
-pub mod bond;
+pub(crate) mod bond;
 /// Isosurface mesh renderer (electron density maps).
 pub(crate) mod isosurface;
 /// Nucleic acid ring + stem renderer.
-pub mod nucleic_acid;
+pub(crate) mod nucleic_acid;
 /// Interactive pull arrow renderer.
-pub mod pull;
+pub(crate) mod pull;
 /// Sheet-surface sidechain position adjustment.
 pub(crate) mod sheet_adjust;
 /// Capsule sidechain renderer.
-pub mod sidechain;
+pub(crate) mod sidechain;
 
-pub use backbone::{BackboneRenderer, ChainPair, PreparedBackboneData};
-pub use ball_and_stick::{BallAndStickRenderer, PreparedBallAndStickData};
-pub use band::BandRenderer;
-pub use bond::BondRenderer;
-pub use nucleic_acid::NucleicAcidRenderer;
-pub use pull::PullRenderer;
-pub use sidechain::{SidechainRenderer, SidechainView};
+pub(crate) use backbone::{BackboneRenderer, ChainPair, PreparedBackboneData};
+pub(crate) use ball_and_stick::{
+    BallAndStickRenderer, PreparedBallAndStickData,
+};
+pub(crate) use band::BandRenderer;
+pub(crate) use bond::BondRenderer;
+pub(crate) use nucleic_acid::NucleicAcidRenderer;
+pub(crate) use pull::PullRenderer;
+pub(crate) use sidechain::{SidechainRenderer, SidechainView};

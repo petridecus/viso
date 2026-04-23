@@ -13,33 +13,33 @@ use crate::renderer::impostor::{CapsuleInstance, ImpostorPass, ShaderDef};
 
 /// A single structural bond to be rendered.
 #[derive(Debug, Clone)]
-pub struct StructuralBond {
+pub(crate) struct StructuralBond {
     /// World-space position of the first atom.
-    pub pos_a: Vec3,
+    pub(crate) pos_a: Vec3,
     /// World-space position of the second atom.
-    pub pos_b: Vec3,
+    pub(crate) pos_b: Vec3,
     /// RGB color.
-    pub color: [f32; 3],
+    pub(crate) color: [f32; 3],
     /// Capsule radius in Angstroms.
-    pub radius: f32,
+    pub(crate) radius: f32,
     /// Flat residue index (for picking).
-    pub residue_idx: u32,
+    pub(crate) residue_idx: u32,
     /// Visual style.
-    pub style: BondStyle,
+    pub(crate) style: BondStyle,
     /// Emissive glow factor (0.0 = no glow, 1.0 = fully self-lit).
-    pub emissive: f32,
+    pub(crate) emissive: f32,
     /// Opacity (0.0 = fully transparent, 1.0 = fully opaque).
-    pub opacity: f32,
+    pub(crate) opacity: f32,
 }
 
 /// Renders structural bonds as thin capsules.
-pub struct BondRenderer {
+pub(crate) struct BondRenderer {
     pass: ImpostorPass<CapsuleInstance>,
 }
 
 impl BondRenderer {
     /// Create a new bond renderer with an empty instance buffer.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         shader_composer: &mut ShaderComposer,
@@ -61,7 +61,7 @@ impl BondRenderer {
     ///
     /// Returns `true` if the GPU buffer was reallocated (picking bind
     /// groups may need rebuilding).
-    pub fn update(
+    pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -158,12 +158,12 @@ impl BondRenderer {
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![self.pass.buffer_info("Structural Bonds")]
     }
 
     /// Draw bond capsules into the given render pass.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &crate::renderer::draw_context::DrawBindGroups<'a>,

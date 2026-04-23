@@ -176,7 +176,7 @@ fn create_ssao_textures(
 
 impl SsaoRenderer {
     /// Create a new SSAO renderer with kernel, noise, and pipeline resources.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         depth_view: &wgpu::TextureView,
         normal_view: &wgpu::TextureView,
@@ -583,7 +583,7 @@ impl SsaoRenderer {
     }
 
     /// Update projection and view matrices (call before render_ssao)
-    pub fn update_matrices(
+    pub(crate) fn update_matrices(
         &self,
         queue: &wgpu::Queue,
         camera: &super::post_process::PostProcessCamera,
@@ -609,7 +609,7 @@ impl SsaoRenderer {
     }
 
     /// Update the external geometry views used in bind group recreation.
-    pub fn set_geometry_views(
+    pub(crate) fn set_geometry_views(
         &mut self,
         depth: wgpu::TextureView,
         normal: wgpu::TextureView,
@@ -619,7 +619,7 @@ impl SsaoRenderer {
     }
 
     /// Render SSAO (call after geometry pass)
-    pub fn render_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub(crate) fn render_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
         run_screen_pass(
             encoder,
             &ScreenPassDesc {
@@ -643,7 +643,7 @@ impl SsaoRenderer {
     }
 
     /// Get the final (blurred) SSAO texture view for the composite pass.
-    pub fn get_ssao_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn get_ssao_view(&self) -> &wgpu::TextureView {
         &self.ssao_blurred_view
     }
 }

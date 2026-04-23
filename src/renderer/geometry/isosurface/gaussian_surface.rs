@@ -20,7 +20,7 @@ use super::IsosurfaceVertex;
 /// - `color`: RGBA color for the surface
 ///
 /// Returns `(vertices, indices)` for an indexed triangle mesh.
-pub fn generate_gaussian_surface(
+pub(crate) fn generate_gaussian_surface(
     positions: &[Vec3],
     radii: &[f32],
     resolution: f32,

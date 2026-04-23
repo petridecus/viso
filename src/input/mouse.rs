@@ -7,7 +7,7 @@ use crate::renderer::picking::PickTarget;
 const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
 /// Result of processing a mouse-up event through the multi-click state machine.
-pub enum ClickResult {
+pub(crate) enum ClickResult {
     /// No selection action (drag, mismatched up/down, etc.)
     NoAction,
     /// Single click on a target.
@@ -36,13 +36,13 @@ pub enum ClickResult {
 }
 
 /// Tracks mouse position, drag state, and the multi-click state machine.
-pub struct InputState {
+pub(crate) struct InputState {
     /// Current cursor position in screen coordinates.
-    pub mouse_pos: (f32, f32),
+    pub(crate) mouse_pos: (f32, f32),
     /// Target under cursor at mouse-down.
-    pub mouse_down_target: PickTarget,
+    pub(crate) mouse_down_target: PickTarget,
     /// Whether a drag is in progress.
-    pub is_dragging: bool,
+    pub(crate) is_dragging: bool,
     /// Last cursor position for computing deltas.
     last_cursor_pos: Option<(f32, f32)>,
     last_click_time: Instant,
@@ -52,7 +52,7 @@ pub struct InputState {
 
 impl InputState {
     /// Create a new input state with no active click.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             mouse_pos: (0.0, 0.0),
             mouse_down_target: PickTarget::None,
@@ -65,19 +65,23 @@ impl InputState {
     }
 
     /// Record what target (if any) is under the cursor at mouse-down.
-    pub fn handle_mouse_down(&mut self, target: PickTarget) {
+    pub(crate) fn handle_mouse_down(&mut self, target: PickTarget) {
         self.mouse_down_target = target;
         self.is_dragging = false;
     }
 
     /// Mark that a drag occurred (significant mouse movement while pressed).
-    pub fn mark_dragging(&mut self) {
+    pub(crate) fn mark_dragging(&mut self) {
         self.is_dragging = true;
     }
 
     /// Update cursor position for hover/picking and return the delta from the
     /// previous position.
-    pub fn handle_mouse_position(&mut self, x: f32, y: f32) -> (f32, f32) {
+    pub(crate) fn handle_mouse_position(
+        &mut self,
+        x: f32,
+        y: f32,
+    ) -> (f32, f32) {
         let delta = if let Some((lx, ly)) = self.last_cursor_pos {
             (x - lx, y - ly)
         } else {
@@ -92,7 +96,7 @@ impl InputState {
     ///
     /// `target` is the pick target under cursor at release time.
     /// `shift_held` is the current shift key state.
-    pub fn process_mouse_up(
+    pub(crate) fn process_mouse_up(
         &mut self,
         target: PickTarget,
         shift_held: bool,

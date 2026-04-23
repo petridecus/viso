@@ -15,23 +15,23 @@ use crate::options::GeometryOptions;
 /// Interpolated per-spline-point geometry parameters.
 #[derive(Clone, Copy)]
 pub(crate) struct CrossSectionProfile {
-    pub width: f32,
-    pub thickness: f32,
-    pub roundness: f32,
+    pub(crate) width: f32,
+    pub(crate) thickness: f32,
+    pub(crate) roundness: f32,
     /// Weight [0, 1] for blending the RMF-derived normal toward the
     /// radial-outward direction (1.0 for helices, 0 elsewhere).
-    pub radial_blend: f32,
+    pub(crate) radial_blend: f32,
     /// Weight [0, 1] for blending in the peptide-plane "sheet" normal
     /// (1.0 for sheet residues, 0 elsewhere). Interpolated across SS
     /// boundaries by `interpolate_profiles`, giving a smooth ramp
     /// through the sheet↔coil transition instead of a hard switch.
-    pub sheet_blend: f32,
-    pub color: [f32; 3],
-    pub residue_idx: u32,
+    pub(crate) sheet_blend: f32,
+    pub(crate) color: [f32; 3],
+    pub(crate) residue_idx: u32,
 }
 
 impl CrossSectionProfile {
-    pub fn lerp(&self, other: &Self, t: f32) -> Self {
+    pub(crate) fn lerp(&self, other: &Self, t: f32) -> Self {
         Self {
             width: self.width + (other.width - self.width) * t,
             thickness: self.thickness + (other.thickness - self.thickness) * t,

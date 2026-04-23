@@ -14,7 +14,9 @@ use super::controller::CameraController;
 /// Centroid + bounding-sphere radius over an entity's atoms. `None` if
 /// the entity has no atoms.
 #[must_use]
-pub fn bounding_sphere_of(entity: &MoleculeEntity) -> Option<(Vec3, f32)> {
+pub(crate) fn bounding_sphere_of(
+    entity: &MoleculeEntity,
+) -> Option<(Vec3, f32)> {
     let atoms = entity.atom_set();
     if atoms.is_empty() {
         return None;
@@ -32,7 +34,7 @@ pub fn bounding_sphere_of(entity: &MoleculeEntity) -> Option<(Vec3, f32)> {
 /// entities. Weighting is by atom count so a small ion next to a
 /// protein doesn't pull the centroid. `None` if every entity is empty.
 #[must_use]
-pub fn combined_bounding_sphere<'a>(
+pub(crate) fn combined_bounding_sphere<'a>(
     entities: impl IntoIterator<Item = &'a MoleculeEntity>,
 ) -> Option<(Vec3, f32)> {
     let mut total_weight = 0.0f32;
@@ -62,7 +64,7 @@ pub fn combined_bounding_sphere<'a>(
 
 /// Fit the camera to a single entity's bounding sphere, animated.
 /// No-op if the entity has no atoms.
-pub fn fit_to_entity(
+pub(crate) fn fit_to_entity(
     controller: &mut CameraController,
     entity: &MoleculeEntity,
 ) {
@@ -73,7 +75,7 @@ pub fn fit_to_entity(
 
 /// Fit the camera to the combined bounding sphere of an iterator of
 /// entities (e.g. every visible entity). No-op if the set is empty.
-pub fn fit_to_entities<'a>(
+pub(crate) fn fit_to_entities<'a>(
     controller: &mut CameraController,
     entities: impl IntoIterator<Item = &'a MoleculeEntity>,
 ) {

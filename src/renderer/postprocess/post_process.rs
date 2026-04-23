@@ -35,7 +35,7 @@ pub(crate) struct PostProcessStack {
 impl PostProcessStack {
     /// Build the full post-processing stack (depth/normal textures + all
     /// passes).
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, VisoError> {
@@ -94,7 +94,7 @@ impl PostProcessStack {
     }
 
     /// Recreate all resolution-dependent resources.
-    pub fn resize(&mut self, context: &RenderContext) {
+    pub(crate) fn resize(&mut self, context: &RenderContext) {
         let (depth_texture, depth_view) = Self::create_depth_texture(context);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
@@ -131,7 +131,7 @@ impl PostProcessStack {
     }
 
     /// Run the SSAO → bloom → composite → FXAA sequence.
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
@@ -154,7 +154,7 @@ impl PostProcessStack {
     }
 
     /// Update fog uniforms.
-    pub fn update_fog(
+    pub(crate) fn update_fog(
         &mut self,
         queue: &wgpu::Queue,
         fog_start: f32,
@@ -165,7 +165,7 @@ impl PostProcessStack {
     }
 
     /// Push post-processing option values to GPU.
-    pub fn apply_options(
+    pub(crate) fn apply_options(
         &mut self,
         options: &VisoOptions,
         queue: &wgpu::Queue,
@@ -190,7 +190,7 @@ impl PostProcessStack {
     }
 
     /// The color texture view used as render target for the geometry pass.
-    pub fn color_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn color_view(&self) -> &wgpu::TextureView {
         &self.composite_pass.color_view
     }
 

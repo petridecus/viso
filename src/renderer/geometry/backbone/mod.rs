@@ -17,11 +17,11 @@ use molex::SSType;
 /// Output of backbone mesh generation.
 #[derive(Default)]
 pub(crate) struct BackboneMeshOutput {
-    pub vertices: Vec<BackboneVertex>,
-    pub tube_indices: Vec<u32>,
-    pub ribbon_indices: Vec<u32>,
-    pub sheet_offsets: Vec<(u32, Vec3)>,
-    pub chain_ranges: Vec<ChainRange>,
+    pub(crate) vertices: Vec<BackboneVertex>,
+    pub(crate) tube_indices: Vec<u32>,
+    pub(crate) ribbon_indices: Vec<u32>,
+    pub(crate) sheet_offsets: Vec<(u32, Vec3)>,
+    pub(crate) chain_ranges: Vec<ChainRange>,
 }
 
 impl BackboneMeshOutput {
@@ -66,14 +66,15 @@ use crate::util::hash::hash_vec3_slices;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct BackboneVertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub color: [f32; 3],
-    pub residue_idx: u32,
-    pub center_pos: [f32; 3],
+    pub(crate) position: [f32; 3],
+    pub(crate) normal: [f32; 3],
+    pub(crate) color: [f32; 3],
+    pub(crate) residue_idx: u32,
+    pub(crate) center_pos: [f32; 3],
 }
 
-pub fn backbone_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+pub(crate) fn backbone_vertex_buffer_layout(
+) -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<BackboneVertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -110,30 +111,30 @@ pub fn backbone_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
 // ==================== INPUT DATA ====================
 
 /// Paired backbone chain input (protein CA/N/C triples + nucleic acid P atoms).
-pub struct ChainPair<'a> {
-    pub protein: &'a [Vec<Vec3>],
-    pub na: &'a [Vec<Vec3>],
+pub(crate) struct ChainPair<'a> {
+    pub(crate) protein: &'a [Vec<Vec3>],
+    pub(crate) na: &'a [Vec<Vec3>],
 }
 
 // ==================== PREPARED DATA ====================
 
 /// Pre-computed backbone mesh for GPU upload (from scene processor).
-pub struct PreparedBackboneData<'a> {
-    pub vertices: &'a [u8],
-    pub tube_indices: &'a [u8],
-    pub ribbon_indices: &'a [u8],
-    pub tube_index_count: u32,
-    pub ribbon_index_count: u32,
-    pub sheet_offsets: Vec<(u32, Vec3)>,
-    pub chain_ranges: Vec<ChainRange>,
-    pub cached_chains: &'a [Vec<Vec3>],
-    pub cached_na_chains: &'a [Vec<Vec3>],
+pub(crate) struct PreparedBackboneData<'a> {
+    pub(crate) vertices: &'a [u8],
+    pub(crate) tube_indices: &'a [u8],
+    pub(crate) ribbon_indices: &'a [u8],
+    pub(crate) tube_index_count: u32,
+    pub(crate) ribbon_index_count: u32,
+    pub(crate) sheet_offsets: Vec<(u32, Vec3)>,
+    pub(crate) chain_ranges: Vec<ChainRange>,
+    pub(crate) cached_chains: &'a [Vec<Vec3>],
+    pub(crate) cached_na_chains: &'a [Vec<Vec3>],
 }
 
 // ==================== RENDERER ====================
 
 /// Unified backbone renderer with tube + ribbon passes.
-pub struct BackboneRenderer {
+pub(crate) struct BackboneRenderer {
     tube_pass: MeshPass,
     ribbon_pass: MeshPass,
     vertex_buffer: DynamicBuffer,
@@ -146,7 +147,7 @@ pub struct BackboneRenderer {
 }
 
 impl BackboneRenderer {
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
         chains: &ChainPair,
@@ -221,7 +222,7 @@ impl BackboneRenderer {
     // ── Draw ──
 
     /// Frustum-culled draw: skip chains whose bounding sphere is off-screen.
-    pub fn draw_culled<'a>(
+    pub(crate) fn draw_culled<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &DrawBindGroups<'a>,
@@ -266,7 +267,7 @@ impl BackboneRenderer {
 
     // ── Scene-processor path ──
 
-    pub fn apply_prepared(
+    pub(crate) fn apply_prepared(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -299,7 +300,7 @@ impl BackboneRenderer {
             combined_hash(&self.cached_chains, &self.cached_na_chains);
     }
 
-    pub fn update_metadata(
+    pub(crate) fn update_metadata(
         &mut self,
         cached_chains: &[Vec<Vec3>],
         cached_na_chains: &[Vec<Vec3>],
@@ -312,7 +313,7 @@ impl BackboneRenderer {
             combined_hash(&self.cached_chains, &self.cached_na_chains);
     }
 
-    pub fn apply_mesh(
+    pub(crate) fn apply_mesh(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -341,42 +342,42 @@ impl BackboneRenderer {
 
     // ── Accessors ──
 
-    pub fn chain_ranges(&self) -> &[ChainRange] {
+    pub(crate) fn chain_ranges(&self) -> &[ChainRange] {
         &self.chain_ranges
     }
-    pub fn cached_lod_tiers(&self) -> &[u8] {
+    pub(crate) fn cached_lod_tiers(&self) -> &[u8] {
         &self.cached_lod_tiers
     }
-    pub fn set_cached_lod_tiers(&mut self, tiers: Vec<u8>) {
+    pub(crate) fn set_cached_lod_tiers(&mut self, tiers: Vec<u8>) {
         self.cached_lod_tiers = tiers;
     }
-    pub fn sheet_offsets(&self) -> &[(u32, Vec3)] {
+    pub(crate) fn sheet_offsets(&self) -> &[(u32, Vec3)] {
         &self.sheet_offsets
     }
-    pub fn cached_chains(&self) -> &[Vec<Vec3>] {
+    pub(crate) fn cached_chains(&self) -> &[Vec<Vec3>] {
         &self.cached_chains
     }
-    pub fn cached_na_chains(&self) -> &[Vec<Vec3>] {
+    pub(crate) fn cached_na_chains(&self) -> &[Vec<Vec3>] {
         &self.cached_na_chains
     }
-    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn vertex_buffer(&self) -> &wgpu::Buffer {
         self.vertex_buffer.buffer()
     }
-    pub fn tube_index_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn tube_index_buffer(&self) -> &wgpu::Buffer {
         self.tube_pass.index_buffer()
     }
-    pub fn ribbon_index_buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn ribbon_index_buffer(&self) -> &wgpu::Buffer {
         self.ribbon_pass.index_buffer()
     }
-    pub fn tube_index_count(&self) -> u32 {
+    pub(crate) fn tube_index_count(&self) -> u32 {
         self.tube_pass.index_count
     }
-    pub fn ribbon_index_count(&self) -> u32 {
+    pub(crate) fn ribbon_index_count(&self) -> u32 {
         self.ribbon_pass.index_count
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         vec![
             (
                 "Backbone Vertex",

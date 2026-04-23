@@ -245,7 +245,7 @@ fn install_ipc_bridge(
             }
             Ok(bridge::ParsedFile::Density(map)) => {
                 let mut e = eng.borrow_mut();
-                let _id = e.load_density_map(map);
+                let _id = e.density_mut().load(map);
                 push_load_status("loaded", "Density map loaded");
             }
             Err(msg) => {

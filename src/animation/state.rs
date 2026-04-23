@@ -19,13 +19,13 @@ use crate::engine::trajectory::{
 /// Grouped animation fields.
 pub(crate) struct AnimationState {
     /// Per-entity interpolation runner.
-    pub animator: StructureAnimator,
+    pub(crate) animator: StructureAnimator,
     /// Multi-frame trajectory player, if loaded.
-    pub trajectory_player: Option<TrajectoryPlayer>,
+    pub(crate) trajectory_player: Option<TrajectoryPlayer>,
     /// Transitions pending from the last shim-driven mutation, keyed on
     /// raw entity id. Consumed by the engine's sync pipeline when the
     /// new snapshot arrives.
-    pub pending_transitions: HashMap<u32, Transition>,
+    pub(crate) pending_transitions: HashMap<u32, Transition>,
 }
 
 impl AnimationState {

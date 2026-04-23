@@ -6,6 +6,7 @@
 //! [`VisoEngine::execute`](super::VisoEngine::execute).
 
 use glam::{Vec2, Vec3};
+use molex::MoleculeType;
 
 // ── Constraint payload types ────────────────────────────────────────────
 
@@ -90,34 +91,34 @@ pub struct PullInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedBand {
     /// World-space position of first endpoint.
-    pub endpoint_a: Vec3,
+    pub(crate) endpoint_a: Vec3,
     /// World-space position of second endpoint.
-    pub endpoint_b: Vec3,
+    pub(crate) endpoint_b: Vec3,
     /// Whether the band is disabled.
-    pub is_disabled: bool,
+    pub(crate) is_disabled: bool,
     /// Band strength (affects radius and color intensity).
-    pub strength: f32,
+    pub(crate) strength: f32,
     /// Target length for the band (used for type detection).
-    pub target_length: f32,
+    pub(crate) target_length: f32,
     /// Residue index for picking (from anchor_a).
-    pub residue_idx: u32,
+    pub(crate) residue_idx: u32,
     /// Whether anchor_b is a fixed position (renders anchor sphere).
-    pub is_space_pull: bool,
+    pub(crate) is_space_pull: bool,
     /// Explicit band type.
-    pub band_type: Option<BandType>,
+    pub(crate) band_type: Option<BandType>,
     /// Whether this band was created by a script.
-    pub from_script: bool,
+    pub(crate) from_script: bool,
 }
 
 /// Resolved pull with world-space positions, ready for the renderer.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedPull {
     /// World-space position of the atom being pulled.
-    pub atom_pos: Vec3,
+    pub(crate) atom_pos: Vec3,
     /// World-space target position.
-    pub target_pos: Vec3,
+    pub(crate) target_pos: Vec3,
     /// Residue index for picking.
-    pub residue_idx: u32,
+    pub(crate) residue_idx: u32,
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
@@ -129,7 +130,10 @@ pub(crate) struct ResolvedPull {
 /// keyboard, mouse, GUI, or API all look identical:
 ///
 /// ```ignore
-/// engine.execute(VisoCommand::ToggleWaters);
+/// engine.execute(VisoCommand::SetTypeVisibility {
+///     mol_type: molex::MoleculeType::Water,
+///     visible: None,
+/// });
 /// engine.execute(VisoCommand::Zoom { delta: 1.0 });
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -218,15 +222,43 @@ pub enum VisoCommand {
     },
 
     // ── Display toggles ──────────────────────────────────────────
-    /// Toggle ion visibility.
-    ToggleIons,
-
-    /// Toggle water visibility.
-    ToggleWaters,
-
-    /// Toggle solvent visibility.
-    ToggleSolvent,
+    /// Set per-molecule-type visibility.
+    ///
+    /// Currently meaningful for [`MoleculeType::Ion`],
+    /// [`MoleculeType::Water`], and [`MoleculeType::Solvent`] — the
+    /// engine flips the matching `options.display.show_*` flag and
+    /// propagates visibility to every entity of that type. Other
+    /// molecule types are accepted but no-op.
+    SetTypeVisibility {
+        /// Molecule type to retarget.
+        mol_type: MoleculeType,
+        /// `Some(true)` to show, `Some(false)` to hide, `None` to toggle.
+        visible: Option<bool>,
+    },
 
     /// Cycle lipid display mode (coarse ↔ ball-and-stick).
     CycleLipidMode,
+}
+
+/// What changed as a result of [`super::VisoEngine::execute`].
+///
+/// Callers that only care about a single bit of feedback (e.g. "did
+/// the selection change?") can `matches!` on the relevant variant. The
+/// enum is exhaustive — every command produces exactly one outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandOutcome {
+    /// Nothing observable changed (camera-only manipulation, redundant
+    /// selection, clearing an empty selection, etc.).
+    NoEffect,
+    /// The residue selection changed.
+    SelectionChanged,
+    /// Per-entity or per-type visibility changed.
+    VisibilityChanged,
+    /// The focus target changed.
+    FocusChanged,
+    /// A command requiring upstream coordination (e.g.
+    /// [`VisoCommand::RemoveEntity`]) was dispatched directly to
+    /// [`super::VisoEngine::execute`] instead of routing through
+    /// [`crate::VisoApp`]. The engine logs a warning and ignores it.
+    Unhandled,
 }

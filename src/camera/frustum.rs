@@ -17,7 +17,7 @@ pub(crate) struct Plane {
 
 impl Plane {
     /// Create a plane from coefficients and normalize it
-    pub fn from_coefficients(a: f32, b: f32, c: f32, d: f32) -> Self {
+    pub(crate) fn from_coefficients(a: f32, b: f32, c: f32, d: f32) -> Self {
         let len = (a * a + b * b + c * c).sqrt();
         if len > 0.0 {
             Self {
@@ -35,7 +35,7 @@ impl Plane {
     /// Signed distance from point to plane (positive = in front, negative =
     /// behind)
     #[inline]
-    pub fn distance_to_point(&self, point: Vec3) -> f32 {
+    pub(crate) fn distance_to_point(&self, point: Vec3) -> f32 {
         self.normal.dot(point) + self.distance
     }
 }
@@ -51,7 +51,7 @@ impl Frustum {
     /// Extract frustum planes from a view-projection matrix.
     /// Uses the Gribb/Hartmann method for plane extraction.
     /// Planes point inward (positive half-space is inside the frustum).
-    pub fn from_view_projection(vp: Mat4) -> Self {
+    pub(crate) fn from_view_projection(vp: Mat4) -> Self {
         // Get matrix rows (glam stores column-major, so we transpose
         // conceptually)
         let row0 =
@@ -89,7 +89,7 @@ impl Frustum {
     /// Test if a point is inside the frustum
     #[inline]
     #[cfg(test)]
-    pub fn contains_point(&self, point: Vec3) -> bool {
+    pub(crate) fn contains_point(&self, point: Vec3) -> bool {
         for plane in &self.planes {
             if plane.distance_to_point(point) < 0.0 {
                 return false;
@@ -100,7 +100,7 @@ impl Frustum {
 
     /// Test if a sphere intersects or is inside the frustum
     #[inline]
-    pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
+    pub(crate) fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
         for plane in &self.planes {
             if plane.distance_to_point(center) < -radius {
                 return false;

@@ -15,11 +15,11 @@ use super::IsosurfaceVertex;
 const CROP_PADDING: f32 = 5.0;
 
 /// World-space axis-aligned bounding box for map cropping.
-pub struct CropBox {
+pub(crate) struct CropBox {
     /// Minimum corner (Angstroms).
-    pub min: [f32; 3],
+    pub(crate) min: [f32; 3],
     /// Maximum corner (Angstroms).
-    pub max: [f32; 3],
+    pub(crate) max: [f32; 3],
 }
 
 impl CropBox {
@@ -27,7 +27,7 @@ impl CropBox {
     /// padding.
     #[must_use]
     #[allow(dead_code)]
-    pub fn from_sphere(center: [f32; 3], radius: f32) -> Self {
+    pub(crate) fn from_sphere(center: [f32; 3], radius: f32) -> Self {
         let r = radius + CROP_PADDING;
         Self {
             min: [center[0] - r, center[1] - r, center[2] - r],
@@ -44,7 +44,7 @@ impl CropBox {
 /// - `crop`: optional bounding box to restrict meshing (world-space)
 ///
 /// Returns `(vertices, indices)` for an indexed triangle mesh.
-pub fn generate_density_mesh(
+pub(crate) fn generate_density_mesh(
     map: &Density,
     threshold: f32,
     color: [f32; 4],

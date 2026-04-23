@@ -16,6 +16,7 @@ use super::annotations::EntityAnnotations;
 use super::assembly_consumer::AssemblyConsumer;
 use super::density_store::DensityStore;
 use super::scene::Scene;
+use super::surface_regen::SurfaceRegen;
 use super::{ConstraintSpecs, VisoEngine};
 use crate::animation::AnimationState;
 use crate::camera::controller::CameraController;
@@ -183,11 +184,7 @@ impl VisoEngine {
                 cursor_pos: (0.0, 0.0),
                 last_cull_camera_eye: Vec3::ZERO,
                 shader_composer: bootstrap.shader_composer,
-                density_channel:
-                    crate::renderer::gpu_pipeline::DensityChannel {
-                        tx: density_tx,
-                        rx: density_rx,
-                    },
+                density_rx,
             },
             camera_controller: bootstrap.camera_controller,
             constraints: ConstraintSpecs {
@@ -201,6 +198,7 @@ impl VisoEngine {
             density: DensityStore::new(),
             scene: Scene::new(consumer),
             annotations: EntityAnnotations::default(),
+            surface_regen: SurfaceRegen::new(density_tx),
         })
     }
 }

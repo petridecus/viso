@@ -4,10 +4,10 @@
 //! frustum culling, and input handling.
 
 /// Orbital camera controller managing rotation, pan, zoom, and GPU resources.
-pub mod controller;
+pub(crate) mod controller;
 /// Core camera struct and GPU uniform types.
-pub mod core;
+pub(crate) mod core;
 /// Fit-to-molecule-data helpers.
-pub mod fit;
+pub(crate) mod fit;
 /// View frustum extraction and intersection tests.
-pub mod frustum;
+pub(crate) mod frustum;

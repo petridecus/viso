@@ -9,7 +9,7 @@ use crate::error::VisoError;
 
 /// All composable (non-module) shaders in the engine.
 #[derive(Debug, Clone, Copy)]
-pub enum Shader {
+pub(crate) enum Shader {
     BloomThreshold,
     BloomBlur,
     BloomUpsample,
@@ -137,13 +137,13 @@ const MODULE_PATHS: &[(&str, &str)] = &[
 /// All WGSL shader sources are compiled in at build time via `include_str!`.
 /// Consuming code references shaders by their [`Shader`] enum variant,
 /// eliminating fragile string paths across the codebase.
-pub struct ShaderComposer {
+pub(crate) struct ShaderComposer {
     composer: Composer,
 }
 
 impl ShaderComposer {
     /// Create a new composer with shared modules registered.
-    pub fn new() -> Result<Self, VisoError> {
+    pub(crate) fn new() -> Result<Self, VisoError> {
         let mut composer = Composer::default();
 
         for (path, source) in MODULE_PATHS {
@@ -166,7 +166,7 @@ impl ShaderComposer {
 
     /// Compose a shader into a `wgpu::ShaderModule` ready for pipeline
     /// creation.
-    pub fn compose(
+    pub(crate) fn compose(
         &mut self,
         device: &wgpu::Device,
         shader: Shader,
@@ -183,7 +183,7 @@ impl ShaderComposer {
     /// shader module. Useful for testing shader composition without a GPU
     /// device.
     #[cfg(test)]
-    pub fn compose_naga(
+    pub(crate) fn compose_naga(
         &mut self,
         shader: Shader,
     ) -> Result<naga::Module, VisoError> {

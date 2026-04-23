@@ -32,14 +32,14 @@ use crate::renderer::geometry::bond::StructuralBond;
 ///    annotations (visibility, Cartoon ribbon anchors). Runs each sync; needs
 ///    engine state the pure Assembly derivation doesn't see.
 #[derive(Clone, Default)]
-pub struct SceneRenderState {
+pub(crate) struct SceneRenderState {
     /// Disulfide endpoints (SG–SG pairs). Populated from
     /// [`Assembly::disulfides`](molex::Assembly::disulfides) on sync.
-    pub disulfide_endpoints: Vec<(AtomId, AtomId)>,
+    pub(crate) disulfide_endpoints: Vec<(AtomId, AtomId)>,
     /// Backbone H-bond endpoints (donor N / carbonyl C heavy atom
     /// pairs). Populated from [`Assembly::hbonds`](molex::Assembly::hbonds)
     /// on sync.
-    pub hbond_endpoints: Vec<(AtomId, AtomId)>,
+    pub(crate) hbond_endpoints: Vec<(AtomId, AtomId)>,
     /// Render-ready structural bond capsules. Repopulated on every
     /// sync via [`update_structural_bonds`](Self::update_structural_bonds).
     structural_bonds: Vec<StructuralBond>,
@@ -48,7 +48,7 @@ pub struct SceneRenderState {
 impl SceneRenderState {
     /// Empty scene render state.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -59,7 +59,7 @@ impl SceneRenderState {
     ///
     /// [`structural_bonds`]: Self::structural_bonds
     #[must_use]
-    pub fn from_assembly(assembly: &Assembly) -> Self {
+    pub(crate) fn from_assembly(assembly: &Assembly) -> Self {
         Self {
             disulfide_endpoints: assembly
                 .disulfides()
@@ -72,7 +72,7 @@ impl SceneRenderState {
 
     /// Current render-ready bond list. Read by the GPU bond renderer.
     #[must_use]
-    pub fn structural_bonds(&self) -> &[StructuralBond] {
+    pub(crate) fn structural_bonds(&self) -> &[StructuralBond] {
         &self.structural_bonds
     }
 
@@ -83,7 +83,10 @@ impl SceneRenderState {
     /// H-bond endpoints to the ribbon for Cartoon-mode protein
     /// entities so dashed capsules land on the rendered curve rather
     /// than on raw N/C atom positions.
-    pub fn update_structural_bonds(&mut self, input: &BondResolveInput<'_>) {
+    pub(crate) fn update_structural_bonds(
+        &mut self,
+        input: &BondResolveInput<'_>,
+    ) {
         let mut bonds = Vec::with_capacity(
             self.hbond_endpoints.len() + self.disulfide_endpoints.len(),
         );
@@ -110,19 +113,19 @@ impl SceneRenderState {
 pub(crate) struct BondResolveInput<'a> {
     /// Per-entity atom positions. Provides the fallback raw atom
     /// coordinates when ribbon projection isn't applicable.
-    pub positions: &'a EntityPositions,
+    pub(crate) positions: &'a EntityPositions,
     /// Engine per-entity state (for `drawing_mode` + topology lookups).
-    pub entity_views: &'a FxHashMap<EntityId, EntityView>,
+    pub(crate) entity_views: &'a FxHashMap<EntityId, EntityView>,
     /// Engine visibility overlay. Missing → visible.
-    pub entity_visibility: &'a FxHashMap<EntityId, bool>,
+    pub(crate) entity_visibility: &'a FxHashMap<EntityId, bool>,
     /// Precomputed ribbon projections for Cartoon-mode protein entities
     /// that had enough residues to project. Missing → raw atom
     /// positions are used instead.
-    pub ribbons: &'a FxHashMap<EntityId, RibbonBackbone>,
+    pub(crate) ribbons: &'a FxHashMap<EntityId, RibbonBackbone>,
     /// Bond visibility + style + radii.
-    pub options: &'a BondOptions,
+    pub(crate) options: &'a BondOptions,
     /// Palette of reference colors (H-bond / disulfide tints).
-    pub colors: &'a ColorOptions,
+    pub(crate) colors: &'a ColorOptions,
 }
 
 // ---------------------------------------------------------------------------

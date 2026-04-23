@@ -30,14 +30,14 @@ pub(crate) struct StructureAnimator {
 
 impl StructureAnimator {
     /// Animator with default settings.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             runners: FxHashMap::default(),
         }
     }
 
     /// Whether any entity is currently animating.
-    pub fn is_animating(&self) -> bool {
+    pub(crate) fn is_animating(&self) -> bool {
         !self.runners.is_empty()
     }
 
@@ -49,7 +49,7 @@ impl StructureAnimator {
     /// (the standalone app publishes only generation bumps where the
     /// atom set is stable per entity; size changes snap without
     /// animation).
-    pub fn animate_entity(
+    pub(crate) fn animate_entity(
         &mut self,
         entity_id: EntityId,
         start: Vec<Vec3>,
@@ -80,7 +80,7 @@ impl StructureAnimator {
     /// Advance animations for the current frame and write interpolated
     /// positions into `positions`. Returns `true` if any entity's
     /// position buffer was written.
-    pub fn update(
+    pub(crate) fn update(
         &mut self,
         now: Instant,
         positions: &mut EntityPositions,
@@ -117,7 +117,7 @@ impl StructureAnimator {
     /// Whether sidechains should be drawn this frame. Returns `false`
     /// if any currently-running entity is in a phase that hides
     /// sidechains.
-    pub fn should_include_sidechains(&self) -> bool {
+    pub(crate) fn should_include_sidechains(&self) -> bool {
         let now = Instant::now();
         for state in self.runners.values() {
             let t = state.runner.progress(now);

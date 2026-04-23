@@ -12,40 +12,40 @@ use crate::gpu::pipeline_helpers::{
 /// Layout matches the WGSL `LightingUniform` struct (std140).
 /// Padding is handled automatically by encase.
 #[derive(Debug, Copy, Clone, ShaderType)]
-pub struct LightingUniform {
+pub(crate) struct LightingUniform {
     /// Primary light direction (normalized)
-    pub light1_dir: Vec3,
+    pub(crate) light1_dir: Vec3,
     /// Secondary light direction (normalized)
-    pub light2_dir: Vec3,
+    pub(crate) light2_dir: Vec3,
     /// Primary light intensity
-    pub light1_intensity: f32,
+    pub(crate) light1_intensity: f32,
     /// Secondary light intensity
-    pub light2_intensity: f32,
+    pub(crate) light2_intensity: f32,
     /// Ambient light intensity (used as fallback; IBL replaces this when
     /// ibl_strength > 0)
-    pub ambient: f32,
+    pub(crate) ambient: f32,
     /// Specular intensity
-    pub specular_intensity: f32,
+    pub(crate) specular_intensity: f32,
     /// Specular shininess exponent
-    pub shininess: f32,
+    pub(crate) shininess: f32,
     /// Rim edge falloff power (higher = tighter edge glow)
-    pub rim_power: f32,
+    pub(crate) rim_power: f32,
     /// Rim edge brightness
-    pub rim_intensity: f32,
+    pub(crate) rim_intensity: f32,
     /// Rim directionality: 0.0 = pure view-dependent, 1.0 = pure directional
     /// back-light
-    pub rim_directionality: f32,
+    pub(crate) rim_directionality: f32,
     /// Rim light tint color
-    pub rim_color: Vec3,
+    pub(crate) rim_color: Vec3,
     /// IBL diffuse strength (0.0 = use flat ambient, 1.0 = full IBL)
-    pub ibl_strength: f32,
+    pub(crate) ibl_strength: f32,
     /// Rim back-light direction (normalized, points toward the rim light
     /// source)
-    pub rim_dir: Vec3,
+    pub(crate) rim_dir: Vec3,
     /// Surface roughness (0.05 = mirror-like, 1.0 = completely matte)
-    pub roughness: f32,
+    pub(crate) roughness: f32,
     /// Surface metalness (0.0 = dielectric, 1.0 = metal)
-    pub metalness: f32,
+    pub(crate) metalness: f32,
 }
 
 impl Default for LightingUniform {
@@ -75,7 +75,7 @@ impl Default for LightingUniform {
 }
 
 /// GPU lighting uniform, buffer, and bind group.
-pub struct Lighting {
+pub(crate) struct Lighting {
     /// Current lighting uniform data.
     pub(crate) uniform: LightingUniform,
     /// GPU buffer holding the lighting uniform.
@@ -89,7 +89,7 @@ pub struct Lighting {
 impl Lighting {
     /// Create a new lighting instance with default uniform and GPU resources.
     #[allow(clippy::too_many_lines)] // GPU resource setup is inherently verbose
-    pub fn new(context: &RenderContext) -> Self {
+    pub(crate) fn new(context: &RenderContext) -> Self {
         let uniform = LightingUniform::default();
 
         let mut buf = encase::UniformBuffer::new(Vec::new());
@@ -187,7 +187,7 @@ impl Lighting {
     }
 
     /// Apply lighting options from the configuration to the GPU uniform.
-    pub fn apply_options(
+    pub(crate) fn apply_options(
         &mut self,
         opts: &crate::options::LightingOptions,
         queue: &wgpu::Queue,
@@ -208,7 +208,7 @@ impl Lighting {
     }
 
     /// Write the current lighting uniform to the GPU buffer.
-    pub fn update_gpu(&self, queue: &wgpu::Queue) {
+    pub(crate) fn update_gpu(&self, queue: &wgpu::Queue) {
         let mut buf = encase::UniformBuffer::new(Vec::new());
         let _ = buf.write(&self.uniform);
         queue.write_buffer(&self.buffer, 0, &buf.into_inner());
@@ -218,7 +218,7 @@ impl Lighting {
     ///
     /// Convenience wrapper around [`update_headlamp`](Self::update_headlamp)
     /// that extracts the basis from a [`Camera`](crate::camera::core::Camera).
-    pub fn update_headlamp_from_camera(
+    pub(crate) fn update_headlamp_from_camera(
         &mut self,
         camera: &crate::camera::core::Camera,
     ) {
@@ -230,7 +230,7 @@ impl Lighting {
 
     /// Update light directions to follow camera (headlamp mode)
     /// Call this each frame after camera updates
-    pub fn update_headlamp(
+    pub(crate) fn update_headlamp(
         &mut self,
         camera_right: Vec3,
         camera_up: Vec3,

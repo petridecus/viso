@@ -34,22 +34,22 @@ use crate::renderer::geometry::backbone::spline::project_backbone_atoms;
 /// override, the Arc-shared (immutable) [`EntityTopology`], a cached
 /// per-sync per-residue color vector used by Cartoon color uploads,
 /// and a monotonically increasing `mesh_version`.
-pub struct EntityView {
+pub(crate) struct EntityView {
     /// Drawing mode for this entity (Cartoon / Stick / `BallAndStick`).
-    pub drawing_mode: DrawingMode,
+    pub(crate) drawing_mode: DrawingMode,
     /// Optional secondary-structure override. When present, takes
     /// priority over [`EntityTopology::ss_types`] at render time.
-    pub ss_override: Option<Vec<SSType>>,
+    pub(crate) ss_override: Option<Vec<SSType>>,
     /// Rederived render-ready view of this entity. Arc-wrapped so the
     /// background mesh worker can hold a handle without cloning the
     /// underlying buffers. Immutable after derive.
-    pub topology: Arc<EntityTopology>,
+    pub(crate) topology: Arc<EntityTopology>,
     /// Per-residue Cartoon-mode vertex colors, rederived each sync.
     /// Cached here so main-thread color uploads can concatenate across
     /// entities without recomputing.
-    pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    pub(crate) per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Bumped whenever this entity's geometry needs to be regenerated.
-    pub mesh_version: u64,
+    pub(crate) mesh_version: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,9 +67,9 @@ pub struct EntityView {
 /// connects to the ribbon rather than to atoms floating off it.
 pub(crate) struct RibbonBackbone {
     /// Ribbon-projected N position per residue (donor anchoring).
-    pub per_residue_n: Vec<Vec3>,
+    pub(crate) per_residue_n: Vec<Vec3>,
     /// Ribbon-projected C position per residue (acceptor anchoring).
-    pub per_residue_c: Vec<Vec3>,
+    pub(crate) per_residue_c: Vec<Vec3>,
 }
 
 impl RibbonBackbone {
@@ -123,7 +123,7 @@ impl RibbonBackbone {
 /// produced by [`Assembly::ss_types`](molex::Assembly::ss_types). For
 /// non-protein entities it should be an empty slice.
 #[must_use]
-pub fn derive_topology(
+pub(crate) fn derive_topology(
     entity: &MoleculeEntity,
     ss: &[SSType],
 ) -> EntityTopology {

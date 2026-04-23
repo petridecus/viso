@@ -18,13 +18,13 @@ use crate::options::GeometryOptions;
 
 /// Per-chain index range and bounding sphere for frustum culling.
 #[derive(Clone, Debug)]
-pub struct ChainRange {
-    pub tube_index_start: u32,
-    pub tube_index_end: u32,
-    pub ribbon_index_start: u32,
-    pub ribbon_index_end: u32,
-    pub bounding_center: Vec3,
-    pub bounding_radius: f32,
+pub(crate) struct ChainRange {
+    pub(crate) tube_index_start: u32,
+    pub(crate) tube_index_end: u32,
+    pub(crate) ribbon_index_start: u32,
+    pub(crate) ribbon_index_end: u32,
+    pub(crate) bounding_center: Vec3,
+    pub(crate) bounding_radius: f32,
 }
 
 /// Mesh generation parameters that always travel together.

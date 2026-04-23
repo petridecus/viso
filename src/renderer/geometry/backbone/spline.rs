@@ -8,10 +8,10 @@ use molex::SSType;
 /// A point along the spline with position, tangent, and frame vectors.
 #[derive(Clone, Copy)]
 pub(crate) struct SplinePoint {
-    pub pos: Vec3,
-    pub tangent: Vec3,
-    pub normal: Vec3,
-    pub binormal: Vec3,
+    pub(crate) pos: Vec3,
+    pub(crate) tangent: Vec3,
+    pub(crate) normal: Vec3,
+    pub(crate) binormal: Vec3,
 }
 
 /// Catmull-Rom spline interpolation (passes through all control points).

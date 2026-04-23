@@ -4,7 +4,7 @@ use glam::Vec3;
 use rustc_hash::FxHasher;
 
 /// Hash a single [`Vec3`] by converting each component to bits.
-pub fn hash_vec3(v: &Vec3, hasher: &mut impl Hasher) {
+pub(crate) fn hash_vec3(v: &Vec3, hasher: &mut impl Hasher) {
     v.x.to_bits().hash(hasher);
     v.y.to_bits().hash(hasher);
     v.z.to_bits().hash(hasher);
@@ -13,7 +13,10 @@ pub fn hash_vec3(v: &Vec3, hasher: &mut impl Hasher) {
 /// Hash a slice of [`Vec3`] by sampling first, middle, and last points.
 ///
 /// Provides good change detection without hashing every element.
-pub fn hash_vec3_slice_summary(slice: &[Vec3], hasher: &mut impl Hasher) {
+pub(crate) fn hash_vec3_slice_summary(
+    slice: &[Vec3],
+    hasher: &mut impl Hasher,
+) {
     slice.len().hash(hasher);
     if let Some(first) = slice.first() {
         hash_vec3(first, hasher);
@@ -30,7 +33,7 @@ pub fn hash_vec3_slice_summary(slice: &[Vec3], hasher: &mut impl Hasher) {
 ///
 /// Convenience wrapper over [`hash_vec3_slice_summary`] for the common case
 /// where no additional data needs to be mixed into the hasher.
-pub fn hash_vec3_slices(slices: &[Vec<Vec3>]) -> u64 {
+pub(crate) fn hash_vec3_slices(slices: &[Vec<Vec3>]) -> u64 {
     let mut hasher = FxHasher::default();
     slices.len().hash(&mut hasher);
     for slice in slices {

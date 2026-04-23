@@ -5,16 +5,16 @@
 //! `draw(0..N, 0..instance_count)` call.  `ImpostorPass<T>` extracts that
 //! boilerplate so each renderer just composes from shared primitives.
 
-pub mod capsule;
-pub mod cone;
-pub mod polygon;
-pub mod sphere;
+pub(crate) mod capsule;
+pub(crate) mod cone;
+pub(crate) mod polygon;
+pub(crate) mod sphere;
 
 use bytemuck::{Pod, Zeroable};
-pub use capsule::CapsuleInstance;
-pub use cone::ConeInstance;
-pub use polygon::ExtrudedPolygonInstance;
-pub use sphere::SphereInstance;
+pub(crate) use capsule::CapsuleInstance;
+pub(crate) use cone::ConeInstance;
+pub(crate) use polygon::ExtrudedPolygonInstance;
+pub(crate) use sphere::SphereInstance;
 
 use crate::error::VisoError;
 use crate::gpu::dynamic_buffer::TypedBuffer;
@@ -22,9 +22,9 @@ use crate::gpu::{RenderContext, Shader, ShaderComposer};
 use crate::renderer::{pipeline_util, PipelineLayouts};
 
 /// Shader identity for an impostor pass.
-pub struct ShaderDef {
-    pub label: &'static str,
-    pub shader: Shader,
+pub(crate) struct ShaderDef {
+    pub(crate) label: &'static str,
+    pub(crate) shader: Shader,
 }
 
 /// A single impostor draw pass: pipeline + typed storage buffer + bind group.
@@ -34,18 +34,18 @@ pub struct ShaderDef {
 /// - group(1): lighting uniform + textures
 /// - group(2): selection storage
 /// - group(3): storage buffer (instances)
-pub struct ImpostorPass<T: Pod + Zeroable> {
+pub(crate) struct ImpostorPass<T: Pod + Zeroable> {
     pipeline: wgpu::RenderPipeline,
     instance_buffer: TypedBuffer<T>,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
-    pub instance_count: u32,
+    pub(crate) instance_count: u32,
     vertices_per_instance: u32,
 }
 
 impl<T: Pod + Zeroable> ImpostorPass<T> {
     /// Create a new impostor pass with the given shader.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         shader_def: &ShaderDef,
         layouts: &PipelineLayouts,
@@ -176,7 +176,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
     ///
     /// Returns `true` if the underlying buffer was reallocated (callers that
     /// hold external bind groups — e.g. picking — need to recreate them).
-    pub fn write_instances(
+    pub(crate) fn write_instances(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -204,7 +204,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
     /// the buffer was reallocated.
     ///
     /// Returns `true` if the underlying buffer was reallocated.
-    pub fn write_bytes(
+    pub(crate) fn write_bytes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -233,7 +233,7 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
     /// Issue the draw call for this pass.
     ///
     /// Sets the pipeline and bind groups 0–3, then draws.
-    pub fn draw<'a>(
+    pub(crate) fn draw<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         bind_groups: &super::draw_context::DrawBindGroups<'a>,
@@ -250,12 +250,12 @@ impl<T: Pod + Zeroable> ImpostorPass<T> {
     }
 
     /// The underlying `wgpu::Buffer` (for picking bind groups, etc.).
-    pub fn buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
         self.instance_buffer.buffer()
     }
 
     /// `(label, used_bytes, allocated_bytes)` for debug overlay.
-    pub fn buffer_info(
+    pub(crate) fn buffer_info(
         &self,
         label: &'static str,
     ) -> (&'static str, usize, usize) {

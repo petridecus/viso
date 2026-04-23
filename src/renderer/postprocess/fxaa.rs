@@ -34,7 +34,7 @@ pub(crate) struct FxaaPass {
 
 impl FxaaPass {
     /// Create a new FXAA pass with input texture, sampler, and pipeline.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, VisoError> {
@@ -165,12 +165,12 @@ impl FxaaPass {
     }
 
     /// Set the output view (swapchain surface) for this frame.
-    pub fn set_output_view(&mut self, view: wgpu::TextureView) {
+    pub(crate) fn set_output_view(&mut self, view: wgpu::TextureView) {
         self.output_view = Some(view);
     }
 
     /// Get the input view for composite to render into.
-    pub fn get_input_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn get_input_view(&self) -> &wgpu::TextureView {
         &self.input_view
     }
 }

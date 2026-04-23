@@ -5,7 +5,7 @@
 
 /// Easing function variants for animation curves.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EasingFunction {
+pub(crate) enum EasingFunction {
     /// Linear interpolation (no easing).
     #[allow(dead_code)]
     Linear,
@@ -29,7 +29,7 @@ pub enum EasingFunction {
 impl EasingFunction {
     /// Default easing function: CubicHermite with c1=0.33, c2=1.0 for natural
     /// ease-out feel.
-    pub const DEFAULT: EasingFunction =
+    pub(crate) const DEFAULT: EasingFunction =
         EasingFunction::CubicHermite { c1: 0.33, c2: 1.0 };
 
     /// Evaluate the easing function at time t.
@@ -40,7 +40,7 @@ impl EasingFunction {
     /// Target performance: <100ns
     #[inline]
     #[must_use]
-    pub fn evaluate(&self, t: f32) -> f32 {
+    pub(crate) fn evaluate(&self, t: f32) -> f32 {
         // Clamp input to [0, 1]
         let t = t.clamp(0.0, 1.0);
 

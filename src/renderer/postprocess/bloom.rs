@@ -200,7 +200,7 @@ fn create_threshold_buffer(
 impl BloomPass {
     /// Create a new bloom pass with threshold, blur chain, and upsample
     /// pipelines.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         color_view: &wgpu::TextureView,
         shader_composer: &mut ShaderComposer,
@@ -630,14 +630,14 @@ impl BloomPass {
     }
 
     /// Get the bloom output view for the composite pass to sample
-    pub fn get_output_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn get_output_view(&self) -> &wgpu::TextureView {
         // Single-level bloom: output is mip[0] (half-res blurred bright pixels)
         &self.mip_views[0]
     }
 
     /// Rebind the input color texture (called after composite creates its color
     /// texture)
-    pub fn rebind_input(
+    pub(crate) fn rebind_input(
         &mut self,
         context: &RenderContext,
         color_view: &wgpu::TextureView,
@@ -653,7 +653,7 @@ impl BloomPass {
     }
 
     /// Update threshold value on GPU
-    pub fn update_params(&self, queue: &wgpu::Queue) {
+    pub(crate) fn update_params(&self, queue: &wgpu::Queue) {
         queue.write_buffer(
             &self.threshold_buffer,
             0,

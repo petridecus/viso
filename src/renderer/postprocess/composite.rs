@@ -127,7 +127,7 @@ pub(crate) struct CompositePass {
 
 impl CompositePass {
     /// Create a new composite pass with all textures, samplers, and pipeline.
-    pub fn new(
+    pub(crate) fn new(
         context: &RenderContext,
         inputs: &CompositeInputs,
         shader_composer: &mut ShaderComposer,
@@ -325,12 +325,12 @@ impl CompositePass {
     }
 
     /// Set the output view (FXAA input texture) for this frame.
-    pub fn set_output_view(&mut self, view: wgpu::TextureView) {
+    pub(crate) fn set_output_view(&mut self, view: wgpu::TextureView) {
         self.output_view = Some(view);
     }
 
     /// Update the external texture views used in bind group recreation.
-    pub fn set_external_views(
+    pub(crate) fn set_external_views(
         &mut self,
         ssao: wgpu::TextureView,
         depth: wgpu::TextureView,
@@ -344,12 +344,12 @@ impl CompositePass {
     }
 
     /// Get the color view for geometry rendering
-    pub fn get_color_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn get_color_view(&self) -> &wgpu::TextureView {
         &self.color_view
     }
 
     /// Update fog parameters (called each frame from engine)
-    pub fn update_fog(
+    pub(crate) fn update_fog(
         &mut self,
         queue: &wgpu::Queue,
         fog_start: f32,
@@ -365,7 +365,7 @@ impl CompositePass {
     }
 
     /// Flush the current params to the GPU buffer.
-    pub fn flush_params(&self, queue: &wgpu::Queue) {
+    pub(crate) fn flush_params(&self, queue: &wgpu::Queue) {
         queue.write_buffer(
             &self.params_buffer,
             0,

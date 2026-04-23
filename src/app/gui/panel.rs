@@ -268,15 +268,16 @@ impl PanelController {
             UiAction::SetEntitySurface { entity_id, kind } => {
                 if let Some(eid) = engine.entity_id(entity_id) {
                     let default_color = [0.7, 0.7, 0.7, 0.35];
+                    let mut view = engine.annotations_mut();
                     match kind.as_str() {
                         "gaussian" => {
-                            engine.add_gaussian_surface(eid, default_color);
+                            view.add_gaussian_surface(eid, default_color);
                         }
                         "ses" => {
-                            engine.add_ses_surface(eid, default_color);
+                            view.add_ses_surface(eid, default_color);
                         }
                         _ => {
-                            engine.remove_entity_surface(eid);
+                            view.remove_surface(eid);
                         }
                     }
                 }
@@ -298,7 +299,9 @@ impl PanelController {
                         _ => None,
                     };
                     if let Some(ch) = ch {
-                        engine.set_surface_color_channel(eid, ch, v as f32);
+                        engine
+                            .annotations_mut()
+                            .set_surface_color_channel(eid, ch, v as f32);
                     }
                 }
                 self.push_scene_entities(engine);
@@ -308,12 +311,12 @@ impl PanelController {
                 self.push_density_maps(engine);
             }
             UiAction::RemoveDensityMap { id } => {
-                engine.remove_density_map(id);
+                engine.density_mut().remove(id);
                 self.push_density_maps(engine);
             }
             UiAction::ToggleDensityVisibility { id } => {
                 let vis = engine.density.get(id).is_some_and(|e| !e.visible);
-                engine.set_density_visible(id, vis);
+                engine.density_mut().set_visible(id, vis);
                 self.push_density_maps(engine);
             }
             UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
@@ -332,12 +335,12 @@ impl PanelController {
         match field {
             "threshold" => {
                 if let Some(v) = value.as_f64() {
-                    engine.set_density_threshold(id, v as f32);
+                    engine.density_mut().set_threshold(id, v as f32);
                 }
             }
             "opacity" => {
                 if let Some(v) = value.as_f64() {
-                    engine.set_density_opacity(id, v as f32);
+                    engine.density_mut().set_opacity(id, v as f32);
                 }
             }
             "color_r" | "color_g" | "color_b" => {
@@ -352,7 +355,7 @@ impl PanelController {
                         "color_b" => color[2] = v as f32,
                         _ => {}
                     }
-                    engine.set_density_color(id, color);
+                    engine.density_mut().set_color(id, color);
                 }
             }
             _ => log::warn!("Unknown density field: {field}"),
@@ -369,7 +372,8 @@ impl PanelController {
         let Some(eid) = engine.entity_id(entity_id) else {
             return;
         };
-        let mut ovr = engine.entity_appearance(eid).cloned().unwrap_or_default();
+        let mut ovr =
+            engine.entity_appearance(eid).cloned().unwrap_or_default();
         if let Err(unknown) = ovr.apply_json_field(field, value) {
             log::warn!("Unknown entity appearance field: {unknown}");
             return;
@@ -564,7 +568,7 @@ fn parse_and_load(
             std::path::Path::new(path),
         )
         .map_err(|e| format!("Density parse error: {e}"))?;
-        let _ = engine.load_density_map(map);
+        let _ = engine.density_mut().load(map);
         Ok(())
     } else {
         use molex::adapters::pdb::structure_file_to_entities;

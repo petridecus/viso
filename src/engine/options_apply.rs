@@ -132,7 +132,13 @@ impl VisoEngine {
             self.sync_scene_to_renderers(HashMap::new());
         }
         if surface_changed {
-            self.regenerate_entity_surfaces();
+            super::surface_regen::regenerate_surfaces(
+                &self.scene,
+                &self.annotations,
+                &self.density,
+                &self.options,
+                &self.surface_regen,
+            );
         }
     }
 

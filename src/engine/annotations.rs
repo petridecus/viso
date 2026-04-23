@@ -35,9 +35,11 @@ use molex::entity::molecule::id::EntityId;
 use molex::{MoleculeType, SSType};
 use rustc_hash::FxHashMap;
 
-use super::entity_view::EntityView;
+use super::density_store::DensityStore;
 use super::focus::Focus;
-use super::surface::EntitySurface;
+use super::scene::Scene;
+use super::surface::{EntitySurface, SurfaceKind};
+use super::surface_regen::{regenerate_surfaces, SurfaceRegen};
 use super::VisoEngine;
 use crate::animation::transition::Transition;
 use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
@@ -47,53 +49,57 @@ use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
 #[derive(Default)]
 pub(crate) struct EntityAnnotations {
     /// Focus state (session-wide or a specific entity).
-    pub focus: Focus,
+    pub(crate) focus: Focus,
     /// Per-entity visibility (`true` = drawn). Missing = visible.
-    pub visibility: FxHashMap<EntityId, bool>,
+    pub(crate) visibility: FxHashMap<EntityId, bool>,
     /// Per-entity animation behavior overrides.
-    pub behaviors: FxHashMap<EntityId, Transition>,
+    pub(crate) behaviors: FxHashMap<EntityId, Transition>,
     /// Per-entity appearance overrides (None-fields inherit global).
-    pub appearance: FxHashMap<EntityId, EntityAppearance>,
+    pub(crate) appearance: FxHashMap<EntityId, EntityAppearance>,
     /// Per-entity scores (for color-by-score visualization).
-    pub scores: FxHashMap<EntityId, Vec<f64>>,
+    pub(crate) scores: FxHashMap<EntityId, Vec<f64>>,
     /// Per-entity SS overrides (from puzzle annotations).
-    pub ss_overrides: FxHashMap<EntityId, Vec<SSType>>,
+    pub(crate) ss_overrides: FxHashMap<EntityId, Vec<SSType>>,
     /// Per-entity molecular surfaces.
-    pub surfaces: FxHashMap<EntityId, EntitySurface>,
+    pub(crate) surfaces: FxHashMap<EntityId, EntitySurface>,
 }
 
 impl EntityAnnotations {
     /// Whether `id` is currently visible. Entities with no explicit
     /// entry default to visible.
     #[must_use]
-    pub fn is_visible(&self, id: EntityId) -> bool {
+    pub(crate) fn is_visible(&self, id: EntityId) -> bool {
         self.visibility.get(&id).copied().unwrap_or(true)
     }
 
     /// Per-entity animation behavior override, if set.
     #[must_use]
-    pub fn behavior(&self, id: EntityId) -> Option<&Transition> {
+    pub(crate) fn behavior(&self, id: EntityId) -> Option<&Transition> {
         self.behaviors.get(&id)
     }
 
     /// Record a per-entity animation behavior override.
-    pub fn set_behavior(&mut self, id: EntityId, transition: Transition) {
+    pub(crate) fn set_behavior(
+        &mut self,
+        id: EntityId,
+        transition: Transition,
+    ) {
         let _ = self.behaviors.insert(id, transition);
     }
 
     /// Drop a per-entity animation behavior override.
-    pub fn clear_behavior(&mut self, id: EntityId) {
+    pub(crate) fn clear_behavior(&mut self, id: EntityId) {
         let _ = self.behaviors.remove(&id);
     }
 
     /// Per-entity appearance override, if set.
     #[must_use]
-    pub fn appearance(&self, id: EntityId) -> Option<&EntityAppearance> {
+    pub(crate) fn appearance(&self, id: EntityId) -> Option<&EntityAppearance> {
         self.appearance.get(&id)
     }
 
     /// Drop entries for entities no longer present in the assembly.
-    pub fn retain_entities(&mut self, keep: impl Fn(EntityId) -> bool) {
+    pub(crate) fn retain_entities(&mut self, keep: impl Fn(EntityId) -> bool) {
         self.visibility.retain(|&id, _| keep(id));
         self.behaviors.retain(|&id, _| keep(id));
         self.appearance.retain(|&id, _| keep(id));
@@ -109,7 +115,7 @@ impl EntityAnnotations {
     /// for focus (typically: visible, focusable molecule type). The
     /// annotation owns focus state but not the filter, so callers
     /// build the list themselves.
-    pub fn cycle_focus(&mut self, focusable: &[EntityId]) -> Focus {
+    pub(crate) fn cycle_focus(&mut self, focusable: &[EntityId]) -> Focus {
         self.focus = match self.focus {
             Focus::Session => focusable
                 .first()
@@ -130,7 +136,7 @@ impl EntityAnnotations {
     /// Resolve the drawing mode for an entity: per-entity override wins,
     /// else global (with Cartoon falling back to type-default).
     #[must_use]
-    pub fn resolved_drawing_mode(
+    pub(crate) fn resolved_drawing_mode(
         &self,
         options: &VisoOptions,
         eid: EntityId,
@@ -149,7 +155,7 @@ impl EntityAnnotations {
 
     /// Clear every annotation back to the default state (focus back
     /// to session-wide, every map emptied).
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.focus = Focus::default();
         self.visibility.clear();
         self.behaviors.clear();
@@ -164,34 +170,49 @@ impl EntityAnnotations {
 /// fields every mutation has to stamp.
 ///
 /// Annotation writes almost always bump an entity's `mesh_version`, so
-/// this struct bundles `annotations` together with `entity_state` and
-/// the `next_mesh_version` dispenser — three disjoint `&mut`s — so the
-/// write path is expressible without `&mut self` methods fighting
-/// over `VisoEngine`. `VisoEngine::annotations_mut` is the constructor.
+/// this struct bundles `annotations` together with `&mut Scene` (whose
+/// `entity_state` and `next_mesh_version` get stamped) — two disjoint
+/// `&mut`s — so the write path is expressible without `&mut self`
+/// methods fighting over `VisoEngine`. `VisoEngine::annotations_mut`
+/// is the constructor.
+///
+/// Surface mutations also live here (rather than in a parallel handle
+/// that would conflict on `&mut EntityAnnotations`); they need the
+/// extra read borrows of [`DensityStore`], [`VisoOptions`], and
+/// [`SurfaceRegen`] (plus a reborrow of `&Scene` from the held
+/// `&mut Scene`) to call [`regenerate_surfaces`].
 pub(crate) struct AnnotationsScene<'a> {
     annotations: &'a mut EntityAnnotations,
-    entity_state: &'a mut FxHashMap<EntityId, EntityView>,
-    next_mesh_version: &'a mut u64,
+    scene: &'a mut Scene,
+    density: &'a DensityStore,
+    options: &'a VisoOptions,
+    regen: &'a SurfaceRegen,
 }
 
 impl<'a> AnnotationsScene<'a> {
-    /// Construct the view from the three disjoint fields it owns.
+    /// Construct the view from the two disjoint `&mut` fields plus the
+    /// three immutable borrows surface regeneration needs.
     pub(crate) fn new(
         annotations: &'a mut EntityAnnotations,
-        entity_state: &'a mut FxHashMap<EntityId, EntityView>,
-        next_mesh_version: &'a mut u64,
+        scene: &'a mut Scene,
+        density: &'a DensityStore,
+        options: &'a VisoOptions,
+        regen: &'a SurfaceRegen,
     ) -> Self {
         Self {
             annotations,
-            entity_state,
-            next_mesh_version,
+            scene,
+            density,
+            options,
+            regen,
         }
     }
 
     /// Pull a fresh `mesh_version` from the dispenser.
     fn bump(&mut self) -> u64 {
-        let v = *self.next_mesh_version;
-        *self.next_mesh_version = self.next_mesh_version.wrapping_add(1);
+        let v = self.scene.next_mesh_version;
+        self.scene.next_mesh_version =
+            self.scene.next_mesh_version.wrapping_add(1);
         v
     }
 
@@ -199,7 +220,7 @@ impl<'a> AnnotationsScene<'a> {
     /// `EntityView` if one exists.
     fn bump_for(&mut self, eid: EntityId) {
         let v = self.bump();
-        if let Some(state) = self.entity_state.get_mut(&eid) {
+        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
             state.mesh_version = v;
         }
     }
@@ -237,8 +258,8 @@ impl<'a> AnnotationsScene<'a> {
     /// `mesh_version` and the resolved `drawing_mode`.
     ///
     /// The resolved drawing mode is passed in because resolution reads
-    /// `VisoOptions`, which lives outside the three fields this view
-    /// owns; the caller resolves it before taking the view.
+    /// `VisoOptions`, which lives outside the fields this view owns;
+    /// the caller resolves it before taking the view.
     pub(crate) fn set_appearance(
         &mut self,
         eid: EntityId,
@@ -247,7 +268,7 @@ impl<'a> AnnotationsScene<'a> {
     ) {
         let _ = self.annotations.appearance.insert(eid, overrides);
         let v = self.bump();
-        if let Some(state) = self.entity_state.get_mut(&eid) {
+        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
             state.mesh_version = v;
             state.drawing_mode = drawing_mode;
         }
@@ -263,9 +284,86 @@ impl<'a> AnnotationsScene<'a> {
     ) {
         let _ = self.annotations.appearance.remove(&eid);
         let v = self.bump();
-        if let Some(state) = self.entity_state.get_mut(&eid) {
+        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
             state.mesh_version = v;
             state.drawing_mode = drawing_mode;
+        }
+    }
+
+    /// Trigger a regeneration of all isosurface meshes (density,
+    /// entity surfaces, cavities) on the background thread.
+    fn regenerate_surfaces(&self) {
+        regenerate_surfaces(
+            &*self.scene,
+            &*self.annotations,
+            self.density,
+            self.options,
+            self.regen,
+        );
+    }
+
+    /// Add a Gaussian surface for an entity.
+    pub(crate) fn add_gaussian_surface(
+        &mut self,
+        entity_id: EntityId,
+        color: [f32; 4],
+    ) {
+        self.annotations.set_entity_surface(
+            entity_id,
+            EntitySurface {
+                kind: SurfaceKind::Gaussian,
+                color,
+                ..Default::default()
+            },
+        );
+        self.regenerate_surfaces();
+    }
+
+    /// Add a solvent-excluded (Connolly) surface for an entity.
+    pub(crate) fn add_ses_surface(
+        &mut self,
+        entity_id: EntityId,
+        color: [f32; 4],
+    ) {
+        self.annotations.set_entity_surface(
+            entity_id,
+            EntitySurface {
+                kind: SurfaceKind::Ses,
+                color,
+                ..Default::default()
+            },
+        );
+        self.regenerate_surfaces();
+    }
+
+    /// Update a single color channel or opacity on an entity's surface.
+    pub(crate) fn set_surface_color_channel(
+        &mut self,
+        entity_id: EntityId,
+        channel: usize,
+        value: f32,
+    ) {
+        if self
+            .annotations
+            .set_surface_color_channel(entity_id, channel, value)
+        {
+            self.regenerate_surfaces();
+        }
+    }
+
+    /// Remove the molecular surface for an entity.
+    ///
+    /// When a global surface is active, this stores an invisible sentinel
+    /// so the entity explicitly opts out instead of falling back to the
+    /// global default.
+    pub(crate) fn remove_surface(&mut self, entity_id: EntityId) {
+        let global_kind = self.options.display.surface_kind;
+        if self
+            .annotations
+            .remove_entity_surface(entity_id, global_kind)
+        {
+            log::info!("removed surface for entity {}", entity_id.raw());
+            self.regenerate_surfaces();
         }
     }
 }
@@ -285,8 +383,10 @@ impl VisoEngine {
     pub(crate) fn annotations_mut(&mut self) -> AnnotationsScene<'_> {
         AnnotationsScene::new(
             &mut self.annotations,
-            &mut self.scene.entity_state,
-            &mut self.scene.next_mesh_version,
+            &mut self.scene,
+            &self.density,
+            &self.options,
+            &self.surface_regen,
         )
     }
 
@@ -374,8 +474,11 @@ impl VisoEngine {
             .map(|s| s.topology.molecule_type);
         if let Some(mol_type) = mol_type {
             let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
-            self.annotations_mut()
-                .set_appearance(entity_id, overrides, drawing_mode);
+            self.annotations_mut().set_appearance(
+                entity_id,
+                overrides,
+                drawing_mode,
+            );
         } else {
             let _ = self.annotations.appearance.insert(entity_id, overrides);
         }

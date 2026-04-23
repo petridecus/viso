@@ -6,7 +6,7 @@
 mod mesh_concat;
 mod mesh_gen;
 pub(crate) mod prepared;
-pub mod processor;
+pub(crate) mod processor;
 
 pub(crate) use prepared::SceneRequest;
 pub(crate) use processor::SceneProcessor;

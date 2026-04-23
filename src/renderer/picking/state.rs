@@ -5,14 +5,14 @@ use crate::renderer::geometry::sidechain::SidechainRenderer;
 /// Owns the GPU bind groups used for picking ray-tests against capsule geometry
 /// (sidechains and ball-and-stick atoms).
 pub(crate) struct PickingState {
-    pub capsule: Option<wgpu::BindGroup>,
-    pub bns_bond: Option<wgpu::BindGroup>,
-    pub bns_sphere: Option<wgpu::BindGroup>,
+    pub(crate) capsule: Option<wgpu::BindGroup>,
+    pub(crate) bns_bond: Option<wgpu::BindGroup>,
+    pub(crate) bns_sphere: Option<wgpu::BindGroup>,
 }
 
 impl PickingState {
     /// Create a new picking state with no bind groups allocated.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             capsule: None,
             bns_bond: None,
@@ -21,7 +21,7 @@ impl PickingState {
     }
 
     /// Rebuild the capsule (sidechain) picking bind group from current buffer.
-    pub fn rebuild_capsule(
+    pub(crate) fn rebuild_capsule(
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,
@@ -35,7 +35,7 @@ impl PickingState {
 
     /// Rebuild the ball-and-stick bond picking bind group from the visual bond
     /// buffer.
-    pub fn rebuild_bns_bond(
+    pub(crate) fn rebuild_bns_bond(
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,
@@ -54,7 +54,7 @@ impl PickingState {
 
     /// Rebuild the ball-and-stick sphere picking bind group from the visual
     /// sphere buffer.
-    pub fn rebuild_bns_sphere(
+    pub(crate) fn rebuild_bns_sphere(
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,
@@ -72,7 +72,7 @@ impl PickingState {
     }
 
     /// Rebuild both picking bind groups.
-    pub fn rebuild_all(
+    pub(crate) fn rebuild_all(
         &mut self,
         picking: &Picking,
         device: &wgpu::Device,

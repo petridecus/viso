@@ -1,7 +1,7 @@
 use crate::gpu::RenderContext;
 
 /// Uniform interface for fullscreen post-processing passes.
-pub trait ScreenPass {
+pub(crate) trait ScreenPass {
     /// Encode GPU commands for this pass.
     fn render(&self, encoder: &mut wgpu::CommandEncoder);
     /// Recreate resolution-dependent resources.
@@ -27,7 +27,7 @@ pub(crate) struct ScreenPassDesc<'a> {
 /// Run a fullscreen screen-space pass: begin render pass, set pipeline, draw
 /// 3 vertices. Covers the common dispatch pattern shared by every post-process
 /// pass (SSAO, bloom, composite, FXAA).
-pub fn run_screen_pass(
+pub(crate) fn run_screen_pass(
     encoder: &mut wgpu::CommandEncoder,
     desc: &ScreenPassDesc,
 ) {

@@ -22,7 +22,7 @@ const DEFAULT_RESIDUE_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 /// Modeled after `SelectionBuffer` — owns a storage buffer, bind group layout,
 /// and bind group. All renderers reference the same layout at pipeline creation
 /// time and bind the same bind group at draw time.
-pub struct ResidueColorBuffer {
+pub(crate) struct ResidueColorBuffer {
     buffer: wgpu::Buffer,
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) bind_group: wgpu::BindGroup,
@@ -41,7 +41,7 @@ pub struct ResidueColorBuffer {
 
 impl ResidueColorBuffer {
     /// Initializes all residues to default gray `[0.5, 0.5, 0.5]`.
-    pub fn new(device: &wgpu::Device, max_residues: usize) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, max_residues: usize) -> Self {
         let capacity = max_residues.max(1);
         let data: Vec<[f32; 4]> = vec![DEFAULT_RESIDUE_COLOR; capacity];
 
@@ -70,7 +70,7 @@ impl ResidueColorBuffer {
     /// Snap to colors immediately (no transition).
     ///
     /// Used on structure load or when residue count changes.
-    pub fn set_colors_immediate(
+    pub(crate) fn set_colors_immediate(
         &mut self,
         queue: &wgpu::Queue,
         colors: &[[f32; 3]],
@@ -96,7 +96,7 @@ impl ResidueColorBuffer {
     /// Captures current displayed colors as start, sets target, starts timer.
     /// If called during an active transition, the current mid-lerp colors
     /// become the new start (smooth preemption).
-    pub fn set_target_colors(&mut self, colors: &[[f32; 3]]) {
+    pub(crate) fn set_target_colors(&mut self, colors: &[[f32; 3]]) {
         self.start_colors = self.current_colors.clone();
 
         let data: Vec<[f32; 4]> =
@@ -112,7 +112,7 @@ impl ResidueColorBuffer {
     ///
     /// If transitioning: lerps start→target with easing, writes GPU buffer.
     /// Returns `true` if still transitioning (caller should request redraw).
-    pub fn update(&mut self, queue: &wgpu::Queue) -> bool {
+    pub(crate) fn update(&mut self, queue: &wgpu::Queue) -> bool {
         let Some(start) = self.transition_start else {
             return false;
         };
@@ -146,7 +146,11 @@ impl ResidueColorBuffer {
     /// Ensure the buffer has capacity for at least `required` residues.
     ///
     /// Recreates the buffer and bind_group if current capacity is insufficient.
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: usize) {
+    pub(crate) fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        required: usize,
+    ) {
         if required <= self.capacity {
             return;
         }
@@ -165,7 +169,7 @@ impl ResidueColorBuffer {
     }
 
     /// GPU buffer sizes: `(label, used_bytes, allocated_bytes)`.
-    pub fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
+    pub(crate) fn buffer_info(&self) -> Vec<(&'static str, usize, usize)> {
         let bytes = self.capacity * 16; // [f32; 4] = 16 bytes per residue
         vec![("Residue Color", bytes, bytes)]
     }
