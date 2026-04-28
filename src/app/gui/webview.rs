@@ -262,10 +262,10 @@ pub fn push_panel_pinned(webview: &WebView, pinned: bool) {
 
 /// Push a raw JSON string to viso-ui under the given key.
 ///
-/// Wrapper that escapes for JS embedding and routes through
-/// [`safe_push`]. Used by the platform-agnostic dispatcher via the
-/// [`crate::bridge::dispatch::UiHost`] trait.
-pub fn push_raw(webview: &WebView, key: &str, json: &str) {
+/// Wrapper that escapes for JS embedding and routes through the
+/// internal `safe_push`. Used by the platform-agnostic dispatcher via
+/// the in-crate `UiHost` trait.
+pub(crate) fn push_raw(webview: &WebView, key: &str, json: &str) {
     safe_push(webview, key, &bridge::escape_for_js(json));
 }
 
