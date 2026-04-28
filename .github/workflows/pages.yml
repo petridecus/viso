@@ -41,7 +41,9 @@ jobs:
           components: rust-src
 
       - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli
+        # Version must match the wasm-bindgen library version pinned in
+        # Cargo.lock — bindgen rejects mismatched schema versions.
+        run: cargo install wasm-bindgen-cli --version 0.2.120 --locked
 
       - name: Install trunk
         run: cargo install trunk
