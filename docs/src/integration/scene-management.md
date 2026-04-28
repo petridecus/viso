@@ -1,190 +1,171 @@
 # Scene Management
 
-The scene system organizes molecular data into groups, tracks visibility and focus, and provides the data structures that flow into the rendering pipeline.
+Viso's structural state is owned by `molex::Assembly`. The host
+application (or `VisoApp` in standalone deployments) owns the
+authoritative `Assembly` and publishes snapshots through a triple
+buffer; the engine reads them through an `AssemblyConsumer` and
+rederives its render state.
 
-## Core Types
+There is no "group" abstraction in viso — every entity lives directly
+in the `Assembly` and is identified by an opaque `EntityId`.
 
-### Scene
+## The Assembly Channel
 
-`Scene` is the authoritative container for all molecular data. It owns entity groups and tracks dirty state via a generation counter.
+```
+┌──────────────────────┐                  ┌─────────────────┐
+│   VisoApp / host     │  Arc<Assembly>   │   VisoEngine    │
+│                      │ ──triple-buffer→ │                 │
+│  Assembly            │                  │  AssemblyConsumer
+│  AssemblyPublisher   │                  │  Scene + derived│
+└──────────────────────┘                  └─────────────────┘
+```
+
+- `VisoApp` mutates the `Assembly` and calls `publisher.commit(...)`.
+- `VisoEngine::update(dt)` polls the consumer; if a new generation is
+  ready, the engine rederives its per-entity state and submits a
+  full-rebuild request to the background mesh processor.
+
+In standalone deployments (`feature = "viewer" / "gui" / "web"`),
+`VisoApp` plays the host role. In `foldit-rs`, the real host owns the
+publisher and feeds the consumer into `VisoEngine::new` directly.
+
+## Mutating the Scene (via `VisoApp`)
+
+All structural mutation methods take `&mut VisoEngine` so viso-side
+bookkeeping (animation transitions, camera fit, per-entity
+annotations) can update atomically alongside the `Assembly` mutation
+and the `publisher.commit`.
 
 ```rust
-let mut scene = Scene::new();
+// Add entities. Returns the assigned raw u32 ids.
+let ids: Vec<u32> = app.load_entities(&mut engine, entities, fit_camera);
 
-// Add a group of entities
-let group_id = scene.add_group(entities, "Loaded Structure");
+// Replace the entire scene.
+app.replace_scene(&mut engine, new_entities);
 
-// Check if scene changed since last render
-if scene.is_dirty() {
-    // Sync to renderers...
-    scene.mark_rendered();
+// Remove all entities.
+app.clear_scene(&mut engine);
+
+// Update one or many entities (matched by id), with a default
+// transition for entities lacking a per-entity behavior override.
+app.update_entity(&mut engine, entity, Transition::smooth())?;
+app.update_entities(&mut engine, updated, &Transition::smooth());
+
+// Update just the atom coordinates of an existing entity.
+app.update_entity_coords(&mut engine, id, &coords, Transition::smooth());
+
+// Reconcile: add new ids, remove missing ids, update existing ones.
+app.sync_entities(&mut engine, entities, &Transition::smooth());
+
+// Remove a single entity by id.
+app.remove_entity(&mut engine, id);
+
+// Per-entity visibility (also syncs ambient-type display flags for
+// water/ion/solvent so the renderer safety net stays consistent).
+app.set_entity_visible(&mut engine, id, true);
+
+// Per-entity scoring (drives color-by-score; pass None to clear).
+app.set_per_residue_scores(&mut engine, id, Some(scores));
+
+// Per-entity SS override (used for puzzle annotations).
+app.set_ss_override(&mut engine, id, ss_types);
+```
+
+Internally each of these republishes the `Assembly` and calls
+`engine.sync_now()`, which submits a full-rebuild request to the
+background mesh processor. None of the cost is paid synchronously on
+the main thread — mesh generation happens off-thread.
+
+## Engine-Side Annotations
+
+Some per-entity state is purely a viso concern (it doesn't belong on
+the molecular structure itself). Those live on
+`EntityAnnotations`, mutated through engine methods:
+
+```rust
+// Animation behavior overrides (keyed by EntityId, not raw u32).
+let eid = engine.entity_id(raw_id).expect("known entity");
+engine.set_entity_behavior(eid, Transition::collapse_expand(/* ... */));
+engine.clear_entity_behavior(eid);
+
+// Per-entity appearance overrides (drawing mode, color scheme,
+// helix/sheet style, surface kind, palette, etc.).
+let mut overrides = DisplayOverrides::default();
+overrides.color_scheme = Some(ColorScheme::SecondaryStructure);
+engine.set_entity_appearance(eid, overrides);
+engine.clear_entity_appearance(eid);
+```
+
+`set_entity_appearance` diffs against the previous overrides and
+dispatches only the invalidations that matter — a `surface_kind`
+change triggers surface regeneration, a `color_scheme` change triggers
+color recomputation, and so on.
+
+## Looking Up Entities
+
+The engine exposes a small read-only surface for looking entities up:
+
+```rust
+// Translate a raw u32 (from IPC, TOML, CLI) to an opaque EntityId.
+let eid: Option<EntityId> = engine.entity_id(raw_id);
+
+// Walk the current Assembly snapshot directly.
+for entity in engine.assembly().entities() {
+    println!("{:?}: {}", entity.id(), entity.molecule_type());
 }
+
+// Total entity count.
+let n = engine.entity_count();
 ```
 
-### EntityGroup
+`entity_id` is the canonical "boundary translator" — wire formats
+carry raw `u32` ids; viso-internal APIs use `EntityId`. Translate
+once at the boundary and pass `EntityId` through.
 
-An `EntityGroup` is a collection of `MoleculeEntity` values loaded together -- typically from one file or one backend operation. Each group has:
+## Focus
 
-- A unique `GroupId`
-- A human-readable name
-- Visibility state
-- A `mesh_version` counter for cache invalidation
-- Optional per-residue scores and secondary structure overrides
-
-```rust
-// Read access
-let group = engine.group(group_id).unwrap();
-println!("{}: {} entities", group.name(), group.entities().len());
-
-// Write access (bumps mesh_version, invalidates caches)
-let group = engine.group_mut(group_id).unwrap();
-group.set_entities(new_entities);
-group.invalidate_render_cache();
-```
-
-### MoleculeEntity
-
-A `MoleculeEntity` represents a single molecular chain or component. It contains atomic coordinates (`Coords`), a molecule type, and an entity ID.
-
-### GroupId
-
-A monotonically increasing u64 identifier. Each call to `scene.add_group()` or `engine.load_entities()` produces a new unique ID.
-
-## Group Management
-
-### Loading Entities
-
-```rust
-// Load entities into a new group, optionally fitting the camera
-let group_id = engine.load_entities(entities, "My Structure", true);
-```
-
-The `fit_camera` parameter controls whether the camera animates to show the new group.
-
-### Visibility
-
-```rust
-engine.set_group_visible(group_id, false); // Hide
-engine.set_group_visible(group_id, true);  // Show
-```
-
-Hidden groups are excluded from aggregated render data, picking, and camera fitting.
-
-### Removal
-
-```rust
-let removed = engine.remove_group(group_id); // Returns Option<EntityGroup>
-engine.clear_scene(); // Remove all groups
-```
-
-### Iteration
-
-```rust
-let ids = engine.group_ids(); // Ordered by insertion
-let count = engine.group_count();
-
-// Iterate over all groups (read-only)
-for group in engine.scene.iter() {
-    println!("{}: visible={}", group.name(), group.visible);
-}
-```
-
-## Focus System
-
-Focus determines which entities are active for operations. It cycles through groups and focusable entities with tab:
+Focus determines what the camera follows and what the user is
+"working on". It cycles through entities with `Tab`:
 
 ```rust
 pub enum Focus {
-    Session,          // All groups (default)
-    Group(GroupId),   // A specific group
-    Entity(u32),      // A specific entity by entity_id
+    Session,             // All visible entities (default)
+    Entity(EntityId),    // A specific entity
 }
 ```
 
-### Cycling Focus
-
 ```rust
-let new_focus = engine.cycle_focus();
-// Session -> Group1 -> Group2 -> ... -> focusable entities -> Session
+// Cycle: Session → Entity₁ → … → EntityN → Session
+engine.execute(VisoCommand::CycleFocus);
+
+// Focus a specific entity by raw id.
+engine.execute(VisoCommand::FocusEntity { id });
+
+// Reset to session-wide focus.
+engine.execute(VisoCommand::ResetFocus);
+
+// Read current focus state.
+let focus: Focus = engine.focus();
+let focused_entity: Option<EntityId> = engine.focused_entity();
 ```
 
-### Querying Focus
+## What Happens During Sync
 
-```rust
-let focus = engine.focus(); // Returns &Focus
-```
+When a new `Assembly` snapshot arrives:
 
-## Aggregated Render Data
+1. **Rederive per-entity state.** For each entity, the engine builds
+   render-ready derived data (backbone chains, sidechain topology, SS
+   types, residue color metadata).
+2. **Submit a `FullRebuild`.** The background processor receives a
+   `Vec<FullRebuildEntity>` plus the active display, color, and
+   geometry options. Per-entity mesh caching means only entities whose
+   `mesh_version` changed are regenerated.
+3. **Triple-buffer the result.** When the processor finishes, the
+   resulting `PreparedRebuild` is written to a triple buffer.
+4. **Apply on the next frame.** `engine.update(dt)` calls
+   `apply_pending_scene`, which uploads the GPU buffers in a memcpy
+   and rebuilds picking bind groups.
 
-When the scene is dirty, the engine collects data from all visible groups into `AggregatedRenderData`. This is computed lazily and cached:
-
-```rust
-let aggregated = scene.aggregated(); // Returns Arc<AggregatedRenderData>
-```
-
-The aggregated data contains:
-
-- **Backbone chains** -- all visible backbone atom positions, concatenated across groups
-- **Sidechain data** -- positions, bonds, hydrophobicity, residue indices (global)
-- **Secondary structure types** -- per-residue SS classification
-- **Non-protein entities** -- ligands, ions, waters, lipids
-- **Nucleic acid chains** -- P-atom chains and nucleotide rings
-- **All positions** -- for camera fitting
-
-Global residue indices are remapped during aggregation so that the first group's residues start at 0, the second group's residues follow, etc.
-
-## Per-Group Data for Background Processing
-
-When syncing to renderers, the scene produces `PerGroupData` for each visible group:
-
-```rust
-let per_group = scene.per_group_data(); // Vec<PerGroupData>
-```
-
-Each `PerGroupData` contains:
-
-- Group ID and mesh version (for cache invalidation)
-- Backbone chains and residue data
-- Sidechain atoms, bonds, and backbone-sidechain bonds
-- Secondary structure overrides
-- Per-residue scores
-- Non-protein entities and nucleic acid data
-
-The background processor uses `mesh_version` to decide whether to regenerate or reuse cached meshes for each group.
-
-## Syncing Changes
-
-After modifying the scene, sync to the rendering pipeline:
-
-```rust
-// Full sync with optional transition
-engine.sync_scene_to_renderers(Some(Transition::smooth()));
-
-// Per-entity behavior: set before updating coordinates
-engine.set_entity_behavior(design_id, Transition::backbone_then_expand(
-    Duration::from_millis(400),
-    Duration::from_millis(600),
-)
-    .allowing_size_change()
-    .suppressing_initial_sidechains()
-);
-```
-
-The sync submits a `SceneRequest::FullRebuild` to the background thread. On the next frame, `apply_pending_scene()` picks up the results.
-
-## Backend Coordinate Updates
-
-For Rosetta integration where multiple groups may be updated atomically:
-
-```rust
-// Combine coords from all visible groups
-let result = scene.combined_coords_for_backend();
-// result.bytes: ASSEM01 format for Rosetta
-// result.chain_ids_per_group: chain ID mapping for splitting results
-
-// Apply combined update from Rosetta
-scene.apply_combined_update(&coords_bytes, &chain_ids_per_group)?;
-
-// Update a single group's protein coordinates
-scene.update_group_protein_coords(group_id, new_coords);
-```
+The main thread never blocks. If the new meshes aren't ready by the
+next frame, the previous frame's data continues to render until they
+are.

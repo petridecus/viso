@@ -1,102 +1,127 @@
 # Engine Lifecycle
 
-`VisoEngine` is the central facade for all rendering, input handling, scene management, and animation in viso. This chapter covers how to create it, what happens during initialization, and how to manage its lifetime.
+`VisoEngine` is the central rendering, animation, and picking
+coordinator. It is **read-only with respect to structural state** —
+mutations to the loaded `Assembly` always go through a `VisoApp` (or
+the host application that owns the `Assembly` directly). This chapter
+covers how to create the engine, what happens during initialization,
+and how to manage its lifetime.
 
-## Creation
+## Construction Pair
 
-The engine is created asynchronously because wgpu adapter and device initialization are async:
+The engine reads structural snapshots from a triple buffer; the
+matching `AssemblyPublisher` lives on `VisoApp`. The two are always
+constructed together:
 
 ```rust
-// With a structure file (standalone use)
-let mut engine = VisoEngine::new_with_path(
-    window.clone(),   // impl Into<wgpu::SurfaceTarget<'static>>
-    (width, height),  // Physical pixel dimensions
-    scale_factor,     // DPI scale (e.g. 2.0 on Retina)
-    &cif_path,        // Path to mmCIF file
-).await;
+use viso::{RenderContext, VisoApp, VisoEngine};
+use viso::options::VisoOptions;
 
-// Without a pre-loaded structure (library use)
-let mut engine = VisoEngine::new(
-    window.clone(),
-    (width, height),
-    scale_factor,
-).await;
+// 1. Build a VisoApp + AssemblyConsumer pair.
+//    Use one of:
+let (app, consumer) = VisoApp::new_empty();
+let (app, consumer) = VisoApp::from_entities(entities);
+let (app, consumer) = VisoApp::from_bytes(bytes, "cif")?;
+let (app, consumer) = VisoApp::from_file("path/to/structure.cif")?;
+
+// 2. Build a wgpu RenderContext (async — use pollster or your runtime).
+let context = pollster::block_on(
+    RenderContext::new(window.clone(), (width, height))
+)?;
+
+// 3. Build the engine.
+let mut engine = VisoEngine::new(context, consumer, VisoOptions::default())?;
 ```
+
+Hosts that already own an `Assembly` (e.g. `foldit-rs`) build their
+own `AssemblyPublisher`/`AssemblyConsumer` pair and feed the consumer
+into `VisoEngine::new`. They never need a `VisoApp`.
 
 ### What Happens During Init
 
-1. **GPU setup** -- wgpu instance, adapter, device, queue, and surface are configured via `RenderContext`
-2. **Shader compilation** -- `ShaderComposer` loads and composes all WGSL shaders using naga_oil
-3. **Camera** -- `CameraController` is created with default orbital parameters (distance 150, FOV 45)
-4. **Renderers** -- all molecular renderers are created (tube, ribbon, sidechain, ball-and-stick, band, pull, nucleic acid)
-5. **Post-processing** -- SSAO, bloom, composite, and FXAA passes are initialized
-6. **Picking** -- GPU picking system with offscreen render target and staging buffer
-7. **Scene processor** -- background thread is spawned for mesh generation
-8. **Structure loading** -- if a path was provided, the file is parsed and entities are added to the scene
+1. **GPU setup** — `RenderContext` is configured with a surface, adapter,
+   device, and queue.
+2. **Shader compilation** — `ShaderComposer` loads and composes all WGSL
+   modules using `naga_oil`.
+3. **Camera** — `CameraController` is created with default orbital
+   parameters (FOV 45°, fit to origin).
+4. **Renderers** — backbone, sidechain, ball-and-stick, bond, band,
+   pull, nucleic-acid, and isosurface renderers.
+5. **Post-processing** — SSAO, bloom, composite, and FXAA passes.
+6. **Picking** — GPU picking system with offscreen `R32Uint` target and
+   staging buffer.
+7. **Scene processor** — background thread spawned for mesh generation.
+8. **Assembly polling** — the consumer is wired in but the first
+   `Assembly` snapshot is picked up on the first call to `update()`.
 
 ## Initial Scene Sync
 
-After creation, the scene has entities but no GPU meshes. You must sync:
+`VisoApp::load_entities` / `replace_scene` / `from_file` all publish
+an `Assembly` snapshot. The next `engine.update(dt)` polls the
+consumer, rederives the scene, and submits a full mesh rebuild to the
+background thread. On the frame after, `apply_pending_scene` uploads
+the meshes to the GPU.
+
+If you build the engine through `VisoApp::new_empty` (no entities) and
+want an explicit non-animating sync (rare — `update` does this for
+you), call:
 
 ```rust
-engine.sync_scene_to_renderers(None);
+engine.sync_scene_to_renderers(std::collections::HashMap::new());
 ```
 
-This submits the scene to the background processor thread. The `None` argument means no animation action (the initial load uses `Snap` behavior by default). The main thread continues immediately -- mesh generation happens in the background.
-
-On the next frame, `apply_pending_scene()` will detect the completed meshes and upload them to the GPU.
+The `HashMap<u32, Transition>` argument lets you animate specific
+entities; passing an empty map snaps everything.
 
 ## Resize and Scale Factor
 
-Handle window resize events by forwarding to the engine:
+Forward window resize events to the engine:
 
 ```rust
 engine.resize(new_width, new_height);
 ```
 
-This resizes:
-- The wgpu surface
-- All post-processing textures (SSAO, bloom, composite, FXAA)
-- The picking render target
-- The camera aspect ratio
+This resizes the wgpu surface, all post-processing textures, the
+picking render target, and the camera projection.
 
 For DPI changes:
 
 ```rust
-engine.set_scale_factor(new_scale);
+engine.set_surface_scale(scale_factor);
 let inner = window.inner_size();
 engine.resize(inner.width, inner.height);
 ```
 
 ## Shutdown
 
-The engine cleans up automatically on drop. The background scene processor thread is joined:
+The background scene processor is joined automatically on drop. To
+force shutdown earlier:
 
 ```rust
-engine.shutdown_scene_processor();
+engine.shutdown();
 ```
 
-This sends a `SceneRequest::Shutdown` message and waits for the thread to finish. It's also called automatically in the `Drop` implementation, so explicit shutdown is only needed if you want to control timing.
+This sends a `Shutdown` request to the processor thread.
 
 ## Ownership Model
 
-`VisoEngine` owns:
+`VisoEngine` owns 11 sub-systems, each in its own field:
 
-| Component | Type | Purpose |
-|-----------|------|---------|
-| `context` | `RenderContext` | wgpu device, queue, surface |
-| `scene` | `Scene` | Entity groups, focus state |
-| `camera_controller` | `CameraController` | Camera matrices, animation |
-| `animator` | `StructureAnimator` | Backbone/sidechain animation |
-| `picking` | `Picking` | GPU picking system |
-| `scene_processor` | `SceneProcessor` | Background mesh thread |
-| `tube_renderer` | `TubeRenderer` | Backbone tubes/coils |
-| `ribbon_renderer` | `RibbonRenderer` | Helices and sheets |
-| `sidechain_renderer` | `CapsuleSidechainRenderer` | Sidechain capsules |
-| `bns_renderer` | `BallAndStickRenderer` | Ligands, ions, waters |
-| `band_renderer` | `BandRenderer` | Constraint bands |
-| `pull_renderer` | `PullRenderer` | Active pull visualization |
-| `na_renderer` | `NucleicAcidRenderer` | DNA/RNA backbones |
-| `post_process` | `PostProcessStack` | SSAO, bloom, composite, FXAA |
+| Field | Type | Purpose |
+|-------|------|---------|
+| `gpu` | `GpuPipeline` | wgpu context, all renderers, picking, post-process, lighting, shader composer, density mesh receiver |
+| `camera_controller` | `CameraController` | Camera matrices, animation, frustum |
+| `constraints` | `ConstraintSpecs` | Stored band/pull constraint specs |
+| `animation` | `AnimationState` | Structural animator, trajectory player, pending transitions |
+| `options` | `VisoOptions` | Display, lighting, post-processing, geometry, etc. |
+| `active_preset` | `Option<String>` | Name of the currently-applied options preset |
+| `frame_timing` | `FrameTiming` | FPS smoothing, frame pacing |
+| `density` | `DensityStore` | Loaded electron density maps |
+| `scene` | `Scene` | Assembly consumer + derived per-entity state |
+| `annotations` | `EntityAnnotations` | Per-entity overrides: focus, visibility, behaviors, appearance, scores, SS, surfaces |
+| `surface_regen` | `SurfaceRegen` | Background isosurface mesh regeneration |
 
-The engine is **not thread-safe** (`!Send`, `!Sync`) because it holds wgpu GPU resources. All engine access must happen on the main thread. The background scene processor communicates via channels and triple buffers.
+The engine is **not thread-safe** (`!Send`, `!Sync`) because it holds
+wgpu GPU resources. All engine access must happen on the main thread.
+The background scene processor and surface regeneration thread
+communicate via channels and triple buffers.

@@ -1,52 +1,60 @@
 # Architecture Overview
 
-This chapter provides a high-level view of viso's architecture: how subsystems relate to each other, how data flows from file to screen, and how threading is organized.
+This chapter provides a high-level view of viso's architecture: how
+subsystems relate to each other, how data flows from file to screen,
+and how threading is organized.
 
 ## System Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Application Layer                          │
-│  (foldit-rs window.rs / viso main.rs)                           │
+│  (foldit-rs window.rs, or viso's standalone VisoApp)            │
 │                                                                 │
-│  winit events ──► InputProcessor ──► VisoCommand                │
-│  IPC messages ──► backend handler ──► engine API calls          │
+│  Owns the authoritative `Assembly` + AssemblyPublisher.         │
+│  All structural mutations republish a new snapshot.             │
+│                                                                 │
+│  winit events ──► InputProcessor ──► VisoCommand ──► engine     │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │
+                               │ Arc<Assembly> via triple buffer
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         VisoEngine                              │
 │                                                                 │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │
-│  │ Scene      │  │ Animator   │  │ Camera     │  │ Picking    │ │
-│  │            │  │            │  │ Controller │  │ System     │ │
-│  │ Groups     │  │ Backbone   │  │ Arcball    │  │ GPU read   │ │
-│  │ Entities   │  │ Sidechain  │  │ Animation  │  │ Selection  │ │
-│  │ Focus      │  │ Per-entity │  │ Frustum    │  │ Bit-array  │ │
+│  │ Scene      │  │ Animation  │  │ Camera     │  │ GpuPipeline│ │
+│  │ + Annot.   │  │ State      │  │ Controller │  │            │ │
+│  │            │  │            │  │            │  │ Renderers  │ │
+│  │ Per-entity │  │ Animator   │  │ Arcball    │  │ Picking    │ │
+│  │ derived    │  │ Trajectory │  │ Animation  │  │ Post-proc  │ │
+│  │ state +    │  │ Pending    │  │ Frustum    │  │ Lighting   │ │
+│  │ overrides  │  │ trans.     │  │            │  │ Density    │ │
 │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘ │
 │        │               │               │               │        │
 │        ▼               ▼               │               │        │
 │  ┌───────────────────────────┐         │               │        │
-│  │  SceneProcessor           │         │               │        │
-│  │  (background thread)      │         │               │        │
+│  │ Background scene          │         │               │        │
+│  │ processor (worker thread) │         │               │        │
 │  │                           │         │               │        │
-│  │  Per-group mesh cache     │         │               │        │
-│  │  Tube/ribbon/sidechain    │         │               │        │
-│  │  Ball-and-stick/NA gen    │         │               │        │
+│  │ Per-entity mesh cache     │         │               │        │
+│  │ Backbone / sidechain /    │         │               │        │
+│  │ ball-and-stick / NA       │         │               │        │
 │  └─────────────┬─────────────┘         │               │        │
 │                │ triple buffer         │               │        │
 │                ▼                       ▼               ▼        │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │                      Renderers                            │  │
+│  │ Renderers                                                 │  │
 │  │                                                           │  │
-│  │  Molecular:                   Post-Processing:            │  │
-│  │  ├─ BackboneRenderer          ├─ SSAO                     │  │
-│  │  │  (tubes + ribbons)         ├─ Bloom                    │  │
-│  │  ├─ SidechainRenderer         ├─ Composite                │  │
-│  │  ├─ BallAndStickRenderer      └─ FXAA                     │  │
+│  │  Molecular:                  Post-processing:             │  │
+│  │  ├─ BackboneRenderer         ├─ SSAO                      │  │
+│  │  │  (tubes + ribbons)        ├─ Bloom                     │  │
+│  │  ├─ SidechainRenderer        ├─ Composite                 │  │
+│  │  ├─ BondRenderer             └─ FXAA                      │  │
 │  │  ├─ BandRenderer                                          │  │
-│  │  ├─ PullRenderer              ShaderComposer:             │  │
-│  │  └─ NucleicAcidRenderer       └─ naga_oil composition     │  │
+│  │  ├─ PullRenderer             ShaderComposer:              │  │
+│  │  ├─ BallAndStickRenderer     └─ naga_oil composition      │  │
+│  │  ├─ NucleicAcidRenderer                                   │  │
+│  │  └─ IsosurfaceRenderer                                    │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │                            │                                    │
 │                            ▼                                    │
@@ -68,45 +76,50 @@ This chapter provides a high-level view of viso's architecture: how subsystems r
 │  File path (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity> │
 │         │                                    │            │
 │         ▼                                    │            │
-│  molex::parse ──► Vec<MoleculeEntity> ◄┘            │
+│  molex::adapters parse ──► Vec<MoleculeEntity> ◄┘         │
 │                                │                          │
 │                                ▼                          │
-│                     Engine stores as                      │
-│                    SOURCE OF TRUTH                        │
+│                     molex::Assembly (owned by host)       │
+│                              │                            │
+│                              ▼ AssemblyPublisher.commit   │
+│                     triple buffer                         │
+│                              │                            │
+│                              ▼                            │
+│                     AssemblyConsumer (in VisoEngine)      │
 └────────────────────────────┬──────────────────────────────┘
-                             │
+                             │  engine.update() polls,
+                             │  rederives on generation bump
                              ▼
 ┌───────────────────────────────────────────────────────────┐
 │                         SCENE                             │
 │                                                           │
-│  The "live" renderable state of the world.                │
-│  Positions, SS types, colors, sidechain topology —        │
-│  everything needed to produce geometry.                   │
+│  Scene + EntityAnnotations: per-entity derived render     │
+│  state + user-authored overrides (focus, visibility,      │
+│  appearance, behaviors, scores, SS overrides, surfaces).  │
 │                                                           │
-│  Dirty-flagged: only rebuilds geometry when changed.      │
-│  During animation: reflects interpolated state.           │
-│  When animation completes: matches source of truth.       │
+│  Driven by `mesh_version` per-entity for cache            │
+│  invalidation. During animation, `EntityPositions` holds  │
+│  interpolated atom positions read by the renderers.       │
 └────────────────────────────┬──────────────────────────────┘
                              │
                              ▼
 ┌───────────────────────────────────────────────────────────┐
 │                       RENDERER                            │
 │                                                           │
-│  Consumes Scene read-only, produces GPU data.             │
+│  Consumes Scene + annotations read-only.                  │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐  │
-│  │ renderer::geometry                                  │  │
-│  │                                                     │  │
-│  │ Scene data ──► meshes + impostor instances          │  │
-│  │ (tubes, ribbons, capsules, ball-and-stick, NA)      │  │
+│  │ Background mesh processor                           │  │
+│  │   per-entity FullRebuildEntity → cached meshes →    │  │
+│  │   PreparedRebuild (raw byte buffers)                │  │
 │  └──────────────────────┬──────────────────────────────┘  │
-│                         │                                 │
+│                         │ triple buffer                   │
 │                         ▼                                 │
 │  ┌─────────────────────────────────────────────────────┐  │
-│  │ GPU Passes                                          │  │
+│  │ GPU passes                                          │  │
 │  │                                                     │  │
 │  │ 1. Geometry pass (color + normals + depth)          │  │
-│  │ 2. Picking pass (object ID readback)                │  │
+│  │ 2. Picking pass (residue ID readback, async)        │  │
 │  │ 3. Post-process (SSAO, bloom, fog, FXAA)            │  │
 │  │           │                                         │  │
 │  │           ▼                                         │  │
@@ -119,13 +132,14 @@ This chapter provides a high-level view of viso's architecture: how subsystems r
 │                   OUTPUT / EMBEDDING                      │
 │                                                           │
 │  The final texture is consumed by the host:               │
-│    • winit window (current viewer)                        │
+│    • winit window (standalone viewer)                     │
 │    • HTML canvas (wasm / web embed)                       │
 │    • PNG snapshot (headless)                              │
 │    • dioxus / egui / any framework with a texture slot    │
 │                                                           │
-│  The engine produces a texture; the consumer decides      │
-│  what to do with it.                                      │
+│  Use `engine.render()` for swapchain present, or          │
+│  `engine.render_to_texture(view)` to render into a        │
+│  caller-owned texture view.                               │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -134,79 +148,107 @@ This chapter provides a high-level view of viso's architecture: how subsystems r
 ### 1. Parsing
 
 ```
-PDB/CIF file → molex → Coords → MoleculeEntity
+PDB / CIF / BCIF file → molex::adapters → Vec<MoleculeEntity>
 ```
 
-The `molex` crate parses mmCIF files into `Coords` structs (atom positions, names, chains, residue info). These are wrapped in `MoleculeEntity` values with a molecule type classification.
+`molex` parses structure files into `MoleculeEntity` values (atomic
+coordinates, names, chains, residue info, molecule type, computed
+H-bonds, DSSP-classified SS).
 
-### 2. Scene Organization
-
-```
-MoleculeEntity → EntityGroup → Scene
-```
-
-Entities are grouped into `EntityGroup` values. The scene maintains insertion order, visibility state, focus tracking, and a generation counter for dirty detection.
-
-### 3. Background Mesh Generation
+### 2. Assembly Construction
 
 ```
-Scene → PerGroupData → SceneProcessor → PreparedScene
+Vec<MoleculeEntity> → molex::Assembly  (owned by VisoApp / host)
 ```
 
-When the scene is dirty, `per_group_data()` collects render data for each visible group. This is submitted to the background thread via `SceneRequest::FullRebuild`. The processor generates (or retrieves cached) meshes for each group, concatenates them, and writes a `PreparedScene` to the triple buffer.
+The `Assembly` is the authoritative structural state. `VisoApp` (or a
+real host like `foldit-rs`) owns it and commits snapshots through an
+`AssemblyPublisher` whenever it changes.
 
-### 4. GPU Upload
+### 3. Scene Rederivation
+
+Each `engine.update(dt)` polls the consumer; if a new snapshot is
+ready, the engine rebuilds its derived per-entity state (chains,
+sidechain topology, SS arrays, color metadata) from the new assembly.
+
+### 4. Background Mesh Generation
 
 ```
-PreparedScene → queue.write_buffer() → GPU buffers
+Scene → per-entity FullRebuildEntity → SceneProcessor → PreparedRebuild
 ```
 
-The main thread picks up the `PreparedScene` and writes raw byte arrays directly to GPU buffers. This is a memcpy-level operation, typically under 1ms.
+The sync layer collects per-entity render data and submits a
+`SceneRequest::FullRebuild` to the background thread. The processor
+generates (or retrieves cached) meshes per entity, concatenates them
+into a single `PreparedRebuild`, and writes it to the result triple
+buffer.
 
-### 5. Rendering
+### 5. GPU Upload
+
+```
+PreparedRebuild → queue.write_buffer() → GPU buffers
+```
+
+The main thread picks up the prepared rebuild and writes raw byte
+arrays directly to GPU buffers. This is a memcpy-level operation,
+typically under 1ms.
+
+### 6. Rendering
 
 ```
 GPU buffers → Geometry Pass → Post-Processing → Swapchain
 ```
 
-All molecular renderers draw to HDR render targets. The post-processing stack applies SSAO, bloom, compositing (outlines, fog, tone mapping), and FXAA before presenting to the swapchain.
+All molecular renderers draw to HDR render targets. Post-processing
+applies SSAO, bloom, compositing (outlines, fog, tone mapping), and
+FXAA before presenting to the swapchain (or writing into the
+caller-owned texture view).
 
 ## Threading Model
 
-Viso uses two threads with lock-free communication:
+Viso uses three threads with lock-free communication:
 
 ### Main Thread
 
-Owns all GPU resources and runs the render loop. Responsibilities:
+Owns all GPU resources and runs the render loop:
 
 - Processing input events (mouse, keyboard, IPC)
-- Managing the scene (add/remove groups, update entities)
-- Running animation (update each frame, get interpolated state)
+- Polling the `AssemblyConsumer` for new snapshots
+- Running animation per frame
 - Submitting scene requests to the background thread (non-blocking)
 - Picking up completed meshes from the triple buffer (non-blocking)
 - Uploading data to the GPU
 - Executing the render pipeline
-- Handling GPU picking readback
+- Initiating GPU picking readback and resolving completed reads
 
-The main thread **never blocks** on the background thread. If meshes aren't ready, it renders the previous frame's data.
+The main thread **never blocks**. If meshes aren't ready, it renders
+the previous frame's data.
 
-### Background Thread
+### Background Mesh Thread
 
-Owns the mesh cache and performs CPU-intensive work:
+Owns the per-entity mesh cache and performs CPU-intensive work:
 
 - Receiving scene requests via `mpsc::Receiver` (blocks when idle)
-- Generating tube, ribbon, sidechain, ball-and-stick, and nucleic acid meshes
-- Maintaining a per-group mesh cache with version-based invalidation
-- Coalescing queued requests to skip stale intermediates
-- Writing results to triple buffers (non-blocking)
+- Generating backbone, sidechain, ball-and-stick, and nucleic acid
+  meshes
+- Maintaining a per-entity cache keyed on `mesh_version`
+- Writing results to a triple buffer (non-blocking)
 
-### Lock-Free Bridge
+### Background Surface Thread
 
-| Mechanism               | Direction         | Semantics                                           |
-| ----------------------- | ----------------- | --------------------------------------------------- |
-| `mpsc::channel`         | Main → Background | Submit requests (non-blocking send)                 |
-| `triple_buffer` (scene) | Background → Main | Latest `PreparedScene` (non-blocking read)          |
-| `triple_buffer` (anim)  | Background → Main | Latest `PreparedAnimationFrame` (non-blocking read) |
+A short-lived worker spun up to regenerate isosurface meshes
+(Gaussian / SES / cavity surfaces) when surface options change. Sends
+results back through an `mpsc` channel that the main thread polls.
+
+### Lock-Free Bridges
+
+| Mechanism                | Direction          | Semantics                                           |
+| ------------------------ | ------------------ | --------------------------------------------------- |
+| `triple_buffer` (asm)    | Host → Main        | Latest `Arc<Assembly>` (non-blocking read)          |
+| `mpsc::channel`          | Main → Mesh        | Submit scene requests (non-blocking send)           |
+| `triple_buffer` (rebuild)| Mesh → Main        | Latest `PreparedRebuild` (non-blocking read)        |
+| `triple_buffer` (anim)   | Mesh → Main        | Latest `PreparedAnimationFrame` (non-blocking read) |
+| `mpsc::channel`          | Surface → Main     | Density isosurface meshes (non-blocking poll)       |
 
 Triple buffers guarantee:
 
@@ -218,57 +260,127 @@ Triple buffers guarantee:
 
 ```
 viso/src/
-├── lib.rs                  # Public API (flat re-exports only)
-├── main.rs                 # Standalone viewer binary
-├── engine/                 # Core coordinator: frame loop, command dispatch, subsystem wiring
-│   └── trajectory.rs       # TrajectoryPlayer (DCD frame sequencer)
-├── scene/                  # Entity storage, groups, visibility, SS overrides, dirty flagging
-├── animation/              # Structural animation system
-│   ├── animator.rs         # StructureAnimator + StructureState (per-entity runner dispatch)
-│   ├── runner.rs           # AnimationRunner + data types (phase evaluation)
-│   ├── transition.rs       # AnimationPhase, Transition presets (public API)
-│   └── easing.rs           # Easing curves
-├── input/                  # Raw window events → VisoCommand conversion
-├── options/                # TOML-serializable runtime options (lighting, camera, colors, display)
-├── camera/                 # Orbital camera controller, animated transitions, frustum culling
-├── gpu/                    # wgpu device/surface init, dynamic buffers, lighting, shader composition
-├── renderer/               # GPU rendering pipeline
-│   ├── geometry/           # Scene data → mesh/impostor generation
-│   ├── picking/            # GPU-based object picking + readback
-│   └── postprocess/        # SSAO, bloom, composite, FXAA
-├── viewer.rs               # Standalone winit viewer (feature-gated)
-├── gui/                    # Webview options panel (feature-gated)
-└── util/                   # Frame timing, sheet adjust, bond topology, score color
+├── lib.rs              # Public API (flat re-exports only)
+├── main.rs             # Standalone CLI entry point (binary feature)
+├── animation/          # Structural animation
+│   ├── animator.rs     # StructureAnimator + per-entity runners
+│   ├── runner.rs       # AnimationRunner phase evaluation
+│   ├── state.rs        # AnimationState (animator + trajectory + pending)
+│   └── transition.rs   # AnimationPhase, Transition presets (public API)
+├── app/                # Standalone-app layer (feature-gated)
+│   ├── viewer.rs       # winit Viewer + ViewerBuilder (feature = "viewer")
+│   ├── gui/            # wry-webview options panel (feature = "gui")
+│   ├── web/            # WASM entry (feature = "web")
+│   ├── channel.rs      # AssemblyPublisher / AssemblyConsumer triple buffer
+│   └── mod.rs          # VisoApp (host of Assembly in standalone)
+├── bridge/             # GUI / IPC action types (feature = "gui")
+├── camera/             # Orbital camera controller, animation, frustum
+├── engine/             # Core engine struct + frame loop
+│   ├── mod.rs          # VisoEngine (thin dispatcher)
+│   ├── annotations.rs  # EntityAnnotations: focus, visibility, behaviors,
+│   │                   # appearance, scores, SS, surfaces
+│   ├── assembly_consumer.rs   # Triple-buffer reader for Assembly snapshots
+│   ├── bootstrap.rs    # GPU init + VisoEngine::new + FrameTiming
+│   ├── command.rs      # VisoCommand + payload types (BandInfo, PullInfo, …)
+│   ├── constraint.rs   # Band/pull resolution
+│   ├── culling.rs      # Frustum culling
+│   ├── density.rs      # Density map loading + isosurface integration
+│   ├── density_store.rs# DensityStore (loaded electron density maps)
+│   ├── entity_view.rs  # Per-entity render-ready derived data
+│   ├── focus.rs        # Focus enum
+│   ├── options_apply.rs# set_options / set_surface_scale / etc.
+│   ├── positions.rs    # EntityPositions: interpolated atom positions
+│   ├── scene.rs        # Scene: consumer + last_seen_generation + state
+│   ├── scene_state.rs  # SceneRenderState: per-entity render aggregations
+│   ├── surface.rs      # Surface options resolution
+│   ├── surface_regen.rs# Background isosurface regeneration
+│   ├── sync/           # Scene → renderer pipeline
+│   └── trajectory.rs   # TrajectoryPlayer (DCD frame sequencer)
+├── error.rs            # VisoError
+├── gpu/                # wgpu device init, dynamic buffers, lighting,
+│                       # shader composition, residue color buffer
+├── input/              # Raw events → VisoCommand
+├── options/            # TOML-serializable runtime options + score color
+├── renderer/           # GPU rendering pipeline
+│   ├── mod.rs          # PipelineLayouts, Renderers, GeometryPassInput
+│   ├── gpu_pipeline.rs # GpuPipeline (rendering entry point)
+│   ├── draw_context.rs # DrawBindGroups
+│   ├── entity_topology.rs # Per-entity topology metadata for renderers
+│   ├── geometry/       # Mesh + impostor generation (backbone, sidechain,
+│   │                   # ball-and-stick, NA, isosurface, band, pull, bond)
+│   ├── impostor/       # Impostor primitives (sphere, capsule, cone, polygon)
+│   ├── mesh.rs         # Generic mesh helpers
+│   ├── picking/        # GPU picking + PickingSystem + PickTarget + PickMap
+│   ├── pipeline/       # Background mesh-gen pipeline
+│   │   ├── prepared.rs # SceneRequest, PreparedRebuild,
+│   │   │               # PreparedAnimationFrame
+│   │   ├── mesh_gen.rs # Per-entity / per-frame mesh generation
+│   │   ├── mesh_concat.rs # Merge per-entity meshes
+│   │   └── processor.rs   # Background thread + cache
+│   ├── pipeline_util.rs# Helper utilities
+│   └── postprocess/    # SSAO, bloom, composite, FXAA, screen passes
+├── shaders/            # WGSL sources organized by role
+│   ├── modules/        # Shared modules: camera, lighting, ray, sdf, ...
+│   ├── raster/         # Mesh + impostor rasterization shaders
+│   ├── screen/         # Full-screen passes (composite, FXAA, SSAO, bloom)
+│   └── utility/        # Picking shaders
+└── util/               # Helpers (easing.rs, hash.rs)
 ```
 
 ## Key Design Decisions
 
-### Why Background Processing?
+### Why Background Mesh Generation?
 
-Mesh generation for complex proteins (>1000 residues) can take 20-40ms. At 60fps, that's most of the frame budget. By offloading to a background thread:
+Mesh generation for complex proteins (>1000 residues) can take 20-40ms.
+At 60fps, that's most of the frame budget. By offloading to a
+background thread:
 
 - The main thread maintains smooth rendering
 - GPU upload is <1ms (raw buffer writes)
-- The background thread can take as long as it needs without dropping frames
+- The background thread can take as long as it needs without dropping
+  frames
 
 ### Why Triple Buffers?
 
 Triple buffers provide lock-free communication:
 
-- The background thread always has a buffer to write to
-- The main thread always reads the latest result
+- The writer always has a buffer to write to
+- The reader always reads the latest result
 - No mutexes, no contention, no blocking on either side
 
-The cost is memory (3x the buffer size), but mesh data is typically 1-10MB, so this is negligible.
+The cost is memory (3× the buffer size), but mesh data is typically
+1–10MB, so this is negligible.
 
-### Why Per-Group Caching?
+### Why Per-Entity Mesh Caching?
 
-Molecular scenes often have multiple groups where only one changes at a time (e.g., Rosetta updates one group while others stay static). Per-group caching with version-based invalidation means only the changed group's meshes are regenerated. For a 3-group scene, this can save 60-80% of generation time.
+Molecular scenes often have multiple entities where only some change
+at a time (e.g. Rosetta updates one entity while others stay static).
+Per-entity caching with `mesh_version`-based invalidation means only
+changed entities are regenerated. For a 3-entity scene where one
+changes, this saves 60–80% of generation time.
 
 ### Why Capsule Impostors?
 
-Sidechains and ball-and-stick atoms use ray-marched impostor rendering instead of mesh-based spheres and cylinders:
+Sidechains and ball-and-stick atoms use ray-marched impostor rendering
+instead of mesh-based spheres and cylinders:
 
-- **Memory**: a capsule is 48 bytes vs. hundreds of bytes for a mesh sphere
+- **Memory**: a capsule is 48 bytes vs hundreds of bytes for a mesh
+  sphere
 - **Quality**: impostors are pixel-perfect at any zoom level
-- **Performance**: GPU ray-marching is efficient for the simple SDF shapes (spheres, capsules, cones)
+- **Performance**: GPU ray-marching is efficient for the simple SDF
+  shapes (spheres, capsules, cones)
+
+### Why an Assembly Triple Buffer?
+
+In `foldit-rs`, the host owns the authoritative `Assembly` because it
+also drives Rosetta and ML backends and needs to mutate the assembly
+in response to their results. Routing all viso-side reads through a
+triple buffer means:
+
+- The host can publish on any thread without the engine caring
+- The engine's read path is always lock-free
+- Multiple consumers (e.g. an export pipeline) can attach without
+  contention
+
+`VisoApp` plays the same host role for standalone deployments, so the
+engine has a single uniform model.

@@ -1,6 +1,8 @@
 # Handling Input
 
-Viso provides an `InputProcessor` that translates raw mouse/keyboard events into `VisoCommand` values. The engine executes commands via `engine.execute(cmd)`.
+Viso provides an `InputProcessor` that translates raw mouse/keyboard
+events into `VisoCommand` values. The engine executes commands via
+`engine.execute(cmd)`.
 
 ## Architecture
 
@@ -20,7 +22,9 @@ VisoCommand
 engine.execute(cmd)
 ```
 
-`InputProcessor` is optional convenience. Consumers who handle their own input can construct `VisoCommand` values directly and skip `InputProcessor` entirely.
+`InputProcessor` is optional convenience. Consumers who handle their
+own input can construct `VisoCommand` values directly and skip
+`InputProcessor` entirely.
 
 ## InputEvent
 
@@ -42,13 +46,13 @@ Your windowing layer converts platform events into these variants.
 From viso's standalone viewer:
 
 ```rust
-struct ViewerApp {
+struct ViewerShell {
     engine: Option<VisoEngine>,
     input: InputProcessor,
     // ...
 }
 
-impl ViewerApp {
+impl ViewerShell {
     fn dispatch_input(&mut self, event: InputEvent) {
         let Some(engine) = &mut self.engine else { return };
 
@@ -58,7 +62,9 @@ impl ViewerApp {
         }
 
         // Translate event to command and execute
-        if let Some(cmd) = self.input.handle_event(event, engine.hovered_target()) {
+        if let Some(cmd) =
+            self.input.handle_event(event, engine.hovered_target())
+        {
             let _ = engine.execute(cmd);
         }
     }
@@ -111,30 +117,27 @@ WindowEvent::ModifiersChanged(modifiers) => {
 
 ## Keyboard Input
 
-Keyboard events go through `InputProcessor::handle_key_press`, which looks up the key in the configurable `KeyBindings` map:
+Keyboard events go through `InputProcessor::handle_key_press`, which
+looks up the physical key in the configurable `KeyBindings` map:
 
 ```rust
 WindowEvent::KeyboardInput { event, .. } => {
     if event.state == ElementState::Pressed {
-        let key_str = format!("{:?}", event.physical_key);
-        if let Some(cmd) = input.handle_key_press(&key_str) {
-            let _ = engine.execute(cmd);
+        if let PhysicalKey::Code(code) = event.physical_key {
+            let key_str = format!("{code:?}");
+            if let Some(cmd) = input.handle_key_press(&key_str) {
+                let _ = engine.execute(cmd);
+            }
         }
     }
 }
 ```
 
-Display toggles (waters, ions, solvent, lipids) are `VisoOptions` mutations, not commands. The viewer handles them directly:
-
-```rust
-match code {
-    KeyCode::KeyU => engine.toggle_waters(),
-    KeyCode::KeyI => engine.toggle_ions(),
-    KeyCode::KeyO => engine.toggle_solvent(),
-    KeyCode::KeyL => engine.toggle_lipids(),
-    _ => { /* check keybindings */ }
-}
-```
+Display toggles for ambient types (water/ion/solvent) and lipid mode
+go through `VisoCommand::SetTypeVisibility` and
+`VisoCommand::CycleLipidMode` respectively. The default key bindings
+already wire these up — pressing `U`, `I`, `O`, or `L` produces the
+right command without any extra code in the viewer.
 
 ## VisoCommand
 
@@ -144,14 +147,17 @@ The full action vocabulary:
 pub enum VisoCommand {
     // Camera
     RecenterCamera,
+    ToggleAutoRotate,
     RotateCamera { delta: Vec2 },
     PanCamera { delta: Vec2 },
     Zoom { delta: f32 },
-    ToggleAutoRotate,
 
     // Focus
     CycleFocus,
     ResetFocus,
+
+    // Playback
+    ToggleTrajectory,
 
     // Selection
     ClearSelection,
@@ -159,14 +165,22 @@ pub enum VisoCommand {
     SelectSegment { index: i32, extend: bool },
     SelectChain { index: i32, extend: bool },
 
-    // Visualization
-    UpdateBands { bands: Vec<BandInfo> },
-    UpdatePull { pull: Option<PullInfo> },
+    // Entity management
+    FocusEntity { id: u32 },
+    ToggleEntityVisibility { id: u32 },
+    RemoveEntity { id: u32 },
 
-    // Playback
-    ToggleTrajectory,
+    // Display toggles
+    SetTypeVisibility { mol_type: MoleculeType, visible: Option<bool> },
+    CycleLipidMode,
 }
 ```
+
+`engine.execute(cmd)` returns a `CommandOutcome` describing what
+changed (`SelectionChanged`, `FocusChanged`, `VisibilityChanged`,
+`NoEffect`, or `Unhandled`). `RemoveEntity` is `Unhandled` when sent
+to the engine directly — it must be routed through `VisoApp` so the
+authoritative `Assembly` is mutated and republished.
 
 ## Click Detection
 
@@ -185,31 +199,40 @@ Shift + drag produces `PanCamera` instead of `RotateCamera`.
 
 ## KeyBindings
 
-Customizable key-to-command mapping, serde-serializable:
+Customizable key-to-command mapping, serde-serializable. Keys use the
+`winit::keyboard::KeyCode` debug format (`"KeyQ"`, `"Tab"`,
+`"Backquote"`, etc.):
 
 ```rust
 let mut input = InputProcessor::new();
-// Default bindings are pre-loaded:
-// Q → RecenterCamera, Tab → CycleFocus, R → ToggleAutoRotate, etc.
+// Default bindings are pre-loaded.
+
+// Or with a custom map:
+let bindings: KeyBindings = toml::from_str(&toml_str)?;
+let mut input = InputProcessor::with_key_bindings(bindings);
 ```
 
 Default keybindings:
 
 | Key | Action |
 |-----|--------|
-| Q | Recenter camera |
-| T | Toggle trajectory playback |
-| Tab | Cycle focus |
-| R | Toggle auto-rotate |
-| \` | Reset focus to session |
-| Escape | Clear selection |
+| `KeyQ` | Recenter camera on focus |
+| `KeyT` | Toggle trajectory playback |
+| `Tab` | Cycle focus |
+| `KeyR` | Toggle auto-rotate |
+| `Backquote` | Reset focus to session |
+| `Escape` | Clear selection |
+| `KeyI` | Toggle ion visibility |
+| `KeyU` | Toggle water visibility |
+| `KeyO` | Toggle solvent visibility |
+| `KeyL` | Cycle lipid display mode |
 
 ## Skipping InputProcessor
 
 For web embeds or custom hosts, construct commands directly:
 
 ```rust
-// Rotate camera by 5 degrees
+// Rotate camera by 5 degrees worth of pixel delta
 engine.execute(VisoCommand::RotateCamera {
     delta: Vec2::new(5.0, 0.0),
 });

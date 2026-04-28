@@ -16,21 +16,25 @@ There are no trait objects or behavior types. The consumer constructs `Transitio
 
 ## Transition
 
+`Transition` is the only animation type in the public API. Construct
+it via preset constructors and tune with builder methods:
+
 ```rust
 pub struct Transition {
-    pub phases: Vec<AnimationPhase>,
     pub allows_size_change: bool,
     pub suppress_initial_sidechains: bool,
-    pub name: &'static str,
+    // (phases + name are internal)
 }
 
 // Preset constructors
 Transition::snap()       // Instant, allows resize
-Transition::smooth()     // 300ms cubic hermite ease-out
+Transition::smooth()     // 300ms cubic hermite ease-out (also Default)
 Transition::collapse_expand(collapse_dur, expand_dur)
 Transition::backbone_then_expand(backbone_dur, expand_dur)
 Transition::cascade(base_dur, delay_per_residue)
-Transition::default()    // Same as smooth()
+
+// Total duration helper (sum across phases)
+let d: Duration = transition.total_duration();
 
 // Builder methods
 Transition::collapse_expand(
@@ -41,21 +45,24 @@ Transition::collapse_expand(
     .suppressing_initial_sidechains()
 ```
 
-## AnimationPhase
+## AnimationPhase (internal)
 
 Each phase in a transition defines a segment of the animation:
 
 ```rust
-pub struct AnimationPhase {
-    pub easing: EasingFunction,
-    pub duration: Duration,
-    pub lerp_start: f32,    // e.g. 0.0
-    pub lerp_end: f32,      // e.g. 0.4
-    pub include_sidechains: bool,
+pub(crate) struct AnimationPhase {
+    pub(crate) easing: EasingFunction,
+    pub(crate) duration: Duration,
+    pub(crate) lerp_start: f32,    // e.g. 0.0
+    pub(crate) lerp_end: f32,      // e.g. 0.4
+    pub(crate) include_sidechains: bool,
 }
 ```
 
-The runner maps raw progress (0→1 over total duration) through the phase sequence. Each phase applies its own easing within its lerp range.
+`AnimationPhase` is `pub(crate)` — consumers don't construct it
+directly; they use the preset constructors above. The runner maps raw
+progress (0→1 over total duration) through the phase sequence, and
+each phase applies its own easing within its lerp range.
 
 ## Preset Behaviors
 
@@ -81,7 +88,7 @@ Transition::collapse_expand(
 )
 ```
 
-Collapse-to-CA is handled at animation setup time — the `SidechainAnimPositions` start positions are set to CA coordinates when `allows_size_change` is true.
+Collapse-to-CA is handled at animation setup time — when `allows_size_change` is true, the runner's start sidechain positions are written as CA coordinates so the lerp expands them outward into their target positions.
 
 ### Backbone Then Expand
 
@@ -114,75 +121,83 @@ Note: per-residue staggering is not yet integrated into the runner — currently
 
 ## Per-Entity Animation
 
-Each entity gets its own `AnimationRunner` with independent timing. The `StructureAnimator` manages a `HashMap<u32, EntityAnimationState>` of per-entity runners and aggregates their interpolated output each frame.
+Each entity gets its own animation runner with independent timing.
+`StructureAnimator` (private) manages a `HashMap<EntityId, …>` of
+per-entity runners and writes interpolated atom positions into the
+engine's `EntityPositions` each frame.
 
-```rust
-// The engine dispatches per-entity:
-animator.animate_entity(
-    &range,          // EntityResidueRange (includes entity_id)
-    &backbone_chains,
-    &transition,
-    sidechain_data,  // Option<SidechainAnimPositions>
-);
-
-// Each frame:
-let still_animating = animator.update(Instant::now());
-let visual_backbone = animator.get_backbone();
-```
+The mutation surface lives on `VisoApp` (`update_entity_coords`,
+`update_entity`, `update_entities`, `sync_entities`) — each call sets
+the new target coordinates and queues a per-entity `Transition` for
+the engine's next sync. Per-entity behavior overrides
+(`engine.set_entity_behavior`) take precedence over the supplied
+default transition.
 
 ### How It Works
 
-1. `animate_entity()` builds per-residue `ResidueAnimationData` (start/target backbone positions) for the entity's residue range
-2. An `AnimationRunner` is created with those residues, the transition's phases, and optional sidechain positions
-3. Each frame, `update()` calls `interpolate_residues()` on each runner, which returns an iterator of `(residue_idx, lerped_visual)` pairs
-4. Sidechain positions are interpolated with the same `eased_t` as backbone
-5. When a runner completes (progress >= 1.0), the entity's residues are snapped to target and the runner is removed
+1. The host mutates the `Assembly` and republishes via the triple
+   buffer; pending per-entity transitions are stored on the engine's
+   `AnimationState`.
+2. On the next `engine.update()`, the engine rederives per-entity
+   state from the new snapshot. For each entity that has a pending
+   transition, an `AnimationRunner` is created with the start/target
+   backbone positions and the transition's phases.
+3. Each frame, the runner advances; interpolated positions are
+   written into `EntityPositions`. Sidechain positions are
+   interpolated with the same eased `t` as backbone.
+4. When a runner completes (progress ≥ 1.0), the entity snaps to
+   target and the runner is removed.
 
 ### Preemption
 
 When a new target arrives while an entity is mid-animation:
 
-- The current interpolated position becomes the new animation's start state
-- The previous animation's sidechain positions are captured for smooth handoff (when atom counts match)
-- A new runner replaces the old one with the new target
+- The current interpolated position becomes the new animation's start
+  state.
+- The previous animation's sidechain positions are captured for
+  smooth handoff (when atom counts match).
+- A new runner replaces the old one with the new target.
 
-This provides responsive feedback during rapid update cycles (e.g., Rosetta wiggle).
-
-## ResidueVisualState
-
-Each residue's visual state during animation:
-
-```rust
-pub struct ResidueVisualState {
-    pub backbone: [Vec3; 3],  // N, CA, C positions
-}
-```
-
-Interpolation lerps backbone positions linearly, with the easing applied via the phase's easing function.
+This provides responsive feedback during rapid update cycles (e.g.
+Rosetta wiggle).
 
 ## Sidechain Animation
 
-Sidechain positions are stored as `SidechainAnimPositions` (start + target `Vec<Vec3>`) and lerped with the same `eased_t` as backbone. The animator pre-computes interpolated sidechain positions each frame so queries can read them without recomputing.
+Sidechain positions are stored alongside backbone start/target arrays
+and lerped with the same eased `t`. The animator writes interpolated
+sidechain positions each frame so renderers and constraint resolution
+can read them without recomputing.
 
 Specialized sidechain behaviors:
 
-- **Standard lerp** — for smooth transitions, sidechains lerp alongside backbone
-- **Collapse toward CA** — for mutations, start positions are set to the CA position at setup time; the runner's normal lerp handles the expansion
-- **Hidden during backbone phase** — multi-phase transitions use `include_sidechains: false` on early phases
+- **Standard lerp** — for smooth transitions, sidechains lerp
+  alongside backbone.
+- **Collapse toward CA** — for mutations, start positions are set to
+  the CA position at setup time; the runner's normal lerp handles
+  the expansion.
+- **Hidden during backbone phase** — multi-phase transitions use
+  `include_sidechains: false` on early phases.
 
 ## Trajectory Playback
 
-DCD trajectory frames are fed through the standard animation pipeline. The `TrajectoryPlayer` (in `engine/trajectory.rs`) is a frame sequencer with no animation dependencies. Each frame it produces is fed through `animate_entity()` with `Transition::snap()`, so trajectory and structural animation share a single code path in `tick_animation()`.
+DCD trajectory frames are fed through the standard animation
+pipeline. `TrajectoryPlayer` (in `engine/trajectory.rs`) is a frame
+sequencer with no animation dependencies. Each frame it produces is
+applied through the same path used for `Transition::snap()`, so
+trajectory and structural animation share a single code path in the
+engine's `tick_animation`.
 
-## StructureState
+Load a trajectory bound to the first visible protein entity:
 
-`StructureState` (in `animator.rs`) holds the current and target visual state for the entire structure. It converts between backbone chain format (`Vec<Vec<Vec3>>`) and per-residue `ResidueVisualState` arrays, preserving chain boundaries via `chain_lengths`.
-
-The animator owns a single `StructureState` and per-entity runners write interpolated values into it each frame.
+```rust
+engine.load_trajectory(Path::new("path/to/traj.dcd"));
+engine.execute(VisoCommand::ToggleTrajectory); // play/pause
+let has = engine.has_trajectory();
+```
 
 ## Easing Functions
 
-Available in `animation/easing.rs`:
+Available in `util/easing.rs`:
 
 | Function | Description |
 |----------|-------------|
@@ -196,9 +211,10 @@ All functions evaluate in <100ns and clamp input to [0, 1].
 
 ## Disabling Animation
 
-```rust
-// Disable all animation (instant snap)
-animator.set_enabled(false);
+Use `Transition::snap()` per-update, or set a `snap` per-entity
+behavior so every subsequent update is instantaneous:
 
-// Or use Transition::snap() for individual updates
+```rust
+let eid = engine.entity_id(raw_id).expect("known entity");
+engine.set_entity_behavior(eid, Transition::snap());
 ```

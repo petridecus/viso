@@ -41,7 +41,7 @@ Viewer::builder()
 **Performance**
 
 - Background mesh generation on a dedicated thread with triple-buffered results
-- Per-group mesh caching -- only changed groups are regenerated
+- Per-entity mesh caching -- only changed entities are regenerated
 - Lock-free communication between main and background threads
 
 **Configuration**
@@ -55,19 +55,25 @@ Viewer::builder()
 File (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity>
         │                                │
         ▼                                │
- molex::parse ───▶ MoleculeEntity◄─┘
+ molex::adapters ──▶ Vec<MoleculeEntity>◄─┘
         │
         ▼
-     Scene (live renderable state, dirty-flagged)
+ molex::Assembly  (owned by VisoApp / host)
+        │  AssemblyPublisher.commit
+        ▼
+ triple buffer ──▶ AssemblyConsumer (in VisoEngine)
+        │
+        ▼
+ Scene + EntityAnnotations  (engine-side derived state)
         │
         ├───▶ SceneProcessor (background thread)
-        │         mesh generation + triple buffer
+        │       per-entity mesh cache, triple-buffered output
         │
         ▼
-     Renderer (geometry → picking → post-process)
+ Renderer (geometry → picking → post-process)
         │
         ▼
-     2D texture ───▶ winit / canvas / PNG / embed
+ 2D texture ──▶ winit / canvas / PNG / embed
 ```
 
 For the full architecture, see [Architecture Overview](./architecture/overview.md).
@@ -83,7 +89,7 @@ For the full architecture, see [Architecture Overview](./architecture/overview.m
 
 **Understand how Foldit uses viso:**
 
-- [Scene Management](./integration/scene-management.md) -- groups, entities, focus
+- [Scene Management](./integration/scene-management.md) -- Assembly, entities, focus
 - [Dynamic Structure Updates](./integration/dynamic-updates.md) -- Rosetta and ML integration
 - [Options and Presets](./configuration/options-and-presets.md) -- TOML configuration
 

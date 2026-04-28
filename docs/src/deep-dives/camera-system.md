@@ -1,170 +1,148 @@
 # Camera System
 
-Viso uses an arcball camera that orbits around a focus point. The camera supports animated transitions, auto-rotation, frustum culling, and coordinate conversion utilities.
+Viso uses an arcball camera that orbits around a focus point. The
+camera supports animated transitions, auto-rotation, frustum culling,
+and coordinate conversion utilities.
 
 ## Arcball Model
 
 The camera is defined by:
-- **Focus point** -- the world-space point the camera orbits around
-- **Distance** -- how far the camera is from the focus point
-- **Orientation** -- a quaternion defining the camera's rotation
-- **Bounding radius** -- the radius of the protein being viewed (used for fog and culling)
 
-All camera manipulation (rotation, pan, zoom) operates on these parameters rather than directly on a view matrix.
+- **Focus point** — the world-space point the camera orbits around
+- **Distance** — how far the camera is from the focus point
+- **Orientation** — a quaternion defining the camera's rotation
+- **Bounding radius** — the radius of the protein being viewed
+  (used for fog and culling)
+
+All camera manipulation (rotation, pan, zoom) operates on these
+parameters rather than directly on a view matrix.
 
 ## Camera Controller
 
-`CameraController` wraps the camera and manages input, GPU uniforms, and animation:
+`CameraController` (in `camera/controller.rs`) wraps the camera and
+manages input, GPU uniforms, and animation. The type is `pub(crate)`
+— consumers interact with the camera through engine methods or
+`VisoCommand`s, not through the controller directly.
 
-```rust
-pub struct CameraController {
-    pub camera: Camera,
-    pub uniform: CameraUniform,
-    pub buffer: wgpu::Buffer,
-    pub layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
-    pub mouse_pressed: bool,
-    pub shift_pressed: bool,
-    pub rotate_speed: f32,  // default: 0.5
-    pub pan_speed: f32,     // default: 0.5
-    pub zoom_speed: f32,    // default: 0.1
-}
-```
+The controller's tunables come from `CameraOptions`:
+
+- `rotate_speed` (default 0.5)
+- `pan_speed` (default 0.5)
+- `zoom_speed` (default 0.1)
+- `fovy` (default 45.0°)
+- `znear` (default 5.0)
+- `zfar` (default 2000.0)
 
 ### Rotation
 
-Rotation uses the arcball model -- horizontal mouse movement rotates around the up vector, vertical movement rotates around the right vector:
+Rotation uses the arcball model — horizontal mouse movement rotates
+around the up vector, vertical movement rotates around the right
+vector:
 
 ```rust
-controller.rotate(Vec2::new(delta_x, delta_y));
+engine.execute(VisoCommand::RotateCamera { delta });
 ```
 
 The sensitivity is controlled by `rotate_speed`.
 
 ### Panning
 
-Panning translates the focus point along the camera's right and up vectors:
+Panning translates the focus point along the camera's right and up
+vectors, cancelling any in-progress focus animation:
 
 ```rust
-controller.pan(Vec2::new(delta_x, delta_y));
+engine.execute(VisoCommand::PanCamera { delta });
 ```
-
-This cancels any animated focus point transition.
 
 ### Zooming
 
-Zoom adjusts the orbital distance, clamped to [1.0, 1000.0]:
+Zoom adjusts the orbital distance, clamped to a sensible range:
 
 ```rust
-controller.zoom(scroll_delta);
+engine.execute(VisoCommand::Zoom { delta });
 ```
 
 ## Camera Animation
 
-The camera can animate between states for smooth transitions when loading structures or changing focus:
+The camera animates between states for smooth transitions when
+loading structures or changing focus.
 
-### Fitting to Positions
+### Fitting to a Bounding Sphere
+
+Internally, the engine computes a bounding sphere over the relevant
+entities and calls one of:
+
+- `fit_to_sphere(centroid, radius)` — instant fit (initial load)
+- `fit_to_sphere_animated(centroid, radius)` — animated fit (focus
+  cycle, scene replacement)
+
+The fit accounts for both horizontal and vertical FOV so the protein
+fits in the viewport.
+
+Public entry points:
 
 ```rust
-// Instant fit (for initial load)
-controller.fit_to_positions(&all_atom_positions);
-
-// Animated fit (for adding new structures)
-controller.fit_to_positions_animated(&all_atom_positions);
+engine.fit_camera_to_focus();   // fits to current focus target
+engine.execute(VisoCommand::RecenterCamera);
 ```
-
-Both methods:
-1. Calculate the centroid of all positions
-2. Compute a bounding sphere radius
-3. Calculate the distance needed to fit the sphere in the viewport (accounting for both horizontal and vertical FOV)
-
-The animated version sets target values that are interpolated each frame.
 
 ### Per-Frame Update
 
-```rust
-let still_animating = controller.update_animation(dt);
-```
-
-This interpolates:
-- Focus point toward target focus
-- Distance toward target distance
-- Bounding radius toward target radius
-
-The interpolation speed is controlled by `CAMERA_ANIMATION_SPEED` (default 3.0). Higher values mean faster convergence.
+Inside `engine.update(dt)`, the controller's `update_animation` is
+ticked, interpolating focus, distance, and bounding radius toward
+their targets.
 
 ## Auto-Rotation
 
 Toggle turntable-style auto-rotation:
 
 ```rust
-let is_rotating = controller.toggle_auto_rotate();
+engine.execute(VisoCommand::ToggleAutoRotate);
 ```
 
-When enabled, the camera rotates around the up vector at `TURNTABLE_SPEED` (approximately 29 degrees per second). The spin axis is captured from the current up vector when auto-rotation is enabled.
-
-```rust
-if controller.is_auto_rotating() {
-    // Camera is spinning
-}
-```
+When enabled, the camera rotates around the up vector at a fixed
+turntable speed (~29°/s). The spin axis is captured from the current
+up vector when auto-rotation is enabled.
 
 ## Frustum Culling
 
-The camera provides a frustum for culling off-screen geometry:
-
-```rust
-let frustum = controller.frustum();
-```
-
-This is primarily used for sidechain culling -- sidechains outside the view frustum are skipped during rendering to improve performance. Each sidechain is tested against the frustum using a 5.0 angstrom cull radius.
+The camera provides a frustum used for sidechain culling — sidechains
+outside the view frustum (with a small Å margin) are skipped during
+rendering to improve performance. The engine reuploads the
+frustum-filtered sidechain instance buffer when the camera moves
+enough to invalidate the previous cull.
 
 ## Coordinate Conversion
 
-### Screen Delta to World
+The controller exposes screen-to-world utilities for input handling:
 
-Convert mouse movement to world-space displacement:
+- `screen_delta_to_world(delta_x, delta_y)` — convert mouse pixel
+  movement to a world-space displacement using the camera's right
+  and up vectors. The scale is proportional to the orbital distance,
+  so movement feels consistent at any zoom level.
+- `screen_to_world_at_depth(...)` — unproject a screen pixel onto a
+  plane parallel to the camera at a reference world point's depth.
+  Used for pull operations so the drag stays at the atom's depth.
 
-```rust
-let world_offset = controller.screen_delta_to_world(delta_x, delta_y);
-```
-
-Uses the camera's right and up vectors to map 2D screen movement to 3D space. The scale factor is proportional to the orbital distance, so movement feels consistent at any zoom level.
-
-### Screen to World at Depth
-
-Unproject screen coordinates to a world-space point on a plane at a specific depth:
-
-```rust
-let world_point = controller.screen_to_world_at_depth(
-    screen_x, screen_y,
-    screen_width, screen_height,
-    reference_world_point,
-);
-```
-
-This is used for pull operations -- the target position should be on a plane parallel to the camera at the residue's depth, so the pull doesn't move toward or away from the camera.
-
-The conversion:
-1. Maps screen coordinates to NDC [-1, 1] (with Y-flip since screen origin is top-left)
-2. Accounts for both horizontal and vertical FOV
-3. Projects onto a plane at the depth of the reference point
+These are crate-internal — they're consumed by the constraint
+resolution path that produces the per-frame band/pull world-space
+positions.
 
 ## Fog Derivation
 
-Fog parameters are derived from the camera's bounding radius and distance:
+Fog parameters are derived from the camera's distance and bounding
+radius each frame:
 
-- **Fog start** -- based on the distance and bounding radius
-- **Fog density** -- increases with bounding radius for larger structures
+- **Fog start** — based on the orbital distance.
+- **Fog density** — `2.0 / max(bounding_radius, 10.0)`.
 
-The post-processing composite pass uses these to apply depth-based fog, fading distant geometry to the background color.
+The composite post-pass uses these to apply depth-based fog, fading
+distant geometry to the background color.
 
 ## GPU Uniform
 
-The camera uniform is uploaded to the GPU each frame:
-
-```rust
-controller.update_gpu(&queue);
-```
-
-The uniform contains the projection matrix, view matrix, inverse projection, camera position, and screen dimensions. All renderers bind to this uniform for vertex transformation.
+The camera uniform is uploaded to the GPU each frame inside
+`engine.render()`. It contains the projection matrix, view matrix,
+inverse projection, camera position, hovered residue id, screen
+dimensions, and an elapsed-time field. All renderers bind to this
+uniform for vertex transformation and view-dependent effects.

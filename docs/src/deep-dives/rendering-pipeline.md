@@ -1,11 +1,13 @@
 # Rendering Pipeline
 
-Viso's rendering pipeline has two main stages: a geometry pass that renders molecular structures to HDR render targets, and a post-processing stack that applies screen-space effects.
+Viso's rendering pipeline has two main stages: a geometry pass that
+renders molecular structures to HDR render targets, and a
+post-processing stack that applies screen-space effects.
 
 ## Overview
 
 ```
-Geometry Pass (7 molecular renderers)
+Geometry Pass (8 molecular renderers)
     ↓ Color (Rgba16Float) + Normals (Rgba16Float) + Depth (Depth32Float)
     ↓
 Post-Processing Stack:
@@ -19,93 +21,114 @@ Post-Processing Stack:
 
 ### Render Targets
 
-All molecular renderers write to two HDR render targets plus a depth buffer:
+All molecular renderers write to two HDR render targets plus a depth
+buffer:
 
-| Target | Format | Contents |
-|--------|--------|----------|
-| Target 0 | Rgba16Float | Scene color with alpha blending |
-| Target 1 | Rgba16Float | View-space normals / metadata (no blending) |
-| Depth | Depth32Float | Depth buffer (Less compare, writes enabled) |
+| Target  | Format       | Contents |
+|---------|--------------|----------|
+| Color   | `Rgba16Float`| Scene color with alpha blending |
+| Normal  | `Rgba16Float`| View-space normals / metadata (no blending) |
+| Depth   | `Depth32Float`| Depth buffer (Less compare, writes enabled) |
 
-Using Rgba16Float enables HDR lighting and bloom without banding artifacts.
+`Rgba16Float` enables HDR lighting and bloom without banding
+artifacts.
 
 ### Molecular Renderers
 
-Seven renderers draw molecular geometry in order:
+The `Renderers` struct holds eight renderers, drawn in the geometry
+pass:
 
-#### 1. Tube Renderer
+#### 1. BackboneRenderer
 
-Renders protein backbone as smooth cylindrical tubes.
+Renders protein backbones as a single mesh with two index ranges —
+tube indices (drawn first for coil segments and fully in tube mode)
+and ribbon indices (drawn for helices and sheets in ribbon mode).
 
-- **Geometry**: cubic Hermite splines with rotation-minimizing frames (RMF)
-- **Parameters**: radius 0.3 angstroms, 8 radial segments, 4 axial segments per CA span
-- **SS filtering**: in ribbon mode, only renders coil/loop segments; tubes handle everything in tube mode
-- **Vertex data**: position, normal, color, residue_idx, center_pos
+- **Geometry**: cubic Hermite splines with rotation-minimizing frames.
+- **Per-SS appearance**: helix / sheet / coil width, thickness, and
+  roundness from `GeometryOptions` (driven by `cartoon_style` preset
+  unless `Custom`).
+- **Detail**: `segments_per_residue` × `cross_section_verts` (defaults
+  32 × 16, scalable per LOD tier).
+- **Vertex data**: position, normal, color, residue idx, center pos.
 
-#### 2. Ribbon Renderer
+#### 2. SidechainRenderer
 
-Renders helices and sheets as flat ribbons.
+Renders sidechain atoms as ray-marched capsule impostors.
 
-- **Helices**: ribbon normal points radially outward from the helix axis
-- **Sheets**: constant width, smooth RMF-propagated normals (no pleating)
-- **Parameters**: helix width 1.4, sheet width 1.6, thickness 0.25 angstroms
-- **Interpolation**: B-spline with C2 continuity, 16 segments per residue
-- **Sheet offsets**: sheet residues are offset from the tube centerline to separate ribbon from tube in ribbon mode
+- **Technique**: storage buffer of capsule instances rendered as
+  ray-marched impostors.
+- **Capsule radius**: 0.3 Å.
+- **Color**: from the active sidechain color mode (Backbone or
+  Hydrophobicity).
+- **Frustum culling**: instances outside the view frustum are skipped
+  on upload.
 
-#### 3. Capsule Sidechain Renderer
+#### 3. BondRenderer
 
-Renders sidechain atoms as capsule impostors (ray-marched).
+Renders structural bonds (H-bonds, disulfides) as configurable
+capsules.
 
-- **Technique**: storage buffer of `CapsuleInstance` structs, rendered as ray-marched impostors
-- **Capsule radius**: 0.3 angstroms
-- **Colors**: hydrophobic (blue), hydrophilic (orange), configurable via `ColorOptions`
-- **Frustum culling**: sidechains outside the view frustum (with 5.0 angstrom margin) are skipped
-- **Instance data**: two endpoints + radius, color + entity_id for picking
+- **Style**: `Solid`, `Dashed`, or `Stippled` per bond type
+  (`BondOptions`).
+- **Source**: `Auto` (geometry-detected), `Manual` (caller-provided),
+  or `Both`.
 
-#### 4. Ball-and-Stick Renderer
+#### 4. BandRenderer
 
-Renders ligands, ions, waters, and non-protein entities.
+Renders constraint bands (e.g. for Rosetta minimization).
 
-- **Atoms**: ray-cast sphere impostors
-- **Bonds**: capsule impostors (cylinders with hemispherical caps)
-- **Atom radii**: normal atoms 0.3x van der Waals radius, ions 0.5x, water oxygen 0.3 angstroms
-- **Bond radius**: 0.15 angstroms
-- **Double bonds**: two parallel capsules offset by 0.2 angstroms
-- **Lipid modes**: CoarseGrained (P spheres, head-group highlights, thin tail bonds) or BallAndStick (full detail)
+- **Visual**: capsule impostors with variable radius (0.1–0.4 Å,
+  scaled by `strength`).
+- **Colors by type**: default (purple), backbone (yellow-orange),
+  disulfide (yellow-green), H-bond (cyan), disabled (gray).
+- **Anchor spheres**: small spheres at band endpoints.
 
-#### 5. Band Renderer
-
-Renders constraint bands (for Rosetta minimization).
-
-- **Visual**: capsule impostors with variable radius (0.1 to 0.4 angstroms, scaled by constraint strength)
-- **Colors by type**: default (purple), backbone (yellow-orange), disulfide (yellow-green), H-bond (cyan), disabled (gray)
-- **Anchor spheres**: 0.5 angstrom radius spheres at band endpoints for pull indicators
-
-#### 6. Pull Renderer
+#### 5. PullRenderer
 
 Renders the active drag constraint.
 
-- **Cylinder**: capsule impostor from atom to near the mouse position (purple, 0.25 angstrom radius)
-- **Arrow**: cone impostor at the mouse end pointing toward the target (0.6 angstrom radius)
+- **Cylinder**: capsule from atom to mouse target (purple).
+- **Arrow**: cone impostor at the target end pointing toward the
+  drag direction.
 
-#### 7. Nucleic Acid Renderer
+#### 6. BallAndStickRenderer
 
-Renders DNA/RNA backbones.
+Renders ligands, ions, waters, and (in BallAndStick drawing mode)
+proteins.
 
-- **Geometry**: flat ribbons tracing phosphorus (P) atoms with B-spline interpolation and RMF orientation
-- **Parameters**: width 1.2 angstroms (narrower than protein), thickness 0.25 angstroms, 16 segments per P-atom
-- **Color**: light blue-violet (configurable)
+- **Atoms**: ray-cast sphere impostors with vdW-scaled radii.
+- **Bonds**: capsule impostors (cylinders with hemispherical caps).
+- **Lipid modes**: `Coarse` (P-only spheres + thin tail bonds) or
+  `BallAndStick` (full detail).
+
+#### 7. NucleicAcidRenderer
+
+Renders DNA/RNA backbones and base rings.
+
+- **Stems**: capsule instances tracing the phosphate backbone.
+- **Rings**: polygon instances for the nucleobase rings.
+- **Color**: per-base (default) or uniform.
+
+#### 8. IsosurfaceRenderer
+
+Renders electron-density-derived molecular surfaces (Gaussian, SES,
+or cavity) generated by the background `surface_regen` worker.
+
+- **Backface depth pre-pass** is rendered separately so the composite
+  pass can apply correct depth-aware blending for translucent
+  surfaces.
 
 ### Shared Bind Groups
 
 All renderers receive common bind groups via `DrawBindGroups`:
 
 ```rust
-pub struct DrawBindGroups<'a> {
-    pub camera: &'a wgpu::BindGroup,     // Projection/view matrices
-    pub lighting: &'a wgpu::BindGroup,   // Light directions, intensities
-    pub selection: &'a wgpu::BindGroup,  // Selection bit-array
-    pub color: Option<&'a wgpu::BindGroup>, // Per-residue color override
+pub(crate) struct DrawBindGroups<'a> {
+    pub camera: &'a wgpu::BindGroup,         // Projection / view matrices
+    pub lighting: &'a wgpu::BindGroup,       // Light directions, intensities
+    pub selection: &'a wgpu::BindGroup,      // Selection bit-array
+    pub color: Option<&'a wgpu::BindGroup>,  // Per-residue color override
 }
 ```
 
@@ -115,62 +138,60 @@ pub struct DrawBindGroups<'a> {
 
 Computes local ambient occlusion from the depth and normal buffers.
 
-- **Kernel**: 32 hemisphere samples in view-space
-- **Noise**: 4x4 rotation noise texture to reduce banding
-- **Parameters**: radius (0.5), bias (0.025), power (2.0)
-- **Output**: single-channel AO texture
-- **Blur pass**: separable blur to smooth noise patterns
+- **Kernel**: hemisphere samples in view-space.
+- **Noise**: 4×4 rotation noise texture to reduce banding.
+- **Parameters**: `ao_radius` (0.5), `ao_bias` (0.025), `ao_power`
+  (2.0).
+- **Output**: single-channel AO texture.
+- **Blur pass**: separable blur to smooth noise patterns.
 
 ### 2. Bloom
 
 Extracts and blurs bright areas of the image.
 
-- **Threshold**: extracts pixels above the brightness threshold to a half-resolution texture
-- **Blur**: separable Gaussian blur (horizontal then vertical, ping-pong textures)
-- **Mip chain**: 4 levels of downsampling
-- **Upsample**: additive accumulation back to half-resolution
-- **Output**: half-resolution bloom texture
-- **Parameters**: threshold (1.0), intensity (0.0 by default -- disabled)
+- **Threshold**: extracts pixels above `bloom_threshold` (1.0) to a
+  half-resolution texture.
+- **Blur**: separable Gaussian blur (horizontal then vertical,
+  ping-pong textures).
+- **Mip chain**: progressive downsampling.
+- **Upsample**: additive accumulation back to half-resolution.
+- **Output**: half-resolution bloom texture.
+- **Default `bloom_intensity`**: `0.0` (disabled).
 
 ### 3. Composite
 
 Combines all post-processing inputs into the final image.
 
-**Inputs** (8 bind group entries):
+**Inputs**:
 - Scene color texture
 - SSAO texture
 - Depth texture
-- Color/SSAO sampler (linear)
-- Depth sampler (nearest)
-- Params uniform buffer
 - Normal G-buffer
 - Bloom texture
+- Composite params uniform
 
-**Effects applied:**
-- SSAO as darkening multiplier on base color
-- Depth-based fog (configurable start and density)
-- Depth-based outlines (edge detection on depth discontinuities)
-- Normal-based outlines (edge detection on normal discontinuities)
-- Bloom additive blend
-- HDR tone mapping (exposure control)
-- Gamma correction
-
-**Parameters** (CompositeParams uniform):
-- Screen size, outline thickness/strength, AO strength
-- Near/far planes, fog start/density
-- Normal outline strength, exposure, gamma, bloom intensity
+**Effects applied**:
+- SSAO as a darkening multiplier on base color.
+- Depth-based fog (configurable `fog_start` and `fog_density`).
+- Depth-based outlines (edge detection on depth discontinuities).
+- Normal-based outlines (edge detection on normal discontinuities).
+- Bloom additive blend.
+- HDR tone mapping with `exposure`.
+- Gamma correction.
 
 ### 4. FXAA
 
 Fast Approximate Anti-Aliasing as the final pass.
 
-- Smooths jagged edges on mesh-based geometry (tubes, ribbons) that supersampling alone doesn't fully resolve
+- Smooths jagged edges on mesh-based geometry that supersampling
+  alone doesn't fully resolve.
 - Reads from the composite output, writes to the swapchain surface
-- Uses linear filtering for edge detection
+  (or to the caller-owned texture view in `render_to_texture`).
 
 ## ShaderComposer
 
-Viso uses `naga_oil` for shader composition, enabling modular WGSL with imports:
+Viso uses `naga_oil` for shader composition, enabling modular WGSL
+with imports:
 
 ```wgsl
 #import viso::camera
@@ -179,20 +200,30 @@ Viso uses `naga_oil` for shader composition, enabling modular WGSL with imports:
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light = calculate_lighting(in.normal, in.position);
-    // ...
+    // …
 }
 ```
 
-**Pre-loaded shared modules:**
-- `camera.wgsl` -- camera matrix uniforms and transformations
-- `lighting.wgsl` -- Blinn-Phong lighting, directional lights
-- `sdf.wgsl` -- signed distance field utilities
-- `raymarch.wgsl` -- ray marching for implicit surfaces
-- `volume.wgsl` -- volume texture sampling
-- `fullscreen.wgsl` -- fullscreen triangle utilities
+Shaders live under `src/shaders/`:
 
-The composer produces `naga::Module` IR directly (skipping WGSL re-parse at runtime for performance).
+- `shaders/modules/` — shared modules (`camera.wgsl`, `lighting.wgsl`,
+  `pbr.wgsl`, `ray.wgsl`, `volume.wgsl`, `selection.wgsl`,
+  `highlight.wgsl`, `shade.wgsl`, `depth.wgsl`, `constants.wgsl`,
+  `fullscreen.wgsl`, `impostor_types.wgsl`).
+- `shaders/raster/mesh/` — mesh rasterization (backbone, NA).
+- `shaders/raster/impostor/` — impostor shaders (sphere, capsule,
+  cone, polygon).
+- `shaders/screen/` — full-screen passes (`composite.wgsl`,
+  `fxaa.wgsl`, `ssao.wgsl`, `ssao_blur.wgsl`, `bloom_*.wgsl`).
+- `shaders/utility/` — picking shaders (`picking_mesh.wgsl`,
+  `picking_capsule.wgsl`, `picking_sphere.wgsl`).
+
+The composer produces `naga::Module` IR directly (skipping WGSL
+re-parse at runtime for performance).
 
 ## Render-Scale Supersampling
 
-The rendering resolution can differ from the display resolution via `set_scale_factor()`. All internal textures (color, depth, normal, SSAO, bloom) are sized to the render resolution. FXAA downsamples to the display resolution as the final step.
+The rendering resolution can differ from the display resolution via
+`engine.set_surface_scale(scale)`. All internal textures (color,
+depth, normal, SSAO, bloom) are sized to the render resolution. FXAA
+downsamples to the display resolution as the final step.

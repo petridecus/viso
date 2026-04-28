@@ -1,6 +1,8 @@
 # Options and Presets
 
-Viso's visual appearance is controlled by the `VisoOptions` struct, which can be loaded from and saved to TOML files. This enables presets for different visualization styles.
+Viso's visual appearance is controlled by the `VisoOptions` struct,
+which can be loaded from and saved to TOML files. This enables
+presets for different visualization styles.
 
 ## Options Structure
 
@@ -12,49 +14,73 @@ pub struct VisoOptions {
     pub camera: CameraOptions,
     pub colors: ColorOptions,
     pub geometry: GeometryOptions,
-    pub keybindings: KeybindingOptions,
+    pub debug: DebugOptions,
 }
 ```
 
-All fields use `#[serde(default)]`, so TOML files can be partial -- only the fields you want to override need to be specified.
+All sub-structs use `#[serde(default)]`, so TOML files can be partial —
+only the fields you want to override need to be specified. Key
+bindings live separately on `InputProcessor` (`KeyBindings`); they are
+an input-layer concern, not a rendering option.
 
 ## Display Options
 
 ```rust
 pub struct DisplayOptions {
-    pub show_waters: bool,           // default: false
-    pub show_ions: bool,             // default: true
-    pub show_solvent: bool,          // default: false
-    pub lipid_mode: LipidMode,       // default: Coarse
-    pub show_sidechains: bool,       // default: true
-    pub show_hydrogens: bool,        // default: false
-    pub backbone_color_mode: BackboneColorMode,   // default: Chain
-    pub sidechain_color_mode: SidechainColorMode, // default: Hydrophobicity
-    pub na_color_mode: NaColorMode,  // default: Uniform
+    // Ambient visibility (type-level toggles)
+    pub show_waters: bool,
+    pub show_ions: bool,
+    pub show_solvent: bool,
+
+    // Surface presentation mode (VSync, immediate, mailbox)
+    pub present_mode: PresentMode,
+
+    // Structural bond display (H-bonds, disulfides)
+    pub bonds: BondOptions,
+
+    // Legacy (prefer `overrides.color_scheme`)
+    pub backbone_color_mode: BackboneColorMode,
+
+    // Per-entity overridable fields (flattened for TOML compat).
+    // These are also used at per-entity scope via `EntityAnnotations`;
+    // `None` at either scope falls through to the next layer
+    // (entity → global → built-in defaults).
+    #[serde(flatten)]
+    pub overrides: DisplayOverrides,
 }
 ```
+
+`DisplayOverrides` carries 14 per-entity overridable fields:
+`drawing_mode`, `color_scheme`, `helix_style`, `sheet_style`,
+`show_sidechains`, `show_hydrogens`, `surface_kind`, `surface_opacity`,
+`show_cavities`, `sidechain_color_mode`, `na_color_mode`, `lipid_mode`,
+`palette_preset`, `palette_mode`. Any field set to `Some(...)` at the
+global scope acts as the default for entities that don't override it.
+
+Resolved getters (`display.drawing_mode()`, `display.show_sidechains()`,
+etc.) walk the override chain to produce a final value.
 
 ## Lighting Options
 
 ```rust
 pub struct LightingOptions {
-    pub light1_dir: [f32; 3],       // Primary directional light
-    pub light2_dir: [f32; 3],       // Fill directional light
-    pub light1_intensity: f32,      // default: 2.0
-    pub light2_intensity: f32,      // default: 1.1
-    pub ambient: f32,               // default: 0.45
-    pub specular_intensity: f32,    // default: 0.35
-    pub shininess: f32,             // default: 38.0
-    pub rim_power: f32,             // default: 5.0
-    pub rim_intensity: f32,         // default: 0.3
-    pub rim_directionality: f32,    // default: 0.3
-    pub rim_color: [f32; 3],
-    pub rim_dir: [f32; 3],
-    pub ibl_strength: f32,          // default: 0.6
-    pub roughness: f32,             // default: 0.35
-    pub metalness: f32,             // default: 0.15
+    pub light1_intensity: f32,    // default: 2.0   (key light)
+    pub light2_intensity: f32,    // default: 1.1   (fill light)
+    pub ambient: f32,             // default: 0.45
+    pub specular_intensity: f32,  // default: 0.35
+    pub shininess: f32,           // default: 38.0
+    pub rim_power: f32,           // default: 5.0
+    pub rim_intensity: f32,       // default: 0.3
+    pub rim_directionality: f32,  // default: 0.3
+    pub rim_color: [f32; 3],      // default: [1.0, 0.85, 0.7]
+    pub ibl_strength: f32,        // default: 0.6
+    pub roughness: f32,           // default: 0.35
+    pub metalness: f32,           // default: 0.15
 }
 ```
+
+Light directions are derived per-frame from the camera ("headlamp"
+lighting) rather than configured statically.
 
 ## Post-Processing Options
 
@@ -70,7 +96,7 @@ pub struct PostProcessingOptions {
     pub fog_density: f32,               // default: 0.005
     pub exposure: f32,                  // default: 1.0
     pub normal_outline_strength: f32,   // default: 0.5
-    pub bloom_intensity: f32,           // default: 0.0
+    pub bloom_intensity: f32,           // default: 0.0   (disabled)
     pub bloom_threshold: f32,           // default: 1.0
 }
 ```
@@ -105,40 +131,55 @@ pub struct ColorOptions {
 }
 ```
 
+The default `cofactor_tints` includes greens for chlorophylls (CLA,
+CHL), oranges for carotenoids (BCR, BCB), reds for hemes (HEM, HEC,
+HEA, HEB), and others.
+
 ## Geometry Options
+
+Geometry options control cartoon rendering detail. Per-SS parameters
+(width, thickness, roundness) can be set directly or driven by a
+`cartoon_style` preset:
 
 ```rust
 pub struct GeometryOptions {
-    pub tube_radius: f32,           // default: 0.3
-    pub tube_radial_segments: u32,  // default: 8
-    pub solvent_radius: f32,        // default: 0.15
-    pub ligand_sphere_radius: f32,  // default: 0.3
-    pub ligand_bond_radius: f32,    // default: 0.12
+    pub cartoon_style: CartoonStyle,    // Ribbon | Tube | Cylindrical | Custom
+    pub sheet_arrows: bool,             // default: true
+
+    // Per-SS appearance (in Ångström)
+    pub helix_width: f32,               // default: 1.4
+    pub helix_thickness: f32,           // default: 0.25
+    pub helix_roundness: f32,           // default: 0.0
+    pub sheet_width: f32,               // default: 1.6
+    pub sheet_thickness: f32,           // default: 0.25
+    pub sheet_roundness: f32,           // default: 0.0
+    pub coil_width: f32,                // default: 0.4
+    pub coil_thickness: f32,            // default: 0.4
+    pub coil_roundness: f32,            // default: 1.0
+
+    // Nucleic acid backbone
+    pub na_width: f32,                  // default: 1.2
+    pub na_thickness: f32,              // default: 0.25
+    pub na_roundness: f32,              // default: 0.0
+
+    // Mesh detail
+    pub segments_per_residue: usize,    // default: 32
+    pub cross_section_verts: usize,     // default: 16
+
+    // Small-molecule rendering
+    pub solvent_radius: f32,            // default: 0.15
+    pub ligand_sphere_radius: f32,      // default: 0.3
+    pub ligand_bond_radius: f32,        // default: 0.12
 }
 ```
 
-## Keybinding Options
+`CartoonStyle::Custom` keeps the per-SS fields as-is; the other
+presets overwrite them at resolve time.
 
-```rust
-pub struct KeybindingOptions {
-    pub bindings: HashMap<String, String>,  // action name -> key string
-}
-```
+## Debug Options
 
-Default keybindings:
-
-| Action | Key |
-|--------|-----|
-| `recenter_camera` | Q |
-| `toggle_trajectory` | T |
-| `toggle_ions` | I |
-| `toggle_waters` | U |
-| `toggle_solvent` | O |
-| `toggle_lipids` | L |
-| `cycle_focus` | Tab |
-| `toggle_auto_rotate` | R |
-| `reset_focus` | \` |
-| `cancel` | Escape |
+`DebugOptions` controls debug-only visualizations (frustum overlays,
+LOD heatmaps, etc.). See `options/debug.rs` for the current field set.
 
 ## Loading and Saving
 
@@ -154,13 +195,12 @@ let presets = VisoOptions::list_presets(Path::new("presets/"));
 // Returns: ["dark", "publication", "presentation", ...]
 ```
 
+`VisoOptions::json_schema()` returns a Schemars schema describing the
+UI-exposed subset of options (used by the embedded webview panel).
+
 ## Example TOML Preset
 
 ```toml
-[display]
-show_sidechains = true
-backbone_color_mode = "Chain"
-
 [lighting]
 light1_intensity = 2.5
 ambient = 0.5
@@ -185,17 +225,14 @@ hydrophilic_sidechain = [0.9, 0.55, 0.15]
 
 ## Applying Options at Runtime
 
-Options are applied to the engine through dedicated methods. Display and color options trigger a scene re-sync (since the background processor needs them for mesh generation). Lighting and post-processing options are pushed directly to GPU uniforms.
+`engine.set_options(new_options)` is the canonical entry point. It
+diffs the new options against the current ones and dispatches the
+right invalidations:
 
-```rust
-// Apply post-processing options
-engine.post_process.apply_options(&options, &queue);
-
-// Apply lighting options
-engine.update_lighting(&options.lighting);
-
-// Display/color changes require a scene sync
-engine.sync_scene_to_renderers(None);
-```
-
-Changes to display options (like `backbone_color_mode` or `show_sidechains`) invalidate the per-group mesh cache in the background processor, causing a full mesh regeneration on the next sync.
+- Display/color/geometry changes that affect mesh content trigger a
+  full scene resync via the background processor.
+- Lighting changes are pushed directly to GPU lighting uniforms.
+- Post-processing changes update GPU uniforms and SSAO/bloom render
+  targets without touching geometry.
+- Camera changes (FOV, znear/zfar, sensitivity) are applied to the
+  controller in place.

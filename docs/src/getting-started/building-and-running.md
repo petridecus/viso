@@ -54,7 +54,7 @@ The file is downloaded as mmCIF and cached in `assets/models/1ubq.cif`. Subseque
 cargo run -p viso --release -- path/to/structure.cif
 ```
 
-Viso supports mmCIF (`.cif`) files.
+Viso supports mmCIF (`.cif`), PDB (`.pdb`), and BinaryCIF (`.bcif`) files.
 
 ## Logging
 
@@ -71,7 +71,7 @@ RUST_LOG=info cargo run -p viso -- 1ubq
 RUST_LOG=debug cargo run -p viso -- 1ubq
 
 # Module-specific filtering
-RUST_LOG=viso::scene::processor=debug cargo run -p viso -- 1ubq
+RUST_LOG=viso::renderer::pipeline::processor=debug cargo run -p viso -- 1ubq
 ```
 
 ## Platform Notes
@@ -108,5 +108,14 @@ DX12 is the default backend on Windows 10+. Vulkan is also supported if drivers 
 | Double-click | Select secondary structure segment |
 | Triple-click | Select entire chain |
 | Click background | Clear selection |
+| Q | Recenter camera on focus |
+| Tab | Cycle focus through entities |
+| R | Toggle turntable auto-rotation |
+| T | Toggle trajectory playback |
+| I | Toggle ion visibility |
+| U | Toggle water visibility |
+| O | Toggle solvent visibility |
+| L | Cycle lipid display mode |
+| \` | Reset focus to session |
 | Escape | Clear selection |
-| W | Toggle water visibility |
+| \\ | Toggle the GUI options panel (when built with `gui`) |
