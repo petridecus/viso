@@ -8,7 +8,9 @@ on:
       - 'web/**'
       - 'src/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.cargo/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
