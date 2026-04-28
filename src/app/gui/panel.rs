@@ -11,8 +11,23 @@ use web_time::Instant;
 use winit::window::Window;
 
 use super::webview;
+use crate::bridge::dispatch::{self, UiHost};
 use crate::bridge::{self, PanelAxis, UiAction};
 use crate::VisoEngine;
+
+/// [`UiHost`] adapter that funnels dispatcher pushes through the wry
+/// webview. No-ops if the webview isn't attached yet.
+struct PanelHost<'a> {
+    webview: Option<&'a wry::WebView>,
+}
+
+impl UiHost for PanelHost<'_> {
+    fn push(&self, key: &str, json: &str) {
+        if let Some(wv) = self.webview {
+            webview::push_raw(wv, key, json);
+        }
+    }
+}
 
 /// Owns the webview panel and all associated state.
 pub(crate) struct PanelController {
@@ -192,28 +207,15 @@ impl PanelController {
         app: &mut crate::app::VisoApp,
         engine: &mut VisoEngine,
     ) {
-        match action {
-            UiAction::SetOption { path, field, value } => {
-                log::debug!("SetOption: {path}.{field} = {value}");
-                let mut opts = engine.options.clone();
-                let Ok(mut root) = serde_json::to_value(&opts) else {
-                    log::warn!("Failed to serialize options to JSON");
-                    return;
-                };
-                patch_options_json(&mut root, &path, &field, value);
-                match serde_json::from_value(root) {
-                    Ok(updated) => opts = updated,
-                    Err(e) => {
-                        log::warn!("Options deserialization failed: {e}");
-                    }
-                }
-                engine.set_options(opts);
-                if let Some(ref wv) = self.webview {
-                    webview::push_options(wv, &engine.options);
-                }
-                // Surface kind/opacity changes affect entity summaries
-                self.push_scene_entities(engine);
-            }
+        let host = PanelHost {
+            webview: self.webview.as_ref(),
+        };
+        let Some(passthrough) =
+            dispatch::dispatch_engine_action(engine, action, &host)
+        else {
+            return;
+        };
+        match passthrough {
             UiAction::LoadFile { path } => {
                 self.load_local_file(app, engine, &path);
             }
@@ -230,143 +232,10 @@ impl PanelController {
                     let _ = engine.execute(cmd);
                 }
             }
-            UiAction::Command(cmd) => {
-                let _ = engine.execute(cmd);
-                self.push_scene_entities(engine);
-            }
-            UiAction::SetEntityAppearance {
-                entity_id,
-                field,
-                value,
-            } => {
-                Self::apply_entity_appearance_field(
-                    engine, entity_id, &field, &value,
-                );
-                self.push_scene_entities(engine);
-            }
-            UiAction::ClearEntityAppearance { entity_id } => {
-                if let Some(eid) = engine.entity_id(entity_id) {
-                    engine.clear_entity_appearance(eid);
-                }
-                self.push_scene_entities(engine);
-            }
-            UiAction::SetEntitySurface { entity_id, kind } => {
-                if let Some(eid) = engine.entity_id(entity_id) {
-                    let default_color = [0.7, 0.7, 0.7, 0.35];
-                    let mut view = engine.annotations_mut();
-                    match kind.as_str() {
-                        "gaussian" => {
-                            view.add_gaussian_surface(eid, default_color);
-                        }
-                        "ses" => {
-                            view.add_ses_surface(eid, default_color);
-                        }
-                        _ => {
-                            view.remove_surface(eid);
-                        }
-                    }
-                }
-                self.push_scene_entities(engine);
-            }
-            UiAction::SetSurfaceOption {
-                entity_id,
-                field,
-                value,
-            } => {
-                if let (Some(eid), Some(v)) =
-                    (engine.entity_id(entity_id), value.as_f64())
-                {
-                    let ch = match field.as_str() {
-                        "color_r" => Some(0),
-                        "color_g" => Some(1),
-                        "color_b" => Some(2),
-                        "opacity" => Some(3),
-                        _ => None,
-                    };
-                    if let Some(ch) = ch {
-                        engine
-                            .annotations_mut()
-                            .set_surface_color_channel(eid, ch, v as f32);
-                    }
-                }
-                self.push_scene_entities(engine);
-            }
-            UiAction::SetDensityOption { id, field, value } => {
-                Self::apply_density_option(engine, id, &field, &value);
-                self.push_density_maps(engine);
-            }
-            UiAction::RemoveDensityMap { id } => {
-                engine.density_mut().remove(id);
-                self.push_density_maps(engine);
-            }
-            UiAction::ToggleDensityVisibility { id } => {
-                let vis = engine.density.get(id).is_some_and(|e| !e.visible);
-                engine.density_mut().set_visible(id, vis);
-                self.push_density_maps(engine);
-            }
-            UiAction::TogglePanel | UiAction::ResizePanel { .. } => {
-                // Handled in drain_and_apply directly
-            }
-        }
-    }
-
-    /// Apply a single density option field.
-    fn apply_density_option(
-        engine: &mut VisoEngine,
-        id: u32,
-        field: &str,
-        value: &serde_json::Value,
-    ) {
-        match field {
-            "threshold" => {
-                if let Some(v) = value.as_f64() {
-                    engine.density_mut().set_threshold(id, v as f32);
-                }
-            }
-            "opacity" => {
-                if let Some(v) = value.as_f64() {
-                    engine.density_mut().set_opacity(id, v as f32);
-                }
-            }
-            "color_r" | "color_g" | "color_b" => {
-                if let Some(v) = value.as_f64() {
-                    let mut color = engine
-                        .density
-                        .get(id)
-                        .map_or([0.3, 0.5, 0.8], |e| e.color);
-                    match field {
-                        "color_r" => color[0] = v as f32,
-                        "color_g" => color[1] = v as f32,
-                        "color_b" => color[2] = v as f32,
-                        _ => {}
-                    }
-                    engine.density_mut().set_color(id, color);
-                }
-            }
-            _ => log::warn!("Unknown density field: {field}"),
-        }
-    }
-
-    /// Apply a single per-entity appearance override field.
-    fn apply_entity_appearance_field(
-        engine: &mut VisoEngine,
-        entity_id: u32,
-        field: &str,
-        value: &serde_json::Value,
-    ) {
-        let Some(eid) = engine.entity_id(entity_id) else {
-            return;
-        };
-        let mut ovr =
-            engine.entity_appearance(eid).cloned().unwrap_or_default();
-        if let Err(unknown) = ovr.apply_json_field(field, value) {
-            log::warn!("Unknown entity appearance field: {unknown}");
-            return;
-        }
-        if ovr.is_empty() {
-            engine.clear_entity_appearance(eid);
-        } else {
-            engine.set_entity_appearance(eid, ovr);
+            // TogglePanel/ResizePanel are intercepted in
+            // drain_and_apply; remaining variants are engine-level and
+            // were handled by the dispatcher above.
+            _ => {}
         }
     }
 
@@ -393,22 +262,18 @@ impl PanelController {
 
     /// Push the current entity list to the webview.
     pub(crate) fn push_scene_entities(&self, engine: &VisoEngine) {
-        let Some(ref wv) = self.webview else {
-            return;
+        let host = PanelHost {
+            webview: self.webview.as_ref(),
         };
-        let summaries = bridge::entity_summaries(engine);
-        let json = serde_json::to_string(&summaries).unwrap_or_default();
-        webview::push_scene_entities(wv, &json);
+        dispatch::push_scene_entities(engine, &host);
     }
 
     /// Push the current density map list to the webview.
     fn push_density_maps(&self, engine: &VisoEngine) {
-        let Some(ref wv) = self.webview else {
-            return;
+        let host = PanelHost {
+            webview: self.webview.as_ref(),
         };
-        let maps = bridge::density_summaries(engine);
-        let json = serde_json::to_string(&maps).unwrap_or_default();
-        webview::push_density_maps(wv, &json);
+        dispatch::push_density_maps(engine, &host);
     }
 }
 
@@ -535,45 +400,6 @@ impl PanelController {
 }
 
 // ── Helpers (free functions) ─────────────────────────────────────────────
-
-/// Apply a `{path, field, value}` patch to a serialized `VisoOptions`
-/// JSON value.
-///
-/// The common case is `root.pointer_mut(/path/field)` — replace the
-/// existing JSON value. But with `DisplayOverrides` flattened into
-/// `DisplayOptions` and each override field carrying
-/// `#[serde(skip_serializing_if = "Option::is_none")]`, a field that
-/// hasn't been set yet is *absent* from the serialized JSON and
-/// `pointer_mut` returns `None`. In that case we navigate to the
-/// parent path and insert the field on the parent object.
-fn patch_options_json(
-    root: &mut serde_json::Value,
-    path: &str,
-    field: &str,
-    value: serde_json::Value,
-) {
-    let pointer = format!(
-        "/{}",
-        path.split('.')
-            .chain(std::iter::once(field))
-            .collect::<Vec<_>>()
-            .join("/")
-    );
-    if let Some(target) = root.pointer_mut(&pointer) {
-        *target = value;
-        return;
-    }
-    let parent_pointer = format!("/{}", path.replace('.', "/"));
-    let Some(parent) = root.pointer_mut(&parent_pointer) else {
-        log::warn!("Option path not found: {pointer}");
-        return;
-    };
-    let Some(obj) = parent.as_object_mut() else {
-        log::warn!("Option parent is not an object: {parent_pointer}");
-        return;
-    };
-    let _ = obj.insert(field.to_owned(), value);
-}
 
 /// Parse a file (structure or density) and load it into the engine.
 fn parse_and_load(

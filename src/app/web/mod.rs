@@ -14,11 +14,22 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::HtmlCanvasElement;
 
 use crate::app::VisoApp;
+use crate::bridge::dispatch::{self, UiHost};
 use crate::bridge::{self, PanelAxis, UiAction};
 use crate::gpu::RenderContext;
 use crate::input::InputProcessor;
 use crate::options::VisoOptions;
 use crate::VisoEngine;
+
+/// [`UiHost`] adapter that funnels dispatcher pushes through the
+/// iframe `eval` transport already used by [`push_to_ui`].
+struct WebHost;
+
+impl UiHost for WebHost {
+    fn push(&self, key: &str, json: &str) {
+        push_to_ui(key, json);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Shared handles
@@ -408,43 +419,20 @@ fn handle_ipc_action(
         return;
     };
 
-    match action {
-        UiAction::SetOption { path, field, value } => {
-            let mut eng = engine.borrow_mut();
-            if let Ok(mut root) = serde_json::to_value(eng.options()) {
-                // Build a JSON pointer from the dot-separated path + field.
-                let pointer = format!(
-                    "/{}",
-                    path.split('.')
-                        .chain(std::iter::once(field.as_str()))
-                        .collect::<Vec<_>>()
-                        .join("/")
-                );
-                if let Some(target) = root.pointer_mut(&pointer) {
-                    *target = value;
-                } else {
-                    log::warn!("Option path not found: {pointer}");
-                }
-                if let Ok(updated) = serde_json::from_value::<VisoOptions>(root)
-                {
-                    eng.set_options(updated);
-                    let opts_json = serde_json::to_string(eng.options())
-                        .unwrap_or_default();
-                    push_to_ui("options", &opts_json);
-                }
-            }
-        }
+    let passthrough = {
+        let mut eng = engine.borrow_mut();
+        dispatch::dispatch_engine_action(&mut eng, action, &WebHost)
+    };
+    let Some(passthrough) = passthrough else {
+        return;
+    };
+    match passthrough {
         UiAction::FetchPdb { id, source } => {
             let app_clone = Rc::clone(app);
             let eng_clone = Rc::clone(engine);
             wasm_bindgen_futures::spawn_local(async move {
                 fetch_and_load(&app_clone, &eng_clone, &id, &source).await;
             });
-        }
-        UiAction::Command(cmd) => {
-            let mut eng = engine.borrow_mut();
-            let _ = eng.execute(cmd);
-            push_scene_entities(&eng);
         }
         UiAction::TogglePanel => {
             let mut collapsed = panel.collapsed.borrow_mut();
@@ -462,144 +450,10 @@ fn handle_ipc_action(
             apply_web_layout(axis, collapsed, clamped);
             push_to_ui("panel_size", &format!("{clamped}"));
         }
-        UiAction::ClearEntityAppearance { entity_id } => {
-            let mut eng = engine.borrow_mut();
-            if let Some(eid) = eng.entity_id(entity_id) {
-                eng.clear_entity_appearance(eid);
-            }
-            push_scene_entities(&eng);
-        }
-        UiAction::SetEntityAppearance {
-            entity_id,
-            field,
-            value,
-        } => {
-            let mut eng = engine.borrow_mut();
-            apply_entity_appearance_field(&mut eng, entity_id, &field, &value);
-            push_scene_entities(&eng);
-        }
-        UiAction::SetEntitySurface { entity_id, kind } => {
-            let mut eng = engine.borrow_mut();
-            if let Some(eid) = eng.entity_id(entity_id) {
-                let default_color = [0.7, 0.7, 0.7, 0.35];
-                let mut view = eng.annotations_mut();
-                match kind.as_str() {
-                    "gaussian" => {
-                        view.add_gaussian_surface(eid, default_color);
-                    }
-                    "ses" => {
-                        view.add_ses_surface(eid, default_color);
-                    }
-                    _ => {
-                        view.remove_surface(eid);
-                    }
-                }
-            }
-            push_scene_entities(&eng);
-        }
-        UiAction::SetSurfaceOption {
-            entity_id,
-            field,
-            value,
-        } => {
-            let mut eng = engine.borrow_mut();
-            if let (Some(eid), Some(v)) =
-                (eng.entity_id(entity_id), value.as_f64())
-            {
-                let ch = match field.as_str() {
-                    "color_r" => Some(0),
-                    "color_g" => Some(1),
-                    "color_b" => Some(2),
-                    "opacity" => Some(3),
-                    _ => None,
-                };
-                if let Some(ch) = ch {
-                    eng.annotations_mut()
-                        .set_surface_color_channel(eid, ch, v as f32);
-                }
-            }
-            push_scene_entities(&eng);
-        }
-        UiAction::SetDensityOption { id, field, value } => {
-            let mut eng = engine.borrow_mut();
-            apply_density_option(&mut eng, id, &field, &value);
-            push_density_maps(&eng);
-        }
-        UiAction::RemoveDensityMap { id } => {
-            let mut eng = engine.borrow_mut();
-            eng.density_mut().remove(id);
-            push_density_maps(&eng);
-        }
-        UiAction::ToggleDensityVisibility { id } => {
-            let mut eng = engine.borrow_mut();
-            let vis = eng.density.get(id).is_some_and(|e| !e.visible);
-            eng.density_mut().set_visible(id, vis);
-            push_density_maps(&eng);
-        }
-        UiAction::OpenFileDialog
-        | UiAction::KeyPress { .. }
-        | UiAction::LoadFile { .. } => {
-            // Native-only actions; no-op on web
-        }
-    }
-}
-
-/// Apply a single density option field.
-fn apply_density_option(
-    engine: &mut VisoEngine,
-    id: u32,
-    field: &str,
-    value: &serde_json::Value,
-) {
-    match field {
-        "threshold" => {
-            if let Some(v) = value.as_f64() {
-                engine.density_mut().set_threshold(id, v as f32);
-            }
-        }
-        "opacity" => {
-            if let Some(v) = value.as_f64() {
-                engine.density_mut().set_opacity(id, v as f32);
-            }
-        }
-        "color_r" | "color_g" | "color_b" => {
-            if let Some(v) = value.as_f64() {
-                let mut color = engine
-                    .density
-                    .get(id)
-                    .map_or([0.3, 0.5, 0.8], |e| e.color);
-                match field {
-                    "color_r" => color[0] = v as f32,
-                    "color_g" => color[1] = v as f32,
-                    "color_b" => color[2] = v as f32,
-                    _ => {}
-                }
-                engine.density_mut().set_color(id, color);
-            }
-        }
-        _ => log::warn!("Unknown density field: {field}"),
-    }
-}
-
-/// Apply a single per-entity appearance override field.
-fn apply_entity_appearance_field(
-    engine: &mut VisoEngine,
-    entity_id: u32,
-    field: &str,
-    value: &serde_json::Value,
-) {
-    let Some(eid) = engine.entity_id(entity_id) else {
-        return;
-    };
-    let mut ovr = engine.entity_appearance(eid).cloned().unwrap_or_default();
-    if let Err(unknown) = ovr.apply_json_field(field, value) {
-        log::warn!("Unknown entity appearance field: {unknown}");
-        return;
-    }
-    if ovr.is_empty() {
-        engine.clear_entity_appearance(eid);
-    } else {
-        engine.set_entity_appearance(eid, ovr);
+        // OpenFileDialog/KeyPress/LoadFile are native-only; remaining
+        // variants are engine-level and were handled by the dispatcher
+        // above.
+        _ => {}
     }
 }
 
@@ -704,16 +558,7 @@ fn push_schema_and_options(engine: &VisoEngine) {
 
 /// Push the scene entity list to viso-ui.
 fn push_scene_entities(engine: &VisoEngine) {
-    let summaries = bridge::entity_summaries(engine);
-    let json = serde_json::to_string(&summaries).unwrap_or_default();
-    push_to_ui("scene_entities", &json);
-}
-
-/// Push the current density map list to viso-ui.
-fn push_density_maps(engine: &VisoEngine) {
-    let maps = bridge::density_summaries(engine);
-    let json = serde_json::to_string(&maps).unwrap_or_default();
-    push_to_ui("density_maps", &json);
+    dispatch::push_scene_entities(engine, &WebHost);
 }
 
 /// Push a load-status event to viso-ui.

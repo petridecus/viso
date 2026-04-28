@@ -8,6 +8,8 @@ use crate::engine::command::VisoCommand;
 use crate::engine::focus::Focus;
 use crate::VisoEngine;
 
+pub(crate) mod dispatch;
+
 // ── Panel layout model ──────────────────────────────────────────────────
 
 /// Panel axis: right sidebar or bottom bar.
