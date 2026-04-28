@@ -16,46 +16,45 @@ viso = { path = "../viso", default-features = false }
 pollster = "0.4"  # for blocking on async GPU init
 ```
 
-The minimal integration has three parts: build a `VisoApp` (which owns
-the authoritative `Assembly`), build a `VisoEngine` from the matching
-`AssemblyConsumer`, and run a render loop.
+The minimal integration has three parts: build a `VisoEngine`, push a
+`molex::Assembly` snapshot to it, and run a render loop. You own the
+`Assembly` directly using molex's APIs.
 
-### 1. Create the App + Engine Pair
-
-`VisoApp` is the host of the structural state. The engine reads
-snapshots through an `AssemblyConsumer` triple buffer.
+### 1. Build the Engine and Push an Assembly
 
 ```rust
-use viso::{RenderContext, VisoApp, VisoEngine};
+use std::sync::Arc;
+use viso::{RenderContext, VisoEngine};
 use viso::options::VisoOptions;
-
-// Empty scene — useful when you want to load entities later.
-let (mut app, consumer) = VisoApp::new_empty();
-
-// Or load straight from a structure file (.cif / .pdb / .bcif):
-let (mut app, consumer) = VisoApp::from_file("path/to/structure.cif")?;
-
-// Or from in-memory bytes with a format hint:
-let (mut app, consumer) = VisoApp::from_bytes(&bytes, "cif")?;
+use molex::{Assembly, MoleculeEntity};
 
 let context = pollster::block_on(
     RenderContext::new(window.clone(), (width, height))
 )?;
-let mut engine = VisoEngine::new(context, consumer, VisoOptions::default())?;
+let mut engine = VisoEngine::new(context, VisoOptions::default())?;
+
+// You own the Assembly. After every mutation, push the latest
+// snapshot via engine.set_assembly. The engine drains it on the
+// next update tick.
+let mut assembly = Assembly::new(entities);
+engine.set_assembly(Arc::new(assembly.clone()));
 ```
 
-### 2. Load or Replace Entities
+### 2. Mutate and Re-publish
 
-All structural mutations route through `VisoApp`, which publishes
-snapshots that the engine picks up on the next `update()`.
+Mutate your `Assembly` through molex's APIs (`add_entity`,
+`remove_entity`, `update_positions`, etc.), then push the new snapshot
+to viso:
 
 ```rust
-// entities: Vec<MoleculeEntity> from molex or your own pipeline
-let ids = app.load_entities(&mut engine, entities, true); // fit camera
+assembly.add_entity(new_entity);
+assembly.update_positions(eid, &new_coords);
 
-// Replace the whole scene:
-app.replace_scene(&mut engine, new_entities);
+engine.set_assembly(Arc::new(assembly.clone()));
 ```
+
+The engine generation-checks each push, so re-publishing without an
+actual change is a no-op.
 
 ### 3. Render Loop
 
@@ -95,9 +94,12 @@ if let Some(cmd) = input.handle_event(event, engine.hovered_target()) {
 }
 ```
 
-## Standalone Viewer
+## Standalone Viewer (separate use case)
 
-For quick prototyping, enable the `viewer` feature:
+If you want to run viso *as* a standalone application — not embed it
+in your own library — there's a built-in `Viewer` for quick
+prototyping. This is a separate use case from library embedding;
+library users should not enable these features.
 
 ```toml
 [dependencies]
@@ -116,6 +118,12 @@ Viewer::builder()
     .build()
     .run()?;
 ```
+
+Internally, the standalone viewer uses a helper called `VisoApp` to
+own its own `Assembly`. **`VisoApp` is not part of the library API**
+— it exists solely so viso can be its own host when run standalone.
+Library consumers own their own `molex::Assembly` and call
+`engine.set_assembly` directly, never going through `VisoApp`.
 
 ### Running the CLI
 

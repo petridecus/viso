@@ -4,42 +4,52 @@ Viso is designed for live manipulation — structures can be updated
 mid-session by computational backends (Rosetta energy minimization,
 ML structure prediction) or user actions (mutations, drag operations).
 
-All structural mutations route through [`VisoApp`](./scene-management.md)
-(or whatever owns the `Assembly` in your host). The engine itself is
-read-only with respect to structural state.
+All structural mutations happen on **your** `molex::Assembly`. After
+each batch of changes, push the new snapshot to the engine via
+`engine.set_assembly(Arc::new(assembly.clone()))`. The engine itself
+is read-only with respect to structural state.
 
 ## Per-Entity Coordinate Updates
 
-The primary API for streaming new atom positions is
-`VisoApp::update_entity_coords`, which uses `molex`'s shared codec so
-caller-provided `Coords` values are applied consistently with the
-byte format:
+To stream new atom positions for an existing entity, mutate the
+relevant entity's coordinates on your `Assembly` (using molex's
+`update_protein_entities` codec helper, or
+`assembly.update_positions(eid, &coords)` for direct position updates),
+then re-publish:
 
 ```rust
-app.update_entity_coords(&mut engine, id, &new_coords, Transition::smooth());
+use std::sync::Arc;
+use molex::ops::codec::update_protein_entities;
+
+// Apply caller-provided Coords through molex's shared codec so the
+// path matches the byte-format pipeline.
+let mut entities = vec![assembly.entity(eid).unwrap().clone()];
+update_protein_entities(&mut entities, &new_coords);
+if let Some(updated) = entities.into_iter().next() {
+    assembly.remove_entity(eid);
+    assembly.add_entity(updated);
+}
+
+engine.set_assembly(Arc::new(assembly.clone()));
 ```
 
-The engine looks up the entity's per-entity behavior override (set
-via `engine.set_entity_behavior`) and uses it if present; otherwise
-the supplied `Transition` argument is used as the default.
-
-For full-entity replacement (atoms + topology + chains):
+To make the next sync animate (instead of snapping), queue a per-entity
+behavior override before re-publishing:
 
 ```rust
-app.update_entity(&mut engine, new_entity, Transition::smooth())?;
-app.update_entities(&mut engine, vec![e1, e2, e3], &Transition::smooth());
+engine.set_entity_behavior(entity_id, Transition::smooth());
+engine.set_assembly(Arc::new(assembly.clone()));
 ```
 
-For reconcile semantics (add/remove/update by id):
-
-```rust
-app.sync_entities(&mut engine, incoming, &Transition::smooth());
-```
+The engine queues the transition for the affected entity on its next
+sync, regardless of whether the override was set before or after the
+`set_assembly` call (transitions are picked up in `update`).
 
 ### Per-Entity Behavior Overrides
 
 Override the default transition for a specific entity. Once set, every
-subsequent update for that entity uses the override (until cleared):
+subsequent sync involving that entity uses the override (until
+cleared):
 
 ```rust
 let eid = engine.entity_id(raw_id).expect("known entity");
@@ -49,9 +59,9 @@ engine.set_entity_behavior(eid, Transition::collapse_expand(
     Duration::from_millis(300),
 ));
 
-// Subsequent updates use collapse_expand even if `Transition::smooth`
-// is passed:
-app.update_entity_coords(&mut engine, raw_id, &coords, Transition::smooth());
+// Subsequent re-publishes that touch this entity will use
+// collapse_expand instead of the default snap.
+engine.set_assembly(Arc::new(assembly.clone()));
 
 // Revert to default:
 engine.clear_entity_behavior(eid);

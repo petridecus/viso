@@ -69,7 +69,7 @@ overrides via `engine.set_ss_override(id, ss_types)`.
 Colors residues by per-residue energy values (e.g. from Rosetta).
 `Score` uses absolute values; `ScoreRelative` normalizes to the
 5th/95th percentiles within the structure. Scores are set via
-`app.set_per_residue_scores(&mut engine, id, Some(scores))`.
+`engine.set_per_residue_scores(id, Some(scores))`.
 
 ### ResidueIndex
 

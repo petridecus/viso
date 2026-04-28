@@ -9,14 +9,14 @@ and how threading is organized.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Application Layer                          │
-│  (foldit-rs window.rs, or viso's standalone VisoApp)            │
+│  (your application — e.g. foldit-rs)                            │
 │                                                                 │
-│  Owns the authoritative `Assembly` + AssemblyPublisher.         │
-│  All structural mutations republish a new snapshot.             │
+│  Owns the authoritative `molex::Assembly`. All structural       │
+│  mutations push a new Arc<Assembly> via engine.set_assembly.    │
 │                                                                 │
 │  winit events ──► InputProcessor ──► VisoCommand ──► engine     │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ Arc<Assembly> via triple buffer
+                               │ engine.set_assembly(Arc<Assembly>)
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         VisoEngine                              │
@@ -81,13 +81,13 @@ and how threading is organized.
 │                                ▼                          │
 │                     molex::Assembly (owned by host)       │
 │                              │                            │
-│                              ▼ AssemblyPublisher.commit   │
-│                     triple buffer                         │
-│                              │                            │
+│                              ▼ engine.set_assembly(...)   │
+│                     pending: Option<Arc<Assembly>>        │
+│                              │  (engine-internal slot)    │
 │                              ▼                            │
-│                     AssemblyConsumer (in VisoEngine)      │
+│                     Scene (in VisoEngine)                 │
 └────────────────────────────┬──────────────────────────────┘
-                             │  engine.update() polls,
+                             │  engine.update() drains,
                              │  rederives on generation bump
                              ▼
 ┌───────────────────────────────────────────────────────────┐
@@ -158,18 +158,20 @@ H-bonds, DSSP-classified SS).
 ### 2. Assembly Construction
 
 ```
-Vec<MoleculeEntity> → molex::Assembly  (owned by VisoApp / host)
+Vec<MoleculeEntity> → molex::Assembly  (owned by your application)
 ```
 
-The `Assembly` is the authoritative structural state. `VisoApp` (or a
-real host like `foldit-rs`) owns it and commits snapshots through an
-`AssemblyPublisher` whenever it changes.
+The `Assembly` is the authoritative structural state. Your
+application owns it and pushes the latest snapshot to the engine via
+`engine.set_assembly(Arc::new(assembly.clone()))` whenever it
+changes.
 
 ### 3. Scene Rederivation
 
-Each `engine.update(dt)` polls the consumer; if a new snapshot is
-ready, the engine rebuilds its derived per-entity state (chains,
-sidechain topology, SS arrays, color metadata) from the new assembly.
+Each `engine.update(dt)` drains the engine's pending Assembly slot;
+if a new snapshot is ready, the engine rebuilds its derived per-entity
+state (chains, sidechain topology, SS arrays, color metadata) from the
+new assembly.
 
 ### 4. Background Mesh Generation
 
@@ -213,7 +215,7 @@ Viso uses three threads with lock-free communication:
 Owns all GPU resources and runs the render loop:
 
 - Processing input events (mouse, keyboard, IPC)
-- Polling the `AssemblyConsumer` for new snapshots
+- Draining the pending `Assembly` slot for new snapshots
 - Running animation per frame
 - Submitting scene requests to the background thread (non-blocking)
 - Picking up completed meshes from the triple buffer (non-blocking)
@@ -271,15 +273,14 @@ viso/src/
 │   ├── viewer.rs       # winit Viewer + ViewerBuilder (feature = "viewer")
 │   ├── gui/            # wry-webview options panel (feature = "gui")
 │   ├── web/            # WASM entry (feature = "web")
-│   ├── channel.rs      # AssemblyPublisher / AssemblyConsumer triple buffer
-│   └── mod.rs          # VisoApp (host of Assembly in standalone)
+│   └── mod.rs          # VisoApp (host of Assembly in standalone),
+│                       # publish helper that calls engine.set_assembly
 ├── bridge/             # GUI / IPC action types (feature = "gui")
 ├── camera/             # Orbital camera controller, animation, frustum
 ├── engine/             # Core engine struct + frame loop
 │   ├── mod.rs          # VisoEngine (thin dispatcher)
 │   ├── annotations.rs  # EntityAnnotations: focus, visibility, behaviors,
 │   │                   # appearance, scores, SS, surfaces
-│   ├── assembly_consumer.rs   # Triple-buffer reader for Assembly snapshots
 │   ├── bootstrap.rs    # GPU init + VisoEngine::new + FrameTiming
 │   ├── command.rs      # VisoCommand + payload types (BandInfo, PullInfo, …)
 │   ├── constraint.rs   # Band/pull resolution
@@ -290,7 +291,7 @@ viso/src/
 │   ├── focus.rs        # Focus enum
 │   ├── options_apply.rs# set_options / set_surface_scale / etc.
 │   ├── positions.rs    # EntityPositions: interpolated atom positions
-│   ├── scene.rs        # Scene: consumer + last_seen_generation + state
+│   ├── scene.rs        # Scene: pending Assembly + last_seen_generation + state
 │   ├── scene_state.rs  # SceneRenderState: per-entity render aggregations
 │   ├── surface.rs      # Surface options resolution
 │   ├── surface_regen.rs# Background isosurface regeneration
@@ -370,17 +371,21 @@ instead of mesh-based spheres and cylinders:
 - **Performance**: GPU ray-marching is efficient for the simple SDF
   shapes (spheres, capsules, cones)
 
-### Why an Assembly Triple Buffer?
+### Why a Host-Owned Assembly?
 
-In `foldit-rs`, the host owns the authoritative `Assembly` because it
-also drives Rosetta and ML backends and needs to mutate the assembly
-in response to their results. Routing all viso-side reads through a
-triple buffer means:
+`molex::Assembly` belongs to molex; viso just renders it. The host
+application — typically `foldit-rs` — owns the authoritative
+`Assembly` because it also drives Rosetta and ML backends and needs
+to mutate the assembly in response to their results. Viso never
+mutates the structural state itself; the host pushes the latest
+`Arc<Assembly>` snapshot via `engine.set_assembly`, and the engine
+drains it on the next sync tick. The library API stays narrow: a
+single setter and a generation check inside `update`. No viso-flavored
+channels or publishers leak out of the engine.
 
-- The host can publish on any thread without the engine caring
-- The engine's read path is always lock-free
-- Multiple consumers (e.g. an export pipeline) can attach without
-  contention
-
-`VisoApp` plays the same host role for standalone deployments, so the
-engine has a single uniform model.
+When viso runs as a standalone application (`cargo run -p viso`,
+`feature = "viewer" / "gui" / "web"`), the in-tree helper `VisoApp`
+plays the host role for viso itself. `VisoApp` is purely an internal
+standalone-deployment helper — it is feature-gated and is **not** part
+of the library's public surface. Library consumers own their own
+`Assembly` and call `engine.set_assembly` directly.

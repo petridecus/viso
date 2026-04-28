@@ -1,10 +1,10 @@
 //! Assembly consumption + derived per-entity state.
 //!
 //! [`Scene`] bundles the one coherent data flow that makes the engine
-//! a consumer of the host's [`Assembly`]: the
-//! triple-buffer read end, the latest snapshot, the generation
-//! tracker, and the render-ready derived state
-//! ([`SceneRenderState`] + per-entity [`EntityView`] +
+//! a consumer of the host's [`Assembly`]: the pending-snapshot slot
+//! written by [`crate::VisoEngine::set_assembly`], the latest applied
+//! snapshot, the generation tracker, and the render-ready derived
+//! state ([`SceneRenderState`] + per-entity [`EntityView`] +
 //! [`EntityPositions`]).
 //!
 //! `sync_from_assembly` reads the three ingest fields and writes the
@@ -26,7 +26,6 @@ use molex::{Assembly, MoleculeEntity};
 use rustc_hash::FxHashMap;
 
 use super::annotations::EntityAnnotations;
-use super::assembly_consumer::AssemblyConsumer;
 use super::entity_view::EntityView;
 use super::positions::EntityPositions;
 use super::scene_state::SceneRenderState;
@@ -35,8 +34,10 @@ use crate::options::DrawingMode;
 /// Assembly consumption + derived per-entity state.
 pub(crate) struct Scene {
     // ── Ingest ────────────────────────────────────────────────────
-    /// Triple-buffer reader for the host-owned [`Assembly`].
-    pub(crate) consumer: AssemblyConsumer,
+    /// Latest assembly snapshot pushed by the host via
+    /// [`crate::VisoEngine::set_assembly`] but not yet applied. Drained
+    /// by `poll_assembly` / `poll_assembly_force` on the next sync tick.
+    pub(crate) pending: Option<Arc<Assembly>>,
     /// Last `Assembly` snapshot applied by `sync_from_assembly`. Held
     /// for read-only queries (entity metadata for the UI panel, atom
     /// positions for the picking pipeline). Always up to date with
@@ -74,10 +75,11 @@ pub(crate) type VisibleEntity<'a> =
 
 impl Scene {
     /// Empty scene with a valid (but empty) assembly snapshot. The
-    /// caller provides the triple-buffer reader.
-    pub(crate) fn new(consumer: AssemblyConsumer) -> Self {
+    /// host pushes its first snapshot via
+    /// [`crate::VisoEngine::set_assembly`].
+    pub(crate) fn new() -> Self {
         Self {
-            consumer,
+            pending: None,
             current: Arc::new(Assembly::new(Vec::new())),
             last_seen_generation: u64::MAX,
             render_state: SceneRenderState::new(),
@@ -157,10 +159,10 @@ impl Scene {
     }
 
     /// Reset all scene-local derived state (positions, entity_state).
-    /// Keeps the consumer and `next_mesh_version` (the dispenser must
-    /// outlive `replace_scene` so fresh per-file entity IDs don't
-    /// collide with stale worker mesh cache entries). Also resets
-    /// `last_seen_generation` to `u64::MAX` so the next snapshot
+    /// Keeps `next_mesh_version` (the dispenser must outlive
+    /// `replace_scene` so fresh per-file entity IDs don't collide with
+    /// stale worker mesh cache entries) and any pending snapshot. Also
+    /// resets `last_seen_generation` to `u64::MAX` so the next snapshot
     /// triggers a sync unconditionally.
     pub(crate) fn reset_local_state(&mut self) {
         self.entity_state.clear();

@@ -430,8 +430,10 @@ impl VisoEngine {
             .is_none_or(|eid| self.annotations.is_visible(eid))
     }
 
-    /// Record the visibility of a single entity.
-    pub(crate) fn set_entity_visible(&mut self, id: u32, visible: bool) {
+    /// Record the visibility of a single entity. Visibility is
+    /// engine-side state — mutating it does not require re-publishing
+    /// the [`Assembly`](molex::Assembly).
+    pub fn set_entity_visible(&mut self, id: u32, visible: bool) {
         if let Some(eid) = self.entity_id(id) {
             self.annotations_mut().set_visible(eid, visible);
         }
@@ -457,8 +459,11 @@ impl VisoEngine {
         }
     }
 
-    /// Set per-entity scores (`None` clears).
-    pub(crate) fn set_per_residue_scores(
+    /// Set per-entity scores (`None` clears). Per-residue scores are
+    /// engine-side state used by the score-based color modes;
+    /// mutating them does not require re-publishing the
+    /// [`Assembly`](molex::Assembly).
+    pub fn set_per_residue_scores(
         &mut self,
         id: u32,
         scores: Option<Vec<f64>>,
@@ -468,8 +473,11 @@ impl VisoEngine {
         }
     }
 
-    /// Set an SS override for an entity.
-    pub(crate) fn set_ss_override(&mut self, id: u32, ss: Vec<SSType>) {
+    /// Set an SS override for an entity. The override is engine-side
+    /// state and replaces DSSP-derived secondary structure for
+    /// rendering only — it does not mutate the
+    /// [`Assembly`](molex::Assembly).
+    pub fn set_ss_override(&mut self, id: u32, ss: Vec<SSType>) {
         if let Some(eid) = self.entity_id(id) {
             self.annotations_mut().set_ss_override(eid, ss);
         }

@@ -58,13 +58,11 @@ File (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity>
  molex::adapters ──▶ Vec<MoleculeEntity>◄─┘
         │
         ▼
- molex::Assembly  (owned by VisoApp / host)
-        │  AssemblyPublisher.commit
+ molex::Assembly  (owned by your application — e.g. foldit-rs)
+        │  engine.set_assembly(Arc::new(assembly.clone()))
         ▼
- triple buffer ──▶ AssemblyConsumer (in VisoEngine)
-        │
-        ▼
- Scene + EntityAnnotations  (engine-side derived state)
+ Scene + EntityAnnotations  (engine-side derived state,
+        │                     rederived on generation change)
         │
         ├───▶ SceneProcessor (background thread)
         │       per-entity mesh cache, triple-buffered output

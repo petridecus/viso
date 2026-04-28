@@ -1,11 +1,9 @@
 //! GPU pipeline initialization and engine assembly.
 //!
-//! Unlike pre-Phase-4 viso, this module no longer creates an
-//! [`Assembly`](molex::Assembly) or its publisher — those live on
-//! [`crate::VisoApp`] under the standalone-app feature gate, or on the real
-//! host application (e.g. `foldit-rs`) otherwise. The engine constructor
-//! takes an [`AssemblyConsumer`] built by whichever side owns the
-//! [`Assembly`](molex::Assembly).
+//! The engine never creates or mutates an [`Assembly`](molex::Assembly):
+//! the host application owns the assembly and pushes the latest snapshot
+//! via [`crate::VisoEngine::set_assembly`]. In standalone deployments
+//! [`crate::VisoApp`] plays the host role.
 
 use std::time::Duration;
 
@@ -13,7 +11,6 @@ use glam::Vec3;
 use web_time::Instant;
 
 use super::annotations::EntityAnnotations;
-use super::assembly_consumer::AssemblyConsumer;
 use super::density_store::DensityStore;
 use super::scene::Scene;
 use super::surface_regen::SurfaceRegen;
@@ -155,19 +152,18 @@ fn init_gpu_pipeline(
 // ---------------------------------------------------------------------------
 
 impl VisoEngine {
-    /// Build an engine over a prepared [`RenderContext`] and the host's
-    /// [`AssemblyConsumer`] handle.
+    /// Build an engine over a prepared [`RenderContext`].
     ///
-    /// The consumer is polled once per frame by [`Self::update`]; the
-    /// engine never mutates the assembly — all mutations route through
-    /// the host (in standalone: [`crate::VisoApp`]).
+    /// The engine starts with an empty internal [`Assembly`](molex::Assembly).
+    /// The host pushes its first snapshot — and every subsequent
+    /// snapshot — via [`Self::set_assembly`]; viso never mutates the
+    /// assembly itself.
     ///
     /// # Errors
     ///
     /// Returns [`VisoError`] if GPU pipeline initialization fails.
     pub fn new(
         context: RenderContext,
-        consumer: AssemblyConsumer,
         options: VisoOptions,
     ) -> Result<Self, VisoError> {
         let bootstrap = init_gpu_pipeline(&context)?;
@@ -196,7 +192,7 @@ impl VisoEngine {
             active_preset: None,
             frame_timing: FrameTiming::new(TARGET_FPS),
             density: DensityStore::new(),
-            scene: Scene::new(consumer),
+            scene: Scene::new(),
             annotations: EntityAnnotations::default(),
             surface_regen: SurfaceRegen::new(density_tx),
         })

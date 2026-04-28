@@ -101,9 +101,10 @@ pub async fn start(canvas: HtmlCanvasElement) -> Result<(), JsValue> {
         context.render_scale = 2;
     }
 
-    let (app, consumer) = VisoApp::new_empty();
-    let engine = VisoEngine::new(context, consumer, VisoOptions::default())
+    let app = VisoApp::new_empty();
+    let mut engine = VisoEngine::new(context, VisoOptions::default())
         .map_err(|e| JsValue::from_str(&format!("Engine init failed: {e}")))?;
+    app.publish(&mut engine);
 
     let engine = Rc::new(RefCell::new(engine));
     let app = Rc::new(RefCell::new(app));

@@ -179,8 +179,9 @@ pub enum VisoCommand {
 `engine.execute(cmd)` returns a `CommandOutcome` describing what
 changed (`SelectionChanged`, `FocusChanged`, `VisibilityChanged`,
 `NoEffect`, or `Unhandled`). `RemoveEntity` is `Unhandled` when sent
-to the engine directly — it must be routed through `VisoApp` so the
-authoritative `Assembly` is mutated and republished.
+to the engine directly — it must be routed through `VisoApp` (or the
+host that owns the `Assembly`) so the assembly is mutated and the new
+snapshot is pushed via `engine.set_assembly`.
 
 ## Click Detection
 

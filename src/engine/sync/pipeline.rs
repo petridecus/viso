@@ -111,8 +111,9 @@ impl SyncPipeline {
         annotations.retain_entities(|id| seen.contains(&id));
     }
 
-    /// Poll the consumer, then submit a full-rebuild request to the
-    /// background mesh processor using the current pending transitions.
+    /// Drain any pending assembly snapshot, then submit a full-rebuild
+    /// request to the background mesh processor using the current
+    /// pending transitions.
     pub(crate) fn sync_now(
         scene: &mut Scene,
         annotations: &mut EntityAnnotations,
@@ -132,15 +133,17 @@ impl SyncPipeline {
         );
     }
 
-    /// Poll the consumer and immediately apply any new snapshot. Used
-    /// by [`Self::sync_now`] when a mutation has just published a new
-    /// snapshot that must be reflected before the next render.
+    /// Drain any pending [`Assembly`](molex::Assembly) snapshot and
+    /// immediately apply it. Used by [`Self::sync_now`] when the host
+    /// has just pushed a new snapshot via
+    /// [`crate::VisoEngine::set_assembly`] that must be reflected
+    /// before the next render.
     fn poll_assembly_force(
         scene: &mut Scene,
         annotations: &mut EntityAnnotations,
         options: &VisoOptions,
     ) {
-        let Some(assembly) = scene.consumer.latest() else {
+        let Some(assembly) = scene.pending.take() else {
             return;
         };
         if assembly.generation() == scene.last_seen_generation {

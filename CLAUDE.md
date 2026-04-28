@@ -18,50 +18,60 @@ configuration lives in `Cargo.toml` under `[lints.clippy]` and
 ## Architecture
 
 ```
-foldit-rs / caller                     viso engine
-    │                                      │
-    ├─ engine.update_entities() ─────────►│  EntityStore (source of truth)
-    │  engine.update_entity_coords()       │  Vec<MoleculeEntity> + Vec<SceneEntity>
-    │                                      │
-    ├─ engine.set_entity_behavior() ─────►│  per-entity behavior map
-    │                                      │  HashMap<u32, Transition>
-    │                                      │
-    │                              engine.pre_render(dt):
-    │                                poll background thread results
-    │                                tick per-entity animation runners
-    │                                upload GPU buffers (<1ms)
-    │                                      │
-    │                                      ▼
-    │                              SceneTopology + VisualState
-    │                              (derived metadata + interpolated positions)
-    │                                      │
-    │                                      ▼
-    │                              renderer::geometry (background thread)
-    │                              (meshes + impostors from scene data)
-    │                                      │
-    │                                      ▼
-    │                              GPU passes
-    │                              (geometry → picking → post-process)
-    │                                      │
-    │                                      ▼
-    │                              2D texture
-    │                              (winit / canvas / png / embed)
+host application (foldit-rs / VisoApp)        viso engine
+    │                                              │
+    │  owns: molex::Assembly (source of truth)     │
+    │  mutates freely (load, commands, backend     │
+    │   writebacks from Rosetta / ML workers)      │
+    │                                              │
+    ├─ engine.set_assembly(Arc<Assembly>) ───────►│  scene.pending: Option<Arc<Assembly>>
+    │  (called after each Assembly mutation)       │  drained next sync tick
+    │                                              │
+    ├─ engine.set_entity_behavior(eid, t) ───────►│  annotations: per-entity behavior map
+    │                                              │  HashMap<EntityId, Transition>
+    │                                              │
+    │                                  engine.update(dt):
+    │                                    drain scene.pending; on generation change
+    │                                      rederive scene.render_state +
+    │                                      per-entity EntityView + EntityPositions
+    │                                    tick per-entity animation runners
+    │                                    upload GPU buffers (<1ms)
+    │                                              │
+    │                                              ▼
+    │                                  scene.render_state + scene.entity_state
+    │                                  (derived per-sync; no &Assembly threading)
+    │                                              │
+    │                                              ▼
+    │                                  renderer::geometry (background thread)
+    │                                  (meshes + impostors from scene data)
+    │                                              │
+    │                                              ▼
+    │                                  GPU passes
+    │                                  (geometry → picking → post-process)
+    │                                              │
+    │                                              ▼
+    │                                  2D texture
+    │                                  (winit / canvas / png / embed)
 ```
 
-### VisoEngine structure (10 fields, thin dispatcher)
+### VisoEngine structure (thin dispatcher)
 
 ```
 VisoEngine {
-    gpu: GpuPipeline,               // renderer/gpu_pipeline.rs (9 fields, 16 methods)
-    entities: EntityStore,           // engine/entity_store.rs
-    topology: SceneTopology,         // engine/scene.rs
-    visual: VisualState,             // engine/scene.rs
-    animation: AnimationState,       // animation/state.rs (3 fields, 6 methods)
+    gpu: GpuPipeline,                // renderer/gpu_pipeline.rs
     camera_controller: CameraController,
     constraints: ConstraintSpecs,    // band_specs + pull_spec
+    animation: AnimationState,       // animation/state.rs
     options: VisoOptions,
     active_preset: Option<String>,
     frame_timing: FrameTiming,
+    density: DensityStore,
+    scene: Scene,                    // engine/scene.rs (assembly ingest +
+                                     //   derived per-entity render state)
+    annotations: EntityAnnotations,  // user-authored per-entity opinions
+                                     //   (focus, visibility, behaviors,
+                                     //   appearance, scores, ss_override)
+    surface_regen: SurfaceRegen,     // background isosurface mesh worker
 }
 ```
 
@@ -70,23 +80,44 @@ Module-level types own their behavior — not passive field bags.
 
 ### Key data types
 
-- **`EntityStore`** (`engine/entity_store.rs`): Entity ownership.
-  `Vec<MoleculeEntity>` (source of truth), `Vec<SceneEntity>` (render
-  state), per-entity behavior map, focus state, structural dirty
-  flagging (`generation`).
-- **`SceneTopology`** (`engine/scene.rs`): Derived metadata for the
-  renderer. NA chains, entity residue ranges, sidechain topology, SS
-  types, per-residue colors. All computed on main thread via
-  `prepare_scene_metadata()` before background submission.
-- **`VisualState`** (`engine/scene.rs`): Animation output buffer.
-  Interpolated backbone chains, sidechain positions, backbone-sidechain
-  bonds. Position-level dirty flagging (`position_generation`).
+- **`Scene`** (`engine/scene.rs`): Assembly ingest + derived per-entity
+  state. Holds `pending: Option<Arc<Assembly>>` (host's latest push,
+  drained on sync), `current: Arc<Assembly>` (last applied snapshot),
+  `last_seen_generation`, `render_state: SceneRenderState` (cross-entity
+  rendering data), `entity_state: HashMap<EntityId, EntityView>`
+  (per-entity topology + drawing mode + mesh version), and
+  `positions: EntityPositions` (per-entity animator write surface).
+- **`EntityView`** (`engine/entity_view.rs`): Per-entity render-ready
+  view — drawing mode, ss override, topology, mesh version. Rederived
+  on every Assembly sync.
+- **`EntityAnnotations`** (`engine/annotations.rs`): User-authored
+  per-entity opinions that ride alongside the Assembly: focus,
+  visibility, behaviors, appearance overrides, scores, SS overrides,
+  surfaces. All maps keyed on `EntityId`.
 - **`GpuPipeline`** (`renderer/gpu_pipeline.rs`): Rendering entry point.
   Context, renderers, picking, scene_processor, post_process,
   shader_composer, lighting, cursor_pos, last_cull_camera_eye.
 - **`AnimationState`** (`animation/state.rs`): Animation entry point.
   Animator, trajectory_player, pending_transitions.
 - **`ConstraintSpecs`** (`engine/mod.rs`): Band specs + pull spec.
+
+### Host integration
+
+The library API for structural ingest is one method:
+`engine.set_assembly(Arc<molex::Assembly>)`. Library consumers
+(`foldit-rs`) own their own `molex::Assembly`, mutate it via molex's
+APIs, and push the new snapshot to the engine after each batch of
+mutations. There is no viso-defined channel, publisher, or consumer
+exposed to library users.
+
+`VisoApp` (in `src/app/mod.rs`, behind `feature = "viewer" / "web"`)
+is *not* part of the library surface. It is the helper viso uses to
+host its own `Assembly` when running as a standalone application
+(`cargo run -p viso`, the `viewer` / `gui` / `web` features). Its
+mutation methods (`load_entities`, `update_entity`, etc.) bundle a
+`molex::Assembly` mutation and an `engine.set_assembly` push for the
+standalone case. Library users with `default-features = false` do not
+see `VisoApp` and should not look for it.
 
 ### Animation
 
@@ -145,21 +176,28 @@ src/
 ├── lib.rs              Public API surface (flat re-exports only)
 ├── main.rs             CLI binary entry point
 ├── engine/             Core engine struct + frame loop
-│   ├── mod.rs          VisoEngine (10-field dispatcher), ConstraintSpecs, FrameTiming
-│   ├── bootstrap.rs    Construction, GpuBootstrap, scene loading, assembly helpers
+│   ├── mod.rs          VisoEngine dispatcher, ConstraintSpecs, set_assembly
+│   ├── bootstrap.rs    Construction (RenderContext + VisoOptions → engine),
+│   │                   GpuBootstrap, FrameTiming
 │   ├── command.rs      VisoCommand, BandInfo, PullInfo, AtomRef,
 │   │                   BandTarget, BandType, ResolvedBand, ResolvedPull
-│   ├── entity.rs       Entity management: load, update, coords, visibility,
-│   │                   SS override, scores, remove. Constraints + behavior.
+│   ├── annotations.rs  EntityAnnotations: per-entity opinions (focus,
+│   │                   visibility, behaviors, appearance, scores, ss override)
 │   ├── constraint.rs   Constraint resolution (resolve_atom_ref, band/pull)
-│   ├── entity_store.rs EntityStore: entity ownership, behaviors, focus,
-│   │                   dirty tracking, SceneEntity management
-│   ├── options_apply.rs Options application
-│   ├── scene.rs        SceneTopology, VisualState, SidechainTopology, Focus
-│   ├── scene_data.rs   SceneEntity, PerEntityData, EntityResidueRange,
-│   │                   aggregation functions, bond topology tables
-│   ├── sync.rs         Scene→renderer pipeline: metadata prep, GPU upload,
-│   │                   animation setup, frustum culling, LOD
+│   ├── culling.rs      Frustum culling
+│   ├── density.rs      Volumetric density helpers
+│   ├── density_store.rs DensityStore (loaded electron density maps)
+│   ├── entity_view.rs  EntityView (per-entity render-ready view)
+│   ├── focus.rs        Focus enum (Session | Entity(EntityId))
+│   ├── options_apply.rs Options application + preset loading
+│   ├── positions.rs    EntityPositions (per-entity animator write surface)
+│   ├── scene.rs        Scene: pending/current Assembly, render_state,
+│   │                   entity_state, positions
+│   ├── scene_state.rs  SceneRenderState (cross-entity rendering data)
+│   ├── surface.rs      Per-entity surface state
+│   ├── surface_regen.rs Background isosurface mesh regeneration
+│   ├── sync/           Scene → renderer pipeline (poll Assembly, rederive,
+│   │                   submit mesh-gen, frustum culling, LOD)
 │   └── trajectory.rs   TrajectoryPlayer (DCD frame sequencer)
 ├── animation/          Structural animation
 │   ├── mod.rs          Re-exports
@@ -198,7 +236,11 @@ src/
 │   └── residue_color.rs    Per-residue color GPU buffer
 ├── input/              Input processing (InputProcessor, InputEvent, KeyBindings)
 ├── options/            TOML-serializable runtime options + score_color.rs
-├── viewer.rs           Standalone winit viewer
+├── app/                Standalone-app layer (feature = "viewer"/"gui"/"web")
+│   ├── mod.rs          VisoApp (owns Assembly), publish helper
+│   ├── viewer.rs       Winit viewer shell
+│   ├── gui/            wry-webview options panel (feature = "gui")
+│   └── web/            Wasm entry (feature = "web")
 └── util/               Helpers (easing.rs, hash.rs)
 ```
 
@@ -207,18 +249,25 @@ src/
 See `.claude/api_surface.md` for the full design.
 
 **Re-exported from `lib.rs`:**
-- Core: `VisoEngine`, `VisoCommand`, `BandInfo`, `BandType`, `PullInfo`,
-  `AtomRef`, `BandTarget`, `VisoError`
+- Core: `VisoEngine` (with `set_assembly`), `VisoCommand`, `BandInfo`,
+  `BandType`, `PullInfo`, `AtomRef`, `BandTarget`, `CommandOutcome`,
+  `VisoError`, `Focus`
 - Picking: `PickTarget`
-- Config: `VisoOptions` (pub mod)
+- Config: `VisoOptions` (pub mod), `DisplayOverrides`, `DrawingMode`,
+  `HelixStyle`, `SheetStyle`
 - Input: `InputEvent`, `InputProcessor`, `KeyBindings`, `MouseButton`
 - GPU bootstrap: `RenderContext`, `RenderTarget`
 - Animation: `Transition`
-- Feature-gated: `Viewer`, `ViewerBuilder`, `UiAction`
+- Molex passthrough: `pub use molex;`
+- Feature-gated: `VisoApp` (`viewer`/`web`), `Viewer`, `ViewerBuilder`
+  (`viewer`), `UiAction` (`gui`)
 
-**NOT public:** EntityStore, SceneTopology, VisualState, AnimationRunner,
-AnimationPhase, StructureAnimator, GpuPipeline, AnimationState,
-ResolvedBand, ResolvedPull, renderer types, EasingFunction.
+**NOT public:** Scene, SceneRenderState, EntityView, EntityPositions,
+EntityAnnotations, AnimationRunner, AnimationPhase, StructureAnimator,
+GpuPipeline, AnimationState, ResolvedBand, ResolvedPull, renderer
+types, EasingFunction. The host owns its own `molex::Assembly` and
+pushes via `engine.set_assembly`; viso never exposes its internal
+ingest channel.
 
 ## Conventions
 

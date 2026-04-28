@@ -1,22 +1,20 @@
 //! Standalone-application layer for viso.
 //!
 //! In the real deployment (`foldit-rs`), the host application owns the
-//! [`Assembly`] and publishes snapshots through a triple buffer; viso
-//! holds only the consumer side. In standalone deployments
+//! [`Assembly`] and pushes the latest snapshot to viso via
+//! [`VisoEngine::set_assembly`]. In standalone deployments
 //! (`feature = "viewer"`, `"gui"`, `"web"`), viso plays that same host
-//! role: this module owns [`VisoApp`] (the authoritative `Assembly` +
-//! its publisher) and the executable layer that wraps it — the winit
-//! [`viewer`], the wry-webview [`gui`] panel, and the wasm `web`
-//! entry.
+//! role: this module owns [`VisoApp`] (the authoritative `Assembly`)
+//! and the executable layer that wraps it — the winit [`viewer`], the
+//! wry-webview [`gui`] panel, and the wasm `web` entry.
 //!
-//! Each [`VisoApp`] mutation method takes `&mut VisoEngine` so
-//! viso-side bookkeeping (animation transitions, camera fit,
-//! per-entity annotations) can be updated atomically alongside the
-//! `Assembly` mutation and `publisher.commit`. `VisoEngine` has no
-//! mutation surface for structural state — all mutations route through
-//! [`VisoApp`].
-
-mod channel;
+//! Each [`VisoApp`] mutation method takes `&mut VisoEngine` so the new
+//! `Assembly` snapshot can be pushed via [`VisoEngine::set_assembly`]
+//! and viso-side bookkeeping (animation transitions, camera fit,
+//! per-entity annotations) can be updated atomically alongside it.
+//! `VisoEngine` has no mutation surface for structural state — the
+//! host (in standalone: [`VisoApp`]) is the sole owner of the
+//! authoritative `Assembly`.
 
 #[cfg(feature = "viewer")]
 pub mod viewer;
@@ -30,52 +28,42 @@ pub mod web;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(crate) use channel::{assembly_channel, AssemblyPublisher};
 use molex::ops::codec::{update_protein_entities, Coords};
 use molex::{Assembly, MoleculeEntity, MoleculeType, SSType};
 
 use crate::animation::transition::Transition;
-use crate::engine::assembly_consumer::AssemblyConsumer;
 use crate::error::VisoError;
 use crate::VisoEngine;
 
-/// Owns the authoritative `Assembly` and its `AssemblyPublisher`.
+/// Owns the authoritative [`Assembly`] in standalone deployments.
 ///
 /// Produced by [`VisoApp::new_empty`], [`VisoApp::from_entities`],
-/// [`VisoApp::from_bytes`], or [`VisoApp::from_file`], each paired
-/// with the matching [`AssemblyConsumer`] for the engine. Standalone
+/// [`VisoApp::from_bytes`], or [`VisoApp::from_file`]. Standalone
 /// entry points (viewer, gui, web) hold a `VisoApp` alongside their
-/// `VisoEngine` and drive mutations through the app.
+/// `VisoEngine`; mutation methods take `&mut VisoEngine` and push the
+/// new snapshot via [`VisoEngine::set_assembly`].
 pub struct VisoApp {
     assembly: Assembly,
-    publisher: AssemblyPublisher,
 }
 
 impl VisoApp {
     // ── Construction ───────────────────────────────────────────────
 
-    /// An empty app — a zero-entity `Assembly`. Publishes the initial
-    /// snapshot so the consumer's first poll returns a usable
-    /// (empty) assembly.
+    /// An empty app — a zero-entity `Assembly`. The caller pushes the
+    /// initial snapshot to viso via [`Self::publish`] (or
+    /// [`VisoEngine::set_assembly`] directly) after constructing the
+    /// engine.
     #[must_use]
-    pub fn new_empty() -> (Self, AssemblyConsumer) {
+    pub fn new_empty() -> Self {
         Self::from_entities(Vec::new())
     }
 
-    /// App seeded with the given entities. Publishes the initial
-    /// snapshot.
+    /// App seeded with the given entities.
     #[must_use]
-    pub fn from_entities(
-        entities: Vec<MoleculeEntity>,
-    ) -> (Self, AssemblyConsumer) {
-        let assembly = Assembly::new(entities);
-        let (mut publisher, consumer) = assembly_channel();
-        publisher.commit(Arc::new(assembly.clone()));
-        let app = Self {
-            assembly,
-            publisher,
-        };
-        (app, consumer)
+    pub fn from_entities(entities: Vec<MoleculeEntity>) -> Self {
+        Self {
+            assembly: Assembly::new(entities),
+        }
     }
 
     /// Parse structure bytes with the given format hint (`"cif"`,
@@ -89,7 +77,7 @@ impl VisoApp {
     pub fn from_bytes(
         bytes: &[u8],
         format_hint: &str,
-    ) -> Result<(Self, AssemblyConsumer), VisoError> {
+    ) -> Result<Self, VisoError> {
         let entities = parse_structure_bytes(bytes, format_hint)?;
         Ok(Self::from_entities(entities))
     }
@@ -102,9 +90,7 @@ impl VisoApp {
     /// Returns [`VisoError::StructureLoad`] if the file cannot be
     /// read or parsed.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_file(
-        path: &str,
-    ) -> Result<(Self, AssemblyConsumer), VisoError> {
+    pub fn from_file(path: &str) -> Result<Self, VisoError> {
         let entities = molex::adapters::pdb::structure_file_to_entities(
             std::path::Path::new(path),
         )
@@ -124,10 +110,15 @@ impl VisoApp {
         &self.assembly
     }
 
-    // ── Internal publish helper ────────────────────────────────────
+    // ── Publish helper ─────────────────────────────────────────────
 
-    fn publish(&mut self) {
-        self.publisher.commit(Arc::new(self.assembly.clone()));
+    /// Push the current `Assembly` snapshot to the engine. Library
+    /// hosts call this once after constructing both the app and the
+    /// engine to seed viso's first sync; subsequent mutations route
+    /// through the [`VisoApp`] mutation methods, which publish
+    /// internally.
+    pub fn publish(&self, engine: &mut VisoEngine) {
+        engine.set_assembly(Arc::new(self.assembly.clone()));
     }
 
     // ── Lifecycle mutations ────────────────────────────────────────
@@ -165,7 +156,7 @@ impl VisoApp {
         }
         engine.animation.pending_transitions = entity_transitions;
 
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
 
         if fit_camera {
@@ -190,7 +181,7 @@ impl VisoApp {
     pub fn clear_scene(&mut self, engine: &mut VisoEngine) {
         self.remove_all_internal(engine);
         engine.animation.pending_transitions.clear();
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
     }
 
@@ -242,7 +233,7 @@ impl VisoApp {
         }
         self.assembly = Assembly::new(combined);
         engine.animation.pending_transitions = entity_transitions;
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
     }
 
@@ -275,7 +266,7 @@ impl VisoApp {
         let _ = transitions.insert(raw_id, effective);
         engine.animation.pending_transitions = transitions;
 
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
         Ok(())
     }
@@ -317,7 +308,7 @@ impl VisoApp {
         let _ = transitions.insert(id, effective);
         engine.animation.pending_transitions = transitions;
 
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
     }
 
@@ -369,7 +360,7 @@ impl VisoApp {
         self.assembly = Assembly::new(entities);
 
         engine.animation.pending_transitions = entity_transitions;
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
     }
 
@@ -386,7 +377,7 @@ impl VisoApp {
         };
         engine.clear_entity_behavior(eid);
         self.assembly.remove_entity(eid);
-        self.publish();
+        self.publish(engine);
         engine.sync_now();
     }
 

@@ -135,9 +135,9 @@ default transition.
 
 ### How It Works
 
-1. The host mutates the `Assembly` and republishes via the triple
-   buffer; pending per-entity transitions are stored on the engine's
-   `AnimationState`.
+1. The host mutates the `Assembly` and pushes the new snapshot via
+   `engine.set_assembly`; pending per-entity transitions are stored on
+   the engine's `AnimationState`.
 2. On the next `engine.update()`, the engine rederives per-entity
    state from the new snapshot. For each entity that has a pending
    transition, an `AnimationRunner` is created with the start/target

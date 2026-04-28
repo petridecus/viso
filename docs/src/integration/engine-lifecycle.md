@@ -2,40 +2,49 @@
 
 `VisoEngine` is the central rendering, animation, and picking
 coordinator. It is **read-only with respect to structural state** —
-mutations to the loaded `Assembly` always go through a `VisoApp` (or
-the host application that owns the `Assembly` directly). This chapter
+your application owns a `molex::Assembly` and pushes the latest
+snapshot to the engine via [`VisoEngine::set_assembly`]. This chapter
 covers how to create the engine, what happens during initialization,
 and how to manage its lifetime.
 
-## Construction Pair
+## Construction
 
-The engine reads structural snapshots from a triple buffer; the
-matching `AssemblyPublisher` lives on `VisoApp`. The two are always
-constructed together:
+You own your own `molex::Assembly` and hand viso the latest snapshot.
+There is no viso-defined channel, publisher, or consumer in the public
+API — the entire structural ingest contract is one setter on the
+engine.
 
 ```rust
-use viso::{RenderContext, VisoApp, VisoEngine};
+use std::sync::Arc;
+use viso::{RenderContext, VisoEngine};
 use viso::options::VisoOptions;
+use molex::Assembly;
 
-// 1. Build a VisoApp + AssemblyConsumer pair.
-//    Use one of:
-let (app, consumer) = VisoApp::new_empty();
-let (app, consumer) = VisoApp::from_entities(entities);
-let (app, consumer) = VisoApp::from_bytes(bytes, "cif")?;
-let (app, consumer) = VisoApp::from_file("path/to/structure.cif")?;
-
-// 2. Build a wgpu RenderContext (async — use pollster or your runtime).
+// 1. Build a wgpu RenderContext (async — use pollster or your runtime).
 let context = pollster::block_on(
     RenderContext::new(window.clone(), (width, height))
 )?;
 
-// 3. Build the engine.
-let mut engine = VisoEngine::new(context, consumer, VisoOptions::default())?;
+// 2. Build the engine.
+let mut engine = VisoEngine::new(context, VisoOptions::default())?;
+
+// 3. Push your Assembly to the engine.
+let assembly: Assembly = /* your owned Assembly */;
+engine.set_assembly(Arc::new(assembly.clone()));
 ```
 
-Hosts that already own an `Assembly` (e.g. `foldit-rs`) build their
-own `AssemblyPublisher`/`AssemblyConsumer` pair and feed the consumer
-into `VisoEngine::new`. They never need a `VisoApp`.
+After every Assembly mutation, re-publish by calling
+`engine.set_assembly(...)` again. The engine stages the snapshot in
+its internal pending slot and drains it on the next `update(dt)` (or
+`sync_now()`) tick — a generation check skips work if nothing changed.
+
+> **Note for standalone deployments only.** When viso is built as its
+> own standalone app via `cargo run -p viso` (features `viewer` /
+> `gui` / `web`), it uses an internal helper called `VisoApp` to play
+> the host role for itself. Library users **never** go through
+> `VisoApp` — own your own `Assembly` and call `set_assembly`
+> directly. `VisoApp` is not part of the library's public surface
+> with `default-features = false`.
 
 ### What Happens During Init
 
@@ -51,20 +60,20 @@ into `VisoEngine::new`. They never need a `VisoApp`.
 6. **Picking** — GPU picking system with offscreen `R32Uint` target and
    staging buffer.
 7. **Scene processor** — background thread spawned for mesh generation.
-8. **Assembly polling** — the consumer is wired in but the first
-   `Assembly` snapshot is picked up on the first call to `update()`.
+8. **Assembly slot** — `Scene` starts with an empty `current` Assembly
+   and `pending: None`. The first `set_assembly` call fills `pending`;
+   the next `update(dt)` consumes it.
 
 ## Initial Scene Sync
 
-`VisoApp::load_entities` / `replace_scene` / `from_file` all publish
-an `Assembly` snapshot. The next `engine.update(dt)` polls the
-consumer, rederives the scene, and submits a full mesh rebuild to the
+The first `engine.set_assembly(...)` call after construction pushes
+your initial snapshot. The next `engine.update(dt)` drains the pending
+snapshot, rederives the scene, and submits a full mesh rebuild to the
 background thread. On the frame after, `apply_pending_scene` uploads
 the meshes to the GPU.
 
-If you build the engine through `VisoApp::new_empty` (no entities) and
-want an explicit non-animating sync (rare — `update` does this for
-you), call:
+If you want an explicit non-animating sync (rare — `update` does this
+for you), call:
 
 ```rust
 engine.sync_scene_to_renderers(std::collections::HashMap::new());
@@ -117,7 +126,7 @@ This sends a `Shutdown` request to the processor thread.
 | `active_preset` | `Option<String>` | Name of the currently-applied options preset |
 | `frame_timing` | `FrameTiming` | FPS smoothing, frame pacing |
 | `density` | `DensityStore` | Loaded electron density maps |
-| `scene` | `Scene` | Assembly consumer + derived per-entity state |
+| `scene` | `Scene` | Pending/current Assembly + derived per-entity state |
 | `annotations` | `EntityAnnotations` | Per-entity overrides: focus, visibility, behaviors, appearance, scores, SS, surfaces |
 | `surface_regen` | `SurfaceRegen` | Background isosurface mesh regeneration |
 

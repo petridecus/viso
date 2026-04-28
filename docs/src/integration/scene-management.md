@@ -1,80 +1,71 @@
 # Scene Management
 
-Viso's structural state is owned by `molex::Assembly`. The host
-application (or `VisoApp` in standalone deployments) owns the
-authoritative `Assembly` and publishes snapshots through a triple
-buffer; the engine reads them through an `AssemblyConsumer` and
-rederives its render state.
+Viso's structural state lives in `molex::Assembly`, which is owned by
+**your** application — not by viso. Viso is a pure consumer: you push
+the latest `Arc<Assembly>` to the engine via
+[`VisoEngine::set_assembly`], and the engine drains the snapshot on
+the next sync tick and rederives its render state.
 
 There is no "group" abstraction in viso — every entity lives directly
 in the `Assembly` and is identified by an opaque `EntityId`.
 
-## The Assembly Channel
+## Pushing Assembly Snapshots
 
 ```
-┌──────────────────────┐                  ┌─────────────────┐
-│   VisoApp / host     │  Arc<Assembly>   │   VisoEngine    │
-│                      │ ──triple-buffer→ │                 │
-│  Assembly            │                  │  AssemblyConsumer
-│  AssemblyPublisher   │                  │  Scene + derived│
-└──────────────────────┘                  └─────────────────┘
+┌──────────────────────┐                          ┌─────────────────┐
+│   your application   │   Arc<Assembly>          │   VisoEngine    │
+│                      │ ─engine.set_assembly──►  │                 │
+│  molex::Assembly     │                          │  pending slot   │
+│  (mutated freely)    │                          │  → Scene+derived│
+└──────────────────────┘                          └─────────────────┘
 ```
 
-- `VisoApp` mutates the `Assembly` and calls `publisher.commit(...)`.
-- `VisoEngine::update(dt)` polls the consumer; if a new generation is
-  ready, the engine rederives its per-entity state and submits a
-  full-rebuild request to the background mesh processor.
+- Your application mutates its `molex::Assembly` (using molex's APIs)
+  and calls `engine.set_assembly(Arc::new(self.assembly.clone()))`.
+- `VisoEngine::update(dt)` drains the pending snapshot; if its
+  generation differs from the last applied one, the engine rederives
+  its per-entity state and submits a full-rebuild request to the
+  background mesh processor.
 
-In standalone deployments (`feature = "viewer" / "gui" / "web"`),
-`VisoApp` plays the host role. In `foldit-rs`, the real host owns the
-publisher and feeds the consumer into `VisoEngine::new` directly.
+That's the entire structural ingest contract for library users. There
+is no viso-defined channel, publisher, or consumer in the public API.
 
-## Mutating the Scene (via `VisoApp`)
+## Mutating the Scene
 
-All structural mutation methods take `&mut VisoEngine` so viso-side
-bookkeeping (animation transitions, camera fit, per-entity
-annotations) can update atomically alongside the `Assembly` mutation
-and the `publisher.commit`.
+You mutate `molex::Assembly` through molex's own APIs and re-publish
+to viso after each batch of changes:
 
 ```rust
-// Add entities. Returns the assigned raw u32 ids.
-let ids: Vec<u32> = app.load_entities(&mut engine, entities, fit_camera);
+use std::sync::Arc;
+use molex::Assembly;
+use viso::{Transition, VisoEngine};
 
-// Replace the entire scene.
-app.replace_scene(&mut engine, new_entities);
+// 1. Mutate the assembly however you like.
+let mut assembly = /* your owned Assembly */;
+assembly.add_entity(new_entity);
+assembly.update_positions(eid, &new_coords);
+// ... add/remove/update as needed ...
 
-// Remove all entities.
-app.clear_scene(&mut engine);
+// 2. Push the new snapshot. Cheap: Arc<Assembly> is shared
+//    by reference.
+engine.set_assembly(Arc::new(assembly.clone()));
 
-// Update one or many entities (matched by id), with a default
-// transition for entities lacking a per-entity behavior override.
-app.update_entity(&mut engine, entity, Transition::smooth())?;
-app.update_entities(&mut engine, updated, &Transition::smooth());
-
-// Update just the atom coordinates of an existing entity.
-app.update_entity_coords(&mut engine, id, &coords, Transition::smooth());
-
-// Reconcile: add new ids, remove missing ids, update existing ones.
-app.sync_entities(&mut engine, entities, &Transition::smooth());
-
-// Remove a single entity by id.
-app.remove_entity(&mut engine, id);
-
-// Per-entity visibility (also syncs ambient-type display flags for
-// water/ion/solvent so the renderer safety net stays consistent).
-app.set_entity_visible(&mut engine, id, true);
-
-// Per-entity scoring (drives color-by-score; pass None to clear).
-app.set_per_residue_scores(&mut engine, id, Some(scores));
-
-// Per-entity SS override (used for puzzle annotations).
-app.set_ss_override(&mut engine, id, ss_types);
+// 3. (Optional) For entities whose positions changed, queue a
+//    per-entity transition so the next sync animates instead of
+//    snapping. Without this, the engine snaps to the new state.
+engine.set_entity_behavior(entity_id, Transition::smooth());
 ```
 
-Internally each of these republishes the `Assembly` and calls
-`engine.sync_now()`, which submits a full-rebuild request to the
-background mesh processor. None of the cost is paid synchronously on
-the main thread — mesh generation happens off-thread.
+The next `engine.update(dt)` drains the pending snapshot, rederives
+the scene, and submits a full-rebuild to the background mesh
+processor. Mesh generation happens off-thread, so the main thread is
+not blocked.
+
+> **Note.** If you're embedding viso as a library, ignore `VisoApp`
+> entirely. `VisoApp` is the standalone-app helper that viso uses to
+> be its own host when run via `cargo run -p viso` (or the `viewer`
+> / `gui` / `web` features). Library consumers own their own
+> `Assembly` and don't need or want the convenience wrapper.
 
 ## Engine-Side Annotations
 

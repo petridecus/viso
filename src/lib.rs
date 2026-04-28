@@ -50,7 +50,6 @@ pub use app::viewer::{Viewer, ViewerBuilder};
 pub use app::VisoApp;
 #[cfg(feature = "gui")]
 pub use bridge::UiAction;
-pub use engine::assembly_consumer::AssemblyConsumer;
 pub use engine::command::{
     AtomRef, BandInfo, BandTarget, BandType, CommandOutcome, PullInfo,
     VisoCommand,

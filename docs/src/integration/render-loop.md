@@ -35,10 +35,11 @@ WindowEvent::RedrawRequested => {
 
 1. **Camera animation tick** — interpolates animated focus, distance,
    and bounding radius; advances turntable auto-rotation.
-2. **Poll the assembly consumer.** If a new `Assembly` snapshot is
-   waiting (because the host or `VisoApp` republished), the engine
-   rederives its per-entity state and submits a `FullRebuild` request
-   to the background mesh processor.
+2. **Drain the pending Assembly snapshot.** If a new `Assembly`
+   snapshot is waiting (because the host or `VisoApp` called
+   `engine.set_assembly`), the engine rederives its per-entity state
+   and submits a `FullRebuild` request to the background mesh
+   processor.
 3. **Apply any pending scene.** If the background processor has a
    completed `PreparedRebuild` ready, it is uploaded to the GPU
    (vertex/index/instance buffers, picking bind groups). GPU upload is

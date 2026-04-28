@@ -203,7 +203,7 @@ fn create_app_and_engine(
     scale: f64,
     path: Option<&str>,
 ) -> Result<(VisoApp, VisoEngine), VisoError> {
-    let (app, consumer) = match path {
+    let app = match path {
         Some(p) => VisoApp::from_file(p)?,
         None => VisoApp::new_empty(),
     };
@@ -212,7 +212,8 @@ fn create_app_and_engine(
     if scale < 2.0 {
         context.render_scale = 2;
     }
-    let engine = VisoEngine::new(context, consumer, VisoOptions::default())?;
+    let mut engine = VisoEngine::new(context, VisoOptions::default())?;
+    app.publish(&mut engine);
     Ok((app, engine))
 }
 

@@ -1,5 +1,4 @@
 pub(crate) mod annotations;
-pub(crate) mod assembly_consumer;
 mod bootstrap;
 /// The engine's complete interactive vocabulary.
 pub(crate) mod command;
@@ -48,14 +47,15 @@ pub(crate) struct ConstraintSpecs {
 /// The core rendering engine for protein visualization.
 ///
 /// `VisoEngine` is a read-only consumer of structural state: the host
-/// application owns an [`molex::Assembly`] and publishes snapshots
-/// through a triple buffer. In standalone deployments
+/// application owns an [`molex::Assembly`] and pushes the latest
+/// snapshot via [`VisoEngine::set_assembly`]. In standalone deployments
 /// ([`crate::VisoApp`]) the app plays the host role.
 ///
-/// The engine is never mutated directly for structural changes —
-/// all such mutations route through [`crate::VisoApp`]. Viso-side
-/// annotations (appearance overrides, behavior overrides, camera state)
-/// are mutated through engine methods directly.
+/// The engine is never mutated directly for structural changes — the
+/// host mutates its own `Assembly` and re-publishes via
+/// [`VisoEngine::set_assembly`]. Viso-side annotations (appearance
+/// overrides, behavior overrides, camera state) are mutated through
+/// engine methods directly.
 pub struct VisoEngine {
     // ── GPU + camera ──────────────────────────────────────────────
     /// All GPU infrastructure (device, renderers, picking, post-process,
@@ -79,11 +79,11 @@ pub struct VisoEngine {
     pub(crate) density: DensityStore,
 
     // ── Assembly ingest + derived per-entity state ────────────────
-    /// Triple-buffer reader, latest snapshot, generation tracker,
-    /// plus the per-entity render-ready derived state rebuilt on
-    /// every sync (`SceneRenderState`, `EntityView`s, positions).
-    /// Also owns the monotonic `mesh_version` dispenser. See
-    /// [`Scene`].
+    /// Pending snapshot pushed by the host, latest applied snapshot,
+    /// generation tracker, plus the per-entity render-ready derived
+    /// state rebuilt on every sync (`SceneRenderState`, `EntityView`s,
+    /// positions). Also owns the monotonic `mesh_version` dispenser.
+    /// See [`Scene`].
     pub(crate) scene: Scene,
 
     // ── User-authored per-entity annotations ──────────────────────
@@ -379,10 +379,16 @@ impl VisoEngine {
         self.apply_pending_scene();
     }
 
-    /// Poll the consumer for a new Assembly snapshot and, if one is
-    /// ready, rederive viso-side state.
+    /// Push a new [`Assembly`] snapshot from the host. The next
+    /// `update` (or `sync_now`) tick will rederive viso-side state.
+    pub fn set_assembly(&mut self, assembly: std::sync::Arc<Assembly>) {
+        self.scene.pending = Some(assembly);
+    }
+
+    /// Drain any pending Assembly snapshot and, if its generation
+    /// differs, rederive viso-side state.
     fn poll_assembly(&mut self) {
-        let Some(assembly) = self.scene.consumer.latest() else {
+        let Some(assembly) = self.scene.pending.take() else {
             return;
         };
         if assembly.generation() == self.scene.last_seen_generation {
