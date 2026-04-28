@@ -100,17 +100,8 @@ pub enum UiAction {
         /// Physical key name matching winit's `KeyCode` debug format.
         key: String,
     },
-    /// Set a per-entity display override field.
-    SetEntityOption {
-        /// Entity ID to override.
-        entity_id: u32,
-        /// Override field name (e.g. `"cartoon_style"`).
-        field: String,
-        /// New JSON value for the field.
-        value: serde_json::Value,
-    },
     /// Clear all per-entity display overrides for an entity.
-    ClearEntityOption {
+    ClearEntityAppearance {
         /// Entity ID to clear.
         entity_id: u32,
     },
@@ -208,19 +199,9 @@ pub(crate) fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             let id = msg.get("id")?.as_u64()? as u32;
             Some(UiAction::Command(VisoCommand::RemoveEntity { id }))
         }
-        "set_entity_option" => {
+        "clear_entity_option" | "clear_entity_appearance" => {
             let entity_id = msg.get("entity_id")?.as_u64()? as u32;
-            let field = msg.get("field")?.as_str()?.to_owned();
-            let value = msg.get("value")?.clone();
-            Some(UiAction::SetEntityOption {
-                entity_id,
-                field,
-                value,
-            })
-        }
-        "clear_entity_option" => {
-            let entity_id = msg.get("entity_id")?.as_u64()? as u32;
-            Some(UiAction::ClearEntityOption { entity_id })
+            Some(UiAction::ClearEntityAppearance { entity_id })
         }
         "set_entity_surface" => {
             let entity_id = msg.get("entity_id")?.as_u64()? as u32;
@@ -251,7 +232,7 @@ pub(crate) fn parse_action(msg: &serde_json::Value) -> Option<UiAction> {
             let id = msg.get("id")?.as_u64()? as u32;
             Some(UiAction::ToggleDensityVisibility { id })
         }
-        "set_entity_appearance" => {
+        "set_entity_appearance" | "set_entity_option" => {
             let entity_id = msg.get("entity_id")?.as_u64()? as u32;
             let field = msg.get("field")?.as_str()?.to_owned();
             let value = msg.get("value")?.clone();
@@ -315,12 +296,12 @@ pub(crate) fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
 
             let effective_mode =
                 ovr.and_then(|o| o.drawing_mode).unwrap_or_else(|| {
-                    if engine.options().display.drawing_mode
+                    if engine.options().display.drawing_mode()
                         == DrawingMode::Cartoon
                     {
                         DrawingMode::default_for(entity.molecule_type())
                     } else {
-                        engine.options().display.drawing_mode
+                        engine.options().display.drawing_mode()
                     }
                 });
 
@@ -334,12 +315,12 @@ pub(crate) fn entity_summaries(engine: &VisoEngine) -> Vec<serde_json::Value> {
                 "focused": focused,
                 "focusable": entity.is_focusable(),
                 "drawing_mode": effective_mode,
-                "color_scheme": resolved_display.backbone_color_scheme,
-                "show_sidechains": resolved_display.show_sidechains,
+                "color_scheme": resolved_display.backbone_color_scheme(),
+                "show_sidechains": resolved_display.show_sidechains(),
                 "surface": effective_surface_kind(engine, raw_id),
                 "surface_color": effective_surface_color(engine, raw_id),
-                "helix_style": resolved_display.helix_style,
-                "sheet_style": resolved_display.sheet_style,
+                "helix_style": resolved_display.helix_style(),
+                "sheet_style": resolved_display.sheet_style(),
                 "has_overrides": has_overrides,
             });
             if let Some(ovr_val) = ovr {
@@ -370,7 +351,7 @@ fn effective_surface_kind(engine: &VisoEngine, raw: u32) -> &'static str {
         }
     }
     // No per-entity entry — fall back to global
-    match engine.options.display.surface_kind {
+    match engine.options.display.surface_kind() {
         SurfaceKindOption::Gaussian => "gaussian",
         SurfaceKindOption::Ses => "ses",
         SurfaceKindOption::None => "none",

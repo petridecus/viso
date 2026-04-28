@@ -53,7 +53,7 @@ impl super::VisoEngine {
                 &raw_view,
                 &offset_map,
             );
-        let sc_colors = if self.options.display.sidechain_color_mode
+        let sc_colors = if self.options.display.sidechain_color_mode()
             == crate::options::SidechainColorMode::Backbone
         {
             let flat = self.scene.flat_cartoon_colors(&self.annotations);

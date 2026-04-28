@@ -674,7 +674,7 @@ fn per_entity_colors(
         backbone_chains,
         ss_types,
         &scores_slice,
-        &display.backbone_color_scheme,
+        &display.backbone_color_scheme(),
         &display.backbone_palette(),
         entity_index,
     );

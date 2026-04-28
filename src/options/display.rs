@@ -351,52 +351,26 @@ impl PresentMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema,
+)]
 #[serde(default)]
 #[allow(clippy::struct_excessive_bools)]
 /// Display toggles and coloring mode selections.
 ///
-/// This is the single canonical appearance struct. Per-entity overrides
-/// are stored as [`super::EntityAppearance`] (thin `Option<T>` wrapper)
-/// and resolved against this via
-/// [`EntityAppearance::to_display_options`](super::EntityAppearance::to_display_options).
+/// Combines:
+/// - 5 global-only ambient toggles (waters/ions/solvent/present_mode/bonds)
+/// - a flattened [`super::DisplayOverrides`] bag of 14 per-entity overridable
+///   fields (drawing mode, color scheme, cartoon style, etc.) serialized flat
+///   for TOML compatibility
+///
+/// The same [`super::DisplayOverrides`] type is used at per-entity scope
+/// (via `DisplayOverrides::overlay`). `None` at either scope falls through
+/// to the next layer (entity → global → built-in defaults).
 ///
 /// Rendered in the Scene tab's Global Appearance card, not the Options
 /// tab (hence `#[schemars(skip)]` at struct level).
 pub struct DisplayOptions {
-    // --- Per-entity overridable fields ---
-    /// Top-level drawing mode (Cartoon / Stick / BallAndStick).
-    pub drawing_mode: DrawingMode,
-    /// What property backbone color maps to.
-    pub backbone_color_scheme: ColorScheme,
-    /// Whether to render amino acid sidechains.
-    pub show_sidechains: bool,
-    /// Global molecular surface type.
-    pub surface_kind: SurfaceKindOption,
-    /// Global surface opacity (0.0–1.0).
-    #[serde(default = "default_surface_opacity")]
-    pub surface_opacity: f32,
-    /// Whether to render internal cavity meshes extracted from the same
-    /// SDF pipeline as the molecular surface. Cavities use a fixed
-    /// bluish translucent color and are not configurable per-entity.
-    pub show_cavities: bool,
-    /// Helix rendering style within Cartoon mode.
-    pub helix_style: HelixStyle,
-    /// Sheet rendering style within Cartoon mode.
-    pub sheet_style: SheetStyle,
-    /// Sidechain coloring strategy.
-    pub sidechain_color_mode: SidechainColorMode,
-    /// Nucleic acid coloring strategy.
-    pub na_color_mode: NaColorMode,
-    /// Lipid rendering style.
-    pub lipid_mode: LipidMode,
-    /// Whether to render hydrogen atoms.
-    pub show_hydrogens: bool,
-    /// Named color palette preset for backbone coloring.
-    pub backbone_palette_preset: PalettePreset,
-    /// How backbone palette colors are distributed.
-    pub backbone_palette_mode: PaletteMode,
-
     // --- Ambient visibility (type-level toggles, not per-entity) ---
     /// Whether to render water molecules.
     pub show_waters: bool,
@@ -415,50 +389,120 @@ pub struct DisplayOptions {
 
     // --- Legacy ---
     /// Backbone coloring strategy (legacy field — prefer
-    /// `backbone_color_scheme`).
+    /// `overrides.color_scheme`).
     pub backbone_color_mode: BackboneColorMode,
-}
 
-impl Default for DisplayOptions {
-    fn default() -> Self {
-        Self {
-            drawing_mode: DrawingMode::default(),
-            backbone_color_scheme: ColorScheme::default(),
-            show_sidechains: false,
-            surface_kind: SurfaceKindOption::default(),
-            surface_opacity: default_surface_opacity(),
-            show_cavities: false,
-            helix_style: HelixStyle::default(),
-            sheet_style: SheetStyle::default(),
-            sidechain_color_mode: SidechainColorMode::default(),
-            na_color_mode: NaColorMode::default(),
-            lipid_mode: LipidMode::default(),
-            show_hydrogens: false,
-            backbone_palette_preset: PalettePreset::default(),
-            backbone_palette_mode: PaletteMode::default(),
-            show_waters: false,
-            show_ions: false,
-            show_solvent: false,
-            present_mode: PresentMode::default(),
-            bonds: BondOptions::default(),
-            backbone_color_mode: BackboneColorMode::default(),
-        }
-    }
+    // --- Per-entity overridable fields (flattened for TOML compat) ---
+    /// User's global display preferences, expressed as a bag of
+    /// overrides. `None` fields fall through to built-in defaults.
+    #[serde(flatten)]
+    #[schemars(skip)]
+    pub overrides: super::DisplayOverrides,
 }
 
 impl DisplayOptions {
+    /// Top-level drawing mode (Cartoon / Stick / BallAndStick), resolved
+    /// against built-in defaults.
+    #[must_use]
+    pub fn drawing_mode(&self) -> DrawingMode {
+        self.overrides.drawing_mode.unwrap_or_default()
+    }
+
+    /// What property backbone color maps to, resolved.
+    #[must_use]
+    pub fn backbone_color_scheme(&self) -> ColorScheme {
+        self.overrides.color_scheme.clone().unwrap_or_default()
+    }
+
+    /// Whether to render amino acid sidechains, resolved.
+    #[must_use]
+    pub fn show_sidechains(&self) -> bool {
+        self.overrides.show_sidechains.unwrap_or(false)
+    }
+
+    /// Global molecular surface type, resolved.
+    #[must_use]
+    pub fn surface_kind(&self) -> SurfaceKindOption {
+        self.overrides.surface_kind.unwrap_or_default()
+    }
+
+    /// Global surface opacity (0.0–1.0), resolved.
+    #[must_use]
+    pub fn surface_opacity(&self) -> f32 {
+        self.overrides
+            .surface_opacity
+            .unwrap_or_else(default_surface_opacity)
+    }
+
+    /// Whether to render internal cavity meshes, resolved.
+    #[must_use]
+    pub fn show_cavities(&self) -> bool {
+        self.overrides.show_cavities.unwrap_or(false)
+    }
+
+    /// Helix rendering style within Cartoon mode, resolved.
+    #[must_use]
+    pub fn helix_style(&self) -> HelixStyle {
+        self.overrides.helix_style.unwrap_or_default()
+    }
+
+    /// Sheet rendering style within Cartoon mode, resolved.
+    #[must_use]
+    pub fn sheet_style(&self) -> SheetStyle {
+        self.overrides.sheet_style.unwrap_or_default()
+    }
+
+    /// Sidechain coloring strategy, resolved.
+    #[must_use]
+    pub fn sidechain_color_mode(&self) -> SidechainColorMode {
+        self.overrides
+            .sidechain_color_mode
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Nucleic acid coloring strategy, resolved.
+    #[must_use]
+    pub fn na_color_mode(&self) -> NaColorMode {
+        self.overrides.na_color_mode.clone().unwrap_or_default()
+    }
+
+    /// Lipid rendering style, resolved.
+    #[must_use]
+    pub fn lipid_mode(&self) -> LipidMode {
+        self.overrides.lipid_mode.clone().unwrap_or_default()
+    }
+
+    /// Whether to render hydrogen atoms, resolved.
+    #[must_use]
+    pub fn show_hydrogens(&self) -> bool {
+        self.overrides.show_hydrogens.unwrap_or(false)
+    }
+
+    /// Named color palette preset for backbone coloring, resolved.
+    #[must_use]
+    pub fn backbone_palette_preset(&self) -> PalettePreset {
+        self.overrides.palette_preset.clone().unwrap_or_default()
+    }
+
+    /// How backbone palette colors are distributed, resolved.
+    #[must_use]
+    pub fn backbone_palette_mode(&self) -> PaletteMode {
+        self.overrides.palette_mode.clone().unwrap_or_default()
+    }
+
     /// Whether lipid mode uses full ball-and-stick representation.
     #[must_use]
     pub fn lipid_ball_and_stick(&self) -> bool {
-        matches!(self.lipid_mode, LipidMode::BallAndStick)
+        matches!(self.lipid_mode(), LipidMode::BallAndStick)
     }
 
-    /// Construct a [`Palette`] from the flattened preset/mode fields.
+    /// Construct a [`Palette`] from the resolved preset/mode fields.
     #[must_use]
     pub fn backbone_palette(&self) -> Palette {
         Palette {
-            preset: self.backbone_palette_preset.clone(),
-            mode: self.backbone_palette_mode.clone(),
+            preset: self.backbone_palette_preset(),
+            mode: self.backbone_palette_mode(),
             stops: Vec::new(),
         }
     }

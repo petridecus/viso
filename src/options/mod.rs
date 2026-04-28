@@ -8,14 +8,14 @@
 //! [`InputProcessor`](crate::input::InputProcessor), not here — they are an
 //! input concern, not a rendering option.
 
-/// Unified per-entity visual appearance settings.
-pub mod appearance;
 mod camera;
 mod colors;
 mod debug;
 mod display;
 mod geometry;
 mod lighting;
+/// Display override bag (used globally and per-entity).
+pub mod overrides;
 /// Color palette system.
 pub mod palette;
 mod post_processing;
@@ -25,7 +25,6 @@ pub(crate) mod score_color;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
-pub use appearance::EntityAppearance;
 pub use camera::CameraOptions;
 pub use colors::ColorOptions;
 pub use debug::DebugOptions;
@@ -40,6 +39,7 @@ pub use geometry::{
     CartoonStyle, GeometryOptions,
 };
 pub use lighting::LightingOptions;
+pub use overrides::DisplayOverrides;
 pub use palette::{Palette, PaletteMode, PalettePreset};
 pub use post_processing::PostProcessingOptions;
 use schemars::JsonSchema;
@@ -114,8 +114,8 @@ impl VisoOptions {
     pub fn resolved_geometry(&self) -> GeometryOptions {
         self.geometry
             .resolve_cartoon_style()
-            .with_helix_style(self.display.helix_style)
-            .with_sheet_style(self.display.sheet_style)
+            .with_helix_style(self.display.helix_style())
+            .with_sheet_style(self.display.sheet_style())
     }
 
     /// List available preset names (TOML file stems) in a directory.
@@ -162,7 +162,7 @@ shininess = 80.0
         assert_eq!(opts.lighting.shininess, 80.0);
         // Everything else should be default
         assert_eq!(opts.lighting.ambient, 0.45);
-        assert_eq!(opts.display.lipid_mode, LipidMode::Coarse);
+        assert_eq!(opts.display.lipid_mode(), LipidMode::Coarse);
     }
 
     #[test]

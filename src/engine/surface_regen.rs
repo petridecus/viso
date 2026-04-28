@@ -61,9 +61,9 @@ pub(crate) fn regenerate_surfaces(
 
     let all_entities = scene.current.entities();
     let palette = options.display.backbone_palette();
-    let global_kind = options.display.surface_kind;
-    let global_opacity = options.display.surface_opacity;
-    let global_show_cavities = options.display.show_cavities;
+    let global_kind = options.display.surface_kind();
+    let global_opacity = options.display.surface_opacity();
+    let global_show_cavities = options.display.show_cavities();
 
     // Collect jobs: (positions, radii, surface params with color)
     let mut jobs: Vec<(Vec<glam::Vec3>, Vec<f32>, EntitySurface)> = Vec::new();

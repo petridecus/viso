@@ -6,6 +6,21 @@
 //! `camera_controller`) — the code can't live in `options/` because
 //! that would invert the dependency direction (options is a leaf
 //! module, engine depends on it).
+//!
+//! ## Dispatch model
+//!
+//! `set_options` computes two diff products:
+//!
+//! - [`GlobalsChange`] — bools for concerns that only exist at global scope
+//!   (lighting, camera, present mode, type-level visibility, etc.)
+//! - [`crate::options::overrides::RenderInvalidation`] — per-field projection
+//!   from a [`crate::options::DisplayOverrides::diff`] onto classes of GPU work
+//!   (mesh/color/surface/LOD/drawing-mode-resolve)
+//!
+//! The dispatcher fires each `RenderInvalidation` flag at most once per
+//! call — dedup is a structural property of the type, not a runtime
+//! discipline. Fixes the historical triple-sync bug (same invalidation
+//! reached from three different `OptionsChange` bools at once).
 
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -15,20 +30,18 @@ use molex::entity::molecule::id::EntityId;
 use molex::MoleculeType;
 
 use super::VisoEngine;
+use crate::options::overrides::RenderInvalidation;
 use crate::options::VisoOptions;
 
-/// Fine-grained diff of what changed between two [`VisoOptions`] values.
+/// Global-only diff. Covers every section of [`VisoOptions`] whose
+/// changes cannot be driven by per-entity overrides.
 ///
-/// Each field corresponds to one dispatch step in
-/// [`VisoEngine::apply_options_change`]. Adding a field here forces a
-/// matching dispatch arm — the struct initializer in [`Self::diff`] and
-/// the OR-chain in [`Self::any`] both break if fields drift out of sync.
-///
-/// The struct is intentionally a flat bag of bools: each bit maps to
-/// one independent dispatch arm, so a state-machine rewrite would lose
-/// the 1-to-1 mapping that makes diff/apply enforceable.
+/// The overridable subset of `display` is diffed separately via
+/// [`crate::options::DisplayOverrides::diff`] into a
+/// [`RenderInvalidation`] flag set.
+#[derive(Debug, Default, Clone, Copy)]
 #[allow(clippy::struct_excessive_bools)]
-pub(crate) struct OptionsChange {
+pub(crate) struct GlobalsChange {
     /// Lighting uniform (`options.lighting`) changed.
     pub(crate) lighting: bool,
     /// Post-processing stack (`options.post_processing`) changed.
@@ -39,9 +52,6 @@ pub(crate) struct OptionsChange {
     pub(crate) debug: bool,
     /// Surface present mode changed (requires swapchain reconfigure).
     pub(crate) present_mode: bool,
-    /// Display section changed (ignoring `present_mode`, which has its
-    /// own flag).
-    pub(crate) display: bool,
     /// Geometry tuning section changed.
     pub(crate) geometry: bool,
     /// Colors section changed.
@@ -52,61 +62,66 @@ pub(crate) struct OptionsChange {
     pub(crate) ions: bool,
     /// Solvent visibility toggled.
     pub(crate) solvent: bool,
-    /// Surface kind / opacity / cavities changed (requires surface
-    /// regeneration).
-    pub(crate) surface: bool,
-    /// Helix or sheet style changed (requires backbone remesh).
-    pub(crate) helix_sheet: bool,
-    /// Global drawing mode changed (requires per-entity re-resolution).
-    pub(crate) drawing_mode: bool,
 }
 
-impl OptionsChange {
-    /// Compute the fine-grained diff between two options.
+impl GlobalsChange {
+    /// Compute the global-only diff between two options.
     pub(crate) fn diff(old: &VisoOptions, new: &VisoOptions) -> Self {
-        let display = {
-            let mut old_d = old.display.clone();
-            old_d.present_mode = new.display.present_mode;
-            old_d != new.display
-        };
         Self {
             lighting: old.lighting != new.lighting,
             post_processing: old.post_processing != new.post_processing,
             camera: old.camera != new.camera,
             debug: old.debug != new.debug,
             present_mode: old.display.present_mode != new.display.present_mode,
-            display,
             geometry: old.geometry != new.geometry,
             colors: old.colors != new.colors,
             waters: old.display.show_waters != new.display.show_waters,
             ions: old.display.show_ions != new.display.show_ions,
             solvent: old.display.show_solvent != new.display.show_solvent,
-            surface: old.display.surface_kind != new.display.surface_kind
-                || old.display.surface_opacity != new.display.surface_opacity
-                || old.display.show_cavities != new.display.show_cavities,
-            helix_sheet: old.display.helix_style != new.display.helix_style
-                || old.display.sheet_style != new.display.sheet_style,
-            drawing_mode: old.display.drawing_mode != new.display.drawing_mode,
         }
     }
 
-    /// True if any part of the options changed.
+    /// True if any global concern changed.
     pub(crate) fn any(&self) -> bool {
-        self.lighting
-            || self.post_processing
-            || self.camera
-            || self.debug
-            || self.present_mode
-            || self.display
-            || self.geometry
-            || self.colors
-            || self.waters
-            || self.ions
-            || self.solvent
-            || self.surface
-            || self.helix_sheet
-            || self.drawing_mode
+        // Exhaustive destructuring — adding a field forces a compile
+        // error here until `any()` is updated to include it.
+        let Self {
+            lighting,
+            post_processing,
+            camera,
+            debug,
+            present_mode,
+            geometry,
+            colors,
+            waters,
+            ions,
+            solvent,
+        } = *self;
+        lighting
+            || post_processing
+            || camera
+            || debug
+            || present_mode
+            || geometry
+            || colors
+            || waters
+            || ions
+            || solvent
     }
+}
+
+/// Classes of mesh/render work invalidated by a `GeometryOptions` change.
+///
+/// Separate from the override-driven `RenderInvalidation` because
+/// `GeometryOptions` is a global-only concern (LOD parameters, not
+/// overridable per-entity) — its invalidation is always global scope.
+fn geometry_invalidation() -> RenderInvalidation {
+    RenderInvalidation::RE_MESH | RenderInvalidation::LOD_REMESH
+}
+
+/// Classes of mesh work invalidated by a `ColorOptions` change.
+fn colors_invalidation() -> RenderInvalidation {
+    RenderInvalidation::RE_MESH | RenderInvalidation::RE_COLOR
 }
 
 impl VisoEngine {
@@ -134,76 +149,87 @@ impl VisoEngine {
 
     /// Replace options and apply only the sections that changed.
     pub fn set_options(&mut self, new: VisoOptions) {
-        let change = OptionsChange::diff(&self.options, &new);
-        if !change.any() {
+        let globals = GlobalsChange::diff(&self.options, &new);
+        // Override-field diff: per-field mapping onto invalidation classes.
+        let mut inv =
+            self.options.display.overrides.diff(&new.display.overrides);
+        if globals.geometry {
+            inv |= geometry_invalidation();
+        }
+        if globals.colors {
+            inv |= colors_invalidation();
+        }
+        if !globals.any() && inv.is_empty() {
             return;
         }
         self.options = new;
-        self.apply_options_change(&change);
+        self.apply_global_invalidation(globals, inv);
     }
 
-    /// Dispatch one action per field of [`OptionsChange`]. Adding a
-    /// field to [`OptionsChange`] forces a matching arm here — the
-    /// compiler enforces diff/apply stay in sync via the struct
-    /// initializer in [`OptionsChange::diff`] and the `any()` OR-chain.
-    fn apply_options_change(&mut self, change: &OptionsChange) {
-        if change.waters {
+    /// Dispatch one action per [`GlobalsChange`] flag and per
+    /// [`RenderInvalidation`] bit. Each invalidation fires at most once
+    /// — the bitflag union is the dedup mechanism.
+    ///
+    /// Ordering: `DRAWING_MODE_RESOLVE` must precede `RE_MESH` so the
+    /// subsequent scene sync picks up the newly-resolved drawing mode.
+    /// Enforced by arm order in this function body.
+    fn apply_global_invalidation(
+        &mut self,
+        globals: GlobalsChange,
+        inv: RenderInvalidation,
+    ) {
+        // --- Global-only concerns ---
+        if globals.waters {
             self.set_type_visibility(
                 MoleculeType::Water,
                 self.options.display.show_waters,
             );
         }
-        if change.ions {
+        if globals.ions {
             self.set_type_visibility(
                 MoleculeType::Ion,
                 self.options.display.show_ions,
             );
         }
-        if change.solvent {
+        if globals.solvent {
             self.set_type_visibility(
                 MoleculeType::Solvent,
                 self.options.display.show_solvent,
             );
         }
-        if change.lighting {
+        if globals.lighting {
             self.apply_lighting();
         }
-        if change.post_processing {
+        if globals.post_processing {
             self.apply_post_processing();
         }
-        if change.camera {
+        if globals.camera {
             self.apply_camera();
         }
-        if change.debug {
+        if globals.debug {
             self.apply_debug();
         }
-        if change.present_mode {
+        if globals.present_mode {
             self.gpu
                 .context
                 .set_present_mode(self.options.display.present_mode.to_wgpu());
         }
-        if change.drawing_mode {
+
+        // --- Override-driven invalidations. Each flag fires at most once. ---
+        if inv.contains(RenderInvalidation::DRAWING_MODE_RESOLVE) {
             self.reresolve_drawing_modes();
         }
-        if change.display || change.geometry || change.colors {
+        if inv.contains(RenderInvalidation::RE_MESH) {
             self.invalidate_all_mesh_versions();
         }
-        if change.display {
-            self.refresh_ball_and_stick();
+        if inv.contains(RenderInvalidation::RE_COLOR) {
             self.recompute_backbone_colors();
         }
-        if change.geometry || change.helix_sheet {
+        if inv.contains(RenderInvalidation::LOD_REMESH) {
             let camera_eye = self.camera_controller.camera.eye;
             self.submit_per_chain_lod_remesh(camera_eye);
         }
-        if change.colors {
-            self.refresh_ball_and_stick();
-        }
-        if change.display || change.colors {
-            log::debug!("set_options: display/colors changed, triggering sync");
-            self.sync_scene_to_renderers(HashMap::new());
-        }
-        if change.surface {
+        if inv.contains(RenderInvalidation::RE_SURFACE) {
             super::surface_regen::regenerate_surfaces(
                 &self.scene,
                 &self.annotations,
@@ -211,6 +237,61 @@ impl VisoEngine {
                 &self.options,
                 &self.surface_regen,
             );
+        }
+        // Single final sync. Any mesh / color invalidation needs the
+        // scene submitted once.
+        if inv.contains(RenderInvalidation::RE_MESH)
+            || inv.contains(RenderInvalidation::RE_COLOR)
+        {
+            self.sync_scene_to_renderers(HashMap::new());
+        }
+    }
+
+    /// Dispatch [`RenderInvalidation`] flags at per-entity scope. Called
+    /// from `set_entity_appearance` / `clear_entity_appearance` after
+    /// diffing the entity's old vs. new overrides.
+    ///
+    /// Shares the `RenderInvalidation` vocabulary with the global
+    /// dispatcher but elides global-only concerns (lighting, camera,
+    /// visibility toggles, etc.) — those are unreachable at per-entity
+    /// scope.
+    ///
+    /// Fires `RE_SURFACE` for per-entity surface changes, which was
+    /// previously a bug: a per-entity `surface_kind` change never
+    /// triggered surface regeneration because the only path to
+    /// `regenerate_surfaces` went through the global `change.surface`
+    /// bool.
+    pub(crate) fn apply_entity_invalidation(
+        &mut self,
+        inv: RenderInvalidation,
+    ) {
+        if inv.is_empty() {
+            return;
+        }
+        // No DRAWING_MODE_RESOLVE arm — `set_appearance` /
+        // `clear_appearance` already re-resolve the single entity's
+        // `state.drawing_mode` before the mesh regen. That matches the
+        // ordering invariant enforced globally (resolve-before-mesh).
+        if inv.contains(RenderInvalidation::RE_COLOR) {
+            self.recompute_backbone_colors();
+        }
+        if inv.contains(RenderInvalidation::LOD_REMESH) {
+            let camera_eye = self.camera_controller.camera.eye;
+            self.submit_per_chain_lod_remesh(camera_eye);
+        }
+        if inv.contains(RenderInvalidation::RE_SURFACE) {
+            super::surface_regen::regenerate_surfaces(
+                &self.scene,
+                &self.annotations,
+                &self.density,
+                &self.options,
+                &self.surface_regen,
+            );
+        }
+        if inv.contains(RenderInvalidation::RE_MESH)
+            || inv.contains(RenderInvalidation::RE_COLOR)
+        {
+            self.sync_scene_to_renderers(HashMap::new());
         }
     }
 

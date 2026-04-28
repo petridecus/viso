@@ -82,7 +82,7 @@ fn generate_sidechain_bytes(
         hydrophobicity: &layout.hydrophobicity,
         residue_indices: &layout.residue_indices,
     };
-    let backbone_colors = (display.sidechain_color_mode
+    let backbone_colors = (display.sidechain_color_mode()
         == SidechainColorMode::Backbone)
         .then_some(per_residue_colors)
         .flatten();
@@ -191,7 +191,7 @@ pub(super) fn generate_entity_mesh(
             if is_na { &chain_positions } else { &[] };
 
         let na_base_colors: Vec<[f32; 3]> =
-            if is_na && display.na_color_mode == NaColorMode::BaseColor {
+            if is_na && display.na_color_mode() == NaColorMode::BaseColor {
                 topology.ring_topology.iter().map(|r| r.color).collect()
             } else {
                 Vec::new()

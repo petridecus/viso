@@ -165,7 +165,7 @@ impl VisoEngine {
         self.gpu.render_to_view(
             view,
             &self.camera_controller,
-            self.options.display.show_sidechains,
+            self.options.display.show_sidechains(),
         )
     }
 
@@ -319,12 +319,12 @@ impl VisoEngine {
                 CommandOutcome::VisibilityChanged
             }
             VisoCommand::CycleLipidMode => {
-                self.options.display.lipid_mode =
-                    if self.options.display.lipid_ball_and_stick() {
+                self.options.display.overrides.lipid_mode =
+                    Some(if self.options.display.lipid_ball_and_stick() {
                         crate::options::LipidMode::Coarse
                     } else {
                         crate::options::LipidMode::BallAndStick
-                    };
+                    });
                 self.refresh_ball_and_stick();
                 CommandOutcome::NoEffect
             }

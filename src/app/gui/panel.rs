@@ -200,19 +200,7 @@ impl PanelController {
                     log::warn!("Failed to serialize options to JSON");
                     return;
                 };
-                // Build a JSON pointer from the dot-separated path + field.
-                let pointer = format!(
-                    "/{}",
-                    path.split('.')
-                        .chain(std::iter::once(field.as_str()))
-                        .collect::<Vec<_>>()
-                        .join("/")
-                );
-                if let Some(target) = root.pointer_mut(&pointer) {
-                    *target = value;
-                } else {
-                    log::warn!("Option path not found: {pointer}");
-                }
+                patch_options_json(&mut root, &path, &field, value);
                 match serde_json::from_value(root) {
                     Ok(updated) => opts = updated,
                     Err(e) => {
@@ -246,20 +234,17 @@ impl PanelController {
                 let _ = engine.execute(cmd);
                 self.push_scene_entities(engine);
             }
-            UiAction::SetEntityOption {
-                entity_id,
-                field,
-                value,
-            }
-            | UiAction::SetEntityAppearance {
+            UiAction::SetEntityAppearance {
                 entity_id,
                 field,
                 value,
             } => {
-                Self::apply_entity_option(engine, entity_id, &field, &value);
+                Self::apply_entity_appearance_field(
+                    engine, entity_id, &field, &value,
+                );
                 self.push_scene_entities(engine);
             }
-            UiAction::ClearEntityOption { entity_id } => {
+            UiAction::ClearEntityAppearance { entity_id } => {
                 if let Some(eid) = engine.entity_id(entity_id) {
                     engine.clear_entity_appearance(eid);
                 }
@@ -363,7 +348,7 @@ impl PanelController {
     }
 
     /// Apply a single per-entity appearance override field.
-    fn apply_entity_option(
+    fn apply_entity_appearance_field(
         engine: &mut VisoEngine,
         entity_id: u32,
         field: &str,
@@ -550,6 +535,45 @@ impl PanelController {
 }
 
 // ── Helpers (free functions) ─────────────────────────────────────────────
+
+/// Apply a `{path, field, value}` patch to a serialized `VisoOptions`
+/// JSON value.
+///
+/// The common case is `root.pointer_mut(/path/field)` — replace the
+/// existing JSON value. But with `DisplayOverrides` flattened into
+/// `DisplayOptions` and each override field carrying
+/// `#[serde(skip_serializing_if = "Option::is_none")]`, a field that
+/// hasn't been set yet is *absent* from the serialized JSON and
+/// `pointer_mut` returns `None`. In that case we navigate to the
+/// parent path and insert the field on the parent object.
+fn patch_options_json(
+    root: &mut serde_json::Value,
+    path: &str,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let pointer = format!(
+        "/{}",
+        path.split('.')
+            .chain(std::iter::once(field))
+            .collect::<Vec<_>>()
+            .join("/")
+    );
+    if let Some(target) = root.pointer_mut(&pointer) {
+        *target = value;
+        return;
+    }
+    let parent_pointer = format!("/{}", path.replace('.', "/"));
+    let Some(parent) = root.pointer_mut(&parent_pointer) else {
+        log::warn!("Option path not found: {pointer}");
+        return;
+    };
+    let Some(obj) = parent.as_object_mut() else {
+        log::warn!("Option parent is not an object: {parent_pointer}");
+        return;
+    };
+    let _ = obj.insert(field.to_owned(), value);
+}
 
 /// Parse a file (structure or density) and load it into the engine.
 fn parse_and_load(

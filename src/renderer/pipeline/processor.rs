@@ -367,7 +367,7 @@ impl MeshCache {
         // NA base colors: only Cartoon-mode NA entities contribute when
         // BaseColor mode is active.
         let mut na_colors: Vec<[f32; 3]> = Vec::new();
-        if display.na_color_mode == NaColorMode::BaseColor {
+        if display.na_color_mode() == NaColorMode::BaseColor {
             for e in entities {
                 if e.drawing_mode != DrawingMode::Cartoon
                     || !e.topology.is_nucleic_acid()

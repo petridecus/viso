@@ -462,16 +462,7 @@ fn handle_ipc_action(
             apply_web_layout(axis, collapsed, clamped);
             push_to_ui("panel_size", &format!("{clamped}"));
         }
-        UiAction::SetEntityOption {
-            entity_id,
-            field,
-            value,
-        } => {
-            let mut eng = engine.borrow_mut();
-            apply_entity_option(&mut eng, entity_id, &field, &value);
-            push_scene_entities(&eng);
-        }
-        UiAction::ClearEntityOption { entity_id } => {
+        UiAction::ClearEntityAppearance { entity_id } => {
             let mut eng = engine.borrow_mut();
             if let Some(eid) = eng.entity_id(entity_id) {
                 eng.clear_entity_appearance(eid);
@@ -484,7 +475,7 @@ fn handle_ipc_action(
             value,
         } => {
             let mut eng = engine.borrow_mut();
-            apply_entity_option(&mut eng, entity_id, &field, &value);
+            apply_entity_appearance_field(&mut eng, entity_id, &field, &value);
             push_scene_entities(&eng);
         }
         UiAction::OpenFileDialog
@@ -496,7 +487,7 @@ fn handle_ipc_action(
 }
 
 /// Apply a single per-entity appearance override field.
-fn apply_entity_option(
+fn apply_entity_appearance_field(
     engine: &mut VisoEngine,
     entity_id: u32,
     field: &str,

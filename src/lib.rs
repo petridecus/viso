@@ -63,8 +63,8 @@ pub use gpu::texture::RenderTarget;
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
 pub use molex;
-// Per-entity appearance + drawing mode enums
-pub use options::{DrawingMode, EntityAppearance, HelixStyle, SheetStyle};
+// Display overrides + drawing mode enums
+pub use options::{DisplayOverrides, DrawingMode, HelixStyle, SheetStyle};
 // Picking output
 pub use renderer::picking::PickTarget;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]

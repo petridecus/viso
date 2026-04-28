@@ -29,8 +29,6 @@
 //! `VisoEngine` exposes it through `annotations_mut()`; all annotation
 //! mutators on `VisoEngine` become one-line dispatchers.
 
-use std::collections::HashMap;
-
 use molex::entity::molecule::id::EntityId;
 use molex::{MoleculeType, SSType};
 use rustc_hash::FxHashMap;
@@ -42,7 +40,7 @@ use super::surface::{EntitySurface, SurfaceKind};
 use super::surface_regen::{regenerate_surfaces, SurfaceRegen};
 use super::VisoEngine;
 use crate::animation::transition::Transition;
-use crate::options::{DrawingMode, EntityAppearance, VisoOptions};
+use crate::options::{DisplayOverrides, DrawingMode, VisoOptions};
 
 /// Per-entity user-authored state that isn't derived from the
 /// [`Assembly`](molex::Assembly).
@@ -55,7 +53,7 @@ pub(crate) struct EntityAnnotations {
     /// Per-entity animation behavior overrides.
     pub(crate) behaviors: FxHashMap<EntityId, Transition>,
     /// Per-entity appearance overrides (None-fields inherit global).
-    pub(crate) appearance: FxHashMap<EntityId, EntityAppearance>,
+    pub(crate) appearance: FxHashMap<EntityId, DisplayOverrides>,
     /// Per-entity scores (for color-by-score visualization).
     pub(crate) scores: FxHashMap<EntityId, Vec<f64>>,
     /// Per-entity SS overrides (from puzzle annotations).
@@ -94,7 +92,7 @@ impl EntityAnnotations {
 
     /// Per-entity appearance override, if set.
     #[must_use]
-    pub(crate) fn appearance(&self, id: EntityId) -> Option<&EntityAppearance> {
+    pub(crate) fn appearance(&self, id: EntityId) -> Option<&DisplayOverrides> {
         self.appearance.get(&id)
     }
 
@@ -142,17 +140,34 @@ impl EntityAnnotations {
         eid: EntityId,
         mol_type: MoleculeType,
     ) -> DrawingMode {
-        self.appearance(eid)
-            .and_then(|ovr| ovr.drawing_mode)
-            .unwrap_or_else(|| {
-                if options.display.drawing_mode == DrawingMode::Cartoon {
-                    DrawingMode::default_for(mol_type)
-                } else {
-                    options.display.drawing_mode
-                }
-            })
+        resolve_drawing_mode(self.appearance(eid), options, mol_type)
     }
+}
 
+/// Resolve drawing mode against explicit overrides rather than the
+/// annotations map. Used by `set_entity_appearance` /
+/// `clear_entity_appearance`, which need to resolve against the NEW
+/// overrides before the map has been updated — reading through the map
+/// would return stale values and `state.drawing_mode` would lag one
+/// mutation behind.
+#[must_use]
+pub(crate) fn resolve_drawing_mode(
+    overrides: Option<&DisplayOverrides>,
+    options: &VisoOptions,
+    mol_type: MoleculeType,
+) -> DrawingMode {
+    overrides
+        .and_then(|ovr| ovr.drawing_mode)
+        .unwrap_or_else(|| {
+            if options.display.drawing_mode() == DrawingMode::Cartoon {
+                DrawingMode::default_for(mol_type)
+            } else {
+                options.display.drawing_mode()
+            }
+        })
+}
+
+impl EntityAnnotations {
     /// Clear every annotation back to the default state (focus back
     /// to session-wide, every map emptied).
     pub(crate) fn reset(&mut self) {
@@ -263,7 +278,7 @@ impl<'a> AnnotationsScene<'a> {
     pub(crate) fn set_appearance(
         &mut self,
         eid: EntityId,
-        overrides: EntityAppearance,
+        overrides: DisplayOverrides,
         drawing_mode: DrawingMode,
     ) {
         let _ = self.annotations.appearance.insert(eid, overrides);
@@ -357,7 +372,7 @@ impl<'a> AnnotationsScene<'a> {
     /// so the entity explicitly opts out instead of falling back to the
     /// global default.
     pub(crate) fn remove_surface(&mut self, entity_id: EntityId) {
-        let global_kind = self.options.display.surface_kind;
+        let global_kind = self.options.display.surface_kind();
         if self
             .annotations
             .remove_entity_surface(entity_id, global_kind)
@@ -480,18 +495,39 @@ impl VisoEngine {
     }
 
     /// Set per-entity appearance overrides.
+    ///
+    /// Diffs against the entity's previous overrides and dispatches only
+    /// the invalidations that actually matter — a `surface_kind` change
+    /// fires `RE_SURFACE`, a `color_scheme` change fires `RE_COLOR`, and
+    /// so on. Previously this blindly called `sync_scene_to_renderers`
+    /// regardless of which field changed (and never triggered surface
+    /// regen for per-entity `surface_kind` changes — now fixed).
     pub fn set_entity_appearance(
         &mut self,
         entity_id: EntityId,
-        overrides: EntityAppearance,
+        overrides: DisplayOverrides,
     ) {
+        let previous = self
+            .annotations
+            .appearance
+            .get(&entity_id)
+            .cloned()
+            .unwrap_or_default();
+        let inv = previous.diff(&overrides);
+
         let mol_type = self
             .scene
             .entity_state
             .get(&entity_id)
             .map(|s| s.topology.molecule_type);
         if let Some(mol_type) = mol_type {
-            let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
+            // Resolve against the NEW overrides, not the stale map. The
+            // map still holds `previous` until `set_appearance` inserts
+            // — reading via `resolved_drawing_mode` here would write the
+            // OLD resolved value into `state.drawing_mode` and the
+            // change wouldn't show until the next mutation.
+            let drawing_mode =
+                resolve_drawing_mode(Some(&overrides), &self.options, mol_type);
             self.annotations_mut().set_appearance(
                 entity_id,
                 overrides,
@@ -500,24 +536,35 @@ impl VisoEngine {
         } else {
             let _ = self.annotations.appearance.insert(entity_id, overrides);
         }
-        self.sync_scene_to_renderers(HashMap::new());
+        self.apply_entity_invalidation(inv);
     }
 
     /// Clear a per-entity appearance override.
     pub fn clear_entity_appearance(&mut self, entity_id: EntityId) {
+        let previous = self
+            .annotations
+            .appearance
+            .get(&entity_id)
+            .cloned()
+            .unwrap_or_default();
+        let inv = previous.diff(&DisplayOverrides::default());
+
         let mol_type = self
             .scene
             .entity_state
             .get(&entity_id)
             .map(|s| s.topology.molecule_type);
         if let Some(mol_type) = mol_type {
-            let drawing_mode = self.resolved_drawing_mode(entity_id, mol_type);
+            // After clear, the entity has no overrides — resolve falls
+            // through to global. Same staleness fix as `set_entity_appearance`.
+            let drawing_mode =
+                resolve_drawing_mode(None, &self.options, mol_type);
             self.annotations_mut()
                 .clear_appearance(entity_id, drawing_mode);
         } else {
             let _ = self.annotations.appearance.remove(&entity_id);
         }
-        self.sync_scene_to_renderers(HashMap::new());
+        self.apply_entity_invalidation(inv);
     }
 
     /// Look up a per-entity appearance override.
@@ -525,7 +572,7 @@ impl VisoEngine {
     pub fn entity_appearance(
         &self,
         entity_id: EntityId,
-    ) -> Option<&EntityAppearance> {
+    ) -> Option<&DisplayOverrides> {
         self.annotations.appearance(entity_id)
     }
 
