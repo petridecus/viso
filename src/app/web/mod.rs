@@ -478,11 +478,106 @@ fn handle_ipc_action(
             apply_entity_appearance_field(&mut eng, entity_id, &field, &value);
             push_scene_entities(&eng);
         }
+        UiAction::SetEntitySurface { entity_id, kind } => {
+            let mut eng = engine.borrow_mut();
+            if let Some(eid) = eng.entity_id(entity_id) {
+                let default_color = [0.7, 0.7, 0.7, 0.35];
+                let mut view = eng.annotations_mut();
+                match kind.as_str() {
+                    "gaussian" => {
+                        view.add_gaussian_surface(eid, default_color);
+                    }
+                    "ses" => {
+                        view.add_ses_surface(eid, default_color);
+                    }
+                    _ => {
+                        view.remove_surface(eid);
+                    }
+                }
+            }
+            push_scene_entities(&eng);
+        }
+        UiAction::SetSurfaceOption {
+            entity_id,
+            field,
+            value,
+        } => {
+            let mut eng = engine.borrow_mut();
+            if let (Some(eid), Some(v)) =
+                (eng.entity_id(entity_id), value.as_f64())
+            {
+                let ch = match field.as_str() {
+                    "color_r" => Some(0),
+                    "color_g" => Some(1),
+                    "color_b" => Some(2),
+                    "opacity" => Some(3),
+                    _ => None,
+                };
+                if let Some(ch) = ch {
+                    eng.annotations_mut()
+                        .set_surface_color_channel(eid, ch, v as f32);
+                }
+            }
+            push_scene_entities(&eng);
+        }
+        UiAction::SetDensityOption { id, field, value } => {
+            let mut eng = engine.borrow_mut();
+            apply_density_option(&mut eng, id, &field, &value);
+            push_density_maps(&eng);
+        }
+        UiAction::RemoveDensityMap { id } => {
+            let mut eng = engine.borrow_mut();
+            eng.density_mut().remove(id);
+            push_density_maps(&eng);
+        }
+        UiAction::ToggleDensityVisibility { id } => {
+            let mut eng = engine.borrow_mut();
+            let vis = eng.density.get(id).is_some_and(|e| !e.visible);
+            eng.density_mut().set_visible(id, vis);
+            push_density_maps(&eng);
+        }
         UiAction::OpenFileDialog
         | UiAction::KeyPress { .. }
         | UiAction::LoadFile { .. } => {
             // Native-only actions; no-op on web
         }
+    }
+}
+
+/// Apply a single density option field.
+fn apply_density_option(
+    engine: &mut VisoEngine,
+    id: u32,
+    field: &str,
+    value: &serde_json::Value,
+) {
+    match field {
+        "threshold" => {
+            if let Some(v) = value.as_f64() {
+                engine.density_mut().set_threshold(id, v as f32);
+            }
+        }
+        "opacity" => {
+            if let Some(v) = value.as_f64() {
+                engine.density_mut().set_opacity(id, v as f32);
+            }
+        }
+        "color_r" | "color_g" | "color_b" => {
+            if let Some(v) = value.as_f64() {
+                let mut color = engine
+                    .density
+                    .get(id)
+                    .map_or([0.3, 0.5, 0.8], |e| e.color);
+                match field {
+                    "color_r" => color[0] = v as f32,
+                    "color_g" => color[1] = v as f32,
+                    "color_b" => color[2] = v as f32,
+                    _ => {}
+                }
+                engine.density_mut().set_color(id, color);
+            }
+        }
+        _ => log::warn!("Unknown density field: {field}"),
     }
 }
 
@@ -612,6 +707,13 @@ fn push_scene_entities(engine: &VisoEngine) {
     let summaries = bridge::entity_summaries(engine);
     let json = serde_json::to_string(&summaries).unwrap_or_default();
     push_to_ui("scene_entities", &json);
+}
+
+/// Push the current density map list to viso-ui.
+fn push_density_maps(engine: &VisoEngine) {
+    let maps = bridge::density_summaries(engine);
+    let json = serde_json::to_string(&maps).unwrap_or_default();
+    push_to_ui("density_maps", &json);
 }
 
 /// Push a load-status event to viso-ui.
