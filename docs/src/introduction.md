@@ -58,7 +58,7 @@ File (.cif/.pdb/.bcif)  ──or──  Vec<MoleculeEntity>
  molex::adapters ──▶ Vec<MoleculeEntity>◄─┘
         │
         ▼
- molex::Assembly  (owned by your application — e.g. foldit-rs)
+ molex::Assembly  (owned by your application — e.g. foldit)
         │  engine.set_assembly(Arc::new(assembly.clone()))
         ▼
  Scene + EntityAnnotations  (engine-side derived state,

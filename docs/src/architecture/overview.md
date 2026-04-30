@@ -9,7 +9,7 @@ and how threading is organized.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Application Layer                          │
-│  (your application — e.g. foldit-rs)                            │
+│  (your application — e.g. foldit)                               │
 │                                                                 │
 │  Owns the authoritative `molex::Assembly`. All structural       │
 │  mutations push a new Arc<Assembly> via engine.set_assembly.    │
@@ -374,7 +374,7 @@ instead of mesh-based spheres and cylinders:
 ### Why a Host-Owned Assembly?
 
 `molex::Assembly` belongs to molex; viso just renders it. The host
-application — typically `foldit-rs` — owns the authoritative
+application — typically `foldit` — owns the authoritative
 `Assembly` because it also drives Rosetta and ML backends and needs
 to mutate the assembly in response to their results. Viso never
 mutates the structural state itself; the host pushes the latest

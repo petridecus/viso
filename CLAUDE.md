@@ -18,7 +18,7 @@ configuration lives in `Cargo.toml` under `[lints.clippy]` and
 ## Architecture
 
 ```
-host application (foldit-rs / VisoApp)        viso engine
+host application (foldit / VisoApp)           viso engine
     │                                              │
     │  owns: molex::Assembly (source of truth)     │
     │  mutates freely (load, commands, backend     │
@@ -105,7 +105,7 @@ Module-level types own their behavior — not passive field bags.
 
 The library API for structural ingest is one method:
 `engine.set_assembly(Arc<molex::Assembly>)`. Library consumers
-(`foldit-rs`) own their own `molex::Assembly`, mutate it via molex's
+(`foldit`) own their own `molex::Assembly`, mutate it via molex's
 APIs, and push the new snapshot to the engine after each batch of
 mutations. There is no viso-defined channel, publisher, or consumer
 exposed to library users.

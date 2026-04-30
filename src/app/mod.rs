@@ -1,6 +1,6 @@
 //! Standalone-application layer for viso.
 //!
-//! In the real deployment (`foldit-rs`), the host application owns the
+//! In the real deployment (`foldit`), the host application owns the
 //! [`Assembly`] and pushes the latest snapshot to viso via
 //! [`VisoEngine::set_assembly`]. In standalone deployments
 //! (`feature = "viewer"`, `"gui"`, `"web"`), viso plays that same host

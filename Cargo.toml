@@ -38,7 +38,7 @@ web = [
 
 [lib]
 # rlib only by default. cdylib is unnecessary for native consumers
-# (foldit-rs, the standalone viewer) and triggers a link-time conflict
+# (foldit, the standalone viewer) and triggers a link-time conflict
 # when transitive deps (e.g. `molex` with the `python` feature)
 # leave Python symbols unresolved. Wasm builds should override via
 # `cargo rustc -- --crate-type=cdylib` or a wasm-specific build profile.
