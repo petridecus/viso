@@ -22,10 +22,13 @@ pub(crate) struct AnimationState {
     pub(crate) animator: StructureAnimator,
     /// Multi-frame trajectory player, if loaded.
     pub(crate) trajectory_player: Option<TrajectoryPlayer>,
-    /// Transitions pending from the last shim-driven mutation, keyed on
-    /// raw entity id. Consumed by the engine's sync pipeline when the
-    /// new snapshot arrives.
-    pub(crate) pending_transitions: HashMap<u32, Transition>,
+    /// Transitions pending from the last host mutation, keyed on raw
+    /// entity id. Consumed by the engine's sync pipeline when the new
+    /// snapshot arrives. Private so callers (including `VisoApp`)
+    /// cannot poke this map directly — they go through
+    /// `queue_entity_transition` / `clear_pending_transitions` on
+    /// [`crate::VisoEngine`].
+    pending_transitions: HashMap<u32, Transition>,
 }
 
 impl AnimationState {
@@ -36,6 +39,32 @@ impl AnimationState {
             trajectory_player: None,
             pending_transitions: HashMap::new(),
         }
+    }
+
+    /// Stage a transition for entity `id` on the next sync.
+    pub(crate) fn queue_transition(&mut self, id: u32, transition: Transition) {
+        let _ = self.pending_transitions.insert(id, transition);
+    }
+
+    /// Bulk-replace the pending transitions map.
+    pub(crate) fn set_pending_transitions(
+        &mut self,
+        transitions: HashMap<u32, Transition>,
+    ) {
+        self.pending_transitions = transitions;
+    }
+
+    /// Drop all pending transitions.
+    pub(crate) fn clear_pending_transitions(&mut self) {
+        self.pending_transitions.clear();
+    }
+
+    /// Drain the pending transitions map (used by the sync pipeline
+    /// when applying a new Assembly snapshot).
+    pub(crate) fn take_pending_transitions(
+        &mut self,
+    ) -> HashMap<u32, Transition> {
+        std::mem::take(&mut self.pending_transitions)
     }
 
     /// Tick the structural animator. Returns `true` if any positions

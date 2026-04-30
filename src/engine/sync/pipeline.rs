@@ -122,7 +122,7 @@ impl SyncPipeline {
         animation: &mut AnimationState,
     ) {
         Self::poll_assembly_force(scene, annotations, options);
-        let transitions = std::mem::take(&mut animation.pending_transitions);
+        let transitions = animation.take_pending_transitions();
         Self::submit_full_rebuild(
             scene,
             annotations,
@@ -181,7 +181,7 @@ impl SyncPipeline {
         );
 
         let entity_options = Self::resolve_entity_options(annotations, options);
-        animation.pending_transitions = entity_transitions;
+        animation.set_pending_transitions(entity_transitions);
 
         let generation = gpu.scene_processor.next_generation();
         log::debug!(
@@ -383,7 +383,7 @@ impl SyncPipeline {
 
     /// Apply any pending scene data from the background `SceneProcessor`.
     pub(crate) fn apply_pending_scene(
-        scene: &Scene,
+        scene: &mut Scene,
         annotations: &EntityAnnotations,
         options: &VisoOptions,
         gpu: &mut GpuPipeline,
@@ -393,8 +393,7 @@ impl SyncPipeline {
             return;
         };
 
-        let entity_transitions =
-            std::mem::take(&mut animation.pending_transitions);
+        let entity_transitions = animation.take_pending_transitions();
         let animating = !entity_transitions.is_empty();
 
         if animating {
@@ -426,7 +425,7 @@ impl SyncPipeline {
     /// positions as `start` and each entity's reference positions as
     /// `target`.
     fn start_per_entity_animations(
-        scene: &Scene,
+        scene: &mut Scene,
         animation: &mut AnimationState,
         entity_transitions: &HashMap<u32, Transition>,
     ) {
@@ -446,6 +445,19 @@ impl SyncPipeline {
                 .get(eid)
                 .map(<[Vec3]>::to_vec)
                 .unwrap_or_default();
+            if current.len() != target.len() {
+                // Atom layout changed (e.g. mutation rebuilds
+                // sidechains). Snap positions to target so the renderer
+                // reflects the new layout immediately — interpolation
+                // is meaningless across mismatched shapes.
+                scene.positions.set(eid, target.clone());
+                if !transition.allows_size_change {
+                    continue;
+                }
+                // For size-change-aware transitions (collapse_expand),
+                // still install a runner so the phase timeline (which
+                // controls sidechain visibility) plays through.
+            }
             animation
                 .animator
                 .animate_entity(eid, current, target, transition);
@@ -453,10 +465,20 @@ impl SyncPipeline {
     }
 
     fn snap_from_prepared(
-        scene: &Scene,
+        scene: &mut Scene,
         annotations: &EntityAnnotations,
         gpu: &mut GpuPipeline,
     ) {
+        // Snap mode: no animation is queued for this sync, so the
+        // visual positions buffer must be overwritten with the new
+        // assembly's atom positions. Without this, scene.positions
+        // would stay frozen at whatever the previous sync produced,
+        // and the mesh would never reflect a coord update from the
+        // host (the bug surfaces as a stationary protein during
+        // wiggle/shake when no transition is queued).
+        for entity in scene.current.entities() {
+            scene.positions.set(entity.id(), entity.positions());
+        }
         Self::ensure_gpu_capacity_and_colors(scene, annotations, gpu);
         let flat_colors = scene.flat_cartoon_colors(annotations);
         if !flat_colors.is_empty() {

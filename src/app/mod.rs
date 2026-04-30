@@ -154,7 +154,7 @@ impl VisoApp {
                 let _ = entity_transitions.insert(id, Transition::snap());
             }
         }
-        engine.animation.pending_transitions = entity_transitions;
+        engine.queue_entity_transitions(entity_transitions);
 
         self.publish(engine);
         engine.sync_now();
@@ -180,7 +180,7 @@ impl VisoApp {
     /// Remove all entities from the scene.
     pub fn clear_scene(&mut self, engine: &mut VisoEngine) {
         self.remove_all_internal(engine);
-        engine.animation.pending_transitions.clear();
+        engine.clear_pending_transitions();
         self.publish(engine);
         engine.sync_now();
     }
@@ -217,11 +217,8 @@ impl VisoApp {
         for entity in current {
             let raw_id = entity.id().raw();
             if let Some(new_entity) = updated_by_id.remove(&raw_id) {
-                let transition = engine
-                    .entity_behavior(raw_id)
-                    .cloned()
-                    .unwrap_or_else(|| default_transition.clone());
-                let _ = entity_transitions.insert(raw_id, transition);
+                let _ = entity_transitions
+                    .insert(raw_id, default_transition.clone());
                 combined.push(new_entity);
             } else {
                 combined.push(entity);
@@ -232,7 +229,7 @@ impl VisoApp {
             return;
         }
         self.assembly = Assembly::new(combined);
-        engine.animation.pending_transitions = entity_transitions;
+        engine.queue_entity_transitions(entity_transitions);
         self.publish(engine);
         engine.sync_now();
     }
@@ -258,14 +255,7 @@ impl VisoApp {
         self.assembly.remove_entity(entity.id());
         self.assembly.add_entity(entity);
 
-        let effective = engine
-            .entity_behavior(raw_id)
-            .cloned()
-            .unwrap_or(transition);
-        let mut transitions = HashMap::new();
-        let _ = transitions.insert(raw_id, effective);
-        engine.animation.pending_transitions = transitions;
-
+        engine.queue_entity_transition(raw_id, transition);
         self.publish(engine);
         engine.sync_now();
         Ok(())
@@ -302,12 +292,7 @@ impl VisoApp {
             self.assembly.add_entity(updated);
         }
 
-        let effective =
-            engine.entity_behavior(id).cloned().unwrap_or(transition);
-        let mut transitions = HashMap::new();
-        let _ = transitions.insert(id, effective);
-        engine.animation.pending_transitions = transitions;
-
+        engine.queue_entity_transition(id, transition);
         self.publish(engine);
         engine.sync_now();
     }
@@ -347,19 +332,12 @@ impl VisoApp {
         let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
         for entity in &entities {
             let raw_id = entity.id().raw();
-            let transition = if current_raw_ids.contains(&raw_id) {
-                engine
-                    .entity_behavior(raw_id)
-                    .cloned()
-                    .unwrap_or_else(|| default_transition.clone())
-            } else {
-                default_transition.clone()
-            };
-            let _ = entity_transitions.insert(raw_id, transition);
+            let _ = entity_transitions
+                .insert(raw_id, default_transition.clone());
         }
         self.assembly = Assembly::new(entities);
 
-        engine.animation.pending_transitions = entity_transitions;
+        engine.queue_entity_transitions(entity_transitions);
         self.publish(engine);
         engine.sync_now();
     }

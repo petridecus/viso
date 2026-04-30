@@ -274,7 +274,7 @@ pub(super) fn generate_entity_mesh(
 pub(super) struct AnimationFrameCache {
     /// Per-entity topology snapshots (same Arcs the main thread holds).
     pub topologies: FxHashMap<EntityId, Arc<EntityTopology>>,
-    /// Per-entity drawing-mode + SS-override lookup.
+    /// Per-entity drawing-mode + SS-override + sidechain color lookup.
     pub entity_meta: FxHashMap<EntityId, EntityMetaSnapshot>,
     /// Concatenated SS types for Cartoon-mode entities only (feeds the
     /// backbone mesh).
@@ -283,6 +283,10 @@ pub(super) struct AnimationFrameCache {
     pub cartoon_per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Concatenated NA base colors for Cartoon-mode NA entities.
     pub cartoon_na_base_colors: Option<Vec<[f32; 3]>>,
+    /// Hydrophobic / hydrophilic sidechain color pair for the
+    /// Hydrophobicity sidechain mode. Captured from the global
+    /// [`crate::options::ColorOptions`] at rebuild time.
+    pub sidechain_palette: ([f32; 3], [f32; 3]),
     /// Rendering order of entities, captured at the last `FullRebuild`.
     pub entity_order: Vec<EntityId>,
 }
@@ -291,6 +295,14 @@ pub(super) struct AnimationFrameCache {
 #[derive(Clone)]
 pub(super) struct EntityMetaSnapshot {
     pub drawing_mode: DrawingMode,
+    /// Per-residue colors for this entity (used by Backbone-mode
+    /// sidechain coloring during animation frames). Mirrors
+    /// [`super::FullRebuildEntity::per_residue_colors`] at the last
+    /// rebuild.
+    pub per_residue_colors: Option<Vec<[f32; 3]>>,
+    /// Resolved sidechain color mode for this entity (per-entity
+    /// appearance overrides applied).
+    pub sidechain_color_mode: SidechainColorMode,
 }
 
 /// Input data for [`process_animation_frame`].
@@ -453,8 +465,16 @@ fn generate_animation_sidechains(
             hydrophobicity: &layout.hydrophobicity,
             residue_indices: &layout.residue_indices,
         };
-        let insts =
-            SidechainRenderer::generate_instances(&view, None, None, None);
+        let backbone_colors = (meta.sidechain_color_mode
+            == SidechainColorMode::Backbone)
+            .then(|| meta.per_residue_colors.as_deref())
+            .flatten();
+        let insts = SidechainRenderer::generate_instances(
+            &view,
+            None,
+            Some(input.cache.sidechain_palette),
+            backbone_colors,
+        );
         total_count += insts.len() as u32;
         combined.extend_from_slice(bytemuck::cast_slice(&insts));
     }

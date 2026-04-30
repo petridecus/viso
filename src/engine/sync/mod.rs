@@ -61,7 +61,7 @@ impl VisoEngine {
     /// Apply any pending scene data from the background `SceneProcessor`.
     pub fn apply_pending_scene(&mut self) {
         SyncPipeline::apply_pending_scene(
-            &self.scene,
+            &mut self.scene,
             &self.annotations,
             &self.options,
             &mut self.gpu,

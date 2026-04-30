@@ -52,17 +52,27 @@ impl StructureAnimator {
     pub(crate) fn animate_entity(
         &mut self,
         entity_id: EntityId,
-        start: Vec<Vec3>,
+        mut start: Vec<Vec3>,
         target: Vec<Vec3>,
         transition: &Transition,
     ) {
-        if start.len() != target.len() {
-            // Sizes differ — snap without animation (record via
-            // positions directly; bypass the runner).
-            let _ = self.runners.remove(&entity_id);
-            return;
-        }
-        if start == target {
+        let size_mismatch = start.len() != target.len();
+        if size_mismatch {
+            if !transition.allows_size_change {
+                // Plain interpolation transition on different-shaped
+                // arrays: caller is expected to have snapped positions;
+                // remove any stale runner.
+                let _ = self.runners.remove(&entity_id);
+                return;
+            }
+            // Size-change-aware transition (e.g. collapse_expand for
+            // mutation animations). Positions are already snapped to
+            // target by the caller; install a runner so the
+            // transition's phases (sidechain-visibility timing) still
+            // play through. Use `target` as both endpoints so per-frame
+            // position writes are no-ops.
+            start = target.clone();
+        } else if start == target {
             let _ = self.runners.remove(&entity_id);
             return;
         }

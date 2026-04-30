@@ -375,28 +375,40 @@ impl VisoEngine {
     /// background processor.
     pub fn update(&mut self, dt: f32) {
         let _ = self.camera_controller.update_animation(dt);
-        self.poll_assembly();
+        if self.poll_assembly() {
+            // Fresh assembly snapshot consumed: queue mesh generation
+            // for the background processor. Without this, viso-side
+            // derived state would advance but no meshes would be
+            // produced for the new entities.
+            let transitions = self.animation.take_pending_transitions();
+            self.sync_scene_to_renderers(transitions);
+        }
         self.apply_pending_scene();
     }
 
     /// Push a new [`Assembly`] snapshot from the host. The next
-    /// `update` (or `sync_now`) tick will rederive viso-side state.
+    /// `update` (or `sync_now`) tick will rederive viso-side state
+    /// and submit mesh generation.
     pub fn set_assembly(&mut self, assembly: std::sync::Arc<Assembly>) {
         self.scene.pending = Some(assembly);
     }
 
     /// Drain any pending Assembly snapshot and, if its generation
-    /// differs, rederive viso-side state.
-    fn poll_assembly(&mut self) {
+    /// differs from the last applied one, rederive viso-side state.
+    /// Returns `true` if a new generation was consumed (caller should
+    /// follow up with mesh-rebuild work); `false` if there was nothing
+    /// to apply.
+    fn poll_assembly(&mut self) -> bool {
         let Some(assembly) = self.scene.pending.take() else {
-            return;
+            return false;
         };
         if assembly.generation() == self.scene.last_seen_generation {
-            return;
+            return false;
         }
         self.sync_from_assembly(&assembly);
         self.scene.current = assembly;
         self.scene.last_seen_generation = self.scene.current.generation();
+        true
     }
 
     /// Stop the background scene processor thread.
@@ -566,6 +578,23 @@ impl VisoEngine {
         glam::UVec2::new(
             self.gpu.context.config.width,
             self.gpu.context.config.height,
+        )
+    }
+
+    /// Project screen coordinates onto a plane parallel to the camera
+    /// at the depth of `world_point`. Useful for drag-anchor math
+    /// (e.g. translating cursor motion into world-space delta on the
+    /// camera plane through a clicked atom).
+    #[must_use]
+    pub fn screen_to_world_at_depth(
+        &self,
+        screen_pos: glam::Vec2,
+        world_point: glam::Vec3,
+    ) -> glam::Vec3 {
+        self.camera_controller.screen_to_world_at_depth(
+            screen_pos,
+            self.viewport_size(),
+            world_point,
         )
     }
 

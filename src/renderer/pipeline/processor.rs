@@ -229,7 +229,12 @@ impl SceneProcessor {
                         generation,
                     } = *body;
                     last_rebuild_generation = generation;
-                    cache.cache_stable_data(&entities, &display);
+                    cache.cache_stable_data(
+                        &entities,
+                        &display,
+                        &colors,
+                        &entity_options,
+                    );
                     let entity_meshes = cache.update(
                         &entities,
                         &display,
@@ -302,6 +307,7 @@ impl MeshCache {
                 cartoon_ss_types: None,
                 cartoon_per_residue_colors: None,
                 cartoon_na_base_colors: None,
+                sidechain_palette: ([1.0, 1.0, 1.0], [0.5, 0.5, 0.5]),
                 entity_order: Vec::new(),
             },
         }
@@ -313,19 +319,30 @@ impl MeshCache {
         &mut self,
         entities: &[FullRebuildEntity],
         display: &DisplayOptions,
+        colors: &ColorOptions,
+        entity_options: &FxHashMap<u32, (DisplayOptions, GeometryOptions)>,
     ) {
         self.anim_cache.topologies.clear();
         self.anim_cache.entity_meta.clear();
         self.anim_cache.entity_order.clear();
+        self.anim_cache.sidechain_palette = (
+            colors.hydrophobic_sidechain,
+            colors.hydrophilic_sidechain,
+        );
         for e in entities {
             let _ = self
                 .anim_cache
                 .topologies
                 .insert(e.id, Arc::clone(&e.topology));
+            let entity_display = entity_options
+                .get(&e.id.raw())
+                .map_or(display, |(d, _)| d);
             let _ = self.anim_cache.entity_meta.insert(
                 e.id,
                 EntityMetaSnapshot {
                     drawing_mode: e.drawing_mode,
+                    per_residue_colors: e.per_residue_colors.clone(),
+                    sidechain_color_mode: entity_display.sidechain_color_mode(),
                 },
             );
             self.anim_cache.entity_order.push(e.id);

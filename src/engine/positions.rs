@@ -47,20 +47,27 @@ impl EntityPositions {
         let _ = self.per_entity.insert(id, positions);
     }
 
-    /// Insert a new entity from a reference position snapshot if absent.
-    ///
-    /// Used on sync when a new entity joined the assembly: the initial
-    /// positions are copied from the assembly's reference positions so
-    /// the animator has a visual state to interpolate from.
+    /// Insert positions for an entity from a reference snapshot, or
+    /// reset them if the slot's atom count no longer matches the
+    /// reference (entity replaced with a different-shaped one). Used
+    /// on sync to seed positions for new entities and to invalidate
+    /// stale buffers when an existing entity's topology changes (e.g.
+    /// streaming backbone-only frames followed by a full-atom result).
     pub(crate) fn insert_from_reference(
         &mut self,
         id: EntityId,
         reference: &[Vec3],
     ) {
-        let _ = self
-            .per_entity
-            .entry(id)
-            .or_insert_with(|| reference.to_vec());
+        match self.per_entity.entry(id) {
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                if slot.get().len() != reference.len() {
+                    *slot.get_mut() = reference.to_vec();
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let _ = slot.insert(reference.to_vec());
+            }
+        }
     }
 
     /// Keep only entities for which `keep` returns true.

@@ -29,6 +29,8 @@
 //! `VisoEngine` exposes it through `annotations_mut()`; all annotation
 //! mutators on `VisoEngine` become one-line dispatchers.
 
+use std::collections::HashMap;
+
 use molex::entity::molecule::id::EntityId;
 use molex::{MoleculeType, SSType};
 use rustc_hash::FxHashMap;
@@ -425,7 +427,8 @@ impl VisoEngine {
 
     /// Whether an entity is currently visible. Absent entries default
     /// to visible.
-    pub(crate) fn is_entity_visible(&self, id: u32) -> bool {
+    #[must_use]
+    pub fn is_entity_visible(&self, id: u32) -> bool {
         self.entity_id(id)
             .is_none_or(|eid| self.annotations.is_visible(eid))
     }
@@ -488,7 +491,11 @@ impl VisoEngine {
         self.annotations.behavior(self.entity_id(id)?)
     }
 
-    /// Set the animation behavior for a specific entity.
+    /// Set a persistent animation-behavior override for an entity.
+    /// Survives across syncs until [`Self::clear_entity_behavior`] is
+    /// called. The override is consulted by `queue_entity_transition`
+    /// callers via [`Self::entity_behavior`] when deciding what
+    /// transition to actually stage.
     pub fn set_entity_behavior(
         &mut self,
         entity_id: EntityId,
@@ -500,6 +507,53 @@ impl VisoEngine {
     /// Clear a per-entity behavior override.
     pub fn clear_entity_behavior(&mut self, entity_id: EntityId) {
         self.annotations.clear_behavior(entity_id);
+    }
+
+    /// Stage a per-entity animation transition for the **next** sync.
+    /// One-shot: the staged transition is consumed when the next
+    /// `update`/`sync_now` applies a new Assembly generation, and
+    /// entities with no staged transition snap.
+    ///
+    /// If a persistent behavior override is set on this entity (via
+    /// [`Self::set_entity_behavior`]) it wins — `transition` is the
+    /// fallback used only when no override exists. Hosts that don't
+    /// use persistent overrides can ignore the precedence and treat
+    /// this as a plain "queue this transition" call.
+    ///
+    /// Hosts typically pair this with `set_assembly`: stage the
+    /// transition first, then push the new snapshot.
+    pub fn queue_entity_transition(&mut self, id: u32, transition: Transition) {
+        let effective = self
+            .entity_behavior(id)
+            .cloned()
+            .unwrap_or(transition);
+        self.animation.queue_transition(id, effective);
+    }
+
+    /// Bulk form of [`Self::queue_entity_transition`]: stage a set of
+    /// per-entity transitions for the next sync, with persistent
+    /// behavior overrides honored per entity. Replaces any previously
+    /// staged transitions.
+    pub fn queue_entity_transitions(
+        &mut self,
+        transitions: HashMap<u32, Transition>,
+    ) {
+        let mut resolved = HashMap::with_capacity(transitions.len());
+        for (id, fallback) in transitions {
+            let effective = self
+                .entity_behavior(id)
+                .cloned()
+                .unwrap_or(fallback);
+            let _ = resolved.insert(id, effective);
+        }
+        self.animation.set_pending_transitions(resolved);
+    }
+
+    /// Drop all transitions staged via [`Self::queue_entity_transition`]
+    /// or [`Self::queue_entity_transitions`]. The next sync snaps for
+    /// every entity.
+    pub fn clear_pending_transitions(&mut self) {
+        self.animation.clear_pending_transitions();
     }
 
     /// Set per-entity appearance overrides.
