@@ -383,6 +383,45 @@ impl CameraController {
         self.target_distance = Some(self.fit_distance_for_radius(radius));
     }
 
+    /// Set the camera pose explicitly from world-space center / eye / up.
+    /// Leaves `bounding_radius` untouched so fog stays tied to molecule extent.
+    pub(crate) fn set_pose(&mut self, center: Vec3, eye: Vec3, up: Vec3) {
+        let offset = eye - center;
+        let dist = offset.length();
+        // Degenerate eye==center: keep current orientation/distance.
+        if dist < 1e-5 {
+            return;
+        }
+        let back = offset / dist;
+        let mut up = up.normalize_or_zero();
+        if up.length_squared() < 1e-10 || up.cross(back).length_squared() < 1e-10
+        {
+            // Fallback when up is zero or parallel to back.
+            up = if back.cross(Vec3::Y).length_squared() > 1e-6 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+        }
+        // Gram-Schmidt: build right and re-derive up so basis is orthonormal.
+        let right = up.cross(back).normalize();
+        let up_corrected = back.cross(right).normalize();
+
+        self.focus_point = center;
+        self.distance = dist;
+        self.orientation = Quat::from_mat3(&glam::Mat3::from_cols(
+            right,
+            up_corrected,
+            back,
+        ));
+
+        self.target_focus_point = None;
+        self.target_distance = None;
+        self.target_bounding_radius = None;
+
+        self.update_camera_pos();
+    }
+
     /// Convert screen delta (pixels) to world-space offset.
     /// Uses camera orientation to map 2D mouse movement to 3D space.
     #[allow(dead_code)]

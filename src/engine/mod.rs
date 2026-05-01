@@ -393,6 +393,54 @@ impl VisoEngine {
         self.scene.pending = Some(assembly);
     }
 
+    /// Atomic topology swap: tear down scene-local state (animation,
+    /// surfaces, derived per-entity views), stage the new snapshot,
+    /// and force a sync so subsequent calls (`set_ss_override`,
+    /// camera pose, etc.) operate against synced state. Use this for
+    /// puzzle/file reloads — `set_assembly` alone leaves stale state
+    /// from the previous topology around until the next `update`.
+    pub fn replace_assembly(&mut self, assembly: std::sync::Arc<Assembly>) {
+        self.reset_scene_local_state();
+        self.scene.pending = Some(assembly);
+        self.sync_now();
+    }
+
+    /// Combined centroid of every visible entity in the synced scene,
+    /// weighted by atom count. `None` if the scene is empty. Use this
+    /// to anchor a camera pose on the molecule rather than on a saved
+    /// look-at target.
+    pub fn focus_centroid(&self) -> Option<glam::Vec3> {
+        let visible: Vec<&MoleculeEntity> = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| self.is_entity_visible(e.id().raw()))
+            .collect();
+        camera::fit::combined_bounding_sphere(visible).map(|(c, _)| c)
+    }
+
+    /// Snap (non-animated) version of [`Self::fit_camera_to_focus`].
+    /// Sets `focus_point`, orbit `distance`, and `bounding_radius`
+    /// instantly to the molecule's bounding sphere — needed when a
+    /// caller follows up with a manual `set_camera_pose` and would
+    /// otherwise leave `bounding_radius` (the fog driver) tied to the
+    /// previous topology.
+    pub fn snap_camera_to_focus(&mut self) {
+        let visible: Vec<&MoleculeEntity> = self
+            .scene
+            .current
+            .entities()
+            .iter()
+            .filter(|e| self.is_entity_visible(e.id().raw()))
+            .collect();
+        if let Some((centroid, radius)) =
+            camera::fit::combined_bounding_sphere(visible)
+        {
+            self.camera_controller.fit_to_sphere(centroid, radius);
+        }
+    }
+
     /// Drain any pending Assembly snapshot and, if its generation
     /// differs from the last applied one, rederive viso-side state.
     /// Returns `true` if a new generation was consumed (caller should
@@ -424,6 +472,17 @@ impl VisoEngine {
             &self.scene,
             &self.annotations,
         );
+    }
+
+    /// Position the camera explicitly from world-space center / eye / up.
+    /// Used by puzzle loaders to apply a saved viewpoint.
+    pub fn set_camera_pose(
+        &mut self,
+        center: glam::Vec3,
+        eye: glam::Vec3,
+        up: glam::Vec3,
+    ) {
+        self.camera_controller.set_pose(center, eye, up);
     }
 
     /// Fit the camera to the currently focused element (session-wide

@@ -103,13 +103,28 @@ impl Scene {
     /// `None` if no entity with that raw id exists. Callers that hold
     /// a raw id should translate here *once* and then pass `EntityId`
     /// down.
+    ///
+    /// Also checks `pending` so callers can stage annotation overrides
+    /// for newly-published entities before the next sync tick consumes
+    /// the snapshot — without this, a `set_*` call sandwiched between
+    /// `set_assembly` and the next `update` is a silent no-op.
     #[must_use]
     pub(crate) fn entity_id(&self, raw: u32) -> Option<EntityId> {
-        self.current
+        let in_current = self
+            .current
             .entities()
             .iter()
             .map(MoleculeEntity::id)
-            .find(|eid| eid.raw() == raw)
+            .find(|eid| eid.raw() == raw);
+        if in_current.is_some() {
+            return in_current;
+        }
+        self.pending.as_ref().and_then(|asm| {
+            asm.entities()
+                .iter()
+                .map(MoleculeEntity::id)
+                .find(|eid| eid.raw() == raw)
+        })
     }
 
     /// Iterate every visible entity that has an `entity_state` slot,

@@ -42,6 +42,7 @@ use super::surface::{EntitySurface, SurfaceKind};
 use super::surface_regen::{regenerate_surfaces, SurfaceRegen};
 use super::VisoEngine;
 use crate::animation::transition::Transition;
+use crate::options::overrides::RenderInvalidation;
 use crate::options::{DisplayOverrides, DrawingMode, VisoOptions};
 
 /// Per-entity user-authored state that isn't derived from the
@@ -267,7 +268,14 @@ impl<'a> AnnotationsScene<'a> {
 
     /// Record an SS override for `eid`.
     pub(crate) fn set_ss_override(&mut self, eid: EntityId, ss: Vec<SSType>) {
-        let _ = self.annotations.ss_overrides.insert(eid, ss);
+        let _ = self.annotations.ss_overrides.insert(eid, ss.clone());
+        // Also stamp entity_state directly: the rebuild path reads
+        // state.ss_override (sync_from_assembly is the only other writer,
+        // so an override applied between syncs would otherwise be ignored
+        // on the next rebuild).
+        if let Some(state) = self.scene.entity_state.get_mut(&eid) {
+            state.ss_override = Some(ss);
+        }
         self.bump_for(eid);
     }
 
@@ -473,6 +481,12 @@ impl VisoEngine {
     ) {
         if let Some(eid) = self.entity_id(id) {
             self.annotations_mut().set_per_residue_scores(eid, scores);
+            // Score colors feed per-residue color buffers; recolor +
+            // remesh so the change shows without waiting for an
+            // unrelated rebuild trigger.
+            self.apply_entity_invalidation(
+                RenderInvalidation::RE_MESH | RenderInvalidation::RE_COLOR,
+            );
         }
     }
 
@@ -483,6 +497,9 @@ impl VisoEngine {
     pub fn set_ss_override(&mut self, id: u32, ss: Vec<SSType>) {
         if let Some(eid) = self.entity_id(id) {
             self.annotations_mut().set_ss_override(eid, ss);
+            // SS feeds cartoon ribbon geometry (helix/sheet/coil shape);
+            // remesh so the override shows immediately.
+            self.apply_entity_invalidation(RenderInvalidation::RE_MESH);
         }
     }
 
