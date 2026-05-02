@@ -107,16 +107,84 @@ pub(crate) fn expected_lut_sample_count(size: u32) -> Option<usize> {
 
 /// Parse a minimal ASCII `.cube` LUT.
 ///
-/// This will be implemented in small steps; for now it only reports a missing
-/// `LUT_3D_SIZE` header.
+/// the first non-empty line must be `LUT_3D_SIZE N` (ASCII,
+/// blank lines skipped). If the file ends after that line, RGB count is treated
+/// as zero until samples parsed.
 ///
 /// # Errors
 ///
 /// Returns [`LutCubeParseError`] if the text does not match the supported
 /// subset.
 #[allow(dead_code)] // Called from tests until host wiring lands.
-pub(crate) fn parse_adobe_cube_str(_input: &str) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
-    Err(LutCubeParseError::MissingLutSize)
+pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
+    let mut lut_size: Option<u32> = None;
+    let mut rgb_line_count = 0usize;
+
+    for (idx, raw_line) in input.lines().enumerate() {
+        let line_no = idx + 1; 
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if lut_size.is_none() {
+            let n = parse_lut_size_line(line, line_no)?;
+
+            // Reject LUT sizes outside `LutRgbF32Cube3d::new`'s accepted range.
+            // `parse_lut_size_line` only ensures the token parses as [`u32`].
+            if !(2..=LutRgbF32Cube3d::MAX_SIZE).contains(&n)
+                || expected_lut_sample_count(n).is_none()
+            {
+                return Err(LutCubeParseError::InvalidLutSize { size: n });
+            }
+
+            lut_size = Some(n);
+            continue;
+        }
+
+        // Non-empty lines after the header count as RGB rows
+        rgb_line_count = rgb_line_count.saturating_add(1);
+    }
+
+    let Some(lut_sz) = lut_size else {
+        return Err(LutCubeParseError::MissingLutSize);
+    };
+
+    let expected_len = expected_lut_sample_count(lut_sz)
+        .ok_or(LutCubeParseError::InvalidLutSize { size: lut_sz })?;
+
+    if rgb_line_count > 0 {
+        return Err(LutCubeParseError::WrongRgbCount {
+            expected: expected_len,
+            actual: rgb_line_count,
+        });
+    }
+
+    LutRgbF32Cube3d::new(lut_sz, Vec::new())
+}
+
+#[allow(dead_code)] // Used by `parse_adobe_cube_str`; 
+fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseError> {
+    let mut tokens = line.split_whitespace();
+    let Some(head) = tokens.next() else {
+        return Err(LutCubeParseError::InvalidLutSizeLine { line: line_no });
+    };
+
+    if head != "LUT_3D_SIZE" {
+        return Err(LutCubeParseError::InvalidLutSizeLine { line: line_no });
+    }
+
+    let Some(raw_n) = tokens.next() else {
+        return Err(LutCubeParseError::InvalidLutSizeLine { line: line_no });
+    };
+
+    if tokens.next().is_some() {
+        return Err(LutCubeParseError::InvalidLutSizeLine { line: line_no });
+    }
+
+    raw_n
+        .parse::<u32>()
+        .map_err(|_| LutCubeParseError::InvalidLutSizeLine { line: line_no })
 }
 
 #[cfg(test)]
@@ -175,5 +243,52 @@ mod tests {
     fn parse_reports_missing_header() {
         let err = parse_adobe_cube_str("").expect_err("should reject empty input");
         assert_eq!(err, LutCubeParseError::MissingLutSize);
+    }
+
+    #[test]
+    fn parse_accepts_lut_size_after_blank_lines() {
+        let err = parse_adobe_cube_str("\n\nLUT_3D_SIZE 2\n")
+            .expect_err("header-only file has no RGB rows yet");
+        assert_eq!(
+            err,
+            LutCubeParseError::WrongRgbCount {
+                expected: 8,
+                actual: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_requires_lut_size_before_other_content() {
+        let err = parse_adobe_cube_str("0 0 0\nLUT_3D_SIZE 2\n").expect_err("order matters");
+        assert_eq!(
+            err,
+            LutCubeParseError::InvalidLutSizeLine { line: 1 }
+        );
+    }
+
+    #[test]
+    fn parse_header_only_yields_wrong_sample_count() {
+        let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n")
+            .expect_err("no RGB rows after header");
+        assert_eq!(
+            err,
+            LutCubeParseError::WrongRgbCount {
+                expected: 8,
+                actual: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_counts_non_empty_lines_after_header_before_triplet_parsing() {
+        let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0 0\n").expect_err("incomplete LUT");
+        assert_eq!(
+            err,
+            LutCubeParseError::WrongRgbCount {
+                expected: 8,
+                actual: 1
+            }
+        );
     }
 }
