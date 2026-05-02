@@ -3,7 +3,6 @@
 use crate::VisoError;
 
 /// In-memory RGB samples for a 3D LUT of edge length [`Self::size`].
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LutRgbF32Cube3d {
@@ -39,8 +38,17 @@ impl std::fmt::Display for LutCubeParseError {
 
 impl std::error::Error for LutCubeParseError {}
 
+/// Map to `VisoError::OptionsParse`.
 impl From<LutCubeParseError> for VisoError {
     fn from(value: LutCubeParseError) -> Self {
         Self::OptionsParse(value.to_string())
     }
+}
+
+/// Returns `size³` as [`usize`] if fits; otherwise [`None`]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) fn expected_lut_sample_count(size: u32) -> Option<usize> {
+    let n = usize::try_from(size).ok()?;
+    Some(n.checked_mul(n)?.checked_mul(n)?)
 }
