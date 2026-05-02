@@ -249,6 +249,19 @@ fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseEr
         .map_err(|_| LutCubeParseError::InvalidLutSizeLine { line: line_no })
 }
 
+/// Parses `token` as [`f32`] and rejects NaN and infinity (unsuitable for LUT texels).
+fn parse_finite_f32(token: &str, line_no: usize) -> Result<f32, LutCubeParseError> {
+    let value = token
+        .parse::<f32>()
+        .map_err(|_| LutCubeParseError::MalformedRgbLine { line: line_no })?;
+
+    if !value.is_finite() {
+        return Err(LutCubeParseError::MalformedRgbLine { line: line_no });
+    }
+
+    Ok(value)
+}
+
 fn parse_rgb_triplet_line(line: &str, line_no: usize) -> Result<[f32; 3], LutCubeParseError> {
     let mut tokens = line.split_whitespace();
     let r_s = tokens
@@ -265,15 +278,9 @@ fn parse_rgb_triplet_line(line: &str, line_no: usize) -> Result<[f32; 3], LutCub
         return Err(LutCubeParseError::MalformedRgbLine { line: line_no });
     }
 
-    let r = r_s
-        .parse::<f32>()
-        .map_err(|_| LutCubeParseError::MalformedRgbLine { line: line_no })?;
-    let g = g_s
-        .parse::<f32>()
-        .map_err(|_| LutCubeParseError::MalformedRgbLine { line: line_no })?;
-    let b = b_s
-        .parse::<f32>()
-        .map_err(|_| LutCubeParseError::MalformedRgbLine { line: line_no })?;
+    let r = parse_finite_f32(r_s, line_no)?;
+    let g = parse_finite_f32(g_s, line_no)?;
+    let b = parse_finite_f32(b_s, line_no)?;
 
     Ok([r, g, b])
 }
@@ -388,6 +395,26 @@ mod tests {
     fn parse_rejects_malformed_rgb_line() {
         let err =
             parse_adobe_cube_str("LUT_3D_SIZE 2\nnot_float 0 0\n").expect_err("bad float token");
+        assert_eq!(
+            err,
+            LutCubeParseError::MalformedRgbLine { line: 2 }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_nan_rgb_value() {
+        let err = parse_adobe_cube_str("LUT_3D_SIZE 2\nNaN 0 0\n").expect_err("NaN must fail");
+
+        assert_eq!(
+            err,
+            LutCubeParseError::MalformedRgbLine { line: 2 }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_infinite_rgb_value() {
+        let err = parse_adobe_cube_str("LUT_3D_SIZE 2\ninf 0 0\n").expect_err("inf must fail");
+
         assert_eq!(
             err,
             LutCubeParseError::MalformedRgbLine { line: 2 }
