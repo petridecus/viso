@@ -1,5 +1,7 @@
 //! Adobe / DaVinci Resolve ASCII `.cube` LUT parsing (CPU).
 
+use crate::VisoError;
+
 /// In-memory RGB samples for a 3D LUT of edge length [`Self::size`].
 
 #[allow(dead_code)]
@@ -36,3 +38,9 @@ impl std::fmt::Display for LutCubeParseError {
 }
 
 impl std::error::Error for LutCubeParseError {}
+
+impl From<LutCubeParseError> for VisoError {
+    fn from(value: LutCubeParseError) -> Self {
+        Self::OptionsParse(value.to_string())
+    }
+}
