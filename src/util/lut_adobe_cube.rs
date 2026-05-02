@@ -63,6 +63,8 @@ pub(crate) enum LutCubeParseError {
     },
     /// number of RGB samples not match `size^3`.
     WrongRgbCount { expected: usize, actual: usize },
+    /// Input bytes are not valid UTF-8.
+    InvalidUtf8,
 }
 
 impl std::fmt::Display for LutCubeParseError {
@@ -84,6 +86,7 @@ impl std::fmt::Display for LutCubeParseError {
                 f,
                 "LUT cube has {actual} RGB samples but expected {expected}"
             ),
+            Self::InvalidUtf8 => write!(f, "LUT cube file is not valid UTF-8"),
         }
     }
 }
@@ -182,6 +185,18 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
     LutRgbF32Cube3d::new(lut_sz, rgb)
 }
 
+/// Parse a `.cube` LUT from UTF-8 bytes (including a leading UTF-8 BOM).
+///
+/// # Errors
+///
+/// Returns [`LutCubeParseError::InvalidUtf8`] when `input` is not valid UTF-8.
+/// Other errors match [`parse_adobe_cube_str`].
+#[allow(dead_code)] // Called from tests until host wiring lands.
+pub(crate) fn parse_adobe_cube_bytes(input: &[u8]) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
+    let text = std::str::from_utf8(input).map_err(|_| LutCubeParseError::InvalidUtf8)?;
+    parse_adobe_cube_str(text)
+}
+
 /// Returns the portion of `trimmed_physical_line` that should be parsed, or
 /// [`None`] when the line is only a comment.
 ///
@@ -268,7 +283,8 @@ fn parse_rgb_triplet_line(line: &str, line_no: usize) -> Result<[f32; 3], LutCub
 #[allow(clippy::expect_used)]
 mod tests {
     use super::{
-        expected_lut_sample_count, parse_adobe_cube_str, LutCubeParseError, LutRgbF32Cube3d,
+        expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str,
+        LutCubeParseError, LutRgbF32Cube3d,
     };
 
     #[test]
@@ -583,5 +599,25 @@ LUT_3D_SIZE 2  # grid
         let lut_bom = parse_adobe_cube_str(&with_bom).expect("BOM-prefixed LUT must parse");
 
         assert_eq!(lut_plain, lut_bom);
+    }
+
+    #[test]
+    fn parse_bytes_rejects_invalid_utf8() {
+        let err = parse_adobe_cube_bytes(&[0xff, 0xfe, 0xfd]).expect_err("invalid UTF-8");
+        assert_eq!(err, LutCubeParseError::InvalidUtf8);
+    }
+
+    #[test]
+    fn parse_bytes_accepts_utf8_bom_and_matches_str_parse() {
+        let inner = "LUT_3D_SIZE 2\n\
+             0 0 0\n1 0 0\n0 1 0\n1 1 0\n\
+             0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+        let mut bytes = vec![0xef_u8, 0xbb, 0xbf];
+        bytes.extend_from_slice(inner.as_bytes());
+
+        let lut_bytes = parse_adobe_cube_bytes(&bytes).expect("UTF-8 BOM bytes must parse");
+        let lut_str = parse_adobe_cube_str(inner).expect("plain string must parse");
+
+        assert_eq!(lut_bytes, lut_str);
     }
 }
