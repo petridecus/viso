@@ -107,9 +107,13 @@ pub(crate) fn expected_lut_sample_count(size: u32) -> Option<usize> {
 
 /// Parse a minimal ASCII `.cube` LUT.
 ///
-/// Define a strict subset: after `LUT_3D_SIZE N`, each
-/// non-empty line must be exactly three whitespace-separated floats (`r g b`).
-/// Blank lines are skipped. Comment/BOM handling haven't done yet.
+/// After `LUT_3D_SIZE N`, each non-empty line must be exactly three
+/// whitespace-separated floats (`r g b`). Blank lines are skipped.
+///
+/// ASCII `#` comments are supported: a line whose first non-space
+/// character is `#` is ignored; otherwise text from the first `#` onward is
+/// stripped before parsing. UTF-8 BOM and `TITLE` / `DOMAIN_*` lines are not
+/// handled here.
 ///
 /// # Errors
 ///
@@ -122,10 +126,14 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
-        let line = raw_line.trim();
-        if line.is_empty() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
             continue;
         }
+
+        let Some(line) = meaningful_cube_line(trimmed) else {
+            continue;
+        };
 
         match lut_size {
             None => {
@@ -163,6 +171,24 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
     };
 
     LutRgbF32Cube3d::new(lut_sz, rgb)
+}
+
+/// Returns the portion of `trimmed_physical_line` that should be parsed, or
+/// [`None`] when the line is only a comment.
+///
+/// `trimmed_physical_line` must be the line after [`str::trim`].
+fn meaningful_cube_line(trimmed_physical_line: &str) -> Option<&str> {
+    if trimmed_physical_line.starts_with('#') {
+        return None;
+    }
+
+    let before_hash = trimmed_physical_line
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    (!before_hash.is_empty()).then_some(before_hash)
 }
 
 fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseError> {
@@ -419,5 +445,75 @@ LUT_3D_SIZE 2
             err,
             LutCubeParseError::InvalidLutSizeLine { line: 1 }
         );
+    }
+
+    #[test]
+    fn parse_accepts_hash_comments_and_inline_hash_on_header() {
+        let src = "\
+# prelude
+LUT_3D_SIZE 2  # grid
+# before samples
+0 0 0 # black
+1 0 0
+0 1 0 # mid
+1 1 0
+#
+0 0 1
+1 0 1 # etc
+0 1 1
+1 1 1
+# tail
+";
+
+        let lut = parse_adobe_cube_str(src).expect("hash comments should parse");
+        assert_eq!(lut.size, 2);
+        assert_eq!(lut.rgb.len(), 8);
+        assert_eq!(lut.rgb[0], [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn parse_lut_size_trailing_token_still_fails_when_not_in_comment() {
+        let err =
+            parse_adobe_cube_str("LUT_3D_SIZE 2 junk # not a comment separator for tokens\n")
+                .expect_err("junk before # is still an extra token");
+
+        assert_eq!(
+            err,
+            LutCubeParseError::InvalidLutSizeLine { line: 1 }
+        );
+    }
+
+    #[test]
+    fn parse_fixture_minimal_n2_without_comments() {
+        const SRC: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/lut/minimal_n2.cube"
+        ));
+
+        let lut = parse_adobe_cube_str(SRC).expect("testdata fixture must parse");
+        assert_eq!(lut.size, 2);
+        assert_eq!(lut.rgb.len(), 8);
+        assert_eq!(lut.rgb[0], [0.0, 0.0, 0.0]);
+        assert_eq!(lut.rgb[7], [1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn parse_fixture_minimal_n2_hash_comments_matches_strict_fixture_rgb() {
+        const STRICT: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/lut/minimal_n2.cube"
+        ));
+        const WITH_HASH: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/lut/minimal_n2_hash_comments.cube"
+        ));
+
+        let lut_strict =
+            parse_adobe_cube_str(STRICT).expect("strict LUT fixture must parse");
+        let lut_hash =
+            parse_adobe_cube_str(WITH_HASH).expect("#-comment LUT fixture must parse");
+
+        assert_eq!(lut_strict.size, lut_hash.size);
+        assert_eq!(lut_strict.rgb, lut_hash.rgb);
     }
 }
