@@ -1,28 +1,26 @@
-//! Parse and validation errors for Adobe ASCII `.cube` LUT files.
+//! Errors for Adobe ASCII `.cube` LUT parsing and validation.
 
 use crate::VisoError;
 
-/// Errors emitted while parsing or validating `.cube` LUT files.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LutCubeParseError {
-    /// file not contain any `LUT_3D_SIZE` header line.
+    /// No `LUT_3D_SIZE` header line was found after preprocessing.
     MissingLutSize,
-    /// header line not formatted as `LUT_3D_SIZE N`.
-    InvalidLutSizeLine {
-        /// 1-based source line no.
-        line: usize,
-    },
-    /// size outside the supported range.
+
+    /// A non-metadata line before samples was not exactly `LUT_3D_SIZE N`.
+    InvalidLutSizeLine { line: usize },
+
+    /// N outside 2..=256 or N³ not fit in usize.
     InvalidLutSize { size: u32 },
-    /// line in RGB data section not three floats.
-    MalformedRgbLine {
-        /// 1-based source line no.
-        line: usize,
-    },
-    /// number of RGB samples not match `size^3`.
+
+    /// RGB sample line not exactly three finite floats.
+    MalformedRgbLine { line: usize },
+
+    /// RGB sample count differs from N³.
     WrongRgbCount { expected: usize, actual: usize },
-    /// Input bytes are not valid UTF-8.
+
+    /// Input bytes are not valid UTF-8 (byte entrypoint only).
     InvalidUtf8,
 }
 
@@ -52,7 +50,7 @@ impl std::fmt::Display for LutCubeParseError {
 
 impl std::error::Error for LutCubeParseError {}
 
-/// Map to `VisoError::OptionsParse`.
+/// Converts into [`VisoError::OptionsParse`] using this error’s formatted message.
 impl From<LutCubeParseError> for VisoError {
     fn from(value: LutCubeParseError) -> Self {
         Self::OptionsParse(value.to_string())
