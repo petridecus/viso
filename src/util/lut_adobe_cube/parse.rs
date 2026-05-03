@@ -1,25 +1,12 @@
-//! Line-oriented parsing for Adobe ASCII `.cube` LUT files.
+//! Parse `.cube` text line by line. Public API: [`parse_adobe_cube_str`], [`parse_adobe_cube_bytes`].
 
 use super::{expected_lut_sample_count, LutCubeParseError, LutRgbF32Cube3d};
 
-/// Parse a minimal ASCII `.cube` LUT.
+/// Parse a UTF-8 `.cube` string. Skips blanks, `#` comments, `TITLE` / `DOMAIN_*`, strips a
+/// leading BOM, then expects `LUT_3D_SIZE N` and `N³` RGB lines (three finite floats each).
 ///
-/// After `LUT_3D_SIZE N`, each non-empty line must be exactly three
-/// whitespace-separated floats (`r g b`). Blank lines are skipped.
-///
-/// ASCII `#` comments are supported: a line whose first non-space
-/// character is `#` is ignored; otherwise text from the first `#` onward is
-/// stripped before parsing.
-///
-/// Common DaVinci / Adobe header lines `TITLE`, `DOMAIN_MIN`, and `DOMAIN_MAX`
-/// are ignored (payload not validated). A leading UTF-8 BOM (`U+FEFF`) is
-/// stripped before parsing.
-///
-/// # Errors
-///
-/// Returns [`LutCubeParseError`] if the text does not match the supported
-/// subset.
-#[allow(dead_code)] // Called from tests until host wiring lands.
+/// Errors: see [`LutCubeParseError`].
+#[allow(dead_code)] // Not called from production code yet.
 pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
     let input = input.strip_prefix('\u{FEFF}').unwrap_or(input);
 
@@ -45,8 +32,7 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
             None => {
                 let n = parse_lut_size_line(line, line_no)?;
 
-                // Reject LUT sizes outside `LutRgbF32Cube3d::new`'s accepted range.
-                // `parse_lut_size_line` only ensures the token parses as [`u32`].
+                // Header line is valid syntax only; check allowed N here.
                 if !(2..=LutRgbF32Cube3d::MAX_SIZE).contains(&n)
                     || expected_lut_sample_count(n).is_none()
                 {
@@ -79,22 +65,14 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
     LutRgbF32Cube3d::new(lut_sz, rgb)
 }
 
-/// Parse a `.cube` LUT from UTF-8 bytes (including a leading UTF-8 BOM).
-///
-/// # Errors
-///
-/// Returns [`LutCubeParseError::InvalidUtf8`] when `input` is not valid UTF-8.
-/// Other errors match [`parse_adobe_cube_str`].
-#[allow(dead_code)] // Called from tests until host wiring lands.
+/// UTF-8 bytes → [`parse_adobe_cube_str`]. Wrong encoding → [`LutCubeParseError::InvalidUtf8`].
+#[allow(dead_code)] // Not called from production code yet.
 pub(crate) fn parse_adobe_cube_bytes(input: &[u8]) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
     let text = std::str::from_utf8(input).map_err(|_| LutCubeParseError::InvalidUtf8)?;
     parse_adobe_cube_str(text)
 }
 
-/// Returns the portion of `trimmed_physical_line` that should be parsed, or
-/// [`None`] when the line is only a comment.
-///
-/// `trimmed_physical_line` must be the line after [`str::trim`].
+/// Strip `#` comments; line must already be [`str::trim`]'d. [`None`] means skip the line.
 fn meaningful_cube_line(trimmed_physical_line: &str) -> Option<&str> {
     if trimmed_physical_line.starts_with('#') {
         return None;
@@ -109,8 +87,7 @@ fn meaningful_cube_line(trimmed_physical_line: &str) -> Option<&str> {
     (!before_hash.is_empty()).then_some(before_hash)
 }
 
-/// Returns `true` when `meaningful_line` is a known Adobe `.cube` metadata
-/// header line (`TITLE`, `DOMAIN_MIN`, `DOMAIN_MAX`).
+/// First word is `TITLE`, `DOMAIN_MIN`, or `DOMAIN_MAX` (skip whole line).
 fn is_adobe_cube_metadata_line(meaningful_line: &str) -> bool {
     let mut tokens = meaningful_line.split_whitespace();
     let Some(head) = tokens.next() else {
@@ -120,6 +97,7 @@ fn is_adobe_cube_metadata_line(meaningful_line: &str) -> bool {
     matches!(head, "TITLE" | "DOMAIN_MIN" | "DOMAIN_MAX")
 }
 
+/// Expect exactly `LUT_3D_SIZE N`.
 fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseError> {
     let mut tokens = line.split_whitespace();
     let Some(head) = tokens.next() else {
@@ -143,7 +121,7 @@ fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseEr
         .map_err(|_| LutCubeParseError::InvalidLutSizeLine { line: line_no })
 }
 
-/// Parses `token` as [`f32`] and rejects NaN and infinity (unsuitable for LUT texels).
+/// One float; reject NaN and infinity.
 fn parse_finite_f32(token: &str, line_no: usize) -> Result<f32, LutCubeParseError> {
     let value = token
         .parse::<f32>()
@@ -156,6 +134,7 @@ fn parse_finite_f32(token: &str, line_no: usize) -> Result<f32, LutCubeParseErro
     Ok(value)
 }
 
+/// One RGB sample: three floats, no extra tokens.
 fn parse_rgb_triplet_line(line: &str, line_no: usize) -> Result<[f32; 3], LutCubeParseError> {
     let mut tokens = line.split_whitespace();
     let r_s = tokens

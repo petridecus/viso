@@ -1,4 +1,4 @@
-//! Unit tests for Adobe `.cube` LUT parsing (parent `lut_adobe_cube` module).
+//! Tests for the `lut_adobe_cube` module.
 
 use super::{
     expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str, LutCubeParseError,
@@ -6,18 +6,13 @@ use super::{
 };
 
 #[test]
-// check math on tiny LUTs without building large vectors.
 fn expected_lut_sample_count_matches_size_cubed_for_small_sizes() {
-    // N=2 ⇒ 2³ = 8 RGB triplets; N=3 ⇒ 27 triplets.
     assert_eq!(expected_lut_sample_count(2), Some(8));
     assert_eq!(expected_lut_sample_count(3), Some(27));
 }
 
 #[test]
-// check minimal legal LUT: `LUT_3D_SIZE 2` exactly eight RGB rows.
 fn new_accepts_n2_corner_lut() {
-    // Eight corners of the RGB cube ordering follows flattening,
-    // but `new()` only checks counts not ordering.
     let rgb = vec![
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -35,7 +30,6 @@ fn new_accepts_n2_corner_lut() {
 }
 
 #[test]
-// `N=2`, handing in one RGB row fail
 fn new_rejects_wrong_sample_count() {
     let err = LutRgbF32Cube3d::new(2, vec![[0.0, 0.0, 0.0]]).expect_err("too few samples");
 
