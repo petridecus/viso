@@ -114,7 +114,7 @@ impl Scene {
             .current
             .entities()
             .iter()
-            .map(MoleculeEntity::id)
+            .map(|e| e.id())
             .find(|eid| eid.raw() == raw);
         if in_current.is_some() {
             return in_current;
@@ -122,7 +122,7 @@ impl Scene {
         self.pending.as_ref().and_then(|asm| {
             asm.entities()
                 .iter()
-                .map(MoleculeEntity::id)
+                .map(|e| e.id())
                 .find(|eid| eid.raw() == raw)
         })
     }
@@ -137,6 +137,7 @@ impl Scene {
         annotations: &'a EntityAnnotations,
     ) -> impl Iterator<Item = VisibleEntity<'a>> + 'a {
         self.current.entities().iter().filter_map(|entity| {
+            let entity: &MoleculeEntity = entity;
             let eid = entity.id();
             if !annotations.is_visible(eid) {
                 return None;

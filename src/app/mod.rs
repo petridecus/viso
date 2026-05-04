@@ -141,8 +141,12 @@ impl VisoApp {
         // re-runs DSSP + H-bond detection over *all* entities, so
         // the incremental form is O(N²) for a load of N entities and
         // wedges the main thread for minutes on large complexes.
-        let mut combined: Vec<MoleculeEntity> =
-            self.assembly.entities().to_vec();
+        let mut combined: Vec<MoleculeEntity> = self
+            .assembly
+            .entities()
+            .iter()
+            .map(|e| MoleculeEntity::clone(e))
+            .collect();
         combined.extend(entities);
         self.assembly = Assembly::new(combined);
 
@@ -210,7 +214,12 @@ impl VisoApp {
         let mut updated_by_id: HashMap<u32, MoleculeEntity> =
             updated.into_iter().map(|e| (e.id().raw(), e)).collect();
 
-        let current = self.assembly.entities().to_vec();
+        let current: Vec<MoleculeEntity> = self
+            .assembly
+            .entities()
+            .iter()
+            .map(|e| MoleculeEntity::clone(e))
+            .collect();
         let mut combined: Vec<MoleculeEntity> =
             Vec::with_capacity(current.len());
         let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
@@ -276,7 +285,7 @@ impl VisoApp {
             .assembly
             .entities()
             .iter()
-            .map(MoleculeEntity::id)
+            .map(|e| e.id())
             .find(|e| e.raw() == id)
         else {
             return;
@@ -348,7 +357,7 @@ impl VisoApp {
             .assembly
             .entities()
             .iter()
-            .map(MoleculeEntity::id)
+            .map(|e| e.id())
             .find(|e| e.raw() == id)
         else {
             return;
@@ -372,7 +381,7 @@ impl VisoApp {
             .assembly
             .entities()
             .iter()
-            .map(MoleculeEntity::id)
+            .map(|e| e.id())
             .find(|e| e.raw() == id);
         let Some(eid) = eid else {
             return;

@@ -405,7 +405,7 @@ impl<'a> AnnotationsScene<'a> {
             .entities()
             .iter()
             .filter(|e| self.annotations.is_visible(e.id()) && e.is_focusable())
-            .map(molex::MoleculeEntity::id)
+            .map(|e| e.id())
             .collect();
         self.annotations.cycle_focus(&focusable)
     }
@@ -462,7 +462,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| e.molecule_type() == mol_type)
-            .map(molex::MoleculeEntity::id)
+            .map(|e| e.id())
             .collect();
         let mut view = self.annotations_mut();
         for eid in ids {

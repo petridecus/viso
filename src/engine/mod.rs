@@ -416,6 +416,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
+            .map(|e| e.as_ref())
             .collect();
         camera::fit::combined_bounding_sphere(visible).map(|(c, _)| c)
     }
@@ -433,6 +434,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
+            .map(|e| e.as_ref())
             .collect();
         if let Some((centroid, radius)) =
             camera::fit::combined_bounding_sphere(visible)
@@ -496,7 +498,7 @@ impl VisoEngine {
                 {
                     camera::fit::fit_to_entity(
                         &mut self.camera_controller,
-                        entity,
+                        entity.as_ref(),
                     );
                 }
             }
@@ -512,6 +514,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
+            .map(|e| e.as_ref())
             .collect();
         camera::fit::fit_to_entities(&mut self.camera_controller, visible);
     }

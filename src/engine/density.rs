@@ -53,7 +53,8 @@ impl DensityScene<'_> {
             .current
             .entities()
             .iter()
-            .filter(|e| self.annotations.is_visible(e.id()));
+            .filter(|e| self.annotations.is_visible(e.id()))
+            .map(|e| e.as_ref());
         if let Some((centroid, radius)) = combined_bounding_sphere(visible) {
             log::info!(
                 "protein bounding sphere: center=[{:.1},{:.1},{:.1}], \
