@@ -1,13 +1,16 @@
-//! In-memory 3D LUT buffer ([`LutRgbF32Cube3d`]) and [`expected_lut_sample_count`].
+//! In-memory 3D LUT buffer ([`LutRgbF32Cube3d`]) and
+//! [`expected_lut_sample_count`].
 
 use super::LutCubeParseError;
 
-/// In-memory RGB samples for a 3D LUT with edge length [`Self::size`] (`N` in `LUT_3D_SIZE N`).
+/// In-memory RGB samples for a 3D LUT with edge length [`Self::size`] (`N` in
+/// `LUT_3D_SIZE N`).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LutRgbF32Cube3d {
     /// Grid dimension `N` (`LUT_3D_SIZE N`).
     pub(crate) size: u32,
-    /// Flattened RGB triplets in file order; length must equal `size³` for a valid LUT.
+    /// Flattened RGB triplets in file order; length must equal `size³` for a
+    /// valid LUT.
     pub(crate) rgb: Vec<[f32; 3]>,
 }
 
@@ -20,9 +23,9 @@ impl LutRgbF32Cube3d {
     ///
     /// # Errors
     ///
-    /// Returns [`LutCubeParseError`] when `size` is outside `2..=MAX_SIZE`, when
-    /// `size³` does not fit in [`usize`], or when the RGB sample count is
-    /// wrong.
+    /// Returns [`LutCubeParseError`] when `size` is outside `2..=MAX_SIZE`,
+    /// when `size³` does not fit in [`usize`], or when the RGB sample count
+    /// is wrong.
     pub(crate) fn new(
         size: u32,
         rgb: Vec<[f32; 3]>,

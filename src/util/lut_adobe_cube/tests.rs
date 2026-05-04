@@ -1,8 +1,8 @@
 //! Tests for the `lut_adobe_cube` module.
 
 use super::{
-    expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str, LutCubeParseError,
-    LutRgbF32Cube3d,
+    expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str,
+    LutCubeParseError, LutRgbF32Cube3d,
 };
 
 #[test]
@@ -31,7 +31,8 @@ fn new_accepts_n2_corner_lut() {
 
 #[test]
 fn new_rejects_wrong_sample_count() {
-    let err = LutRgbF32Cube3d::new(2, vec![[0.0, 0.0, 0.0]]).expect_err("too few samples");
+    let err = LutRgbF32Cube3d::new(2, vec![[0.0, 0.0, 0.0]])
+        .expect_err("too few samples");
 
     assert_eq!(
         err,
@@ -50,7 +51,8 @@ fn parse_reports_missing_header() {
 
 #[test]
 fn parse_accepts_lut_size_after_blank_lines() {
-    let err = parse_adobe_cube_str("\n\nLUT_3D_SIZE 2\n").expect_err("header-only file has no RGB rows yet");
+    let err = parse_adobe_cube_str("\n\nLUT_3D_SIZE 2\n")
+        .expect_err("header-only file has no RGB rows yet");
     assert_eq!(
         err,
         LutCubeParseError::WrongRgbCount {
@@ -62,16 +64,15 @@ fn parse_accepts_lut_size_after_blank_lines() {
 
 #[test]
 fn parse_requires_lut_size_before_other_content() {
-    let err = parse_adobe_cube_str("0 0 0\nLUT_3D_SIZE 2\n").expect_err("order matters");
-    assert_eq!(
-        err,
-        LutCubeParseError::InvalidLutSizeLine { line: 1 }
-    );
+    let err = parse_adobe_cube_str("0 0 0\nLUT_3D_SIZE 2\n")
+        .expect_err("order matters");
+    assert_eq!(err, LutCubeParseError::InvalidLutSizeLine { line: 1 });
 }
 
 #[test]
 fn parse_header_only_yields_wrong_sample_count() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n").expect_err("no RGB rows after header");
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n")
+        .expect_err("no RGB rows after header");
     assert_eq!(
         err,
         LutCubeParseError::WrongRgbCount {
@@ -83,7 +84,8 @@ fn parse_header_only_yields_wrong_sample_count() {
 
 #[test]
 fn parse_rejects_incomplete_lut_after_valid_triplets() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0 0\n").expect_err("incomplete LUT");
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0 0\n")
+        .expect_err("incomplete LUT");
     assert_eq!(
         err,
         LutCubeParseError::WrongRgbCount {
@@ -95,32 +97,25 @@ fn parse_rejects_incomplete_lut_after_valid_triplets() {
 
 #[test]
 fn parse_rejects_malformed_rgb_line() {
-    let err =
-        parse_adobe_cube_str("LUT_3D_SIZE 2\nnot_float 0 0\n").expect_err("bad float token");
-    assert_eq!(
-        err,
-        LutCubeParseError::MalformedRgbLine { line: 2 }
-    );
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\nnot_float 0 0\n")
+        .expect_err("bad float token");
+    assert_eq!(err, LutCubeParseError::MalformedRgbLine { line: 2 });
 }
 
 #[test]
 fn parse_rejects_nan_rgb_value() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\nNaN 0 0\n").expect_err("NaN must fail");
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\nNaN 0 0\n")
+        .expect_err("NaN must fail");
 
-    assert_eq!(
-        err,
-        LutCubeParseError::MalformedRgbLine { line: 2 }
-    );
+    assert_eq!(err, LutCubeParseError::MalformedRgbLine { line: 2 });
 }
 
 #[test]
 fn parse_rejects_infinite_rgb_value() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\ninf 0 0\n").expect_err("inf must fail");
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\ninf 0 0\n")
+        .expect_err("inf must fail");
 
-    assert_eq!(
-        err,
-        LutCubeParseError::MalformedRgbLine { line: 2 }
-    );
+    assert_eq!(err, LutCubeParseError::MalformedRgbLine { line: 2 });
 }
 
 #[test]
@@ -137,7 +132,8 @@ LUT_3D_SIZE 2
 1 1 1
 0 0 0
 ";
-    let err = parse_adobe_cube_str(cube).expect_err("unexpected ninth sample row");
+    let err =
+        parse_adobe_cube_str(cube).expect_err("unexpected ninth sample row");
     assert_eq!(
         err,
         LutCubeParseError::WrongRgbCount {
@@ -149,9 +145,8 @@ LUT_3D_SIZE 2
 
 #[test]
 fn parse_succeeds_for_minimal_two_cubed_lut() {
-    let src = "LUT_3D_SIZE 2\n\
-             0 0 0\n1 0 0\n0 1 0\n1 1 0\n\
-             0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let src = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 \
+               1\n1 1 1\n";
 
     let lut = parse_adobe_cube_str(src).expect("minimal N=2 LUT must parse");
 
@@ -172,11 +167,11 @@ fn parse_succeeds_for_minimal_two_cubed_lut() {
 
 #[test]
 fn parse_skips_blank_lines_between_header_and_samples() {
-    let src = "LUT_3D_SIZE 2\n\
-             \n\
-             0 0 0\n\n1 0 0\n  \n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let src = "LUT_3D_SIZE 2\n\n0 0 0\n\n1 0 0\n  \n0 1 0\n1 1 0\n0 0 1\n1 0 \
+               1\n0 1 1\n1 1 1\n";
 
-    let lut = parse_adobe_cube_str(src).expect("blank lines should not break parse");
+    let lut =
+        parse_adobe_cube_str(src).expect("blank lines should not break parse");
     assert_eq!(lut.size, 2);
     assert_eq!(lut.rgb.len(), 8);
     assert_eq!(lut.rgb[0], [0.0, 0.0, 0.0]);
@@ -185,30 +180,23 @@ fn parse_skips_blank_lines_between_header_and_samples() {
 
 #[test]
 fn parse_rejects_rgb_line_with_too_few_tokens() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0\n").expect_err("need three floats");
-    assert_eq!(
-        err,
-        LutCubeParseError::MalformedRgbLine { line: 2 }
-    );
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0\n")
+        .expect_err("need three floats");
+    assert_eq!(err, LutCubeParseError::MalformedRgbLine { line: 2 });
 }
 
 #[test]
 fn parse_rejects_rgb_line_with_too_many_tokens() {
-    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0 0 1\n").expect_err("extra token");
-    assert_eq!(
-        err,
-        LutCubeParseError::MalformedRgbLine { line: 2 }
-    );
+    let err = parse_adobe_cube_str("LUT_3D_SIZE 2\n0 0 0 1\n")
+        .expect_err("extra token");
+    assert_eq!(err, LutCubeParseError::MalformedRgbLine { line: 2 });
 }
 
 #[test]
 fn parse_rejects_lut_size_line_with_trailing_token() {
     let err = parse_adobe_cube_str("LUT_3D_SIZE 2 extra\n")
         .expect_err("header must be exactly two tokens after split");
-    assert_eq!(
-        err,
-        LutCubeParseError::InvalidLutSizeLine { line: 1 }
-    );
+    assert_eq!(err, LutCubeParseError::InvalidLutSizeLine { line: 1 });
 }
 
 #[test]
@@ -237,14 +225,12 @@ LUT_3D_SIZE 2  # grid
 
 #[test]
 fn parse_lut_size_trailing_token_still_fails_when_not_in_comment() {
-    let err =
-        parse_adobe_cube_str("LUT_3D_SIZE 2 junk # not a comment separator for tokens\n")
-            .expect_err("junk before # is still an extra token");
+    let err = parse_adobe_cube_str(
+        "LUT_3D_SIZE 2 junk # not a comment separator for tokens\n",
+    )
+    .expect_err("junk before # is still an extra token");
 
-    assert_eq!(
-        err,
-        LutCubeParseError::InvalidLutSizeLine { line: 1 }
-    );
+    assert_eq!(err, LutCubeParseError::InvalidLutSizeLine { line: 1 });
 }
 
 #[test]
@@ -272,8 +258,10 @@ fn parse_fixture_minimal_n2_hash_comments_matches_strict_fixture_rgb() {
         "/testdata/lut/minimal_n2_hash_comments.cube"
     ));
 
-    let lut_strict = parse_adobe_cube_str(STRICT).expect("strict LUT fixture must parse");
-    let lut_hash = parse_adobe_cube_str(WITH_HASH).expect("#-comment LUT fixture must parse");
+    let lut_strict =
+        parse_adobe_cube_str(STRICT).expect("strict LUT fixture must parse");
+    let lut_hash = parse_adobe_cube_str(WITH_HASH)
+        .expect("#-comment LUT fixture must parse");
 
     assert_eq!(lut_strict.size, lut_hash.size);
     assert_eq!(lut_strict.rgb, lut_hash.rgb);
@@ -281,14 +269,12 @@ fn parse_fixture_minimal_n2_hash_comments_matches_strict_fixture_rgb() {
 
 #[test]
 fn parse_skips_title_and_domain_lines_before_lut_size() {
-    let src = "TITLE \"warm grade\"\n\
-             DOMAIN_MIN 0 0 0\n\
-             DOMAIN_MAX 1 1 1\n\
-             LUT_3D_SIZE 2\n\
-             0 0 0\n1 0 0\n0 1 0\n1 1 0\n\
-             0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let src = "TITLE \"warm grade\"\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 \
+               1\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 \
+               1 1\n1 1 1\n";
 
-    let lut = parse_adobe_cube_str(src).expect("TITLE/DOMAIN prefix must parse");
+    let lut =
+        parse_adobe_cube_str(src).expect("TITLE/DOMAIN prefix must parse");
     assert_eq!(lut.size, 2);
     assert_eq!(lut.rgb.len(), 8);
     assert_eq!(lut.rgb[7], [1.0, 1.0, 1.0]);
@@ -305,8 +291,10 @@ fn parse_fixture_minimal_n2_metadata_matches_strict_fixture_rgb() {
         "/testdata/lut/minimal_n2_metadata.cube"
     ));
 
-    let lut_strict = parse_adobe_cube_str(STRICT).expect("strict LUT fixture must parse");
-    let lut_meta = parse_adobe_cube_str(WITH_META).expect("TITLE/DOMAIN LUT fixture must parse");
+    let lut_strict =
+        parse_adobe_cube_str(STRICT).expect("strict LUT fixture must parse");
+    let lut_meta = parse_adobe_cube_str(WITH_META)
+        .expect("TITLE/DOMAIN LUT fixture must parse");
 
     assert_eq!(lut_strict.size, lut_meta.size);
     assert_eq!(lut_strict.rgb, lut_meta.rgb);
@@ -314,32 +302,33 @@ fn parse_fixture_minimal_n2_metadata_matches_strict_fixture_rgb() {
 
 #[test]
 fn parse_accepts_leading_utf8_bom() {
-    let inner = "LUT_3D_SIZE 2\n\
-             0 0 0\n1 0 0\n0 1 0\n1 1 0\n\
-             0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let inner = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 \
+                 1\n1 1 1\n";
     let with_bom = format!("{}{}", '\u{FEFF}', inner);
 
     let lut_plain = parse_adobe_cube_str(inner).expect("plain LUT must parse");
-    let lut_bom = parse_adobe_cube_str(&with_bom).expect("BOM-prefixed LUT must parse");
+    let lut_bom =
+        parse_adobe_cube_str(&with_bom).expect("BOM-prefixed LUT must parse");
 
     assert_eq!(lut_plain, lut_bom);
 }
 
 #[test]
 fn parse_bytes_rejects_invalid_utf8() {
-    let err = parse_adobe_cube_bytes(&[0xff, 0xfe, 0xfd]).expect_err("invalid UTF-8");
+    let err =
+        parse_adobe_cube_bytes(&[0xff, 0xfe, 0xfd]).expect_err("invalid UTF-8");
     assert_eq!(err, LutCubeParseError::InvalidUtf8);
 }
 
 #[test]
 fn parse_bytes_accepts_utf8_bom_and_matches_str_parse() {
-    let inner = "LUT_3D_SIZE 2\n\
-             0 0 0\n1 0 0\n0 1 0\n1 1 0\n\
-             0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let inner = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 \
+                 1\n1 1 1\n";
     let mut bytes = vec![0xef_u8, 0xbb, 0xbf];
     bytes.extend_from_slice(inner.as_bytes());
 
-    let lut_bytes = parse_adobe_cube_bytes(&bytes).expect("UTF-8 BOM bytes must parse");
+    let lut_bytes =
+        parse_adobe_cube_bytes(&bytes).expect("UTF-8 BOM bytes must parse");
     let lut_str = parse_adobe_cube_str(inner).expect("plain string must parse");
 
     assert_eq!(lut_bytes, lut_str);

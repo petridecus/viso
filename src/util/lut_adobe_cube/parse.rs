@@ -1,13 +1,17 @@
-//! Parse `.cube` text line by line. Public API: [`parse_adobe_cube_str`], [`parse_adobe_cube_bytes`].
+//! Parse `.cube` text line by line. Public API: [`parse_adobe_cube_str`],
+//! [`parse_adobe_cube_bytes`].
 
 use super::{expected_lut_sample_count, LutCubeParseError, LutRgbF32Cube3d};
 
-/// Parse a UTF-8 `.cube` string. Skips blanks, `#` comments, `TITLE` / `DOMAIN_*`, strips a
-/// leading BOM, then expects `LUT_3D_SIZE N` and `N³` RGB lines (three finite floats each).
+/// Parse a UTF-8 `.cube` string. Skips blanks, `#` comments, `TITLE` /
+/// `DOMAIN_*`, strips a leading BOM, then expects `LUT_3D_SIZE N` and `N³` RGB
+/// lines (three finite floats each).
 ///
 /// Errors: see [`LutCubeParseError`].
 #[allow(dead_code)] // Not called from production code yet.
-pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
+pub(crate) fn parse_adobe_cube_str(
+    input: &str,
+) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
     let input = input.strip_prefix('\u{FEFF}').unwrap_or(input);
 
     let mut lut_size: Option<u32> = None;
@@ -42,8 +46,9 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
                 lut_size = Some(n);
             }
             Some(lut_sz) => {
-                let expected_len = expected_lut_sample_count(lut_sz)
-                    .ok_or(LutCubeParseError::InvalidLutSize { size: lut_sz })?;
+                let expected_len = expected_lut_sample_count(lut_sz).ok_or(
+                    LutCubeParseError::InvalidLutSize { size: lut_sz },
+                )?;
 
                 if rgb.len() == expected_len {
                     return Err(LutCubeParseError::WrongRgbCount {
@@ -65,24 +70,26 @@ pub(crate) fn parse_adobe_cube_str(input: &str) -> Result<LutRgbF32Cube3d, LutCu
     LutRgbF32Cube3d::new(lut_sz, rgb)
 }
 
-/// UTF-8 bytes → [`parse_adobe_cube_str`]. Wrong encoding → [`LutCubeParseError::InvalidUtf8`].
+/// UTF-8 bytes → [`parse_adobe_cube_str`]. Wrong encoding →
+/// [`LutCubeParseError::InvalidUtf8`].
 #[allow(dead_code)] // Not called from production code yet.
-pub(crate) fn parse_adobe_cube_bytes(input: &[u8]) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
-    let text = std::str::from_utf8(input).map_err(|_| LutCubeParseError::InvalidUtf8)?;
+pub(crate) fn parse_adobe_cube_bytes(
+    input: &[u8],
+) -> Result<LutRgbF32Cube3d, LutCubeParseError> {
+    let text = std::str::from_utf8(input)
+        .map_err(|_| LutCubeParseError::InvalidUtf8)?;
     parse_adobe_cube_str(text)
 }
 
-/// Strip `#` comments; line must already be [`str::trim`]'d. [`None`] means skip the line.
+/// Strip `#` comments; line must already be [`str::trim`]'d. [`None`] means
+/// skip the line.
 fn meaningful_cube_line(trimmed_physical_line: &str) -> Option<&str> {
     if trimmed_physical_line.starts_with('#') {
         return None;
     }
 
-    let before_hash = trimmed_physical_line
-        .split('#')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let before_hash =
+        trimmed_physical_line.split('#').next().unwrap_or("").trim();
 
     (!before_hash.is_empty()).then_some(before_hash)
 }
@@ -98,7 +105,10 @@ fn is_adobe_cube_metadata_line(meaningful_line: &str) -> bool {
 }
 
 /// Expect exactly `LUT_3D_SIZE N`.
-fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseError> {
+fn parse_lut_size_line(
+    line: &str,
+    line_no: usize,
+) -> Result<u32, LutCubeParseError> {
     let mut tokens = line.split_whitespace();
     let Some(head) = tokens.next() else {
         return Err(LutCubeParseError::InvalidLutSizeLine { line: line_no });
@@ -122,7 +132,10 @@ fn parse_lut_size_line(line: &str, line_no: usize) -> Result<u32, LutCubeParseEr
 }
 
 /// One float; reject NaN and infinity.
-fn parse_finite_f32(token: &str, line_no: usize) -> Result<f32, LutCubeParseError> {
+fn parse_finite_f32(
+    token: &str,
+    line_no: usize,
+) -> Result<f32, LutCubeParseError> {
     let value = token
         .parse::<f32>()
         .map_err(|_| LutCubeParseError::MalformedRgbLine { line: line_no })?;
@@ -135,7 +148,10 @@ fn parse_finite_f32(token: &str, line_no: usize) -> Result<f32, LutCubeParseErro
 }
 
 /// One RGB sample: three floats, no extra tokens.
-fn parse_rgb_triplet_line(line: &str, line_no: usize) -> Result<[f32; 3], LutCubeParseError> {
+fn parse_rgb_triplet_line(
+    line: &str,
+    line_no: usize,
+) -> Result<[f32; 3], LutCubeParseError> {
     let mut tokens = line.split_whitespace();
     let r_s = tokens
         .next()
