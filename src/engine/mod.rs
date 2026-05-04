@@ -19,6 +19,7 @@ mod sync;
 pub(crate) mod trajectory;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use annotations::EntityAnnotations;
 pub(crate) use bootstrap::FrameTiming;
@@ -389,7 +390,7 @@ impl VisoEngine {
     /// Push a new [`Assembly`] snapshot from the host. The next
     /// `update` (or `sync_now`) tick will rederive viso-side state
     /// and submit mesh generation.
-    pub fn set_assembly(&mut self, assembly: std::sync::Arc<Assembly>) {
+    pub fn set_assembly(&mut self, assembly: Arc<Assembly>) {
         self.scene.pending = Some(assembly);
     }
 
@@ -399,7 +400,7 @@ impl VisoEngine {
     /// camera pose, etc.) operate against synced state. Use this for
     /// puzzle/file reloads — `set_assembly` alone leaves stale state
     /// from the previous topology around until the next `update`.
-    pub fn replace_assembly(&mut self, assembly: std::sync::Arc<Assembly>) {
+    pub fn replace_assembly(&mut self, assembly: Arc<Assembly>) {
         self.reset_scene_local_state();
         self.scene.pending = Some(assembly);
         self.sync_now();
@@ -416,7 +417,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
-            .map(|e| e.as_ref())
+            .map(Arc::as_ref)
             .collect();
         camera::fit::combined_bounding_sphere(visible).map(|(c, _)| c)
     }
@@ -434,7 +435,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
-            .map(|e| e.as_ref())
+            .map(Arc::as_ref)
             .collect();
         if let Some((centroid, radius)) =
             camera::fit::combined_bounding_sphere(visible)
@@ -514,7 +515,7 @@ impl VisoEngine {
             .entities()
             .iter()
             .filter(|e| self.is_entity_visible(e.id().raw()))
-            .map(|e| e.as_ref())
+            .map(Arc::as_ref)
             .collect();
         camera::fit::fit_to_entities(&mut self.camera_controller, visible);
     }

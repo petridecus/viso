@@ -34,6 +34,27 @@ fn main() {
         let mut cmd = std::process::Command::new("trunk");
         let _ = cmd.arg("build").current_dir(ui_dir);
 
+        // viso-ui is a workspace member, so a naive `cargo build`
+        // from build.rs walks up to viso's workspace root and tries
+        // to lock viso's target dir — which the parent cargo already
+        // holds, causing a deadlock. Strip cargo/rustc env vars and
+        // point the inner cargo at a dedicated target dir so it
+        // doesn't fight the parent for the workspace lock.
+        for (key, _) in std::env::vars() {
+            if key.starts_with("CARGO") || key.starts_with("RUSTC") {
+                let _ = cmd.env_remove(&key);
+            }
+        }
+        let _ = cmd.env_remove("RUSTFLAGS");
+        let wasm_target_dir = std::env::var("OUT_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .map_or_else(
+                || PathBuf::from("target").join("viso-ui-wasm"),
+                |out| out.join("viso-ui-wasm"),
+            );
+        let _ = cmd.env("CARGO_TARGET_DIR", &wasm_target_dir);
+
         // Match the cargo profile: use --release for release builds.
         if std::env::var("PROFILE").as_deref() == Ok("release") {
             let _ = cmd.arg("--release");

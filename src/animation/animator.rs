@@ -71,7 +71,7 @@ impl StructureAnimator {
             // transition's phases (sidechain-visibility timing) still
             // play through. Use `target` as both endpoints so per-frame
             // position writes are no-ops.
-            start = target.clone();
+            start.clone_from(&target);
         } else if start == target {
             let _ = self.runners.remove(&entity_id);
             return;

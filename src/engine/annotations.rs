@@ -510,9 +510,9 @@ impl VisoEngine {
 
     /// Set a persistent animation-behavior override for an entity.
     /// Survives across syncs until [`Self::clear_entity_behavior`] is
-    /// called. The override is consulted by `queue_entity_transition`
-    /// callers via [`Self::entity_behavior`] when deciding what
-    /// transition to actually stage.
+    /// called. The override is consulted internally by
+    /// `queue_entity_transition` when deciding what transition to
+    /// actually stage.
     pub fn set_entity_behavior(
         &mut self,
         entity_id: EntityId,
@@ -540,10 +540,7 @@ impl VisoEngine {
     /// Hosts typically pair this with `set_assembly`: stage the
     /// transition first, then push the new snapshot.
     pub fn queue_entity_transition(&mut self, id: u32, transition: Transition) {
-        let effective = self
-            .entity_behavior(id)
-            .cloned()
-            .unwrap_or(transition);
+        let effective = self.entity_behavior(id).cloned().unwrap_or(transition);
         self.animation.queue_transition(id, effective);
     }
 
@@ -557,10 +554,8 @@ impl VisoEngine {
     ) {
         let mut resolved = HashMap::with_capacity(transitions.len());
         for (id, fallback) in transitions {
-            let effective = self
-                .entity_behavior(id)
-                .cloned()
-                .unwrap_or(fallback);
+            let effective =
+                self.entity_behavior(id).cloned().unwrap_or(fallback);
             let _ = resolved.insert(id, effective);
         }
         self.animation.set_pending_transitions(resolved);

@@ -1,5 +1,7 @@
 //! Engine methods for loading and managing electron density maps.
 
+use std::sync::Arc;
+
 use molex::entity::surface::Density;
 
 use super::annotations::EntityAnnotations;
@@ -54,7 +56,7 @@ impl DensityScene<'_> {
             .entities()
             .iter()
             .filter(|e| self.annotations.is_visible(e.id()))
-            .map(|e| e.as_ref());
+            .map(Arc::as_ref);
         if let Some((centroid, radius)) = combined_bounding_sphere(visible) {
             log::info!(
                 "protein bounding sphere: center=[{:.1},{:.1},{:.1}], \

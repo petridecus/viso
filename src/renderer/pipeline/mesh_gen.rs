@@ -297,8 +297,8 @@ pub(super) struct EntityMetaSnapshot {
     pub drawing_mode: DrawingMode,
     /// Per-residue colors for this entity (used by Backbone-mode
     /// sidechain coloring during animation frames). Mirrors
-    /// [`super::FullRebuildEntity::per_residue_colors`] at the last
-    /// rebuild.
+    /// [`super::prepared::FullRebuildEntity::per_residue_colors`] at the
+    /// last rebuild.
     pub per_residue_colors: Option<Vec<[f32; 3]>>,
     /// Resolved sidechain color mode for this entity (per-entity
     /// appearance overrides applied).
@@ -467,7 +467,7 @@ fn generate_animation_sidechains(
         };
         let backbone_colors = (meta.sidechain_color_mode
             == SidechainColorMode::Backbone)
-            .then(|| meta.per_residue_colors.as_deref())
+            .then_some(meta.per_residue_colors.as_deref())
             .flatten();
         let insts = SidechainRenderer::generate_instances(
             &view,

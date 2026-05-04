@@ -394,7 +394,8 @@ impl CameraController {
         }
         let back = offset / dist;
         let mut up = up.normalize_or_zero();
-        if up.length_squared() < 1e-10 || up.cross(back).length_squared() < 1e-10
+        if up.length_squared() < 1e-10
+            || up.cross(back).length_squared() < 1e-10
         {
             // Fallback when up is zero or parallel to back.
             up = if back.cross(Vec3::Y).length_squared() > 1e-6 {
@@ -409,11 +410,8 @@ impl CameraController {
 
         self.focus_point = center;
         self.distance = dist;
-        self.orientation = Quat::from_mat3(&glam::Mat3::from_cols(
-            right,
-            up_corrected,
-            back,
-        ));
+        self.orientation =
+            Quat::from_mat3(&glam::Mat3::from_cols(right, up_corrected, back));
 
         self.target_focus_point = None;
         self.target_distance = None;

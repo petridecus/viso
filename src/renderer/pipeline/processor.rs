@@ -325,18 +325,15 @@ impl MeshCache {
         self.anim_cache.topologies.clear();
         self.anim_cache.entity_meta.clear();
         self.anim_cache.entity_order.clear();
-        self.anim_cache.sidechain_palette = (
-            colors.hydrophobic_sidechain,
-            colors.hydrophilic_sidechain,
-        );
+        self.anim_cache.sidechain_palette =
+            (colors.hydrophobic_sidechain, colors.hydrophilic_sidechain);
         for e in entities {
             let _ = self
                 .anim_cache
                 .topologies
                 .insert(e.id, Arc::clone(&e.topology));
-            let entity_display = entity_options
-                .get(&e.id.raw())
-                .map_or(display, |(d, _)| d);
+            let entity_display =
+                entity_options.get(&e.id.raw()).map_or(display, |(d, _)| d);
             let _ = self.anim_cache.entity_meta.insert(
                 e.id,
                 EntityMetaSnapshot {

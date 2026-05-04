@@ -341,8 +341,8 @@ impl VisoApp {
         let mut entity_transitions: HashMap<u32, Transition> = HashMap::new();
         for entity in &entities {
             let raw_id = entity.id().raw();
-            let _ = entity_transitions
-                .insert(raw_id, default_transition.clone());
+            let _ =
+                entity_transitions.insert(raw_id, default_transition.clone());
         }
         self.assembly = Assembly::new(entities);
 

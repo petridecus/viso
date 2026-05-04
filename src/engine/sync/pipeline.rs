@@ -133,7 +133,7 @@ impl SyncPipeline {
         );
     }
 
-    /// Drain any pending [`Assembly`](molex::Assembly) snapshot and
+    /// Drain any pending [`Assembly`] snapshot and
     /// immediately apply it. Used by [`Self::sync_now`] when the host
     /// has just pushed a new snapshot via
     /// [`crate::VisoEngine::set_assembly`] that must be reflected
