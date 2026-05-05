@@ -22,6 +22,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: "signatures/version1/cla.json"
-          path-to-document: "https://github.com/petridecus/viso/blob/main/CLA.md"
-          branch: "main"
+          path-to-document: "https://github.com/foldit-org/viso/blob/main/CLA.md"
+          branch: "dev"
           allowlist: "bot*"
