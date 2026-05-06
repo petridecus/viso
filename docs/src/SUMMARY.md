@@ -23,7 +23,6 @@
 - [GPU Picking and Selection](./deep-dives/picking-and-selection.md)
 - [Rendering Pipeline](./deep-dives/rendering-pipeline.md)
 - [Background Scene Processing](./deep-dives/background-processing.md)
-- [LUT — Adobe `.cube` Parser](./deep-dives/lut-adobe-cube-parser.md)
 
 # Integration Guide
 
