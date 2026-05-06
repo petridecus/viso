@@ -1,5 +1,7 @@
-//! In-memory 3D LUT buffer ([`LutRgbF32Cube3d`]) and
-//! [`expected_lut_sample_count`].
+//! In-memory 3D LUT buffer ([`LutRgbF32Cube3d`]), lattice indexing for GPU
+//! upload, and [`expected_lut_sample_count`].
+
+use bytemuck::bytes_of;
 
 use super::LutCubeParseError;
 
@@ -14,7 +16,37 @@ pub(crate) struct LutRgbF32Cube3d {
     pub(crate) rgb: Vec<[f32; 3]>,
 }
 
-#[allow(dead_code)] // Use by GPU path once 3D LUT textures are connected.
+/// Maps Adobe `.cube` sample index `k` to 3D lattice coordinates `(x, y, z)`
+/// used as texel indices for a `wgpu::TextureDimension::D3` upload.
+///
+/// Adobe ASCII order: input **R** varies fastest, then **G**, then **B**:
+///
+/// - `x = k mod N` — input R
+/// - `y = (k / N) mod N` — input G
+/// - `z = k / N²` — input B
+///
+/// `rgb[k]` is the output RGB triplet at lattice vertex `(x, y, z)`.
+#[cfg_attr(not(test), allow(dead_code))]
+#[must_use]
+pub(crate) fn lattice_xyz_for_sample_index(
+    size: u32,
+    k: usize,
+) -> Option<(u32, u32, u32)> {
+    let n = usize::try_from(size).ok()?;
+    let n3 = n.checked_mul(n)?.checked_mul(n)?;
+    if k >= n3 {
+        return None;
+    }
+    let x = k % n;
+    let y = (k / n) % n;
+    let z = k / (n * n);
+    Some((
+        u32::try_from(x).ok()?,
+        u32::try_from(y).ok()?,
+        u32::try_from(z).ok()?,
+    ))
+}
+
 impl LutRgbF32Cube3d {
     /// Maximum supported 'LUT_3D_SIZE' value ('N').
     pub(crate) const MAX_SIZE: u32 = 256;
@@ -44,11 +76,34 @@ impl LutRgbF32Cube3d {
 
         Ok(Self { size, rgb })
     }
+
+    /// RGBA texels (`A = 1.0`) in **volume upload order**: index `k` matches
+    /// `.cube` file sample order and [`lattice_xyz_for_sample_index`].
+    ///
+    /// Suitable for `TextureFormat::Rgba32Float` and PR2 `queue.write_texture`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[must_use]
+    pub(crate) fn rgba_f32_volume_texels(&self) -> Vec<[f32; 4]> {
+        self.rgb.iter().map(|c| [c[0], c[1], c[2], 1.0]).collect()
+    }
+
+    /// Raw bytes for a full `N×N×N` RGBA32F volume: `16 × N³` bytes,
+    /// native-endian `f32`, order identical to
+    /// [`Self::rgba_f32_volume_texels`].
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[must_use]
+    pub(crate) fn rgba_bytes_volume_order(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.rgb.len().saturating_mul(16));
+        for c in &self.rgb {
+            let px: [f32; 4] = [c[0], c[1], c[2], 1.0];
+            out.extend_from_slice(bytes_of(&px));
+        }
+        out
+    }
 }
 
 /// Returns 'size³' as [`usize`] if fits; otherwise [`None`].
 #[must_use]
-#[allow(dead_code)] // Used by the parser and `LutRgbF32Cube3d::new`; make public for tests.
 pub(crate) fn expected_lut_sample_count(size: u32) -> Option<usize> {
     let n = usize::try_from(size).ok()?;
     n.checked_mul(n)?.checked_mul(n)
