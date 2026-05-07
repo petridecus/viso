@@ -96,15 +96,7 @@ impl PanelController {
                 self.apply_layout(window);
             }
             Err(e) => {
-                if matches!(e, wry::Error::MessageSender) {
-                    // `create_webview` uses MessageSender as a sentinel when
-                    // the embedded viso-ui bundle is
-                    // missing. This is non-fatal: we
-                    // still run the viewer without the GUI panel.
-                    log::warn!("GUI panel disabled (viso-ui bundle missing)");
-                } else {
-                    log::error!("Failed to create webview: {e}");
-                }
+                log::error!("Failed to create webview: {e}");
             }
         }
     }
