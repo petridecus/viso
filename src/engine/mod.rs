@@ -31,11 +31,10 @@ use scene::Scene;
 use web_time::Instant;
 
 use crate::animation::AnimationState;
-use crate::camera;
 use crate::camera::controller::CameraController;
 use crate::options::VisoOptions;
 use crate::renderer::GpuPipeline;
-use crate::VisoError;
+use crate::{camera, VisoError};
 
 /// Stored constraint specifications (bands + pull), resolved to world-space
 /// each frame.
@@ -220,9 +219,11 @@ impl VisoEngine {
         }
     }
 
-    /// Upload or clear an Adobe ASCII `.cube` 3D LUT on the GPU (`Rgba16Float`).
+    /// Upload or clear an Adobe ASCII `.cube` 3D LUT on the GPU
+    /// (`Rgba16Float`).
     ///
-    /// Rendering is unchanged until post-process shaders sample the texture (PR3).
+    /// Rendering is unchanged until post-process shaders sample the texture
+    /// (PR3).
     ///
     /// # Errors
     ///

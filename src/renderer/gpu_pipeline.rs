@@ -64,7 +64,8 @@ pub(crate) struct GpuPipeline {
     /// maps, entity surfaces, cavities). The matching sender lives on
     /// [`crate::engine::surface_regen::SurfaceRegen`].
     pub(crate) density_rx: mpsc::Receiver<(Vec<IsosurfaceVertex>, Vec<u32>)>,
-    /// Optional Adobe `.cube` color LUT uploaded as `Rgba16Float` (PR3+ samples).
+    /// Optional Adobe `.cube` color LUT uploaded as `Rgba16Float` (PR3+
+    /// samples).
     #[allow(dead_code)]
     // Read when post-process binds the LUT texture (PR3).
     pub(crate) adobe_cube_lut: Option<AdobeCubeLutTexture>,

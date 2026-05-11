@@ -10,7 +10,8 @@
 //! - [`VisoOptions`](options::VisoOptions) — runtime configuration (display,
 //!   lighting, camera, colors)
 //! - [`VisoError`] — error type
-//! - [`LutRgbCube3d`] — decoded Adobe `.cube` LUT (see [`parse_adobe_cube_str`])
+//! - [`LutRgbCube3d`] — decoded Adobe `.cube` LUT (see
+//!   [`parse_adobe_cube_str`])
 //! - [`InputProcessor`] — optional convenience for translating raw input events
 //!   into [`VisoCommand`]s
 //!
@@ -60,10 +61,6 @@ pub use engine::VisoEngine;
 pub use error::VisoError;
 pub use gpu::render_context::RenderContext;
 pub use gpu::texture::RenderTarget;
-pub use util::lut_adobe_cube::{
-    expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str,
-    LutCubeParseError, LutRgbCube3d,
-};
 // Input (optional convenience)
 pub use input::{InputEvent, InputProcessor, KeyBindings, MouseButton};
 pub use molex;
@@ -71,5 +68,9 @@ pub use molex;
 pub use options::{DisplayOverrides, DrawingMode, HelixStyle, SheetStyle};
 // Picking output
 pub use renderer::picking::PickTarget;
+pub use util::lut_adobe_cube::{
+    expected_lut_sample_count, parse_adobe_cube_bytes, parse_adobe_cube_str,
+    LutCubeParseError, LutRgbCube3d,
+};
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
