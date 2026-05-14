@@ -9,7 +9,7 @@ description = "GPU-accelerated 3D protein visualization engine"
 authors = ["Andreas Petrides <apetrides32@gmail.com>"]
 license-file = "LICENSE.md"
 publish = false
-repository = "https://github.com/petridecus/viso"
+repository = "https://github.com/foldit-org/viso"
 readme = "README.md"
 keywords = ["protein", "visualization", "molecular", "wgpu", "3d"]
 categories = ["graphics", "rendering", "science", "visualization"]
@@ -87,7 +87,7 @@ half = "2"
 naga_oil = "0.19"
 naga = "26"
 
-molex = "0.3.1"
+molex = "0.4.2"
 
 # Cross-platform Instant (delegates to performance.now() on WASM)
 web-time = "1"

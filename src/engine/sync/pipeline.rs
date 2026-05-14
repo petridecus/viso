@@ -357,8 +357,7 @@ impl SyncPipeline {
     }
 
     /// Flatten per-entity backbone / NA chains in assembly order. Only
-    /// Cartoon-mode protein entities contribute to the flat backbone
-    /// (matching pre-migration behaviour).
+    /// Cartoon-mode protein entities contribute to the flat backbone.
     fn flat_scene_chains(
         scene: &Scene,
         annotations: &EntityAnnotations,
