@@ -4,44 +4,76 @@
 use glam::Vec3;
 use molex::SSType;
 
+use super::arrows::apply_sheet_arrows;
+use super::curve::{cubic_bspline, sliding_window_centroids};
+use super::index::{extrude_and_index, MeshParams};
 use super::path::{
     compute_sheet_geometry, interpolate_per_residue_normals, SheetGeometry,
 };
 use super::profile::{
-    cap_offset, extrude_cross_section, interpolate_profiles,
-    resolve_na_profile, resolve_profile, CrossSectionProfile,
+    interpolate_profiles, resolve_na_profile, resolve_profile,
+    CrossSectionProfile,
 };
 use super::spline::{
-    compute_helix_axis_points, cubic_bspline, dual_hermite_spline,
-    frenet_frames, helix_aware_spline, rmf_frames, SplinePoint, SplineTrace,
+    dual_hermite_spline, frenet_frames, helix_aware_spline, rmf_frames,
+    SplinePoint, SplineTrace,
 };
-use super::{BackboneMeshOutput, BackboneVertex};
-use crate::options::GeometryOptions;
+use super::BackboneMeshOutput;
+use crate::options::{ChainLod, GeometryOptions};
 
 /// Per-chain index range and bounding sphere for frustum culling.
+///
+/// The tube/ribbon index spans are half-open `Range<u32>` into the
+/// shared index buffer. The range fields are private so the only
+/// construction path is [`ChainRange::new`], which asserts the two
+/// invariants every consumer relies on: `start <= end` and triangle
+/// alignment (`% 3 == 0`, since indices come in triples).
 #[derive(Clone, Debug)]
 pub(crate) struct ChainRange {
-    pub(crate) tube_index_start: u32,
-    pub(crate) tube_index_end: u32,
-    pub(crate) ribbon_index_start: u32,
-    pub(crate) ribbon_index_end: u32,
+    tube: std::ops::Range<u32>,
+    ribbon: std::ops::Range<u32>,
     pub(crate) bounding_center: Vec3,
     pub(crate) bounding_radius: f32,
 }
 
-/// Mesh generation parameters that always travel together.
-struct MeshParams {
-    base_vertex: u32,
-    cross_section_verts: usize,
-    segments_per_residue: usize,
-}
+impl ChainRange {
+    /// Build a chain range, asserting the index-span invariants.
+    pub(crate) fn new(
+        tube: std::ops::Range<u32>,
+        ribbon: std::ops::Range<u32>,
+        bounding_center: Vec3,
+        bounding_radius: f32,
+    ) -> Self {
+        debug_assert!(
+            tube.start <= tube.end && ribbon.start <= ribbon.end,
+            "ChainRange index span: start must not exceed end (tube {tube:?}, \
+             ribbon {ribbon:?})",
+        );
+        debug_assert!(
+            tube.start.is_multiple_of(3)
+                && tube.end.is_multiple_of(3)
+                && ribbon.start.is_multiple_of(3)
+                && ribbon.end.is_multiple_of(3),
+            "ChainRange index span must be triangle-aligned (multiple of 3): \
+             tube {tube:?}, ribbon {ribbon:?}",
+        );
+        Self {
+            tube,
+            ribbon,
+            bounding_center,
+            bounding_radius,
+        }
+    }
 
-/// Mutable mesh generation context: parameters + output buffers.
-struct MeshWriter<'a> {
-    params: &'a MeshParams,
-    vertices: &'a mut Vec<BackboneVertex>,
-    tube_indices: &'a mut Vec<u32>,
-    ribbon_indices: &'a mut Vec<u32>,
+    /// Half-open index span for the tube (round cross-section) pass.
+    pub(crate) fn tube(&self) -> std::ops::Range<u32> {
+        self.tube.clone()
+    }
+
+    /// Half-open index span for the ribbon (flat cross-section) pass.
+    pub(crate) fn ribbon(&self) -> std::ops::Range<u32> {
+        self.ribbon.clone()
+    }
 }
 
 /// Default nucleic acid backbone color (light blue-violet).
@@ -49,23 +81,24 @@ const NA_COLOR: [f32; 3] = [0.45, 0.55, 0.85];
 
 /// Generate unified backbone mesh from protein and nucleic acid chains.
 pub(crate) fn generate_mesh_colored(
-    chains: &super::ChainPair,
+    protein: &[crate::renderer::entity_topology::ProteinBackboneChain],
+    na: &[crate::renderer::entity_topology::NaBackboneChain],
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
-    per_chain_lod: Option<&[(usize, usize)]>,
+    per_chain_lod: Option<&[ChainLod]>,
     na_residue_colors: Option<&[[f32; 3]]>,
 ) -> BackboneMeshOutput {
     let (mut out, global_residue_idx) = process_protein_chains(
-        chains.protein,
+        protein,
         ss_override,
         per_residue_colors,
         geo,
         per_chain_lod,
     );
-    let na_lod = per_chain_lod.and_then(|l| l.get(chains.protein.len()..));
+    let na_lod = per_chain_lod.and_then(|l| l.get(protein.len()..));
     process_na_chains(
-        chains.na,
+        na,
         geo,
         na_lod,
         &mut out,
@@ -81,7 +114,7 @@ fn process_protein_chains(
     ss_override: Option<&[SSType]>,
     per_residue_colors: Option<&[[f32; 3]]>,
     geo: &GeometryOptions,
-    per_chain_lod: Option<&[(usize, usize)]>,
+    per_chain_lod: Option<&[ChainLod]>,
 ) -> (BackboneMeshOutput, u32) {
     let mut out = BackboneMeshOutput::default();
     let mut global_residue_idx: u32 = 0;
@@ -101,9 +134,9 @@ fn process_protein_chains(
             (end.saturating_sub(start) == n_residues).then(|| &o[start..end])
         });
         // Engine sync always installs per-entity SS via
-        // `Assembly::ss_types`, so every protein chain with ≥ 2 CA atoms
+        // `Assembly::ss_types`, so every protein chain with >= 2 CA atoms
         // has a matching slice. If that invariant is ever violated the
-        // chain renders as coil — it doesn't recompute DSSP here.
+        // chain renders as coil -- it doesn't recompute DSSP here.
         let ss_types = chain_slice.map_or_else(
             || vec![SSType::Coil; n_residues],
             molex::analysis::merge_short_segments,
@@ -129,16 +162,31 @@ fn process_protein_chains(
             apply_sheet_arrows(&ss_types, &mut profiles, geo);
         }
 
-        let (chain_spr, chain_csv) = per_chain_lod
+        let lod = per_chain_lod
             .and_then(|l| l.get(chain_idx).copied())
-            .unwrap_or((spr, csv));
+            .unwrap_or(ChainLod {
+                segments_per_residue: spr,
+                cross_section_verts: csv,
+            });
 
         let params = MeshParams {
             base_vertex: out.vertices.len() as u32,
-            cross_section_verts: chain_csv,
-            segments_per_residue: chain_spr,
+            cross_section_verts: lod.cross_section_verts,
+            segments_per_residue: lod.segments_per_residue,
         };
-        let (center, radius) = bounding_sphere(atoms.ca());
+        // Widest the extruded ribbon/tube can sit off the CA spline:
+        // the largest configured half-width/thickness, scaled by the
+        // x1.5 sheet-arrow shoulder, plus Catmull-Rom overshoot.
+        let max_extent = geo
+            .sheet_width
+            .max(geo.helix_width)
+            .max(geo.coil_width)
+            .max(geo.sheet_thickness)
+            .max(geo.helix_thickness)
+            .max(geo.coil_thickness)
+            * 1.5;
+        let (center, radius) =
+            bounding_sphere(atoms.ca(), max_extent + SPLINE_OVERSHOOT_SLACK);
 
         let chain_mesh = generate_protein_chain_mesh(
             atoms,
@@ -156,9 +204,9 @@ fn process_protein_chains(
 }
 
 fn process_na_chains(
-    chains: &[Vec<Vec3>],
+    chains: &[crate::renderer::entity_topology::NaBackboneChain],
     geo: &GeometryOptions,
-    per_chain_lod: Option<&[(usize, usize)]>,
+    per_chain_lod: Option<&[ChainLod]>,
     out: &mut BackboneMeshOutput,
     mut global_residue_idx: u32,
     na_residue_colors: Option<&[[f32; 3]]>,
@@ -170,13 +218,14 @@ fn process_na_chains(
     let mut na_residue_offset: usize = 0;
 
     for (na_idx, chain) in chains.iter().enumerate() {
-        if chain.len() < 2 {
-            global_residue_idx += chain.len() as u32;
-            na_residue_offset += chain.len();
+        let points = chain.p();
+        if points.len() < 2 {
+            global_residue_idx += points.len() as u32;
+            na_residue_offset += points.len();
             continue;
         }
 
-        let n_residues = chain.len();
+        let n_residues = points.len();
         let profiles: Vec<CrossSectionProfile> = (0..n_residues)
             .map(|i| {
                 let color = na_residue_colors
@@ -186,17 +235,22 @@ fn process_na_chains(
             })
             .collect();
 
-        let (chain_spr, chain_csv) = per_chain_lod
+        let lod = per_chain_lod
             .and_then(|l| l.get(na_idx).copied())
-            .unwrap_or((spr, csv));
+            .unwrap_or(ChainLod {
+                segments_per_residue: spr,
+                cross_section_verts: csv,
+            });
 
         let params = MeshParams {
             base_vertex: out.vertices.len() as u32,
-            cross_section_verts: chain_csv,
-            segments_per_residue: chain_spr,
+            cross_section_verts: lod.cross_section_verts,
+            segments_per_residue: lod.segments_per_residue,
         };
-        let (center, radius) = bounding_sphere(chain);
-        let chain_mesh = generate_na_chain_mesh(chain, &profiles, &params);
+        let na_extent = geo.na_width.max(geo.na_thickness);
+        let (center, radius) =
+            bounding_sphere(points, na_extent + SPLINE_OVERSHOOT_SLACK);
+        let chain_mesh = generate_na_chain_mesh(points, &profiles, &params);
         out.push_chain(chain_mesh, center, radius);
 
         global_residue_idx += n_residues as u32;
@@ -204,8 +258,20 @@ fn process_na_chains(
     }
 }
 
-/// Compute bounding sphere (centroid + max distance) from a set of positions.
-fn bounding_sphere(positions: &[Vec3]) -> (Vec3, f32) {
+/// Catmull-Rom interpolation can bow outside the CA control hull at
+/// sharp turns; this bounds that overshoot for the culling sphere so a
+/// chain isn't culled while its extruded curve is still on-screen.
+const SPLINE_OVERSHOOT_SLACK: f32 = 1.0;
+
+/// Compute bounding sphere (centroid + max distance) from a set of
+/// positions, padded by `slack`.
+///
+/// The sphere is fit to the raw control points (CA / P atoms), but the
+/// drawn mesh is an extruded tube/ribbon that extends past them by up to
+/// the cross-section half-extent plus spline overshoot. `slack` widens
+/// the radius to cover that, eliminating false-negative frustum culls at
+/// sharp turns. Over-padding only makes culling more conservative.
+fn bounding_sphere(positions: &[Vec3], slack: f32) -> (Vec3, f32) {
     if positions.is_empty() {
         return (Vec3::ZERO, 0.0);
     }
@@ -215,83 +281,12 @@ fn bounding_sphere(positions: &[Vec3]) -> (Vec3, f32) {
         .iter()
         .map(|p| (*p - center).length())
         .fold(0.0f32, f32::max);
-    (center, radius)
+    (center, radius + slack)
 }
-
-// ==================== SHEET ARROW HEADS ====================
-
-/// Maximum number of consecutive non-sheet residues that is still
-/// treated as the interior of the same physical strand. Strands are
-/// frequently split into several Sheet runs by short classification
-/// breaks; an arrowhead belongs only at the strand's true C-terminus,
-/// not at every internal break.
-const MAX_INTERIOR_GAP: usize = 2;
-
-/// Widen and narrow the C-terminal residues of each physical β-strand to
-/// create an arrowhead at the strand→non-strand transition.
-///
-/// Short interior gaps (≤ [`MAX_INTERIOR_GAP`] non-sheet residues with
-/// sheet resuming after) are bridged so the arrowhead is placed once, at
-/// the last sheet residue of the strand:
-/// - that residue (the arrow point): width → 0.05
-/// - the preceding sheet residue (the arrow shoulder): width × 1.5
-fn apply_sheet_arrows(
-    ss_types: &[SSType],
-    profiles: &mut [CrossSectionProfile],
-    geo: &GeometryOptions,
-) {
-    let n = ss_types.len();
-    if n == 0 {
-        return;
-    }
-
-    let is_sheet = |k: usize| ss_types[k] == SSType::Sheet;
-
-    let mut i = 0;
-    while i < n {
-        if !is_sheet(i) {
-            i += 1;
-            continue;
-        }
-
-        // Walk to the physical strand's C-terminus, stepping across
-        // short interior gaps where sheet resumes within
-        // MAX_INTERIOR_GAP.
-        let strand_start = i;
-        let mut arrow_point = i;
-        i += 1;
-        loop {
-            while i < n && is_sheet(i) {
-                arrow_point = i;
-                i += 1;
-            }
-            let gap_end = (i + MAX_INTERIOR_GAP).min(n);
-            match (i..gap_end).find(|&k| is_sheet(k)) {
-                Some(k) => i = k,
-                None => break,
-            }
-        }
-
-        // Shoulder: the sheet residue immediately preceding the arrow
-        // point (skipping any interior-gap residues between them).
-        if arrow_point > strand_start {
-            let mut shoulder = arrow_point - 1;
-            while shoulder > strand_start && !is_sheet(shoulder) {
-                shoulder -= 1;
-            }
-            if is_sheet(shoulder) {
-                profiles[shoulder].width = geo.sheet_width * 1.5;
-            }
-        }
-        profiles[arrow_point].width = 0.05;
-    }
-}
-
-// ==================== PROTEIN CHAIN MESH ====================
 
 /// Generate mesh for a single protein chain (with SS detection, sheet
 /// geometry, and RMF/radial/sheet normal blending). Takes the SoA
-/// backbone-atom view directly from the topology — no interleaved
+/// backbone-atom view directly from the topology -- no interleaved
 /// stride shuffling.
 fn generate_protein_chain_mesh(
     atoms: &crate::renderer::entity_topology::ProteinBackboneChain,
@@ -320,7 +315,7 @@ fn generate_protein_chain_mesh(
 
     let tangents = compute_tangents(&spline_points);
 
-    let helix_centers = compute_helix_axis_points(atoms.ca());
+    let helix_centers = sliding_window_centroids(atoms.ca());
     let spline_helix_centers = cubic_bspline(&helix_centers, spr);
 
     let traces = build_traces(&spline_points, &tangents);
@@ -430,39 +425,6 @@ fn build_traces(spline: &[Vec3], tangents: &[Vec3]) -> Vec<SplineTrace> {
         .collect()
 }
 
-/// Extrude cross-sections and generate partitioned indices + end caps.
-fn extrude_and_index(
-    frames: &[SplinePoint],
-    profiles: &[CrossSectionProfile],
-    params: &MeshParams,
-) -> (Vec<BackboneVertex>, Vec<u32>, Vec<u32>) {
-    let csv = params.cross_section_verts;
-    let total = frames.len();
-    let mut vertices = Vec::with_capacity(total * csv);
-    for (i, frame) in frames.iter().enumerate() {
-        extrude_cross_section(frame, &profiles[i], csv, &mut vertices);
-    }
-
-    let mut tube_indices = Vec::new();
-    let mut ribbon_indices = Vec::new();
-    generate_partitioned_indices(
-        frames,
-        profiles,
-        params,
-        &mut tube_indices,
-        &mut ribbon_indices,
-    );
-    let mut writer = MeshWriter {
-        params,
-        vertices: &mut vertices,
-        tube_indices: &mut tube_indices,
-        ribbon_indices: &mut ribbon_indices,
-    };
-    generate_end_caps(frames, profiles, &mut writer);
-
-    (vertices, tube_indices, ribbon_indices)
-}
-
 // ==================== NORMAL BLENDING (protein only) ====================
 
 fn compute_final_frames(
@@ -523,9 +485,9 @@ fn compute_final_frames(
         };
 
         // Smooth blend between the two candidates via sheet_blend,
-        // which `interpolate_profiles` already ramps 0→1 across sheet
+        // which `interpolate_profiles` already ramps 0->1 across sheet
         // boundaries. Replaces the old binary `has_sheet` switch that
-        // caused one-sample ~90° flips at every sheet↔non-sheet
+        // caused one-sample ~90deg flips at every sheet<->non-sheet
         // transition.
         let normal = {
             // The broad-face normal has no geometrically meaningful sign
@@ -553,7 +515,7 @@ fn compute_final_frames(
         // The within-sample alignment above keeps the blend well-defined
         // but its branch can toggle on float noise when the RMF normal is
         // ~perpendicular to the sheet candidate, producing isolated
-        // single-sample 180° spikes. The broad-face normal sign is
+        // single-sample 180deg spikes. The broad-face normal sign is
         // geometrically free, so force each frame into the previous
         // frame's hemisphere: consecutive samples are densely spaced, so
         // a sign opposition between neighbors is always spurious.
@@ -575,123 +537,6 @@ fn compute_final_frames(
     result
 }
 
-// ==================== INDEX GENERATION ====================
-
-fn generate_partitioned_indices(
-    frames: &[SplinePoint],
-    profiles: &[CrossSectionProfile],
-    params: &MeshParams,
-    tube_indices: &mut Vec<u32>,
-    ribbon_indices: &mut Vec<u32>,
-) {
-    if frames.len() < 2 {
-        return;
-    }
-
-    let base_vertex = params.base_vertex;
-    let csv = params.cross_section_verts;
-
-    for i in 0..frames.len() - 1 {
-        let is_tube =
-            profiles[i].roundness > 0.5 && profiles[i + 1].roundness > 0.5;
-
-        let ring_a = base_vertex + (i * csv) as u32;
-        let ring_b = base_vertex + ((i + 1) * csv) as u32;
-
-        for k in 0..csv {
-            let k_next = (k + 1) % csv;
-            let v0 = ring_a + k as u32;
-            let v1 = ring_a + k_next as u32;
-            let v2 = ring_b + k as u32;
-            let v3 = ring_b + k_next as u32;
-            let target = if is_tube {
-                &mut *tube_indices
-            } else {
-                &mut *ribbon_indices
-            };
-            target.extend_from_slice(&[v0, v2, v1]);
-            target.extend_from_slice(&[v1, v2, v3]);
-        }
-    }
-}
-
-fn generate_end_caps(
-    frames: &[SplinePoint],
-    profiles: &[CrossSectionProfile],
-    w: &mut MeshWriter,
-) {
-    if frames.len() < 2 {
-        return;
-    }
-
-    emit_cap(&frames[0], &profiles[0], -frames[0].tangent, w, false);
-
-    let last = frames.len() - 1;
-    emit_cap(
-        &frames[last],
-        &profiles[last],
-        frames[last].tangent,
-        w,
-        true,
-    );
-}
-
-fn emit_cap(
-    frame: &SplinePoint,
-    profile: &CrossSectionProfile,
-    cap_normal: Vec3,
-    w: &mut MeshWriter,
-    forward: bool,
-) {
-    let is_tube = profile.roundness > 0.5;
-    let base_vertex = w.params.base_vertex;
-    let csv = w.params.cross_section_verts;
-
-    let center_idx = base_vertex + w.vertices.len() as u32;
-    w.vertices.push(BackboneVertex {
-        position: frame.pos.into(),
-        normal: cap_normal.into(),
-        color: profile.color,
-        residue_idx: profile.residue_idx,
-        center_pos: (frame.pos - cap_normal).into(),
-    });
-
-    let edge_base = base_vertex + w.vertices.len() as u32;
-    for k in 0..csv {
-        let offset = cap_offset(frame, profile, csv, k);
-        let pos = frame.pos + offset;
-        w.vertices.push(BackboneVertex {
-            position: pos.into(),
-            normal: cap_normal.into(),
-            color: profile.color,
-            residue_idx: profile.residue_idx,
-            center_pos: (pos - cap_normal).into(),
-        });
-    }
-
-    let target = if is_tube {
-        &mut *w.tube_indices
-    } else {
-        &mut *w.ribbon_indices
-    };
-    for k in 0..csv {
-        let k_next = (k + 1) % csv;
-        if forward {
-            target.extend_from_slice(&[
-                center_idx,
-                edge_base + k as u32,
-                edge_base + k_next as u32,
-            ]);
-        } else {
-            target.extend_from_slice(&[
-                center_idx,
-                edge_base + k_next as u32,
-                edge_base + k as u32,
-            ]);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,69 +551,6 @@ mod tests {
             color: [0.5, 0.5, 0.5],
             residue_idx: 0,
         }
-    }
-
-    fn sheet_profiles(
-        geo: &GeometryOptions,
-        n: usize,
-    ) -> Vec<CrossSectionProfile> {
-        (0..n)
-            .map(|_| CrossSectionProfile {
-                width: geo.sheet_width,
-                thickness: geo.sheet_thickness,
-                roundness: geo.sheet_roundness,
-                radial_blend: 0.0,
-                sheet_blend: 1.0,
-                color: [0.5, 0.5, 0.5],
-                residue_idx: 0,
-            })
-            .collect()
-    }
-
-    /// A short interior break that splits one physical strand into two
-    /// Sheet runs must not produce a mid-strand arrowhead — the narrowing
-    /// belongs only at the strand's true C-terminus.
-    #[test]
-    fn sheet_arrow_bridges_interior_gap() {
-        use molex::SSType::{Coil, Sheet};
-        let geo = GeometryOptions::default();
-        // strand spans residues 1..=7, interior gap (Coil) at residue 4.
-        let ss = [
-            Coil, Sheet, Sheet, Sheet, Coil, Sheet, Sheet, Sheet, Coil, Coil,
-            Coil,
-        ];
-        let mut profiles = sheet_profiles(&geo, ss.len());
-        apply_sheet_arrows(&ss, &mut profiles, &geo);
-
-        // Narrow point at the true end, widened shoulder just before it.
-        assert_eq!(profiles[7].width, 0.05, "arrow point at C-terminus");
-        assert_eq!(
-            profiles[6].width,
-            geo.sheet_width * 1.5,
-            "shoulder before the arrow point",
-        );
-        // The interior run-end (residue 3) must be untouched.
-        assert_eq!(
-            profiles[3].width, geo.sheet_width,
-            "no mid-strand narrowing at the interior break",
-        );
-        assert_eq!(profiles[2].width, geo.sheet_width);
-    }
-
-    /// A genuine strand separation (long non-sheet stretch) still gets an
-    /// arrowhead per strand.
-    #[test]
-    fn sheet_arrow_separates_distinct_strands() {
-        use molex::SSType::{Coil, Sheet};
-        let geo = GeometryOptions::default();
-        let ss = [Sheet, Sheet, Sheet, Coil, Coil, Coil, Sheet, Sheet, Sheet];
-        let mut profiles = sheet_profiles(&geo, ss.len());
-        apply_sheet_arrows(&ss, &mut profiles, &geo);
-
-        assert_eq!(profiles[2].width, 0.05);
-        assert_eq!(profiles[1].width, geo.sheet_width * 1.5);
-        assert_eq!(profiles[8].width, 0.05);
-        assert_eq!(profiles[7].width, geo.sheet_width * 1.5);
     }
 
     /// At a strand entry the RMF normal and the peptide-plane sheet normal
@@ -820,7 +602,7 @@ mod tests {
     /// within-sample T0-A branch toggles its flip across samples (the
     /// RMF normal is ~perpendicular to the sheet candidate), so the
     /// pre-coherence normal sequence is +Y, -Y, +Y. Only the
-    /// cross-sample step removes the single-sample 180° spike; remove it
+    /// cross-sample step removes the single-sample 180deg spike; remove it
     /// and this test goes red while every other test stays green.
     #[test]
     fn seq_coherence_fixes_isolated_sign_toggle() {
@@ -833,7 +615,7 @@ mod tests {
             })
             .collect();
         let helix_centers = vec![Vec3::ZERO; 3];
-        // Sheet normal ≈ +Y with a tiny ±x tilt: its sign vs the RMF
+        // Sheet normal ~ +Y with a tiny +/-x tilt: its sign vs the RMF
         // normal (X) alternates, toggling the T0-A flip sample to sample.
         let sheet_normals = vec![
             Vec3::new(0.02, 0.9998, 0.0),
@@ -863,8 +645,8 @@ mod tests {
     /// pointing the right way. With near-opposed candidates at
     /// `sheet_blend = 0.5`, removing the T0-A flip makes the lerp a
     /// near-zero residual that `normalize_or_zero` rescues into a wild
-    /// ~90°-off direction (≈ +Y here). The flip keeps the blended normal
-    /// aligned with the intended broad face (≈ the RMF/X hemisphere).
+    /// ~90deg-off direction (~ +Y here). The flip keeps the blended normal
+    /// aligned with the intended broad face (~ the RMF/X hemisphere).
     /// Disable the flip and this test goes red while the others stay
     /// green.
     #[test]
@@ -876,7 +658,7 @@ mod tests {
             binormal: Vec3::Y,
         }];
         let helix_centers = vec![Vec3::ZERO];
-        // ~179° from the RMF normal: lerp at 0.5 collapses without the
+        // ~179deg from the RMF normal: lerp at 0.5 collapses without the
         // flip, stays unit-length with it.
         let sheet_normals = vec![Vec3::new(-0.999_847_7, 0.017_452_4, 0.0)];
         let profiles = vec![profile_with_sheet_blend(0.5)];
@@ -893,37 +675,5 @@ mod tests {
             "blend swung off the intended broad face (normal = {:?})",
             result[0].normal,
         );
-    }
-
-    /// A non-sheet gap longer than `MAX_INTERIOR_GAP` is a real strand
-    /// break: each side is its own strand and gets its own arrowhead.
-    #[test]
-    fn sheet_arrow_splits_on_wide_gap() {
-        use molex::SSType::{Coil, Sheet};
-        let geo = GeometryOptions::default();
-        // Gap of MAX_INTERIOR_GAP + 1 Coil residues between two strands.
-        let ss = [Sheet, Sheet, Sheet, Coil, Coil, Coil, Sheet, Sheet, Sheet];
-        assert!(ss[3..6].len() > MAX_INTERIOR_GAP);
-        let mut profiles = sheet_profiles(&geo, ss.len());
-        apply_sheet_arrows(&ss, &mut profiles, &geo);
-
-        assert_eq!(profiles[2].width, 0.05);
-        assert_eq!(profiles[8].width, 0.05);
-        assert_eq!(profiles[5].width, geo.sheet_width);
-    }
-
-    /// A single-residue strand has no room for a shoulder: only the
-    /// arrow point is narrowed, and indexing must not underflow.
-    #[test]
-    fn sheet_arrow_single_residue_strand() {
-        use molex::SSType::{Coil, Sheet};
-        let geo = GeometryOptions::default();
-        let ss = [Coil, Sheet, Coil];
-        let mut profiles = sheet_profiles(&geo, ss.len());
-        apply_sheet_arrows(&ss, &mut profiles, &geo);
-
-        assert_eq!(profiles[1].width, 0.05);
-        assert_eq!(profiles[0].width, geo.sheet_width);
-        assert_eq!(profiles[2].width, geo.sheet_width);
     }
 }

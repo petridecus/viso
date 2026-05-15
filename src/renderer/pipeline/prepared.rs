@@ -10,7 +10,7 @@ use crate::options::{
     ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
 };
 use crate::renderer::entity_topology::EntityTopology;
-use crate::renderer::geometry::backbone::ChainRange;
+use crate::renderer::geometry::backbone::{ChainRange, SheetOffset};
 use crate::renderer::picking::PickMap;
 
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ pub(crate) struct BackboneMeshData {
     /// Number of backbone ribbon indices.
     pub(crate) ribbon_index_count: u32,
     /// Per-residue sheet normal offsets for sidechain adjustment.
-    pub(crate) sheet_offsets: Vec<(u32, Vec3)>,
+    pub(crate) sheet_offsets: Vec<SheetOffset>,
     /// Per-chain index ranges and bounding spheres for frustum culling.
     pub(crate) chain_ranges: Vec<ChainRange>,
 }
@@ -72,7 +72,7 @@ pub(super) struct CachedBackbone {
     pub tube_inds: Vec<u32>,
     pub ribbon_inds: Vec<u32>,
     pub vert_count: u32,
-    pub sheet_offsets: Vec<(u32, Vec3)>,
+    pub sheet_offsets: Vec<SheetOffset>,
     pub chain_ranges: Vec<ChainRange>,
 }
 
@@ -132,9 +132,9 @@ pub(crate) struct AnimationFrameBody {
     pub(crate) positions: EntityPositions,
     /// Geometry options for mesh generation.
     pub(crate) geometry: GeometryOptions,
-    /// Per-chain (spr, csv) overrides for LOD. When `Some`, each chain
-    /// uses its own detail level instead of the global geo settings.
-    pub(crate) per_chain_lod: Option<Vec<(usize, usize)>>,
+    /// Per-chain LOD overrides. When `Some`, each chain uses its own
+    /// detail level instead of the global geo settings.
+    pub(crate) per_chain_lod: Option<Vec<crate::options::ChainLod>>,
     /// Whether to regenerate sidechain capsules this frame.
     pub(crate) include_sidechains: bool,
     /// Rebuild generation this frame belongs to.

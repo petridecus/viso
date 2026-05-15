@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec3;
@@ -12,15 +11,16 @@ use super::prepared::{
 };
 use crate::engine::positions::EntityPositions;
 use crate::options::{
-    ColorOptions, DisplayOptions, DrawingMode, GeometryOptions, NaColorMode,
-    SidechainColorMode,
+    ChainLod, ColorOptions, DisplayOptions, DrawingMode, GeometryOptions,
+    NaColorMode, SidechainColorMode,
 };
 use crate::renderer::entity_topology::{EntityTopology, SidechainLayout};
+use crate::renderer::geometry::backbone::SheetOffset;
 use crate::renderer::geometry::sheet_adjust::{
     adjust_bonds_for_sheet, adjust_sidechains_for_sheet,
 };
 use crate::renderer::geometry::{
-    BackboneRenderer, BallAndStickRenderer, ChainPair, NucleicAcidRenderer,
+    BackboneRenderer, BallAndStickRenderer, NucleicAcidRenderer,
     SidechainRenderer, SidechainView,
 };
 
@@ -34,7 +34,7 @@ use crate::renderer::geometry::{
 /// An out-of-range index means the topology layout and the position
 /// slice have desynced upstream (the same invariant class as
 /// [`ProteinBackboneIndices::resolve`](crate::renderer::entity_topology::ProteinBackboneIndices::resolve)),
-/// not recoverable data — fail loudly rather than substituting an origin
+/// not recoverable data -- fail loudly rather than substituting an origin
 /// point that would then participate in centroid/offset math as if real.
 #[allow(clippy::panic)]
 fn resolve_sidechain_atoms(
@@ -72,7 +72,7 @@ fn generate_sidechain_bytes(
     topology: &EntityTopology,
     positions: &[Vec3],
     per_residue_colors: Option<&[[f32; 3]]>,
-    sheet_offsets: &[(u32, Vec3)],
+    sheet_offsets: &[SheetOffset],
     colors: &ColorOptions,
     display: &DisplayOptions,
 ) -> (Vec<u8>, u32) {
@@ -80,22 +80,20 @@ fn generate_sidechain_bytes(
     if layout.atom_indices.is_empty() {
         return (Vec::new(), 0);
     }
-    // Backbone→sidechain bonds use CA position (resolved from positions)
+    // Backbone->sidechain bonds use CA position (resolved from positions)
     // + an index into the sidechain layout.
     let (sidechain_positions, backbone_bonds) =
         resolve_sidechain_atoms(layout, positions);
 
-    let offset_map: HashMap<u32, Vec3> =
-        sheet_offsets.iter().copied().collect();
     let adjusted_positions = adjust_sidechains_for_sheet(
         &sidechain_positions,
         &layout.residue_indices,
-        &offset_map,
+        sheet_offsets,
     );
     let adjusted_bonds = adjust_bonds_for_sheet(
         &backbone_bonds,
         &layout.residue_indices,
-        &offset_map,
+        sheet_offsets,
     );
     let view = SidechainView {
         positions: &adjusted_positions,
@@ -145,11 +143,12 @@ fn generate_non_backbone_bytes(
     let na_chains = entity
         .topology
         .na_backbone_chain_positions(&entity.positions);
-    let na_chain_slice: &[Vec<Vec3>] = if entity.topology.is_nucleic_acid() {
-        &na_chains
-    } else {
-        &[]
-    };
+    let na_chain_slice: &[crate::renderer::entity_topology::NaBackboneChain] =
+        if entity.topology.is_nucleic_acid() {
+            &na_chains
+        } else {
+            &[]
+        };
     let rings = entity.topology.resolve_rings(&entity.positions);
     let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
         na_chain_slice,
@@ -194,10 +193,8 @@ pub(super) fn generate_entity_mesh(
 
     let backbone_mesh = if skip_backbone {
         BackboneRenderer::generate_mesh_colored(
-            &ChainPair {
-                protein: &[],
-                na: &[],
-            },
+            &[],
+            &[],
             None,
             None,
             geometry,
@@ -236,10 +233,8 @@ pub(super) fn generate_entity_mesh(
             .filter(|s| !s.is_empty());
 
         BackboneRenderer::generate_mesh_colored(
-            &ChainPair {
-                protein: &protein_chains,
-                na: &na_chains,
-            },
+            &protein_chains,
+            &na_chains,
             ss_slice,
             entity.per_residue_colors.as_deref(),
             geometry,
@@ -336,7 +331,7 @@ pub(super) struct AnimationFrameInput<'a> {
     pub positions: &'a EntityPositions,
     pub cache: &'a AnimationFrameCache,
     pub geometry: &'a GeometryOptions,
-    pub per_chain_lod: Option<&'a [(usize, usize)]>,
+    pub per_chain_lod: Option<&'a [ChainLod]>,
     pub include_sidechains: bool,
 }
 
@@ -350,14 +345,12 @@ pub(super) fn process_animation_frame(
 
     let total_residues: usize =
         protein_chains.iter().map(|c| c.ca().len()).sum::<usize>()
-            + na_chains.iter().map(Vec::len).sum::<usize>();
+            + na_chains.iter().map(|c| c.p().len()).sum::<usize>();
     let safe_geo = input.geometry.clamped_for_residues(total_residues);
 
     let backbone_mesh = BackboneRenderer::generate_mesh_colored(
-        &ChainPair {
-            protein: &protein_chains,
-            na: &na_chains,
-        },
+        &protein_chains,
+        &na_chains,
         input.cache.cartoon_ss_types.as_deref(),
         input.cache.cartoon_per_residue_colors.as_deref(),
         &safe_geo,
@@ -403,10 +396,11 @@ fn collect_cartoon_chains(
     input: &AnimationFrameInput,
 ) -> (
     Vec<crate::renderer::entity_topology::ProteinBackboneChain>,
-    Vec<Vec<Vec3>>,
+    Vec<crate::renderer::entity_topology::NaBackboneChain>,
 ) {
     let mut protein_chains = Vec::new();
-    let mut na_chains: Vec<Vec<Vec3>> = Vec::new();
+    let mut na_chains: Vec<crate::renderer::entity_topology::NaBackboneChain> =
+        Vec::new();
     for id in &input.cache.entity_order {
         let Some(meta) = input.cache.entity_meta.get(id) else {
             continue;
@@ -433,12 +427,10 @@ fn collect_cartoon_chains(
 /// frame.
 fn generate_animation_sidechains(
     input: &AnimationFrameInput,
-    sheet_offsets: &[(u32, Vec3)],
+    sheet_offsets: &[SheetOffset],
 ) -> (Option<Vec<u8>>, u32) {
     let mut combined: Vec<u8> = Vec::new();
     let mut total_count: u32 = 0;
-    let offset_map: HashMap<u32, Vec3> =
-        sheet_offsets.iter().copied().collect();
 
     for id in &input.cache.entity_order {
         let Some(meta) = input.cache.entity_meta.get(id) else {
@@ -462,12 +454,12 @@ fn generate_animation_sidechains(
         let adjusted_positions = adjust_sidechains_for_sheet(
             &sidechain_positions,
             &layout.residue_indices,
-            &offset_map,
+            sheet_offsets,
         );
         let adjusted_bonds = adjust_bonds_for_sheet(
             &backbone_bonds,
             &layout.residue_indices,
-            &offset_map,
+            sheet_offsets,
         );
         let view = SidechainView {
             positions: &adjusted_positions,

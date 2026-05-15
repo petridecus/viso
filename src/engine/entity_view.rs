@@ -22,7 +22,7 @@ use crate::options::DrawingMode;
 use crate::renderer::entity_topology::{
     EntityTopology, NucleotideRingLayout, SidechainLayout,
 };
-use crate::renderer::geometry::backbone::spline::project_backbone_atoms;
+use crate::renderer::geometry::backbone::curve::project_backbone_atoms;
 
 // ---------------------------------------------------------------------------
 // EntityView
@@ -53,7 +53,7 @@ pub(crate) struct EntityView {
 }
 
 // ---------------------------------------------------------------------------
-// RibbonBackbone — per-sync cache for Cartoon-mode H-bond anchoring
+// RibbonBackbone -- per-sync cache for Cartoon-mode H-bond anchoring
 // ---------------------------------------------------------------------------
 
 /// Per-residue spline-projected backbone positions for Cartoon-mode
@@ -76,7 +76,7 @@ impl RibbonBackbone {
     /// Project per-residue N and C onto the rendered cartoon ribbon.
     ///
     /// Returns `None` for non-protein topologies and for inputs too
-    /// short to support a spline projection — callers fall back to raw
+    /// short to support a spline projection -- callers fall back to raw
     /// atom positions in that case.
     #[must_use]
     pub(crate) fn project(
@@ -114,7 +114,7 @@ impl RibbonBackbone {
 }
 
 // ---------------------------------------------------------------------------
-// derive_topology — engine-side derivation factory
+// derive_topology -- engine-side derivation factory
 // ---------------------------------------------------------------------------
 
 /// Rederive the render-ready [`EntityTopology`] view of a single entity.
@@ -205,7 +205,7 @@ pub(crate) fn derive_topology(
 }
 
 // ---------------------------------------------------------------------------
-// Builder helpers — private derivation used only by derive_topology
+// Builder helpers -- private derivation used only by derive_topology
 // ---------------------------------------------------------------------------
 
 fn atom_elements(atoms: &[molex::Atom]) -> Vec<Element> {
@@ -242,8 +242,8 @@ where
 }
 
 /// Build per-segment SoA backbone-atom indices for a protein entity.
-/// `ProteinEntity::new` enforces canonical atom ordering — N, CA, C, O
-/// as the first four atoms of every kept residue — so each role's
+/// `ProteinEntity::new` enforces canonical atom ordering -- N, CA, C, O
+/// as the first four atoms of every kept residue -- so each role's
 /// index is a fixed offset from the residue's `atom_range.start`.
 fn protein_backbone_indices(
     protein: &molex::entity::molecule::protein::ProteinEntity,
@@ -279,7 +279,7 @@ fn protein_backbone_indices(
 /// Walks every kept residue's sidechain heavy atoms (canonical positions
 /// `[4..]`, excluding hydrogens). Collects entity-local atom indices,
 /// residue indices, names, and hydrophobicity; rebuilds intra-sidechain
-/// and backbone→sidechain bond pairs from the entity's bond list.
+/// and backbone->sidechain bond pairs from the entity's bond list.
 fn protein_sidechain_layout(
     protein: &molex::entity::molecule::protein::ProteinEntity,
 ) -> SidechainLayout {
@@ -288,10 +288,10 @@ fn protein_sidechain_layout(
     let mut atom_indices: Vec<u32> = Vec::new();
     let mut residue_indices: Vec<u32> = Vec::new();
     let mut hydrophobicity: Vec<bool> = Vec::new();
-    // Map entity-local atom index → layout index, so we can resolve
+    // Map entity-local atom index -> layout index, so we can resolve
     // bond endpoints back to positions within this layout.
     let mut atom_to_layout: FxHashMap<u32, u32> = FxHashMap::default();
-    // (residue_idx, atom_name) → entity-local atom index. Populated
+    // (residue_idx, atom_name) -> entity-local atom index. Populated
     // inline with the layout walk so constraint resolution can do
     // O(1) atom-name lookups.
     let mut atom_lookup: FxHashMap<u32, FxHashMap<Box<str>, u32>> =

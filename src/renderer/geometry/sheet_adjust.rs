@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use glam::Vec3;
 
+use crate::renderer::geometry::backbone::SheetOffset;
 use crate::renderer::geometry::sidechain::{OwnedSidechainView, SidechainView};
 
 /// Total residue count from SoA protein backbone chains.
@@ -11,21 +10,39 @@ pub(crate) fn backbone_residue_count(
     backbone_chains.iter().map(|c| c.ca().len()).sum()
 }
 
+/// Look up a residue's sheet offset by binary search.
+///
+/// `offsets` is produced in ascending `residue_idx` order (per-segment,
+/// per-chain, concatenated monotonically in `mesh_concat`), so a binary
+/// search replaces the per-frame `HashMap` rebuild this used to do.
+fn lookup_offset(offsets: &[SheetOffset], res_idx: u32) -> Option<Vec3> {
+    debug_assert!(
+        offsets
+            .windows(2)
+            .all(|w| w[0].residue_idx <= w[1].residue_idx),
+        "sheet offsets must be sorted by residue_idx for binary search"
+    );
+    offsets
+        .binary_search_by_key(&res_idx, |so| so.residue_idx)
+        .ok()
+        .map(|i| offsets[i].offset)
+}
+
 /// Apply sheet-surface offsets to sidechain positions and backbone-sidechain
 /// bonds, returning an [`OwnedSidechainView`] ready for the renderer.
 pub(crate) fn sheet_adjusted_view(
     sidechain: &SidechainView<'_>,
-    offset_map: &HashMap<u32, Vec3>,
+    offsets: &[SheetOffset],
 ) -> OwnedSidechainView {
     let positions = adjust_sidechains_for_sheet(
         sidechain.positions,
         sidechain.residue_indices,
-        offset_map,
+        offsets,
     );
     let backbone_bonds = adjust_bonds_for_sheet(
         sidechain.backbone_bonds,
         sidechain.residue_indices,
-        offset_map,
+        offsets,
     );
     OwnedSidechainView {
         positions,
@@ -40,9 +57,9 @@ pub(crate) fn sheet_adjusted_view(
 pub(crate) fn adjust_sidechains_for_sheet(
     positions: &[Vec3],
     sidechain_residue_indices: &[u32],
-    offset_map: &HashMap<u32, Vec3>,
+    offsets: &[SheetOffset],
 ) -> Vec<Vec3> {
-    if offset_map.is_empty() {
+    if offsets.is_empty() {
         return positions.to_vec();
     }
     // `positions` and `sidechain_residue_indices` are parallel sidechain-
@@ -57,9 +74,8 @@ pub(crate) fn adjust_sidechains_for_sheet(
     positions
         .iter()
         .zip(sidechain_residue_indices.iter())
-        .map(|(&pos, &res_idx)| match offset_map.get(&res_idx) {
-            Some(&offset) => pos + offset,
-            None => pos,
+        .map(|(&pos, &res_idx)| {
+            lookup_offset(offsets, res_idx).map_or(pos, |o| pos + o)
         })
         .collect()
 }
@@ -72,9 +88,9 @@ pub(crate) fn adjust_sidechains_for_sheet(
 pub(crate) fn adjust_bonds_for_sheet(
     bonds: &[(Vec3, u32)],
     sidechain_residue_indices: &[u32],
-    offset_map: &HashMap<u32, Vec3>,
+    offsets: &[SheetOffset],
 ) -> Vec<(Vec3, u32)> {
-    if offset_map.is_empty() {
+    if offsets.is_empty() {
         return bonds.to_vec();
     }
     bonds
@@ -89,11 +105,8 @@ pub(crate) fn adjust_bonds_for_sheet(
                     sidechain_residue_indices.len(),
                 )
             };
-            if let Some(&offset) = offset_map.get(&res_idx) {
-                (*ca_pos + offset, *cb_idx)
-            } else {
-                (*ca_pos, *cb_idx)
-            }
+            lookup_offset(offsets, res_idx)
+                .map_or((*ca_pos, *cb_idx), |o| (*ca_pos + o, *cb_idx))
         })
         .collect()
 }
@@ -110,8 +123,11 @@ mod tests {
     fn adjust_bonds_panics_on_out_of_range_layout_index() {
         let bonds = vec![(Vec3::ZERO, 7u32)];
         let residue_indices = vec![0u32, 1, 2];
-        let offset_map: HashMap<u32, Vec3> = HashMap::from([(0u32, Vec3::X)]);
-        let _ = adjust_bonds_for_sheet(&bonds, &residue_indices, &offset_map);
+        let offsets = [SheetOffset {
+            residue_idx: 0,
+            offset: Vec3::X,
+        }];
+        let _ = adjust_bonds_for_sheet(&bonds, &residue_indices, &offsets);
     }
 
     /// Sidechain adjustment pairs each position with its residue index by
@@ -120,12 +136,12 @@ mod tests {
     fn adjust_sidechains_applies_offsets_by_parallel_index() {
         let positions = vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)];
         let residue_indices = vec![10u32, 11, 12];
-        let offset_map: HashMap<u32, Vec3> = HashMap::from([(11u32, Vec3::X)]);
-        let out = adjust_sidechains_for_sheet(
-            &positions,
-            &residue_indices,
-            &offset_map,
-        );
+        let offsets = [SheetOffset {
+            residue_idx: 11,
+            offset: Vec3::X,
+        }];
+        let out =
+            adjust_sidechains_for_sheet(&positions, &residue_indices, &offsets);
         assert_eq!(out[0], Vec3::ZERO);
         assert_eq!(out[1], Vec3::ONE + Vec3::X);
         assert_eq!(out[2], Vec3::splat(2.0));

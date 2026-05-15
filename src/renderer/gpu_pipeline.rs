@@ -12,9 +12,7 @@ use crate::gpu::{RenderContext, ShaderComposer};
 use crate::options::{GeometryOptions, LightingOptions, VisoOptions};
 use crate::renderer::draw_context::DrawBindGroups;
 use crate::renderer::geometry::isosurface::IsosurfaceVertex;
-use crate::renderer::geometry::{
-    PreparedBackboneData, PreparedBallAndStickData, SidechainView,
-};
+use crate::renderer::geometry::{PreparedBallAndStickData, SidechainView};
 use crate::renderer::picking::PickingSystem;
 use crate::renderer::pipeline::prepared::{
     AnimationFrameBody, PreparedRebuild,
@@ -30,7 +28,8 @@ pub(crate) struct SceneChainData<'a> {
     pub(crate) backbone_chains:
         &'a [crate::renderer::entity_topology::ProteinBackboneChain],
     /// Nucleic-acid chains.
-    pub(crate) na_chains: &'a [Vec<Vec3>],
+    pub(crate) na_chains:
+        &'a [crate::renderer::entity_topology::NaBackboneChain],
 }
 
 /// All GPU infrastructure grouped together: device/queue, renderers,
@@ -65,7 +64,7 @@ pub(crate) struct GpuPipeline {
 }
 
 impl GpuPipeline {
-    /// Core render — geometry, post-process, picking — targeting the given
+    /// Core render -- geometry, post-process, picking -- targeting the given
     /// view. Returns the encoder so the caller can submit it.
     pub(crate) fn render_to_view(
         &mut self,
@@ -101,7 +100,7 @@ impl GpuPipeline {
             &frustum,
         );
 
-        // Post-processing: SSAO → bloom → composite → FXAA
+        // Post-processing: SSAO -> bloom -> composite -> FXAA
         let cam = &camera.camera;
         self.post_process.render(
             &mut encoder,
@@ -157,17 +156,15 @@ impl GpuPipeline {
             self.renderers.backbone.apply_prepared(
                 &self.context.device,
                 &self.context.queue,
-                PreparedBackboneData {
-                    vertices: &prepared.backbone.vertices,
-                    tube_indices: &prepared.backbone.tube_indices,
-                    ribbon_indices: &prepared.backbone.ribbon_indices,
-                    tube_index_count: prepared.backbone.tube_index_count,
-                    ribbon_index_count: prepared.backbone.ribbon_index_count,
-                    sheet_offsets: prepared.backbone.sheet_offsets.clone(),
-                    chain_ranges: prepared.backbone.chain_ranges.clone(),
-                    cached_chains: scene.backbone_chains,
-                    cached_na_chains: scene.na_chains,
-                },
+                &prepared.backbone.vertices,
+                &prepared.backbone.tube_indices,
+                &prepared.backbone.ribbon_indices,
+                prepared.backbone.tube_index_count,
+                prepared.backbone.ribbon_index_count,
+                prepared.backbone.sheet_offsets.clone(),
+                prepared.backbone.chain_ranges.clone(),
+                scene.backbone_chains,
+                scene.na_chains,
             );
             if !suppress_sidechains {
                 let _ = self.renderers.sidechain.apply_prepared(
@@ -263,13 +260,13 @@ impl GpuPipeline {
 
     /// Submit a backbone-only remesh with per-chain LOD to the background
     /// thread. Each chain gets its own `(spr, csv)` based on its distance
-    /// from the camera. No sidechains — they don't change with LOD.
+    /// from the camera. No sidechains -- they don't change with LOD.
     ///
     /// The base geometry is first clamped via
     /// `GeometryOptions::clamped_for_residues` to stay within the 256 MB
     /// buffer limit, then each chain is further scaled by its distance tier.
     /// For very large structures (>50 K residues) this per-chain scaling is
-    /// critical — without it the vertex buffer can exceed GPU limits.
+    /// critical -- without it the vertex buffer can exceed GPU limits.
     pub(crate) fn submit_lod_remesh(
         &self,
         camera_eye: Vec3,
@@ -294,13 +291,13 @@ impl GpuPipeline {
                 .backbone
                 .cached_na_chains()
                 .iter()
-                .map(Vec::len)
+                .map(|c| c.p().len())
                 .sum::<usize>();
         let base_geo = geometry.clamped_for_residues(total_residues);
         let max_spr = base_geo.segments_per_residue;
         let max_csv = base_geo.cross_section_verts;
 
-        let per_chain_lod: Vec<(usize, usize)> = self
+        let per_chain_lod: Vec<crate::options::ChainLod> = self
             .renderers
             .backbone
             .chain_ranges()
@@ -325,7 +322,7 @@ impl GpuPipeline {
 
     /// Check per-chain LOD tiers and submit a background remesh if any
     /// chain's tier has changed. Skipped while a `FullRebuild` is
-    /// pending — the backbone renderer's cached chains are stale.
+    /// pending -- the backbone renderer's cached chains are stale.
     pub(crate) fn check_and_submit_lod(
         &mut self,
         camera_eye: Vec3,
@@ -457,7 +454,9 @@ impl GpuPipeline {
 
     /// Read-only access to the backbone renderer's current sheet-offset
     /// list for main-thread sidechain adjustment.
-    pub(crate) fn backbone_sheet_offsets(&self) -> &[(u32, Vec3)] {
+    pub(crate) fn backbone_sheet_offsets(
+        &self,
+    ) -> &[crate::renderer::geometry::backbone::SheetOffset] {
         self.renderers.backbone.sheet_offsets()
     }
 }

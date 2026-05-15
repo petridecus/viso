@@ -3,7 +3,7 @@
 //! [`EntityTopology`] is the self-sufficient snapshot the mesh worker
 //! and main-thread render consumers read from. It's Arc-shared with
 //! the background worker so mesh-gen is a pure function of
-//! `(&EntityTopology, &[Vec3])` — neither `&Assembly` nor
+//! `(&EntityTopology, &[Vec3])` -- neither `&Assembly` nor
 //! `&MoleculeEntity` appear in any render-path signature.
 //!
 //! [`SidechainLayout`] and [`NucleotideRingLayout`] are entity-internal
@@ -31,7 +31,7 @@ use rustc_hash::FxHashMap;
 /// entity-local atom indices that can be resolved against the
 /// entity's `positions` slice via [`ProteinBackboneIndices::resolve`].
 ///
-/// Replaces the prior interleaved `[N, CA, C, …]` `Vec<usize>` shape
+/// Replaces the prior interleaved `[N, CA, C, ...]` `Vec<usize>` shape
 /// so the carbonyl-O atom is a first-class member of the backbone
 /// (load-bearing for the sheet peptide-plane normal: PyMOL / Mol* /
 /// ChimeraX / rosetta-interactive all use O directly or indirectly).
@@ -48,7 +48,7 @@ impl ProteinBackboneIndices {
     ///
     /// An out-of-range index means the topology layout and the position
     /// slice have desynced (a sync-state bug upstream), not a recoverable
-    /// data condition. Resolving partially — as a `filter_map` would —
+    /// data condition. Resolving partially -- as a `filter_map` would --
     /// silently shortens one field and breaks the "all four parallel,
     /// equal length" SoA invariant every downstream consumer relies on,
     /// with zero signal. So fail loudly with the offending role/index.
@@ -131,6 +131,25 @@ impl ProteinBackboneChain {
     }
 }
 
+/// Resolved P-atom positions for one continuous nucleic-acid backbone
+/// chain (stride 1: `[P0, P1, ...]`).
+///
+/// The NA analogue of [`ProteinBackboneChain`]: a newtype so chain lists
+/// can't be confused with arbitrary nested point vectors. The field is
+/// private -- the only construction path is
+/// [`EntityTopology::na_backbone_chain_positions`].
+#[derive(Clone, Default)]
+pub(crate) struct NaBackboneChain {
+    p: Vec<Vec3>,
+}
+
+impl NaBackboneChain {
+    /// Backbone phosphorus positions, residue-stride.
+    pub(crate) fn p(&self) -> &[Vec3] {
+        &self.p
+    }
+}
+
 /// Self-sufficient render-ready view of a single entity.
 ///
 /// Duplicates the structural metadata the renderer needs (atom elements,
@@ -149,7 +168,7 @@ pub(crate) struct EntityTopology {
     pub(crate) protein_backbone_layout: Vec<ProteinBackboneIndices>,
 
     /// Nucleic acid P-atom indices, one inner vec per continuous chain
-    /// segment (stride 1: `[P₀, P₁, …]`). Empty for non-NA entities.
+    /// segment (stride 1: `[P0, P1, ...]`). Empty for non-NA entities.
     pub(crate) na_backbone_chain_layout: Vec<Vec<usize>>,
 
     /// Sidechain atom indices and bond topology for ball-and-stick /
@@ -169,7 +188,7 @@ pub(crate) struct EntityTopology {
     /// Which residue each atom belongs to (index into
     /// [`residue_atom_ranges`](Self::residue_atom_ranges)).
     pub(crate) atom_residue_index: Vec<u32>,
-    /// 3-byte residue name (`b"ALA"`, `b"GLY"`, …) per residue.
+    /// 3-byte residue name (`b"ALA"`, `b"GLY"`, ...) per residue.
     pub(crate) residue_names: Vec<[u8; 3]>,
     /// Atom-index range per residue, in entity-local indices.
     pub(crate) residue_atom_ranges: Vec<Range<u32>>,
@@ -213,14 +232,14 @@ impl EntityTopology {
     pub(crate) fn na_backbone_chain_positions(
         &self,
         positions: &[Vec3],
-    ) -> Vec<Vec<Vec3>> {
+    ) -> Vec<NaBackboneChain> {
         self.na_backbone_chain_layout
             .iter()
-            .map(|chain| {
-                chain
+            .map(|chain| NaBackboneChain {
+                p: chain
                     .iter()
                     .filter_map(|&idx| positions.get(idx).copied())
-                    .collect()
+                    .collect(),
             })
             .collect()
     }
@@ -261,13 +280,13 @@ pub(crate) struct SidechainLayout {
     /// Intra-sidechain bonds as `(a, b)` indices into
     /// [`atom_indices`](Self::atom_indices).
     pub(crate) bonds: Vec<(u32, u32)>,
-    /// Backbone → sidechain bonds as `(ca_atom_idx, cb_layout_idx)` where
+    /// Backbone -> sidechain bonds as `(ca_atom_idx, cb_layout_idx)` where
     /// `ca_atom_idx` is an entity-local atom index of CA and
     /// `cb_layout_idx` is the index into
     /// [`atom_indices`](Self::atom_indices) of the CB that CA connects
     /// to.
     pub(crate) backbone_bonds: Vec<(u32, u32)>,
-    /// `(residue_idx, atom_name) → entity-local atom index` for O(1)
+    /// `(residue_idx, atom_name) -> entity-local atom index` for O(1)
     /// constraint-resolution lookup. Built at topology-derivation time
     /// from the parallel `atom_indices` + `residue_indices` vecs plus
     /// the source atom names.
@@ -316,7 +335,7 @@ pub(crate) struct NucleotideRingLayout {
     /// Optional five atom indices for the pentagonal ring on purines
     /// (C4, C5, N7, C8, N9). `None` for pyrimidines.
     pub(crate) pent_ring: Option<[u32; 5]>,
-    /// Atom index of C1' (sugar anchor for stem → backbone connection).
+    /// Atom index of C1' (sugar anchor for stem -> backbone connection).
     pub(crate) c1_prime: Option<u32>,
     /// NDB base color.
     pub(crate) color: [f32; 3],

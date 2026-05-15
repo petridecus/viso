@@ -12,6 +12,7 @@ use molex::NucleotideRing;
 
 use crate::error::VisoError;
 use crate::gpu::{RenderContext, Shader, ShaderComposer};
+use crate::renderer::entity_topology::NaBackboneChain;
 use crate::renderer::geometry::backbone::spline::catmull_rom;
 use crate::renderer::impostor::{
     CapsuleInstance, ExtrudedPolygonInstance, ImpostorPass, ShaderDef,
@@ -40,7 +41,7 @@ impl NucleicAcidRenderer {
     pub(crate) fn new(
         context: &RenderContext,
         layouts: &crate::renderer::PipelineLayouts,
-        na_chains: &[Vec<Vec3>],
+        na_chains: &[NaBackboneChain],
         rings: &[NucleotideRing],
         shader_composer: &mut ShaderComposer,
     ) -> Result<Self, VisoError> {
@@ -125,11 +126,11 @@ impl NucleicAcidRenderer {
         ]
     }
 
-    // ── Instance generation ──
+    // -- Instance generation --
 
     /// Generate capsule + polygon instances for stems and rings.
     pub(crate) fn generate_instances(
-        na_chains: &[Vec<Vec3>],
+        na_chains: &[NaBackboneChain],
         rings: &[NucleotideRing],
         na_color: Option<[f32; 3]>,
     ) -> (Vec<CapsuleInstance>, Vec<ExtrudedPolygonInstance>) {
@@ -140,15 +141,15 @@ impl NucleicAcidRenderer {
         // Compute spline points for stem anchoring
         let mut all_spline_points: Vec<Vec3> = Vec::new();
         for chain in na_chains {
-            if chain.len() < 2 {
+            if chain.p().len() < 2 {
                 continue;
             }
-            let spline = catmull_rom(chain, SEGMENTS_PER_RESIDUE);
+            let spline = catmull_rom(chain.p(), SEGMENTS_PER_RESIDUE);
             all_spline_points.extend_from_slice(&spline);
         }
 
         for ring in rings {
-            // Stem: closest spline point to C1' → ring centroid
+            // Stem: closest spline point to C1' -> ring centroid
             if let Some(c1p) = ring.c1_prime {
                 if let Some(&anchor) = closest_point(&all_spline_points, c1p) {
                     let centroid = ring.hex_ring.iter().copied().sum::<Vec3>()
@@ -195,13 +196,13 @@ impl NucleicAcidRenderer {
     }
 
     fn compute_combined_hash(
-        chains: &[Vec<Vec3>],
+        chains: &[NaBackboneChain],
         rings: &[NucleotideRing],
     ) -> u64 {
         let mut hasher = DefaultHasher::new();
         chains.len().hash(&mut hasher);
         for chain in chains {
-            hash_vec3_slice_summary(chain, &mut hasher);
+            hash_vec3_slice_summary(chain.p(), &mut hasher);
         }
         rings.len().hash(&mut hasher);
         if let Some(first_ring) = rings.first() {
@@ -213,7 +214,7 @@ impl NucleicAcidRenderer {
     }
 }
 
-/// Build an `ExtrudedPolygonInstance` from a ring of 3–6 coplanar positions.
+/// Build an `ExtrudedPolygonInstance` from a ring of 3-6 coplanar positions.
 fn make_polygon_instance(
     positions: &[Vec3],
     color: [f32; 3],

@@ -1,4 +1,4 @@
-//! [`SyncPipeline`] ZST — associated functions implementing the
+//! [`SyncPipeline`] ZST -- associated functions implementing the
 //! main-thread sync pipeline. Each method takes disjoint borrows of the
 //! engine's sub-structs (`Scene`, `EntityAnnotations`, `VisoOptions`,
 //! `GpuPipeline`, `AnimationState`) so the pipeline is expressible
@@ -33,7 +33,7 @@ use crate::renderer::GpuPipeline;
 
 /// Main-thread sync pipeline.
 ///
-/// ZST — all methods are associated functions taking disjoint borrows of
+/// ZST -- all methods are associated functions taking disjoint borrows of
 /// the engine's sub-structs. Per-sync working state (ribbon cache, flat
 /// color buffers, etc.) is rebuilt inside each call rather than cached
 /// on the pipeline.
@@ -203,7 +203,7 @@ impl SyncPipeline {
     /// [`SceneRenderState::update_structural_bonds`] produce this
     /// frame's `Vec<StructuralBond>` directly on
     /// `scene.render_state`. The resolver reads visibility, drawing
-    /// mode, and topology straight off the engine's existing maps —
+    /// mode, and topology straight off the engine's existing maps --
     /// the only thing worth caching is the spline projection.
     fn resolve_structural_bonds_into_render_state(
         scene: &mut Scene,
@@ -343,7 +343,7 @@ impl SyncPipeline {
         annotations: &EntityAnnotations,
     ) -> (
         Vec<crate::renderer::entity_topology::ProteinBackboneChain>,
-        Vec<Vec<Vec3>>,
+        Vec<crate::renderer::entity_topology::NaBackboneChain>,
     ) {
         let mut backbone = Vec::new();
         let mut na = Vec::new();
@@ -432,7 +432,7 @@ impl SyncPipeline {
             if current.len() != target.len() {
                 // Atom layout changed (e.g. mutation rebuilds
                 // sidechains). Snap positions to target so the renderer
-                // reflects the new layout immediately — interpolation
+                // reflects the new layout immediately -- interpolation
                 // is meaningless across mismatched shapes.
                 scene.positions.set(eid, target.clone());
                 if !transition.allows_size_change {
@@ -591,7 +591,7 @@ impl SyncPipeline {
     }
 }
 
-// ── Helpers ──
+// -- Helpers --
 
 fn per_entity_colors(
     entity_index: usize,

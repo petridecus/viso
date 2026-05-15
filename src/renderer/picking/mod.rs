@@ -128,8 +128,9 @@ impl PickingSystem {
     }
 
     /// Select all residues in the same chain as `residue_idx`. Chains are
-    /// described by `backbone_chains` (each entry is a chain's backbone
-    /// points, with 3 points per residue).
+    /// described by `backbone_chains` (each entry is one chain's SoA
+    /// backbone atoms; its residue count is
+    /// [`ProteinBackboneChain::residue_count`]).
     ///
     /// If `extend` is true the new residues are added to the existing
     /// selection; otherwise the selection is replaced.
