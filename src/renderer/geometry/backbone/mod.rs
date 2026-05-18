@@ -403,6 +403,8 @@ impl BackboneRenderer {
         geo: &GeometryOptions,
         per_chain_lod: Option<&[ChainLod]>,
         na_residue_colors: Option<&[[f32; 3]]>,
+        na_seeds: Option<&[Option<Vec3>]>,
+        na_guide_dirs: Option<&[Vec3]>,
     ) -> BackboneMeshOutput {
         mesh::generate_mesh_colored(
             protein,
@@ -412,6 +414,8 @@ impl BackboneRenderer {
             geo,
             per_chain_lod,
             na_residue_colors,
+            na_seeds,
+            na_guide_dirs,
         )
     }
 }

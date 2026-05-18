@@ -140,21 +140,13 @@ fn generate_non_backbone_bytes(
             entity.drawing_mode,
             entity.per_residue_colors.as_deref(),
         );
-    let na_chains = entity
-        .topology
-        .na_backbone_chain_positions(&entity.positions);
-    let na_chain_slice: &[crate::renderer::entity_topology::NaBackboneChain] =
-        if entity.topology.is_nucleic_acid() {
-            &na_chains
-        } else {
-            &[]
-        };
-    let rings = entity.topology.resolve_rings(&entity.positions);
-    let (na_stems, na_rings) = NucleicAcidRenderer::generate_instances(
-        na_chain_slice,
-        &rings,
-        Some(colors.nucleic_acid),
-    );
+    let rings = if entity.topology.is_nucleic_acid() {
+        entity.topology.resolve_rings(&entity.positions)
+    } else {
+        Vec::new()
+    };
+    let (na_stems, na_rings) =
+        NucleicAcidRenderer::generate_instances(&rings);
     let bns_atoms = if bns_spheres.is_empty() && bns_capsules.is_empty() {
         0
     } else {
@@ -200,6 +192,8 @@ pub(super) fn generate_entity_mesh(
             geometry,
             None,
             None,
+            None,
+            None,
         )
     } else {
         let is_na = topology.is_nucleic_acid();
@@ -214,17 +208,33 @@ pub(super) fn generate_entity_mesh(
             Vec::new()
         };
 
-        let na_base_colors: Vec<[f32; 3]> =
+        // Residue-parallel with the P-atom stream (built per residue,
+        // not per resolvable ring) so a skipped/modified base doesn't
+        // shift every later base's backbone color.
+        let na_base_colors: &[[f32; 3]] =
             if is_na && display.na_color_mode() == NaColorMode::BaseColor {
-                topology.ring_topology.iter().map(|r| r.color).collect()
+                &topology.na_residue_base_colors
             } else {
-                Vec::new()
+                &[]
             };
-        let na_colors_ref = if na_base_colors.is_empty() {
-            None
+        let na_colors_ref =
+            (!na_base_colors.is_empty()).then_some(na_base_colors);
+
+        let na_seeds: Vec<Option<Vec3>> = if is_na {
+            topology.na_chain_seed_normals(&entity.positions)
         } else {
-            Some(na_base_colors.as_slice())
+            Vec::new()
         };
+        let na_seeds_ref =
+            (!na_seeds.is_empty()).then_some(na_seeds.as_slice());
+
+        let na_guides: Vec<Vec3> = if is_na {
+            topology.na_residue_guide_dirs(&entity.positions)
+        } else {
+            Vec::new()
+        };
+        let na_guides_ref =
+            (!na_guides.is_empty()).then_some(na_guides.as_slice());
 
         let ss_slice = entity
             .ss_override
@@ -240,6 +250,8 @@ pub(super) fn generate_entity_mesh(
             geometry,
             None,
             na_colors_ref,
+            na_seeds_ref,
+            na_guides_ref,
         )
     };
 
@@ -341,7 +353,8 @@ pub(super) fn process_animation_frame(
     input: &AnimationFrameInput,
     generation: u64,
 ) -> PreparedAnimationFrame {
-    let (protein_chains, na_chains) = collect_cartoon_chains(input);
+    let (protein_chains, na_chains, na_seeds, na_guides) =
+        collect_cartoon_chains(input);
 
     let total_residues: usize =
         protein_chains.iter().map(|c| c.ca().len()).sum::<usize>()
@@ -356,6 +369,8 @@ pub(super) fn process_animation_frame(
         &safe_geo,
         input.per_chain_lod,
         input.cache.cartoon_na_base_colors.as_deref(),
+        (!na_seeds.is_empty()).then_some(na_seeds.as_slice()),
+        (!na_guides.is_empty()).then_some(na_guides.as_slice()),
     );
     let backbone_tube_index_count = backbone_mesh.tube_indices.len() as u32;
     let backbone_ribbon_index_count = backbone_mesh.ribbon_indices.len() as u32;
@@ -397,10 +412,18 @@ fn collect_cartoon_chains(
 ) -> (
     Vec<crate::renderer::entity_topology::ProteinBackboneChain>,
     Vec<crate::renderer::entity_topology::NaBackboneChain>,
+    Vec<Option<Vec3>>,
+    Vec<Vec3>,
 ) {
     let mut protein_chains = Vec::new();
     let mut na_chains: Vec<crate::renderer::entity_topology::NaBackboneChain> =
         Vec::new();
+    // Per-NA-chain RMF roll seed (index-parallel with `na_chains`) and
+    // per-residue C1'-P guide field (residue-parallel with the
+    // concatenated P stream `process_na_chains` walks), both recomputed
+    // from the *interpolated* positions each frame.
+    let mut na_seeds: Vec<Option<Vec3>> = Vec::new();
+    let mut na_guides: Vec<Vec3> = Vec::new();
     for id in &input.cache.entity_order {
         let Some(meta) = input.cache.entity_meta.get(id) else {
             continue;
@@ -416,11 +439,13 @@ fn collect_cartoon_chains(
         };
         if topology.is_nucleic_acid() {
             na_chains.extend(topology.na_backbone_chain_positions(positions));
+            na_seeds.extend(topology.na_chain_seed_normals(positions));
+            na_guides.extend(topology.na_residue_guide_dirs(positions));
         } else {
             protein_chains.extend(topology.protein_backbone_chains(positions));
         }
     }
-    (protein_chains, na_chains)
+    (protein_chains, na_chains, na_seeds, na_guides)
 }
 
 /// Concatenate per-entity sidechain capsule bytes for the animation

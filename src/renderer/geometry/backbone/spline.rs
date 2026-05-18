@@ -17,9 +17,9 @@ pub(crate) struct SplinePoint {
 /// Position + tangent only -- the pre-frame intermediate along a spline.
 ///
 /// A completed [`SplinePoint`] (with orthonormal normal/binormal) is
-/// produced from a slice of these by [`rmf_frames`] / [`frenet_frames`].
-/// Carrying this distinct type keeps the invalid "frame with zeroed
-/// normal/binormal" state out of the mesh path entirely.
+/// produced from a slice of these by [`rmf_frames`]. Carrying this
+/// distinct type keeps the invalid "frame with zeroed normal/binormal"
+/// state out of the mesh path entirely.
 #[derive(Clone, Copy)]
 pub(crate) struct SplineTrace {
     pub(crate) pos: Vec3,
@@ -80,42 +80,12 @@ pub(crate) fn residue_bracket(
     (r0, r1, rf - r0 as f32)
 }
 
-/// Catmull-Rom spline interpolation (passes through all control points).
-pub(crate) fn catmull_rom(
-    points: &[Vec3],
-    segments_per_span: usize,
-) -> Vec<Vec3> {
-    let n = points.len();
-    if n < 2 {
-        return points.to_vec();
-    }
-    if n < 3 {
-        return linear_interpolate(points, segments_per_span);
-    }
-
-    let mut result = Vec::new();
-
-    for i in 0..n - 1 {
-        let (p0, p3) = ghost_neighbors(points, i);
-        let p1 = points[i];
-        let p2 = points[i + 1];
-
-        for j in 0..segments_per_span {
-            let t = j as f32 / segments_per_span as f32;
-            result.push(catmull_rom_basis(p0, p1, p2, p3, t));
-        }
-    }
-
-    result.push(points[n - 1]);
-    result
-}
-
 /// Evaluate a single point on the Catmull-Rom spline.
 ///
 /// `span` selects which pair of control points (0..n-2), and `t` is the
 /// parameter within that span (0.0 = start control point, 1.0 = end).
-/// Uses the same phantom-point extrapolation as [`catmull_rom`] for
-/// boundary spans.
+/// Uses phantom-point extrapolation (`ghost_neighbors`) for boundary
+/// spans.
 pub(crate) fn catmull_rom_eval(
     points: &[Vec3],
     span: usize,
@@ -318,56 +288,10 @@ pub(crate) fn linear_interpolate(
     result
 }
 
-/// Compute Frenet frames (curvature-based) for helical traces.
-///
-/// The Frenet normal points away from the center of curvature, so the
-/// ribbon twists naturally with helical geometry (DNA/RNA backbones).
-/// Falls back to an arbitrary frame on straight segments.
-pub(crate) fn compute_frenet_frames(points: &mut [SplinePoint]) {
-    if points.len() < 2 {
-        return;
-    }
-
-    let n = points.len();
-
-    // Curvature vector (dT/ds) at each point via finite differences
-    let curvatures: Vec<Vec3> = (0..n)
-        .map(|i| {
-            if i == 0 {
-                points[1].tangent - points[0].tangent
-            } else if i == n - 1 {
-                points[n - 1].tangent - points[n - 2].tangent
-            } else {
-                (points[i + 1].tangent - points[i - 1].tangent) * 0.5
-            }
-        })
-        .collect();
-
-    for i in 0..n {
-        let t = points[i].tangent;
-        let curv = curvatures[i];
-
-        if curv.length() > 1e-6 {
-            // Negate Frenet normal for outward-pointing ribbon normal
-            let normal = -curv.normalize();
-            let normal = (normal - t * t.dot(normal)).normalize();
-            let binormal = t.cross(normal).normalize();
-            points[i].normal = normal;
-            points[i].binormal = binormal;
-        } else {
-            let arbitrary = if t.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
-            let normal = t.cross(arbitrary).normalize();
-            let binormal = t.cross(normal).normalize();
-            points[i].normal = normal;
-            points[i].binormal = binormal;
-        }
-    }
-}
-
 /// The single construction site of the position-only `SplinePoint`
 /// shell. Every normal/binormal is filled by the frame solver
-/// ([`compute_rmf`] / [`compute_frenet_frames`]) before any consumer
-/// sees the result, so a half-built frame never escapes this module.
+/// ([`compute_rmf`]) before any consumer sees the result, so a
+/// half-built frame never escapes this module.
 fn shells_from_traces(traces: &[SplineTrace]) -> Vec<SplinePoint> {
     traces
         .iter()
@@ -396,13 +320,6 @@ pub(crate) fn rmf_frames(
         first.normal = seed;
     }
     compute_rmf(&mut frames);
-    frames
-}
-
-/// Build Frenet frames from position+tangent traces (nucleic-acid path).
-pub(crate) fn frenet_frames(traces: &[SplineTrace]) -> Vec<SplinePoint> {
-    let mut frames = shells_from_traces(traces);
-    compute_frenet_frames(&mut frames);
     frames
 }
 
@@ -490,57 +407,6 @@ mod tests {
         assert!(approx_eq(*result.last().unwrap(), pts[1]));
         // midpoint at t=0.5 (index 2)
         assert!(approx_eq(result[2], Vec3::new(5.0, 0.0, 0.0)));
-    }
-
-    #[test]
-    fn catmull_rom_endpoints() {
-        let pts: Vec<Vec3> = (0..5)
-            .map(|i| Vec3::new(i as f32 * 2.0, 0.0, 0.0))
-            .collect();
-        let result = catmull_rom(&pts, 4);
-        assert!(approx_eq(result[0], pts[0]));
-        assert!(approx_eq(*result.last().unwrap(), *pts.last().unwrap()));
-    }
-
-    #[test]
-    fn catmull_rom_passes_through() {
-        let pts: Vec<Vec3> = (0..5)
-            .map(|i| Vec3::new(i as f32 * 3.0, (i as f32).sin(), 0.0))
-            .collect();
-        let segs = 8;
-        let result = catmull_rom(&pts, segs);
-        // At span boundaries (every `segs` samples), output ~ control point
-        for (i, pt) in pts.iter().enumerate() {
-            let idx = if i == pts.len() - 1 {
-                result.len() - 1
-            } else {
-                i * segs
-            };
-            assert!(
-                approx_eq(result[idx], *pt),
-                "span {i}: expected {pt:?}, got {:?}",
-                result[idx]
-            );
-        }
-    }
-
-    #[test]
-    fn catmull_rom_two_points_linear() {
-        let pts = vec![Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0)];
-        let result = catmull_rom(&pts, 4);
-        let linear = linear_interpolate(&pts, 4);
-        assert_eq!(result.len(), linear.len());
-        for (a, b) in result.iter().zip(linear.iter()) {
-            assert!(approx_eq(*a, *b));
-        }
-    }
-
-    #[test]
-    fn catmull_rom_single_point() {
-        let pts = vec![Vec3::new(1.0, 2.0, 3.0)];
-        let result = catmull_rom(&pts, 8);
-        assert_eq!(result.len(), 1);
-        assert!(approx_eq(result[0], pts[0]));
     }
 
     #[test]
@@ -708,10 +574,9 @@ mod tests {
     }
 
     #[test]
-    fn frenet_and_rmf_empty() {
+    fn rmf_empty_and_single() {
         // Empty input
         let mut empty: Vec<SplinePoint> = vec![];
-        compute_frenet_frames(&mut empty);
         compute_rmf(&mut empty);
 
         // Single point
@@ -721,8 +586,69 @@ mod tests {
             normal: Vec3::ZERO,
             binormal: Vec3::ZERO,
         }];
-        compute_frenet_frames(&mut single);
         compute_rmf(&mut single);
         // Should not panic -- that's the test
+    }
+
+    /// T0-NA-A regression: the nucleic-acid ribbon path now goes through
+    /// `rmf_frames(&traces, seed)`, not raw Frenet. On a straight-then-
+    /// curved chain the old Frenet path recomputed an arbitrary world
+    /// axis per straight sample and flipped the `-curv` normal 180deg
+    /// through the inflection. RMF must instead stay orthonormal, keep a
+    /// fixed roll across the straight run, and never flip hemisphere
+    /// between adjacent samples through the bend.
+    #[test]
+    fn na_rmf_no_flip_on_straight_then_curved() {
+        // 8 straight samples along +Z, then a quarter circle in the
+        // Z-X plane -- a strong inflection at the join.
+        let mut pos: Vec<Vec3> = (0..8)
+            .map(|i| Vec3::new(0.0, 0.0, i as f32))
+            .collect();
+        let r = 5.0;
+        for k in 1..=12 {
+            let a = (k as f32 / 12.0) * std::f32::consts::FRAC_PI_2;
+            pos.push(Vec3::new(r * (1.0 - a.cos()), 0.0, 7.0 + r * a.sin()));
+        }
+        let n = pos.len();
+        let traces: Vec<SplineTrace> = (0..n)
+            .map(|i| {
+                let prev = if i == 0 { 0 } else { i - 1 };
+                let next = (i + 1).min(n - 1);
+                SplineTrace {
+                    pos: pos[i],
+                    tangent: (pos[next] - pos[prev]).normalize(),
+                }
+            })
+            .collect();
+
+        // Seed analogous to a first base-ring normal (perp-ish to t0).
+        let frames = rmf_frames(&traces, Some(Vec3::X));
+
+        for (i, f) in frames.iter().enumerate() {
+            assert!(
+                (f.normal.length() - 1.0).abs() < TOL
+                    && (f.binormal.length() - 1.0).abs() < TOL,
+                "frame {i}: not unit length"
+            );
+            assert!(
+                f.tangent.dot(f.normal).abs() < TOL,
+                "frame {i}: normal not perpendicular to tangent"
+            );
+        }
+        for i in 1..frames.len() {
+            assert!(
+                frames[i].normal.dot(frames[i - 1].normal) > 0.0,
+                "frame {}->{i}: 180deg ribbon flip (the old Frenet defect)",
+                i - 1,
+            );
+        }
+        // Across the straight run the tangent is constant, so a
+        // rotation-minimizing frame must not roll at all.
+        for i in 1..7 {
+            assert!(
+                frames[i].normal.dot(frames[0].normal) > 0.999,
+                "frame {i}: roll drift on the straight segment"
+            );
+        }
     }
 }

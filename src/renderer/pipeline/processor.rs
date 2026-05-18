@@ -389,7 +389,7 @@ impl MeshCache {
                     continue;
                 }
                 na_colors
-                    .extend(e.topology.ring_topology.iter().map(|r| r.color));
+                    .extend_from_slice(&e.topology.na_residue_base_colors);
             }
         }
         self.anim_cache.cartoon_na_base_colors = if na_colors.is_empty() {

@@ -112,13 +112,8 @@ impl Renderers {
         let pull = PullRenderer::new(context, layouts, shader_composer)?;
         let ball_and_stick =
             BallAndStickRenderer::new(context, layouts, shader_composer)?;
-        let nucleic_acid = NucleicAcidRenderer::new(
-            context,
-            layouts,
-            &[],
-            &[],
-            shader_composer,
-        )?;
+        let nucleic_acid =
+            NucleicAcidRenderer::new(context, layouts, shader_composer)?;
         let isosurface = IsosurfaceRenderer::new(
             context,
             layouts,
