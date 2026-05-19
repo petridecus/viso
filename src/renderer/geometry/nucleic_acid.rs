@@ -31,26 +31,6 @@ const STEM_RADIUS: f32 = 0.25;
 /// coincidence is explicit and either can change without the other (T5-NA-B).
 const RING_HALF_THICKNESS: f32 = 0.25;
 
-/// Newell's-method plane normal for a ring of coplanar positions.
-///
-/// Returns the zero vector for a degenerate (collinear / coincident)
-/// ring. The sign is fixed by the cyclic traversal order of the input;
-/// callers that need cross-base sign coherence apply their own
-/// hemisphere-alignment pass on top of this.
-#[must_use]
-pub(crate) fn newell_normal(positions: &[Vec3]) -> Vec3 {
-    let n = positions.len();
-    let mut normal = Vec3::ZERO;
-    for i in 0..n {
-        let curr = positions[i];
-        let next = positions[(i + 1) % n];
-        normal.x += (curr.y - next.y) * (curr.z + next.z);
-        normal.y += (curr.z - next.z) * (curr.x + next.x);
-        normal.z += (curr.x - next.x) * (curr.y + next.y);
-    }
-    normal.normalize_or_zero()
-}
-
 /// Renders DNA/RNA base rings and stem tubes as impostors.
 pub(crate) struct NucleicAcidRenderer {
     stem_pass: ImpostorPass<CapsuleInstance>,
@@ -167,7 +147,8 @@ impl NucleicAcidRenderer {
         for resolved in rings {
             let ring = &resolved.ring;
 
-            let mut base_normal = newell_normal(&ring.hex_ring);
+            let mut base_normal =
+                crate::util::geom::newell_normal(&ring.hex_ring);
             if base_normal == Vec3::ZERO {
                 degenerate_rings += 1;
                 continue;

@@ -26,6 +26,18 @@ pub(crate) struct SplineTrace {
     pub(crate) tangent: Vec3,
 }
 
+/// Build position+tangent traces from spline positions and tangents.
+pub(crate) fn build_traces(
+    spline: &[Vec3],
+    tangents: &[Vec3],
+) -> Vec<SplineTrace> {
+    spline
+        .iter()
+        .zip(tangents.iter())
+        .map(|(&pos, &tangent)| SplineTrace { pos, tangent })
+        .collect()
+}
+
 /// Phantom (ghost) neighbor control points for the span starting at
 /// control point `j` (ending at `j + 1`).
 ///

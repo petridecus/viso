@@ -302,10 +302,7 @@ impl EntityTopology {
                 continue;
             }
             if let Some(hex) = resolve_ring(&layout.hex_ring, positions) {
-                let normal =
-                    crate::renderer::geometry::nucleic_acid::newell_normal(
-                        &hex,
-                    );
+                let normal = crate::util::geom::newell_normal(&hex);
                 if normal != Vec3::ZERO {
                     seeds[ci] = Some(normal);
                 }
